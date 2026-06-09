@@ -1,0 +1,1 @@
+# fretiq__laravel
