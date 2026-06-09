@@ -37,6 +37,7 @@ class Company extends Model
         'ai_score',
         'ai_explanation',
         'qualification_status',
+        'is_active',
         'zoho_account_id',
     ];
 
@@ -48,6 +49,7 @@ class Company extends Model
     protected $casts = [
         'enrichment_data' => 'array',
         'ai_score'        => 'integer',
+        'is_active'       => 'boolean',
     ];
 
     /**
@@ -61,6 +63,7 @@ class Company extends Model
             $company->relationship         ??= 'prospect';
             $company->source               ??= 'manual';
             $company->qualification_status ??= 'pending';
+            $company->is_active           ??= true;
         });
     }
 
@@ -104,6 +107,7 @@ class Company extends Model
             'relationship'         => 'nullable|in:' . implode(',', array_keys(config('global.data.company_relationships', []))),
             'source'               => 'nullable|in:' . implode(',', array_keys(config('global.data.company_sources', []))),
             'qualification_status' => 'nullable|in:' . implode(',', array_keys(config('global.data.company_qualification_statuses', []))),
+            'is_active'            => 'nullable|boolean',
             'ai_score'             => 'nullable|integer|between:0,100',
             'zoho_account_id'      => 'nullable|string|max:100',
         ];

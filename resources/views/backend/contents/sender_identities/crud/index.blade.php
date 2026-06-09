@@ -71,7 +71,7 @@
 
                 @can('create sender_identities')
                 <a href="{{ route('admin.sender_identities.create') }}" class="btn btn-primary">
-                    {!! getIcon('plus', 'fs-2', '', 'i') !!}
+                    <i class="bi bi-plus-lg fs-2"></i>
                     Ajouter une identité
                 </a>
                 @endcan

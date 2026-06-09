@@ -62,4 +62,30 @@ class ContactController extends BackendController
             'sources'       => config('global.data.contact_sources', []),
         ];
     }
+
+    /**
+     * After a contact is saved, honour an optional return_url from the request
+     * (set by the inline company contact modal) so the user lands back on the
+     * company Contacts tab instead of the generic contacts index.
+     *
+     * Returns a JsonResponse when return_url is present, which Crudable::store()
+     * and Crudable::update() forward directly to the caller (the modal AJAX
+     * fetch). Falls through to default Crudable behaviour when absent.
+     *
+     * @param array $attributes
+     * @param \App\Models\Contact $model
+     * @return \Illuminate\Http\JsonResponse|void
+     */
+    protected function afterSave(array $attributes, $model)
+    {
+        $returnUrl = $this->currentRequest->input('return_url');
+
+        if ($returnUrl) {
+            return response()->json([
+                'message'  => 'success',
+                'model'    => $model,
+                'redirect' => $returnUrl,
+            ], 200);
+        }
+    }
 }

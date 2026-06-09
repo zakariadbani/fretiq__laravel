@@ -36,7 +36,7 @@
             <div class="card">
                 <div class="card-header border-0 pt-5">
                     <h3 class="card-title fw-bolder m-0">
-                        <i class="ki-duotone ki-setting-4 text-primary fs-3 me-2"><span class="path1"></span><span class="path2"></span></i>
+                        <i class="bi bi-gear text-primary fs-3 me-2"></i>
                         Informations générales
                     </h3>
                 </div>

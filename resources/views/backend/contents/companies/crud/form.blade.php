@@ -25,39 +25,29 @@
 @endsection
 
 @section('toolbar_actions')
-    <a href="{{ route('admin.companies.index') }}" class="btn btn-sm btn-light btn-active-light-primary">
-        <i class="ki-duotone ki-arrow-left fs-4"><span class="path1"></span><span class="path2"></span></i>
-        Retour à la liste
-    </a>
-    <button type="button" name="saveandcontinue" class="btn btn-sm fw-bold btn-success submit" data-form-id="form_crud">
-        <span class="indicator-label">
-            <i class="ki-duotone ki-check-circle fs-4 me-1"><span class="path1"></span><span class="path2"></span></i>
-            Enregistrer &amp; continuer
-        </span>
-        <span class="indicator-progress">
-            Veuillez patienter...
-            <span class="spinner-border spinner-border-sm align-middle ms-2"></span>
-        </span>
-    </button>
-    <button type="button" name="save" class="btn btn-sm fw-bold btn-primary submit" data-form-id="form_crud">
-        <span class="indicator-label">
-            <i class="ki-duotone ki-check fs-4 me-1"><span class="path1"></span><span class="path2"></span></i>
-            Enregistrer
-        </span>
-        <span class="indicator-progress">
-            Veuillez patienter...
-            <span class="spinner-border spinner-border-sm align-middle ms-2"></span>
-        </span>
-    </button>
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.companies.index'])
 @endsection
 
 {{--
-    Company create/edit form — prototype parity.
-    Single <form> wrapping everything; @method('PUT') injected on edit.
-    Tabs are Bootstrap panes — hidden panes still submit via FormData.
-    Native form-select only (no select2 — avoids width:0 bug in hidden tabs).
-    Sticky save bar uses stock Bootstrap 5 .sticky-bottom (no custom CSS needed).
-    All required/validated fields are in the default-active Général tab.
+    Company create/edit form — unified 5-tab UX (clic2loc parity).
+
+    Edit mode:
+        - Shared _header-with-tabs partial (currentPage='edit') with 5-tab strip.
+        - Général (active, with phone folded in) + Enrichissement are native form panes INSIDE <form>.
+        - Contacts + Activité panes are rendered AFTER </form> and moved into
+          #company_tab_content by company-tabs.js (avoids nested forms).
+        - Aperçu tab is a cross-route link to view page.
+
+    Create mode:
+        - Simple header card + minimal nav (Général + Enrichissement only).
+          Contacts/Activité are irrelevant until the company exists.
+
+    All selects on the Général pane use data-control="select2" (auto-init via Metronic).
+    The contact modal uses plain <select> — no select2 — to avoid width:0 in hidden container.
+
+    Both @include('backend.elements.form-actions', ...) calls are preserved:
+        - toolbar variant in @section('toolbar_actions') above.
+        - sticky variant at the bottom of <form>.
 --}}
 
 <form method="POST" action="{{ $route }}" class="form" id="form_crud">
@@ -66,34 +56,16 @@
         @method('PUT')
     @endif
 
-    {{-- Hero card (edit only) --}}
+    {{-- ── Edit mode: shared hero + 5-tab nav ──────────────────────────── --}}
     @if(isset($model) && $model->id)
-        <x-companies.hero :model="$model">
-            <x-slot:actions>
-                <a href="{{ route('admin.companies.index') }}" class="btn btn-sm btn-light">
-                    <i class="bi bi-x-circle me-1"></i>
-                    Annuler
-                </a>
-            </x-slot:actions>
 
-            {{-- Tab nav inside hero card --}}
-            <ul class="nav nav-stretch nav-line-tabs nav-line-tabs-2x border-transparent fs-5 fw-bold">
-                <li class="nav-item mt-2">
-                    <a class="nav-link text-active-primary ms-0 me-10 py-5 active"
-                       data-bs-toggle="tab" href="#ce_general">Général</a>
-                </li>
-                <li class="nav-item mt-2">
-                    <a class="nav-link text-active-primary ms-0 me-10 py-5"
-                       data-bs-toggle="tab" href="#ce_contact">Coordonnées</a>
-                </li>
-                <li class="nav-item mt-2">
-                    <a class="nav-link text-active-primary ms-0 me-10 py-5"
-                       data-bs-toggle="tab" href="#ce_enrichment">Enrichissement</a>
-                </li>
-            </ul>
-        </x-companies.hero>
+        @include('backend.contents.companies.partials._header-with-tabs', [
+            'model'       => $model,
+            'currentPage' => 'edit',
+        ])
+
     @else
-        {{-- Create: simple header instead of hero --}}
+        {{-- ── Create mode: simple header + minimal nav (Général + Enrichissement) ── --}}
         <div class="card mb-5">
             <div class="card-body py-6">
                 <h2 class="fs-3 fw-bold m-0">
@@ -102,29 +74,33 @@
                 </h2>
             </div>
         </div>
-        {{-- Tab nav for create (outside hero) --}}
         <ul class="nav nav-line-tabs nav-line-tabs-2x border-bottom mb-5 fs-5 fw-bold">
             <li class="nav-item mt-2">
                 <a class="nav-link text-active-primary ms-0 me-10 py-5 active"
-                   data-bs-toggle="tab" href="#ce_general">Général</a>
+                   data-bs-toggle="tab" href="#company_general">
+                    <i class="bi bi-building me-1"></i>
+                    Général
+                </a>
             </li>
             <li class="nav-item mt-2">
                 <a class="nav-link text-active-primary ms-0 me-10 py-5"
-                   data-bs-toggle="tab" href="#ce_contact">Coordonnées</a>
-            </li>
-            <li class="nav-item mt-2">
-                <a class="nav-link text-active-primary ms-0 me-10 py-5"
-                   data-bs-toggle="tab" href="#ce_enrichment">Enrichissement</a>
+                   data-bs-toggle="tab" href="#company_enrichment">
+                    <i class="bi bi-database me-1"></i>
+                    Enrichissement
+                </a>
             </li>
         </ul>
     @endif
 
-    {{-- Tab content --}}
-    <div class="tab-content">
+    {{-- ── Tab content (form panes only) ────────────────────────────────── --}}
+    {{-- data-out-of-form-panes: consumed by crud-tabs.js to move out-of-form panes into this container. --}}
+    <div class="tab-content" id="company_tab_content"
+         data-out-of-form-panes='["company_contacts","company_activity"]'>
 
-        {{-- ── Tab 1: Général (default active) ───────────────────────────────── --}}
-        {{-- All required/validated fields are here so validation errors surface on the visible pane. --}}
-        <div class="tab-pane fade show active" id="ce_general" role="tabpanel">
+        {{-- ── Général (default active) ──────────────────────────────────── --}}
+        {{-- All required/validated fields are here — validation errors surface on the visible pane. --}}
+        {{-- All select2 selects live here — they render correctly in the default-active pane. --}}
+        <div class="tab-pane fade show active" id="company_general" role="tabpanel">
             <div class="card">
                 <div class="card-header border-0 pt-5">
                     <h3 class="card-title align-items-start flex-column">
@@ -166,15 +142,24 @@
                                        value="{{ old('sector', $model->sector ?? '') }}" />
                             </div>
 
-                            {{-- Pays (select from company_countries map) --}}
+                            {{-- Téléphone (moved from the old Coordonnées tab) --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Téléphone</label>
+                                <input type="text"
+                                       name="phone"
+                                       class="form-control form-control-solid"
+                                       placeholder="Ex : +33 1 23 45 67 89"
+                                       value="{{ old('phone', $model->phone ?? '') }}" />
+                            </div>
+
+                            {{-- Pays (select — select2 safe on active pane) --}}
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Pays</label>
                                 @php
                                     $currentCountry = strtoupper(old('country', $model->country ?? ''));
                                 @endphp
-                                <select name="country" class="form-select form-select-solid">
+                                <select name="country" class="form-select form-select-solid" data-control="select2" data-placeholder="Sélectionner un pays...">
                                     <option value="">Sélectionner un pays...</option>
-                                    {{-- Inject the stored value as a fallback option if it's not in the map --}}
                                     @if($currentCountry && !isset($countries[$currentCountry]))
                                         <option value="{{ $currentCountry }}" selected>{{ $currentCountry }}</option>
                                     @endif
@@ -187,15 +172,14 @@
                                 </select>
                             </div>
 
-                            {{-- Taille estimée (select from company_size_buckets) --}}
+                            {{-- Taille estimée --}}
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Taille estimée</label>
                                 @php
                                     $currentSize = old('estimated_size', $model->estimated_size ?? '');
                                 @endphp
-                                <select name="estimated_size" class="form-select form-select-solid">
+                                <select name="estimated_size" class="form-select form-select-solid" data-control="select2" data-hide-search="true" data-placeholder="Sélectionner une taille...">
                                     <option value="">Sélectionner une taille...</option>
-                                    {{-- Inject the stored value as a fallback option if it's not a known bucket --}}
                                     @if($currentSize !== '' && !isset($sizeBuckets[$currentSize]))
                                         <option value="{{ $currentSize }}" selected>{{ $currentSize }}</option>
                                     @endif
@@ -215,7 +199,7 @@
                             {{-- Relation --}}
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Relation</label>
-                                <select name="relationship" class="form-select form-select-solid">
+                                <select name="relationship" class="form-select form-select-solid" data-control="select2" data-hide-search="true" data-placeholder="Sélectionner une relation...">
                                     <option value="">Sélectionner une relation...</option>
                                     @foreach($relationships as $key => $data)
                                         <option value="{{ $key }}"
@@ -229,7 +213,7 @@
                             {{-- Source --}}
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Source</label>
-                                <select name="source" class="form-select form-select-solid">
+                                <select name="source" class="form-select form-select-solid" data-control="select2" data-hide-search="true" data-placeholder="Sélectionner une source...">
                                     <option value="">Sélectionner une source...</option>
                                     @foreach($sources as $key => $data)
                                         <option value="{{ $key }}"
@@ -243,7 +227,7 @@
                             {{-- Statut qualification --}}
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Statut de qualification</label>
-                                <select name="qualification_status" class="form-select form-select-solid">
+                                <select name="qualification_status" class="form-select form-select-solid" data-control="select2" data-hide-search="true" data-placeholder="Sélectionner un statut...">
                                     <option value="">Sélectionner un statut...</option>
                                     @foreach($qualificationStatuses as $key => $data)
                                         <option value="{{ $key }}"
@@ -271,87 +255,10 @@
                 </div>
             </div>
         </div>
+        {{-- end Général --}}
 
-        {{-- ── Tab 2: Coordonnées ──────────────────────────────────────────────── --}}
-        <div class="tab-pane fade" id="ce_contact" role="tabpanel">
-            <div class="card">
-                <div class="card-header border-0 pt-5">
-                    <h3 class="card-title align-items-start flex-column">
-                        <span class="card-label fw-bold fs-3 mb-1">Coordonnées</span>
-                    </h3>
-                </div>
-                <div class="card-body border-top p-9">
-
-                    {{-- Téléphone --}}
-                    <div class="fv-row mb-7">
-                        <label class="fw-semibold fs-6 mb-2">Téléphone</label>
-                        <input type="text"
-                               name="phone"
-                               class="form-control form-control-solid"
-                               placeholder="Ex : +33 1 23 45 67 89"
-                               value="{{ old('phone', $model->phone ?? '') }}" />
-                    </div>
-
-                    {{-- Contacts mini-list (edit only, read-only) --}}
-                    @if(isset($model) && $model->id)
-                        <div class="separator my-6"></div>
-                        <div class="d-flex align-items-center justify-content-between mb-4">
-                            <h4 class="fw-bold fs-5 m-0">
-                                Contacts liés
-                                <span class="badge badge-light-primary ms-2">{{ $model->contacts->count() }}</span>
-                            </h4>
-                            @can('create contacts')
-                                <a href="{{ route('admin.contacts.create') }}"
-                                   class="btn btn-sm btn-light-primary">
-                                    <i class="bi bi-plus fs-4 me-1"></i>
-                                    Ajouter un contact
-                                </a>
-                            @endcan
-                        </div>
-
-                        @if($model->contacts->isEmpty())
-                            <div class="text-center py-8 text-muted">
-                                <i class="bi bi-people fs-2x mb-3 d-block"></i>
-                                Aucun contact pour cette entreprise.
-                            </div>
-                        @else
-                            <div class="table-responsive">
-                                <table class="table table-row-bordered table-row-gray-300 align-middle gs-0 gy-3">
-                                    <thead>
-                                        <tr class="fw-bold text-muted">
-                                            <th class="min-w-140px">Nom</th>
-                                            <th class="min-w-120px">Email</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        @foreach($model->contacts as $contact)
-                                            <tr>
-                                                <td>
-                                                    <a href="{{ route('admin.contacts.view', $contact->id) }}"
-                                                       class="text-gray-900 fw-bold text-hover-primary fs-6">
-                                                        {{ $contact->name }}
-                                                    </a>
-                                                </td>
-                                                <td>
-                                                    <a href="mailto:{{ $contact->email }}"
-                                                       class="text-gray-700 text-hover-primary fs-7">
-                                                        {{ $contact->email }}
-                                                    </a>
-                                                </td>
-                                            </tr>
-                                        @endforeach
-                                    </tbody>
-                                </table>
-                            </div>
-                        @endif
-                    @endif
-
-                </div>
-            </div>
-        </div>
-
-        {{-- ── Tab 3: Enrichissement ───────────────────────────────────────────── --}}
-        <div class="tab-pane fade" id="ce_enrichment" role="tabpanel">
+        {{-- ── Enrichissement ─────────────────────────────────────────────── --}}
+        <div class="tab-pane fade" id="company_enrichment" role="tabpanel">
             <div class="card">
                 <div class="card-header border-0 pt-5">
                     <h3 class="card-title align-items-start flex-column">
@@ -411,35 +318,44 @@
                 </div>
             </div>
         </div>
+        {{-- end Enrichissement --}}
+
+        {{--
+            Contacts and Activité panes are NOT inside the form.
+            They are rendered AFTER </form> (below) and moved into this
+            #company_tab_content div by company-tabs.js on page load.
+            This avoids nested-form issues while letting Bootstrap tab toggle work.
+        --}}
 
     </div>
     {{-- end tab-content --}}
 
-    {{-- Sticky save bar (stock Bootstrap 5 .sticky-bottom — no custom CSS needed) --}}
-    <div class="sticky-bottom bg-body border-top shadow-sm py-4 mt-4">
-        <div class="container-fluid">
-            <div class="d-flex justify-content-end gap-3">
-                <a href="{{ route('admin.companies.index') }}" class="btn btn-light btn-active-light-primary">
-                    <i class="bi bi-arrow-left fs-4 me-1"></i>
-                    Retour
-                </a>
-                <button type="submit" class="btn btn-primary submit" id="submit_btn">
-                    <span class="indicator-label">
-                        <i class="bi bi-check-circle me-2"></i>
-                        Enregistrer
-                    </span>
-                    <span class="indicator-progress">
-                        <span class="spinner-border spinner-border-sm align-middle ms-2"></span>
-                    </span>
-                </button>
-            </div>
-        </div>
-    </div>
+    {{-- Sticky save bar — shared partial (mirrors top toolbar) --}}
+    @include('backend.elements.form-actions', ['variant' => 'sticky', 'backRoute' => 'admin.companies.index'])
 
 </form>
 
+{{-- ── Out-of-form panes (edit mode only) ───────────────────────────────── --}}
+{{-- company-tabs.js moves these into #company_tab_content after DOMContentLoaded --}}
+@if(isset($model) && $model->id)
+
+    <div class="tab-pane fade" id="company_contacts" role="tabpanel" data-crud-pane>
+        @include('backend.contents.companies.partials._contacts-tab', ['model' => $model])
+    </div>
+
+    <div class="tab-pane fade" id="company_activity" role="tabpanel" data-crud-pane>
+        @include('backend.contents.companies.partials._activity-tab', ['model' => $model])
+    </div>
+
+    {{-- Contact modal --}}
+    @include('backend.contents.companies.partials._contact-modal', ['model' => $model])
+
+@endif
+
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/crud-charts.js') }}"></script>
 @endpush
 
 </x-default-layout>

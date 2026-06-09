@@ -39,8 +39,8 @@ class SampleRoleApi
         // Validate order direction
         $orderDir = strtolower((string) $orderDir) === 'desc' ? 'desc' : 'asc';
 
-        // Note: blade views (roles/show.blade.php, livewire/permission/role-list.blade.php) use
-        // $role->users->count() but those are populated server-side by the RoleManagementController,
+        // Note: blade views (backend/contents/users/roles/*) use $role->users->count()
+        // but those are populated server-side by the RoleManagementController,
         // not from this JSON endpoint. The JS consuming this endpoint does not read item.users.
         // Safe to use withCount('users') instead of with('users') for the datatable list.
         $query = Role::query()->with('permissions')->withCount('users');

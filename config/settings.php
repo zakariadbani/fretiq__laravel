@@ -31,7 +31,7 @@ return [
     # Keenicons
     # Value: duotone | outline | bold
 
-    'KT_THEME_ICONS' => 'duotone',
+    'KT_THEME_ICONS' => 'solid',
 
 
     # Theme Assets

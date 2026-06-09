@@ -37,7 +37,7 @@
 
                 @can('create campaign_templates')
                 <a href="{{ route('admin.campaign_templates.create') }}" class="btn btn-primary">
-                    {!! getIcon('plus', 'fs-2', '', 'i') !!}
+                    <i class="bi bi-plus-lg fs-2"></i>
                     Ajouter un modèle
                 </a>
                 @endcan

@@ -6,7 +6,10 @@
 		<div class="menu menu-column menu-rounded menu-sub-indention px-3 fw-semibold fs-6" id="#kt_app_sidebar_menu" data-kt-menu="true" data-kt-menu-expand="false">
 			@php
 				$menu = \App\Core\Bootstrap\BootstrapDefault::getAsideMenu();
-				if ($menu) { \App\Core\Adapters\Menu::filterMenuPermissions($menu->items); }
+				if ($menu) {
+					\App\Core\Adapters\Menu::filterMenuPermissions($menu->items);
+					$menu->setIconType('font');
+				}
 			@endphp
 			@if($menu){!! $menu->build() !!}@endif
 		</div>

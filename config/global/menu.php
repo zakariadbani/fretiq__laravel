@@ -150,7 +150,7 @@ return [
         //---------------------------------------------------------------------------
         [
             'content' => 'Administration',
-            'permission' => ['view users', 'manage roles', 'view sender_identities'],
+            'permission' => ['view users', 'manage roles', 'manage permissions', 'view sender_identities'],
             'classes' => ['content' => 'pt-8 pb-2'],
         ],
 
@@ -158,10 +158,30 @@ return [
             'title' => 'Utilisateurs',
             'permission' => 'view users',
             'icon' => [
-                'svg' => 'key',
+                'svg' => 'profile-user',
                 'font' => '<i class="bi bi-person-gear fs-2"></i>',
             ],
-            'path' => 'user-management/users',
+            'path' => 'admin/users',
+        ],
+
+        [
+            'title' => 'Rôles',
+            'permission' => 'manage roles',
+            'icon' => [
+                'svg' => 'shield-tick',
+                'font' => '<i class="bi bi-shield-check fs-2"></i>',
+            ],
+            'path' => 'admin/user-management/roles',
+        ],
+
+        [
+            'title' => 'Permissions',
+            'permission' => 'manage permissions',
+            'icon' => [
+                'svg' => 'lock',
+                'font' => '<i class="bi bi-key fs-2"></i>',
+            ],
+            'path' => 'admin/user-management/permissions',
         ],
 
         [

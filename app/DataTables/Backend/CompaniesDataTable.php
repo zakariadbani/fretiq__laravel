@@ -18,11 +18,6 @@ class CompaniesDataTable extends BackendDataTable
             'searchable' => true,
             'raw'        => true,
         ],
-        'domain' => [
-            'title'      => 'Domaine',
-            'orderable'  => true,
-            'searchable' => true,
-        ],
         'sector' => [
             'title'      => 'Secteur',
             'orderable'  => true,
@@ -56,6 +51,14 @@ class CompaniesDataTable extends BackendDataTable
             'title'      => '# Contacts',
             'orderable'  => true,
             'searchable' => false,
+            'raw'        => true,
+        ],
+        'is_active' => [
+            'title'      => 'Actif',
+            'orderable'  => false,
+            'searchable' => false,
+            'switch'     => true,
+            'typetoggle' => 'status',
             'raw'        => true,
         ],
         // 'created_at' intentionally removed from visible columns (prototype has none).
@@ -116,12 +119,15 @@ class CompaniesDataTable extends BackendDataTable
         $relationships         = config('global.data.company_relationships', []);
         $qualificationStatuses = config('global.data.company_qualification_statuses', []);
 
-        // ── Name cell: avatar initial + name link + sector subtext ──────────
+        // ── Name cell: avatar initial + name link + sector subtext + domain ──
         $this->datatables->editColumn('name', function (Company $row) {
             $initial  = e(mb_strtoupper(mb_substr($row->name ?? '', 0, 1)));
             $nameText = e($row->name ?? '');
             $viewUrl  = e(route('admin.companies.view', $row->id));
             $sector   = e($row->sector ?? '');
+            $domainLine = $row->domain
+                ? '<span class="text-muted fs-7">' . e($row->domain) . '</span>'
+                : '';
 
             return '
 <div class="d-flex align-items-center">
@@ -131,6 +137,7 @@ class CompaniesDataTable extends BackendDataTable
     <div class="d-flex flex-column">
         <a href="' . $viewUrl . '" class="text-gray-800 text-hover-primary mb-1 fw-bold">' . $nameText . '</a>
         <span class="text-muted fs-7">' . $sector . '</span>
+        ' . $domainLine . '
     </div>
 </div>';
         });
@@ -140,7 +147,9 @@ class CompaniesDataTable extends BackendDataTable
             if (empty($row->country)) {
                 return '<span class="text-muted">—</span>';
             }
-            return '<span class="fw-semibold">' . e(strtoupper($row->country)) . '</span>';
+            $code = strtoupper($row->country);
+            $name = config('global.data.company_countries')[$code] ?? $code;
+            return '<span class="fw-semibold">' . e($name) . '</span>';
         });
 
         // ── Relationship badge ───────────────────────────────────────────────

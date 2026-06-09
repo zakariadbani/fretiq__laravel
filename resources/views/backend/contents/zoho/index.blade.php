@@ -26,9 +26,7 @@
         <form method="POST" action="{{ route('admin.zoho.sync') }}" class="d-inline">
             @csrf
             <button type="submit" class="btn btn-sm fw-bold btn-primary">
-                <i class="ki-duotone ki-arrows-circle fs-4">
-                    <span class="path1"></span><span class="path2"></span>
-                </i>
+                <i class="bi bi-arrow-repeat fs-4"></i>
                 Synchroniser maintenant
             </button>
         </form>
@@ -38,9 +36,7 @@
 {{-- Flash messages --}}
 @if (session('success'))
     <div class="alert alert-success d-flex align-items-center mb-6 p-5">
-        <i class="ki-duotone ki-shield-tick fs-2hx text-success me-4">
-            <span class="path1"></span><span class="path2"></span>
-        </i>
+        <i class="bi bi-shield-check fs-2hx text-success me-4"></i>
         <div class="d-flex flex-column">
             <span class="fw-semibold fs-6">{{ e(session('success')) }}</span>
         </div>
@@ -49,9 +45,7 @@
 
 @if (session('error'))
     <div class="alert alert-danger d-flex align-items-center mb-6 p-5">
-        <i class="ki-duotone ki-information-5 fs-2hx text-danger me-4">
-            <span class="path1"></span><span class="path2"></span><span class="path3"></span>
-        </i>
+        <i class="bi bi-info-circle fs-2hx text-danger me-4"></i>
         <div class="d-flex flex-column">
             <span class="fw-semibold fs-6">{{ e(session('error')) }}</span>
         </div>
@@ -60,9 +54,7 @@
 
 {{-- On-demand notice --}}
 <div class="notice d-flex bg-light-info rounded border-info border border-dashed mb-6 p-6">
-    <i class="ki-duotone ki-information fs-2tx text-info me-4">
-        <span class="path1"></span><span class="path2"></span><span class="path3"></span>
-    </i>
+    <i class="bi bi-info-circle fs-2tx text-info me-4"></i>
     <div class="d-flex flex-stack flex-grow-1">
         <div class="fw-semibold">
             <div class="fs-6 text-gray-700">
@@ -80,9 +72,7 @@
             <div class="card-body d-flex align-items-center gap-4 py-5">
                 <div class="symbol symbol-50px">
                     <div class="symbol-label bg-light-primary">
-                        <i class="ki-duotone ki-cloud fs-2tx text-primary">
-                            <span class="path1"></span><span class="path2"></span>
-                        </i>
+                        <i class="bi bi-cloud fs-2tx text-primary"></i>
                     </div>
                 </div>
                 <div class="flex-grow-1">
@@ -101,9 +91,7 @@
             <div class="card-body d-flex align-items-center gap-4 py-5">
                 <div class="symbol symbol-50px">
                     <div class="symbol-label bg-light-warning">
-                        <i class="ki-duotone ki-sms fs-2tx text-warning">
-                            <span class="path1"></span><span class="path2"></span>
-                        </i>
+                        <i class="bi bi-envelope fs-2tx text-warning"></i>
                     </div>
                 </div>
                 <div class="flex-grow-1">
@@ -132,10 +120,7 @@
         <div class="card h-100">
             <div class="card-body py-6">
                 <div class="d-flex align-items-center mb-4">
-                    <i class="ki-duotone ki-office-bag fs-2x text-primary me-3">
-                        <span class="path1"></span><span class="path2"></span>
-                        <span class="path3"></span><span class="path4"></span>
-                    </i>
+                    <i class="bi bi-briefcase fs-2x text-primary me-3"></i>
                     <h5 class="fw-bold text-gray-800 mb-0">Dernier sync — Comptes</h5>
                 </div>
                 @if ($lastByModule['Accounts'])
@@ -176,10 +161,7 @@
         <div class="card h-100">
             <div class="card-body py-6">
                 <div class="d-flex align-items-center mb-4">
-                    <i class="ki-duotone ki-profile-user fs-2x text-info me-3">
-                        <span class="path1"></span><span class="path2"></span>
-                        <span class="path3"></span><span class="path4"></span>
-                    </i>
+                    <i class="bi bi-person fs-2x text-info me-3"></i>
                     <h5 class="fw-bold text-gray-800 mb-0">Dernier sync — Contacts</h5>
                 </div>
                 @if ($lastByModule['Contacts'])
@@ -220,9 +202,7 @@
         <div class="card h-100">
             <div class="card-body py-6">
                 <div class="d-flex align-items-center mb-4">
-                    <i class="ki-duotone ki-key-square fs-2x text-warning me-3">
-                        <span class="path1"></span><span class="path2"></span>
-                    </i>
+                    <i class="bi bi-key fs-2x text-warning me-3"></i>
                     <h5 class="fw-bold text-gray-800 mb-0">Token OAuth</h5>
                 </div>
                 @php
@@ -279,9 +259,7 @@
 {{-- Gated banner when driver=zoho but prerequisites are not met --}}
 @if (($readiness['driver'] ?? 'local') === 'zoho' && ! $readinessReady)
     <div class="alert alert-danger d-flex align-items-center mb-6 p-5">
-        <i class="ki-duotone ki-shield-cross fs-2hx text-danger me-4">
-            <span class="path1"></span><span class="path2"></span><span class="path3"></span>
-        </i>
+        <i class="bi bi-shield-x fs-2hx text-danger me-4"></i>
         <div class="d-flex flex-column">
             <h4 class="mb-1 text-danger">Driver réel désactivé — prérequis manquants</h4>
             <span class="fs-6">
@@ -310,9 +288,7 @@
 
         {{-- UNVERIFIED notice --}}
         <div class="notice d-flex bg-light-warning rounded border-warning border border-dashed mb-5 p-4">
-            <i class="ki-duotone ki-information fs-2tx text-warning me-3">
-                <span class="path1"></span><span class="path2"></span><span class="path3"></span>
-            </i>
+            <i class="bi bi-info-circle fs-2tx text-warning me-3"></i>
             <div class="d-flex flex-stack flex-grow-1">
                 <div class="fw-semibold fs-7 text-gray-700">
                     <strong>UNVERIFIED</strong> — Le driver Zoho Campaigns (Phase 5) est construit mais pas vérifié en production.
@@ -337,12 +313,12 @@
                         <td>
                             @if ($item['status'])
                                 <span class="badge badge-light-success">
-                                    <i class="ki-duotone ki-check fs-6 me-1"><span class="path1"></span><span class="path2"></span></i>
+                                    <i class="bi bi-check-lg fs-6 me-1"></i>
                                     OK
                                 </span>
                             @else
                                 <span class="badge badge-light-danger">
-                                    <i class="ki-duotone ki-cross fs-6 me-1"><span class="path1"></span></i>
+                                    <i class="bi bi-x-lg fs-6 me-1"></i>
                                     Manquant
                                 </span>
                             @endif

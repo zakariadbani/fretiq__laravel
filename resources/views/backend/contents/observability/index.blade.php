@@ -29,9 +29,7 @@
     <div class="col-xl-3 col-md-6">
         <div class="card bg-body hoverable card-xl-stretch mb-xl-8">
             <div class="card-body">
-                <i class="ki-duotone ki-cross-circle fs-2x {{ $counts['failed_jobs'] > 0 ? 'text-danger' : 'text-success' }}">
-                    <span class="path1"></span><span class="path2"></span>
-                </i>
+                <i class="bi bi-x-circle fs-2x {{ $counts['failed_jobs'] > 0 ? 'text-danger' : 'text-success' }}"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($counts['failed_jobs']) }}</div>
                 <div class="fw-semibold text-gray-600">Jobs échoués</div>
                 @if ($counts['failed_jobs'] > 0)
@@ -47,9 +45,7 @@
     <div class="col-xl-3 col-md-6">
         <div class="card bg-body hoverable card-xl-stretch mb-xl-8">
             <div class="card-body">
-                <i class="ki-duotone ki-rocket fs-2x {{ $counts['failed_runs'] > 0 ? 'text-warning' : 'text-success' }}">
-                    <span class="path1"></span><span class="path2"></span>
-                </i>
+                <i class="bi bi-rocket fs-2x {{ $counts['failed_runs'] > 0 ? 'text-warning' : 'text-success' }}"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($counts['failed_runs']) }}</div>
                 <div class="fw-semibold text-gray-600">Exécutions échouées</div>
                 @if ($counts['failed_runs'] > 0)
@@ -65,9 +61,7 @@
     <div class="col-xl-3 col-md-6">
         <div class="card bg-body hoverable card-xl-stretch mb-xl-8">
             <div class="card-body">
-                <i class="ki-duotone ki-timer fs-2x text-info">
-                    <span class="path1"></span><span class="path2"></span><span class="path3"></span>
-                </i>
+                <i class="bi bi-stopwatch fs-2x text-info"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($counts['queued_recipients']) }}</div>
                 <div class="fw-semibold text-gray-600">Destinataires en file</div>
                 <div class="mt-2"><span class="badge badge-light-info fs-8">En attente d'envoi</span></div>
@@ -79,10 +73,7 @@
     <div class="col-xl-3 col-md-6">
         <div class="card bg-body hoverable card-xl-stretch mb-xl-8">
             <div class="card-body">
-                <i class="ki-duotone ki-calendar-tick fs-2x text-primary">
-                    <span class="path1"></span><span class="path2"></span>
-                    <span class="path3"></span><span class="path4"></span><span class="path5"></span>
-                </i>
+                <i class="bi bi-calendar-check fs-2x text-primary"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($counts['scheduled_runs']) }}</div>
                 <div class="fw-semibold text-gray-600">Exécutions planifiées</div>
                 <div class="mt-2"><span class="badge badge-light-primary fs-8">Programmées</span></div>
@@ -106,9 +97,7 @@
     <div class="card-body py-3">
         @if ($failedJobs->isEmpty())
             <div class="text-center text-muted py-10">
-                <i class="ki-duotone ki-shield-tick fs-3x text-success mb-3 d-block">
-                    <span class="path1"></span><span class="path2"></span>
-                </i>
+                <i class="bi bi-shield-check fs-3x text-success mb-3 d-block"></i>
                 <div class="fw-semibold fs-6">Aucun job échoué. La file d'attente est saine.</div>
             </div>
         @else
@@ -168,9 +157,7 @@
     <div class="card-body py-3">
         @if ($failedRuns->isEmpty())
             <div class="text-center text-muted py-10">
-                <i class="ki-duotone ki-shield-tick fs-3x text-success mb-3 d-block">
-                    <span class="path1"></span><span class="path2"></span>
-                </i>
+                <i class="bi bi-shield-check fs-3x text-success mb-3 d-block"></i>
                 <div class="fw-semibold fs-6">Aucune exécution de campagne échouée.</div>
             </div>
         @else
@@ -192,9 +179,7 @@
                                     <div class="d-flex align-items-center">
                                         <div class="symbol symbol-40px me-3">
                                             <div class="symbol-label bg-light-danger">
-                                                <i class="ki-duotone ki-rocket fs-3 text-danger">
-                                                    <span class="path1"></span><span class="path2"></span>
-                                                </i>
+                                                <i class="bi bi-rocket fs-3 text-danger"></i>
                                             </div>
                                         </div>
                                         <div>

@@ -61,20 +61,66 @@ class PermissionsTest extends TestCase
     /**
      * Commercial role CANNOT access user management.
      *
-     * The user-management routes sit behind auth + verified only — UserManagementController
-     * has NO permission gate in its controller. Therefore we cannot assert an HTTP 403
-     * from the route. Instead we assert directly on the Spatie ability:
-     * commercial role does not have the 'view users' permission, so can() returns false.
-     *
-     * Note: if a gate/middleware is later added to that controller, replace this assertion
-     * with: actingAs($this->commercial)->get('/user-management/users')->assertStatus(403);
+     * /admin/users is behind auth + verified + permission:backend.access (group gate)
+     * + permission:view users (per-action gate in UserController constructor).
+     * Commercial has backend.access but NOT view users — returns 403.
      */
     public function test_commercial_cannot_view_users(): void
     {
+        // Ability assertion
         $this->assertFalse(
             $this->commercial->can('view users'),
             'commercial role must not have the "view users" permission'
         );
+
+        // HTTP assertion: the per-action middleware returns 403
+        $response = $this->actingAs($this->commercial)
+            ->get('/admin/users');
+
+        $response->assertStatus(403);
+    }
+
+    /**
+     * Admin (superadmin) can load the /admin/users index without error.
+     *
+     * This exercises the full server-render path including GlobalDataTable::html()
+     * which calls $model->getName() — previously threw if User lacked that method.
+     */
+    public function test_admin_can_load_users_index(): void
+    {
+        $response = $this->actingAs($this->superadmin)
+            ->get(route('admin.users.index'));
+
+        $response->assertOk();
+    }
+
+    /**
+     * DataTable ajax-draw returns JSON with a 'data' key.
+     *
+     * Simulates the XHR Yajra sends after the page renders the table shell.
+     */
+    public function test_admin_users_datatable_ajax_draw_returns_json(): void
+    {
+        $response = $this->actingAs($this->superadmin)
+            ->withHeaders([
+                'X-Requested-With' => 'XMLHttpRequest',
+                'Accept'           => 'application/json',
+            ])
+            ->get(route('admin.users.index', [
+                'draw'                    => 1,
+                'start'                   => 0,
+                'length'                  => 10,
+                'columns[0][data]'        => 'user',
+                'columns[0][searchable]'  => 'true',
+                'columns[0][orderable]'   => 'true',
+                'search[value]'           => '',
+                'search[regex]'           => 'false',
+                'order[0][column]'        => 0,
+                'order[0][dir]'           => 'asc',
+            ]));
+
+        $response->assertOk();
+        $response->assertJsonStructure(['data']);
     }
 
     /**

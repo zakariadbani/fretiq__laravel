@@ -71,7 +71,7 @@
 
                 @can('create campaigns')
                 <a href="{{ route('admin.campaigns.create') }}" class="btn btn-primary">
-                    {!! getIcon('plus', 'fs-2', '', 'i') !!}
+                    <i class="bi bi-plus-lg fs-2"></i>
                     Créer une campagne
                 </a>
                 @endcan

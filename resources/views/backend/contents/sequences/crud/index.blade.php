@@ -71,7 +71,7 @@
 
                 @can('create sequences')
                 <a href="{{ route('admin.sequences.create') }}" class="btn btn-primary">
-                    {!! getIcon('plus', 'fs-2', '', 'i') !!}
+                    <i class="bi bi-plus-lg fs-2"></i>
                     Ajouter une séquence
                 </a>
                 @endcan

@@ -24,13 +24,13 @@ class PermissionsDataTable extends DataTable
             })
             ->addColumn('assigned_to', function (Permission $permission) {
                 $roles = $permission->roles;
-                return view('pages/apps.user-management.permissions.columns._assign-to', compact('roles'));
+                return view('backend.contents.users.permissions.columns._assign-to', compact('roles'));
             })
             ->editColumn('created_at', function (Permission $permission) {
-                return $permission->created_at->format('d M Y, h:i a');
+                return $permission->created_at?->format('d M Y, h:i a') ?? '-';
             })
             ->addColumn('actions', function (Permission $permission) {
-                return view('pages/apps.user-management.permissions.columns._actions', compact('permission'));
+                return view('backend.contents.users.permissions.columns._actions', compact('permission'));
             })
             ->setRowId('id');
     }
@@ -56,7 +56,7 @@ class PermissionsDataTable extends DataTable
             ->addTableClass('table align-middle table-row-dashed fs-6 gy-5 dataTable no-footer text-gray-600 fw-semibold')
             ->setTableHeadClass('text-start text-muted fw-bold fs-7 text-uppercase gs-0')
             ->orderBy(0)
-            ->drawCallback("function() {" . file_get_contents(resource_path('views/pages/apps/user-management/permissions/columns/_draw-scripts.js')) . "}");
+            ->drawCallback("function() { KTMenu.init(); }");
     }
 
     /**

@@ -71,7 +71,7 @@
 
                 @can('create demandes')
                 <a href="{{ route('admin.demandes.create') }}" class="btn btn-primary">
-                    {!! getIcon('plus', 'fs-2', '', 'i') !!}
+                    <i class="bi bi-plus-lg fs-2"></i>
                     Ajouter une demande
                 </a>
                 @endcan

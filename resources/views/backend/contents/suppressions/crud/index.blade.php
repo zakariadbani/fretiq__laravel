@@ -71,7 +71,7 @@
 
                 @can('create suppressions')
                 <a href="{{ route('admin.suppressions.create') }}" class="btn btn-primary">
-                    {!! getIcon('plus', 'fs-2', '', 'i') !!}
+                    <i class="bi bi-plus-lg fs-2"></i>
                     Ajouter une suppression
                 </a>
                 @endcan

@@ -68,4 +68,16 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         return $this->addresses?->first();
     }
+
+    /**
+     * Return the entity slug used by GlobalDataTable for table-id and filename.
+     *
+     * Other models derive this via Validator::getName() (snake_case class name,
+     * singular). User does not use the Validator trait, so we define it directly.
+     * Returning 'users' gives table-id 'users-table' and filename prefix 'users_'.
+     */
+    public function getName(): string
+    {
+        return 'users';
+    }
 }

@@ -6,6 +6,29 @@ trait Crudable
 {
 
     /**
+     * Optional ViewConfig class. When set, view()/edit()/create() will call
+     * {$viewConfigClass}::make($model) and pass $viewConfig to the view.
+     * Leave null (default) to preserve existing behaviour for all other controllers.
+     *
+     * @var string|null
+     */
+    protected ?string $viewConfigClass = null;
+
+    /**
+     * Build $viewConfig from the bound ViewConfig class, or return null.
+     *
+     * @param mixed $model
+     * @return array|null
+     */
+    protected function buildViewConfig($model): ?array
+    {
+        if ($this->viewConfigClass === null) {
+            return null;
+        }
+        return ($this->viewConfigClass)::make($model ?? null);
+    }
+
+    /**
      * Handle create request.
      *
      * Views live at backend/contents/{modelName}/crud/{form,view}.blade.php
@@ -16,11 +39,18 @@ trait Crudable
     {
         $view = $this->getView('backend.contents.' . $this->modelName . '.crud.form');
 
-        return $view
+        $view
             ->with('title', trans('app.new ' . $this->modelName))
             ->with('route', route($this->currentPrefixName . '.' . $this->modelName . '.store'))
             ->with('method', 'post')
             ->with('model', $this->currentModel);
+
+        $viewConfig = $this->buildViewConfig(null);
+        if ($viewConfig !== null) {
+            $view->with('viewConfig', $viewConfig);
+        }
+
+        return $view;
     }
 
     /**
@@ -97,9 +127,16 @@ trait Crudable
         }
 
         $view = $this->getView('backend.contents.' . $this->modelName . '.crud.view');
-        return $view
+        $view
             ->with('title', __('overview'))
             ->with('model', $model);
+
+        $viewConfig = $this->buildViewConfig($model);
+        if ($viewConfig !== null) {
+            $view->with('viewConfig', $viewConfig);
+        }
+
+        return $view;
     }
 
     /**
@@ -120,12 +157,19 @@ trait Crudable
 
         $view = $this->getView('backend.contents.' . $this->modelName . '.crud.form');
 
-        return $view
+        $view
             ->with('title', trans('app.edit ' . $this->modelName, ['name' => $model->{isset($this->title) ? $this->title : 'id'}]))
             ->with('route', route($this->currentPrefixName . '.' . $this->modelName . '.update', $id))
             ->with('method', 'post')
             ->with('page', 'edit')
             ->with('model', $model);
+
+        $viewConfig = $this->buildViewConfig($model);
+        if ($viewConfig !== null) {
+            $view->with('viewConfig', $viewConfig);
+        }
+
+        return $view;
     }
 
     /**

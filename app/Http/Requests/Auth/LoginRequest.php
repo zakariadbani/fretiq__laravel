@@ -53,6 +53,17 @@ class LoginRequest extends FormRequest
             ]);
         }
 
+        // is_active gate: reject login when explicitly set to false.
+        // NULL and true both pass — default is true, so existing users are unaffected.
+        $user = Auth::user();
+        if ($user !== null && $user->is_active === false) {
+            Auth::logout();
+            RateLimiter::hit($this->throttleKey());
+            throw ValidationException::withMessages([
+                'email' => 'Ce compte est désactivé. Contactez un administrateur.',
+            ]);
+        }
+
         RateLimiter::clear($this->throttleKey());
     }
 

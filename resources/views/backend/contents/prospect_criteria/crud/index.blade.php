@@ -71,7 +71,7 @@
 
                 @can('create prospect_criteria')
                 <a href="{{ route('admin.prospect_criteria.create') }}" class="btn btn-primary">
-                    {!! getIcon('plus', 'fs-2', '', 'i') !!}
+                    <i class="bi bi-plus-lg fs-2"></i>
                     Ajouter un critère
                 </a>
                 @endcan

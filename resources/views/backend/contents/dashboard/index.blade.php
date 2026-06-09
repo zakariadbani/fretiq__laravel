@@ -25,10 +25,7 @@
     <div class="col-xl-3 col-md-6">
         <a href="{{ route('admin.companies.index') }}" class="card bg-body hoverable card-xl-stretch mb-xl-8">
             <div class="card-body">
-                <i class="ki-duotone ki-office-bag fs-2x text-primary">
-                    <span class="path1"></span><span class="path2"></span>
-                    <span class="path3"></span><span class="path4"></span>
-                </i>
+                <i class="bi bi-briefcase fs-2x text-primary"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['companies']) }}</div>
                 <div class="fw-semibold text-gray-600">Entreprises</div>
             </div>
@@ -39,10 +36,7 @@
     <div class="col-xl-3 col-md-6">
         <a href="{{ route('admin.contacts.index') }}" class="card bg-body hoverable card-xl-stretch mb-xl-8">
             <div class="card-body">
-                <i class="ki-duotone ki-profile-user fs-2x text-info">
-                    <span class="path1"></span><span class="path2"></span>
-                    <span class="path3"></span><span class="path4"></span>
-                </i>
+                <i class="bi bi-person fs-2x text-info"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['contacts']) }}</div>
                 <div class="fw-semibold text-gray-600">Contacts</div>
             </div>
@@ -53,9 +47,7 @@
     <div class="col-xl-3 col-md-6">
         <a href="{{ route('admin.campaigns.index') }}" class="card bg-body hoverable card-xl-stretch mb-xl-8">
             <div class="card-body">
-                <i class="ki-duotone ki-rocket fs-2x text-success">
-                    <span class="path1"></span><span class="path2"></span>
-                </i>
+                <i class="bi bi-rocket fs-2x text-success"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['active_campaigns']) }}</div>
                 <div class="fw-semibold text-gray-600">Campagnes actives</div>
             </div>
@@ -66,9 +58,7 @@
     <div class="col-xl-3 col-md-6">
         <div class="card bg-body hoverable card-xl-stretch mb-xl-8">
             <div class="card-body">
-                <i class="ki-duotone ki-sms fs-2x text-warning">
-                    <span class="path1"></span><span class="path2"></span>
-                </i>
+                <i class="bi bi-envelope fs-2x text-warning"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['emails_sent_30d']) }}</div>
                 <div class="fw-semibold text-gray-600">Emails envoyés (30j)</div>
             </div>
@@ -79,9 +69,7 @@
     <div class="col-xl-3 col-md-6">
         <div class="card bg-body hoverable card-xl-stretch mb-xl-8">
             <div class="card-body">
-                <i class="ki-duotone ki-eye fs-2x text-primary">
-                    <span class="path1"></span><span class="path2"></span><span class="path3"></span>
-                </i>
+                <i class="bi bi-eye fs-2x text-primary"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['open_rate'], 1) }} %</div>
                 <div class="fw-semibold text-gray-600">Taux d'ouverture</div>
                 <div class="mt-2">
@@ -97,9 +85,7 @@
     <div class="col-xl-3 col-md-6">
         <div class="card bg-body hoverable card-xl-stretch mb-xl-8">
             <div class="card-body">
-                <i class="ki-duotone ki-mouse-square fs-2x text-info">
-                    <span class="path1"></span><span class="path2"></span><span class="path3"></span>
-                </i>
+                <i class="bi bi-mouse fs-2x text-info"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['click_rate'], 1) }} %</div>
                 <div class="fw-semibold text-gray-600">Taux de clic</div>
                 <div class="mt-2">
@@ -115,10 +101,7 @@
     <div class="col-xl-3 col-md-6">
         <a href="{{ route('admin.demandes.index') }}" class="card bg-body hoverable card-xl-stretch mb-xl-8">
             <div class="card-body">
-                <i class="ki-duotone ki-note-2 fs-2x text-success">
-                    <span class="path1"></span><span class="path2"></span>
-                    <span class="path3"></span><span class="path4"></span>
-                </i>
+                <i class="bi bi-journal-text fs-2x text-success"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['demandes']) }}</div>
                 <div class="fw-semibold text-gray-600">Demandes générées</div>
                 @if ($kpis['demandes_30d'] > 0)
@@ -134,10 +117,7 @@
     <div class="col-xl-3 col-md-6">
         <div class="card bg-body hoverable card-xl-stretch mb-xl-8">
             <div class="card-body">
-                <i class="ki-duotone ki-chart-simple fs-2x text-danger">
-                    <span class="path1"></span><span class="path2"></span>
-                    <span class="path3"></span><span class="path4"></span>
-                </i>
+                <i class="bi bi-bar-chart fs-2x text-danger"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['conversion_rate'], 2) }} %</div>
                 <div class="fw-semibold text-gray-600">Taux de conversion</div>
                 <div class="mt-2">
@@ -158,15 +138,13 @@
 @if ($kpis['emails_sent_30d'] === 0 && $kpis['active_campaigns'] === 0)
 <div class="card mb-8">
     <div class="card-body text-center py-10">
-        <i class="ki-duotone ki-rocket fs-3x text-muted mb-5 d-block">
-            <span class="path1"></span><span class="path2"></span>
-        </i>
+        <i class="bi bi-rocket fs-3x text-muted mb-5 d-block"></i>
         <div class="text-gray-700 fw-semibold fs-5 mb-2">Aucune donnée — lancez votre première campagne</div>
         <div class="text-muted fs-7">
             Les indicateurs de campagnes (emails, taux d'ouverture, demandes) seront affichés ici dès qu'une campagne est active.
         </div>
         <a href="{{ route('admin.campaigns.create') }}" class="btn btn-primary mt-5">
-            <i class="ki-duotone ki-plus fs-4"><span class="path1"></span></i>
+            <i class="bi bi-plus-lg fs-4"></i>
             Créer une campagne
         </a>
     </div>
@@ -192,10 +170,7 @@
                     <div id="kt_funnel_chart" style="min-height: 280px;"></div>
                 @else
                     <div class="text-center text-muted py-10">
-                        <i class="ki-duotone ki-chart-simple fs-3x text-muted mb-3 d-block">
-                            <span class="path1"></span><span class="path2"></span>
-                            <span class="path3"></span><span class="path4"></span>
-                        </i>
+                        <i class="bi bi-bar-chart fs-3x text-muted mb-3 d-block"></i>
                         Aucune donnée de funnel disponible.
                     </div>
                 @endif
@@ -222,9 +197,7 @@
                     <div id="kt_engagement_chart" style="min-height: 280px;"></div>
                 @else
                     <div class="text-center text-muted py-10">
-                        <i class="ki-duotone ki-chart-line fs-3x text-muted mb-3 d-block">
-                            <span class="path1"></span><span class="path2"></span>
-                        </i>
+                        <i class="bi bi-graph-up fs-3x text-muted mb-3 d-block"></i>
                         Aucune donnée d'engagement disponible.
                     </div>
                 @endif
@@ -269,9 +242,7 @@
                                             <div class="d-flex align-items-center">
                                                 <div class="symbol symbol-40px me-3">
                                                     <div class="symbol-label bg-light-primary">
-                                                        <i class="ki-duotone ki-rocket fs-3 text-primary">
-                                                            <span class="path1"></span><span class="path2"></span>
-                                                        </i>
+                                                        <i class="bi bi-rocket fs-3 text-primary"></i>
                                                     </div>
                                                 </div>
                                                 <div>
@@ -300,9 +271,7 @@
                     </div>
                 @else
                     <div class="text-center text-muted py-10">
-                        <i class="ki-duotone ki-rocket fs-3x text-muted mb-3 d-block">
-                            <span class="path1"></span><span class="path2"></span>
-                        </i>
+                        <i class="bi bi-rocket fs-3x text-muted mb-3 d-block"></i>
                         Aucune campagne avec des données de performance.
                     </div>
                 @endif

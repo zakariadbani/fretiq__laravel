@@ -71,7 +71,7 @@
 
                 @can('create segments')
                 <a href="{{ route('admin.segments.create') }}" class="btn btn-primary">
-                    {!! getIcon('plus', 'fs-2', '', 'i') !!}
+                    <i class="bi bi-plus-lg fs-2"></i>
                     Ajouter un segment
                 </a>
                 @endcan

@@ -21,12 +21,26 @@ class SocialiteController extends Controller
             $existingUser = User::where('email', $user->getEmail())->first();
 
             if ($existingUser) {
+                // Enforce is_active gate — same rule as LoginRequest.
+                if ($existingUser->is_active === false) {
+                    return redirect()->route('login')
+                        ->withErrors(['email' => 'Ce compte est désactivé. Contactez un administrateur.']);
+                }
+
                 auth()->login($existingUser, true);
 
                 return redirect()->to('/');
             }
 
             $newUser = $this->createUser($user);
+
+            // New accounts default to active; guard is a safety net if auto-provisioning
+            // ever sets is_active = false (e.g. pending-approval flow).
+            if ($newUser->is_active === false) {
+                return redirect()->route('login')
+                    ->withErrors(['email' => 'Ce compte est désactivé. Contactez un administrateur.']);
+            }
+
             auth()->login($newUser, true);
         }
 

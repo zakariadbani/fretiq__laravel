@@ -51,3 +51,7 @@ yarn-error.log
 .env.qa
 .claude/
 CLAUDE.md
+# AI tooling artifacts
+.grill/
+.playwright-mcp/
+icon-audit/

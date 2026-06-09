@@ -4,7 +4,7 @@
            type="checkbox"
            data-id="{{ $model->id }}"
            data-field="{{ $name }}"
-           data-route="{{ route('admin.' . \Str::plural($model->getName()) . '.executeSwitch', ['id' => $model->id]) }}"
+           data-route="{{ route('admin.' . $model->getTable() . '.executeSwitch', ['id' => $model->id]) }}"
            {{ data_get($model, $name) ? 'checked' : '' }}
            id="status_{{ $name }}_{{ $model->id }}" />
 </div>
