@@ -22,104 +22,66 @@
     </ul>
 @endsection
 
-{{-- Action buttons --}}
-<div class="d-flex align-items-center gap-2 mb-6">
-    @can('view segments')
-        <a href="{{ route('admin.segments.index') }}" class="btn btn-sm fw-bold btn-light">
-            <i class="bi bi-arrow-left me-1"></i>
-            Retour à la liste
-        </a>
-    @endcan
+{{--
+    Segment view — shared hero + 2-tab UX.
+    Tab pane IDs: segment_apercu / segment_general.
+    Aperçu is native on view; Général deep-links to edit.
+    The domain-specific filter JSON card is preserved below _apercu.
+--}}
 
-    @can('edit segments')
-        <a href="{{ route('admin.segments.edit', $model->id) }}" class="btn btn-sm fw-bold btn-primary">
-            <i class="bi bi-pencil me-1"></i>
-            Modifier
-        </a>
-    @endcan
-</div>
+{{-- Shared hero + tab nav --}}
+@include('backend.contents.segments.partials._header-with-tabs', [
+    'model'       => $model,
+    'currentPage' => 'view',
+])
 
-<div class="row g-5">
+{{-- Tab content --}}
+<div class="tab-content">
 
-    {{-- Segment details --}}
-    <div class="col-lg-6">
-        <div class="card h-100">
-            <div class="card-header border-0 pt-5">
-                <h3 class="card-title fw-bolder m-0">
-                    <i class="bi bi-funnel text-primary fs-3 me-2"></i>
-                    Informations du segment
-                </h3>
-            </div>
-            <div class="card-body border-top">
+    {{-- ── Tab 1: Aperçu (default active on view) ────────────────────────── --}}
+    <div class="tab-pane fade show active" id="segment_apercu" role="tabpanel">
+        @include('backend.partials.crud._apercu', [
+            'model'  => $model,
+            'config' => \App\Crud\ViewConfigs\SegmentViewConfig::make($model, $stats ?? null),
+        ])
 
-                <div class="row mb-7">
-                    <label class="col-lg-4 fw-bold text-muted">Nom</label>
-                    <div class="col-lg-8">
-                        <span class="fw-bolder fs-6 text-gray-900">{{ e($model->name) }}</span>
+        {{-- Domain-specific: Filtre (JSON) — preserved below the generic apercu --}}
+        <div class="row g-5 mt-2">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header border-0 pt-5">
+                        <h3 class="card-title fw-bolder m-0">
+                            <i class="bi bi-braces text-info fs-3 me-2"></i>
+                            Filtre (JSON)
+                        </h3>
                     </div>
-                </div>
-
-                <div class="row mb-7">
-                    <label class="col-lg-4 fw-bold text-muted">Portée</label>
-                    <div class="col-lg-8">
-                        @php
-                            $scope = config('global.data.segment_scopes.' . $model->scope);
-                        @endphp
-                        @if($scope)
-                            <span class="badge badge-light-{{ $scope['color'] }}">{{ $scope['label'] }}</span>
+                    <div class="card-body border-top">
+                        @if($model->filter)
+                            <pre class="bg-light rounded p-4 mb-0 fs-7 text-gray-700" style="white-space: pre-wrap; word-break: break-all;">{{ json_encode($model->filter, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) }}</pre>
                         @else
-                            <span class="text-muted">—</span>
+                            <div class="text-center py-8 text-muted">
+                                <i class="bi bi-braces fs-2x mb-3 d-block"></i>
+                                Aucun filtre défini pour ce segment.
+                            </div>
                         @endif
                     </div>
                 </div>
-
-                <div class="row mb-7">
-                    <label class="col-lg-4 fw-bold text-muted">≈ Contacts</label>
-                    <div class="col-lg-8">
-                        <span class="badge badge-light-primary">{{ $model->contactsCount() }}</span>
-                    </div>
-                </div>
-
-                <div class="row mb-7">
-                    <label class="col-lg-4 fw-bold text-muted">Dernière construction</label>
-                    <div class="col-lg-8">
-                        <span class="fw-semibold">{{ $model->last_built_at ? $model->last_built_at->format('d/m/Y H:i') : '—' }}</span>
-                    </div>
-                </div>
-
-                <div class="row mb-0">
-                    <label class="col-lg-4 fw-bold text-muted">Créé le</label>
-                    <div class="col-lg-8">
-                        <span class="fw-semibold">{{ $model->created_at?->format('d/m/Y H:i') ?? '—' }}</span>
-                    </div>
-                </div>
-
             </div>
         </div>
+        {{-- end Filter JSON card --}}
     </div>
+    {{-- end Aperçu --}}
 
-    {{-- Filter (JSON) --}}
-    <div class="col-lg-6">
-        <div class="card h-100">
-            <div class="card-header border-0 pt-5">
-                <h3 class="card-title fw-bolder m-0">
-                    <i class="bi bi-braces text-info fs-3 me-2"></i>
-                    Filtre (JSON)
-                </h3>
-            </div>
-            <div class="card-body border-top">
-                @if($model->filter)
-                    <pre class="bg-light rounded p-4 mb-0 fs-7 text-gray-700" style="white-space: pre-wrap; word-break: break-all;">{{ json_encode($model->filter, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) }}</pre>
-                @else
-                    <div class="text-center py-8 text-muted">
-                        <i class="bi bi-braces fs-2x mb-3 d-block"></i>
-                        Aucun filtre défini pour ce segment.
-                    </div>
-                @endif
-            </div>
-        </div>
-    </div>
+    {{--
+        Général tab is NOT a native pane here — it deep-links to the edit page.
+        No pane div needed.
+    --}}
 
 </div>
+{{-- end tab-content --}}
+
+@push('scripts')
+    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
+@endpush
 
 </x-default-layout>

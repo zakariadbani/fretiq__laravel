@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Backend;
 
+use App\Crud\ViewConfigs\SequenceViewConfig;
 use App\DataTables\Backend\SequencesDataTable;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
@@ -37,6 +38,9 @@ class SequenceController extends BackendController
 
         $this->listTitle = 'Séquences';
         $this->title     = 'name';
+
+        // ViewConfig must be set inside the constructor body (never as a class property — FATAL otherwise).
+        $this->viewConfigClass = SequenceViewConfig::class;
 
         $this->bootResource(new BackendResource(
             modelClass:       Sequence::class,
@@ -77,9 +81,17 @@ class SequenceController extends BackendController
             return redirect(route('admin.sequences.index'));
         }
 
-        return $this->getView('backend.contents.sequences.crud.view')
+        $view = $this->getView('backend.contents.sequences.crud.view')
             ->with('model', $model)
             ->with('templates', CampaignTemplate::orderBy('name')->get());
+
+        // Inject viewConfig for the hero + tabbar partials.
+        $viewConfig = $this->buildViewConfig($model);
+        if ($viewConfig !== null) {
+            $view->with('viewConfig', $viewConfig);
+        }
+
+        return $view;
     }
 
     /**

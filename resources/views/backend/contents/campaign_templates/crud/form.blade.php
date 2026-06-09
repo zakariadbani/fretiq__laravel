@@ -24,17 +24,73 @@
     </ul>
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.campaign_templates.index'])
+@endsection
+
+{{--
+    CampaignTemplate create/edit form — 2-tab UX (contract parity).
+
+    Edit mode:
+        - Shared _header-with-tabs partial (currentPage='edit') with tab strip.
+        - Général (active) is the only native form pane — contains all fields.
+        - Aperçu tab is a cross-route link to view page.
+
+    Create mode:
+        - Simple header card + minimal nav (Général only — no apercu until record exists).
+
+    The html_content textarea is preserved exactly from the original form.
+    No TinyMCE/CKEditor is wired — plain textarea with font-monospace class.
+    No select2 — CampaignTemplate has no enum/relation selects; no width issue.
+
+    Both form-actions calls are preserved:
+        - toolbar variant in @section('toolbar_actions') above.
+        - sticky variant at the bottom of <form>.
+--}}
+
 <form method="POST" action="{{ $route }}" class="form" id="form_crud">
     @csrf
     @if(isset($model) && $model->id)
         @method('PUT')
     @endif
 
-    <div class="row g-5">
+    {{-- ── Edit mode: shared hero + tab nav ──────────────────────────── --}}
+    @if(isset($model) && $model->id)
 
-        {{-- Main info card --}}
-        <div class="col-12">
-            <div class="card">
+        @include('backend.contents.campaign_templates.partials._header-with-tabs', [
+            'model'       => $model,
+            'currentPage' => 'edit',
+        ])
+
+    @else
+        {{-- ── Create mode: simple header --}}
+        <div class="card mb-5">
+            <div class="card-body py-6">
+                <h2 class="fs-3 fw-bold m-0">
+                    <i class="bi bi-envelope text-primary fs-3 me-2"></i>
+                    Ajouter un modèle d'email
+                </h2>
+            </div>
+        </div>
+        <ul class="nav nav-line-tabs nav-line-tabs-2x border-bottom mb-5 fs-5 fw-bold">
+            <li class="nav-item mt-2">
+                <a class="nav-link text-active-primary ms-0 me-10 py-5 active"
+                   data-bs-toggle="tab" href="#template_general">
+                    <i class="bi bi-envelope me-1"></i>
+                    Général
+                </a>
+            </li>
+        </ul>
+    @endif
+
+    {{-- ── Tab content ────────────────────────────────────────────────── --}}
+    <div class="tab-content" id="template_tab_content">
+
+        {{-- ── Général (default active) ──────────────────────────────── --}}
+        <div class="tab-pane fade show active" id="template_general" role="tabpanel">
+
+            {{-- Main info card --}}
+            <div class="card mb-5">
                 <div class="card-header border-0 pt-5">
                     <h3 class="card-title fw-bolder m-0">
                         <i class="bi bi-envelope text-primary fs-3 me-2"></i>
@@ -96,10 +152,8 @@
 
                 </div>
             </div>
-        </div>
 
-        {{-- HTML content card --}}
-        <div class="col-12">
+            {{-- HTML content card --}}
             <div class="card">
                 <div class="card-header border-0 pt-5">
                     <h3 class="card-title fw-bolder m-0">
@@ -138,38 +192,21 @@
 
                 </div>
             </div>
+
         </div>
+        {{-- end Général --}}
 
     </div>
+    {{-- end tab-content --}}
 
-    {{-- Action buttons --}}
-    <div class="row g-5 mt-4">
-        <div class="col-12">
-            <div class="d-flex justify-content-end gap-3">
-                @can('view campaign_templates')
-                    <a href="{{ route('admin.campaign_templates.index') }}" class="btn btn-secondary">
-                        <i class="bi bi-x-circle me-2"></i>
-                        Annuler
-                    </a>
-                @endcan
-
-                <button type="submit" class="btn btn-primary submit" id="submit_btn">
-                    <span class="indicator-label">
-                        <i class="bi bi-check-circle me-2"></i>
-                        Enregistrer
-                    </span>
-                    <span class="indicator-progress">
-                        <span class="spinner-border spinner-border-sm align-middle ms-2"></span>
-                    </span>
-                </button>
-            </div>
-        </div>
-    </div>
+    {{-- Sticky save bar — shared partial (mirrors top toolbar) --}}
+    @include('backend.elements.form-actions', ['variant' => 'sticky', 'backRoute' => 'admin.campaign_templates.index'])
 
 </form>
 
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
 @endpush
 
 </x-default-layout>

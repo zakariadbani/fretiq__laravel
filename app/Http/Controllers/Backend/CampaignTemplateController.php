@@ -18,7 +18,7 @@ class CampaignTemplateController extends BackendController
 
         $this->middleware('permission:view campaign_templates')->only(['index', 'view']);
         $this->middleware('permission:create campaign_templates')->only(['create', 'store']);
-        $this->middleware('permission:edit campaign_templates')->only(['edit', 'update']);
+        $this->middleware('permission:edit campaign_templates')->only(['edit', 'update', 'executeSwitch']);
         $this->middleware('permission:delete campaign_templates')->only(['delete']);
 
         $this->listTitle = "Modèles d'email";
@@ -32,6 +32,11 @@ class CampaignTemplateController extends BackendController
             prefixName:       'admin',
             titleField:       'name',
         ));
+
+        // Wire ViewConfig — MUST be inside constructor body, never as a class property.
+        // The Crudable trait declares $viewConfigClass = null; re-declaring it at class level
+        // with a non-null default would be a PHP fatal (conflicting default).
+        $this->viewConfigClass = \App\Crud\ViewConfigs\CampaignTemplateViewConfig::class;
     }
 
     /**

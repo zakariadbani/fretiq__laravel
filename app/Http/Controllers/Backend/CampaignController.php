@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Backend;
 
+use App\Crud\ViewConfigs\CampaignViewConfig;
 use App\DataTables\Backend\CampaignsDataTable;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
@@ -31,6 +32,11 @@ class CampaignController extends BackendController
     public function __construct(Request $request, Campaign $model, CampaignsDataTable $dataTable)
     {
         parent::__construct($request, $model, $dataTable);
+
+        // Wire ViewConfig — MUST be inside constructor body, never as a class property.
+        // The Crudable trait declares $viewConfigClass = null; re-declaring it at class level
+        // with a non-null default would be a PHP fatal (conflicting default).
+        $this->viewConfigClass = CampaignViewConfig::class;
 
         $this->middleware('permission:view campaigns')->only(['index', 'view', 'segmentCount']);
         $this->middleware('permission:create campaigns')->only(['create', 'store']);
@@ -69,6 +75,7 @@ class CampaignController extends BackendController
     /**
      * Override view() to render the campaign report.
      * Loads the campaign with all runs and recipients from the latest run.
+     * Computes $stats and passes $viewConfig (with real KPI values) to the view.
      *
      * @param int $id
      * @return \Illuminate\View\View|\Illuminate\Http\RedirectResponse
@@ -91,11 +98,70 @@ class CampaignController extends BackendController
         }
 
         $latestRun = $campaign->runs->first();
+        $stats     = $this->campaignStats($campaign);
+        $viewConfig = CampaignViewConfig::make($campaign, $stats);
 
         return $this->getView('backend.contents.campaigns.crud.view')
             ->with('model', $campaign)
             ->with('latestRun', $latestRun)
-            ->with('runs', $campaign->runs);
+            ->with('runs', $campaign->runs)
+            ->with('stats', $stats)
+            ->with('viewConfig', $viewConfig);
+    }
+
+    /**
+     * Compute aggregate KPI stats for a campaign from its runs and recipients.
+     * Reuses the already-eager-loaded runs/recipients (no extra queries when called
+     * after view() has loaded the campaign with runs.recipients).
+     *
+     * @param Campaign $campaign  Must already have runs + runs.recipients eager-loaded.
+     * @return array
+     */
+    protected function campaignStats(Campaign $campaign): array
+    {
+        $runs = $campaign->runs ?? collect();
+
+        $totalSent      = $runs->sum('stats_sent');
+        $totalDelivered = $runs->sum('stats_delivered');
+        $totalOpened    = $runs->sum('stats_opened');
+        $totalClicked   = $runs->sum('stats_clicked');
+        $totalReplied   = $runs->sum('stats_replied');
+        $totalBounced   = $runs->sum('stats_bounced');
+        $totalConversions = $runs->sum('conversion_count');
+
+        $openRate = $totalDelivered > 0
+            ? round(($totalOpened / $totalDelivered) * 100, 1)
+            : 0;
+
+        $clickRate = $totalDelivered > 0
+            ? round(($totalClicked / $totalDelivered) * 100, 1)
+            : 0;
+
+        $conversionRate = $totalDelivered > 0
+            ? round(($totalConversions / $totalDelivered) * 100, 1)
+            : 0;
+
+        // Opens over time: one data-point per run (ordered oldest-first)
+        $runsAsc  = $runs->sortBy('run_at');
+        $otLabels = $runsAsc->map(fn ($r) => $r->run_at ? $r->run_at->format('d/m') : '—')->values()->toArray();
+        $otSeries = $runsAsc->map(fn ($r) => (int) ($r->stats_opened ?? 0))->values()->toArray();
+
+        return [
+            'total_sent'       => $totalSent,
+            'total_delivered'  => $totalDelivered,
+            'total_opened'     => $totalOpened,
+            'total_clicked'    => $totalClicked,
+            'total_replied'    => $totalReplied,
+            'total_bounced'    => $totalBounced,
+            'total_conversions'=> $totalConversions,
+            'open_rate'        => $openRate,
+            'click_rate'       => $clickRate,
+            'conversion_rate'  => $conversionRate,
+            'opens_over_time'  => [
+                'series' => $otSeries,
+                'labels' => $otLabels,
+            ],
+        ];
     }
 
     /**

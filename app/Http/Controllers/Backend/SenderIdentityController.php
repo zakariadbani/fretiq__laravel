@@ -39,6 +39,8 @@ class SenderIdentityController extends BackendController
             prefixName:       'admin',
             titleField:       'name',
         ));
+
+        $this->viewConfigClass = \App\Crud\ViewConfigs\SenderIdentityViewConfig::class;
     }
 
     /**

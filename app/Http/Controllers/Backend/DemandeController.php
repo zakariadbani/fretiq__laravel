@@ -24,6 +24,11 @@ class DemandeController extends BackendController
     {
         parent::__construct($request, $model, $dataTable);
 
+        // Wire ViewConfig — MUST be inside constructor body, never as a class property.
+        // The Crudable trait declares $viewConfigClass = null; re-declaring it at class level
+        // with a non-null default would be a PHP fatal (conflicting default).
+        $this->viewConfigClass = \App\Crud\ViewConfigs\DemandeViewConfig::class;
+
         $this->middleware('permission:view demandes')->only(['index', 'view']);
         $this->middleware('permission:create demandes')->only(['create', 'store']);
         $this->middleware('permission:edit demandes')->only(['edit', 'update', 'executeSwitch']);
@@ -40,6 +45,48 @@ class DemandeController extends BackendController
             prefixName:       'admin',
             titleField:       'id',
         ));
+    }
+
+    /**
+     * Override the trait's view() to eager-load source chain and inject viewConfig.
+     * Prevents N+1 on contact.company, campaign, sequence relation accesses.
+     */
+    public function view($id)
+    {
+        $model = $this->currentModel
+            ->with(['contact.company', 'campaign', 'sequence'])
+            ->find($id);
+
+        if ($model === null) {
+            session()->flash('error', trans('app.not_found'));
+            return redirect(route('admin.demandes.index'));
+        }
+
+        return $this->getView('backend.contents.demandes.crud.view')
+            ->with('title', __('overview'))
+            ->with('model', $model);
+    }
+
+    /**
+     * Override the trait's edit() to eager-load source chain for the form header.
+     * Prevents N+1 on contact.company, campaign, sequence when rendering the hero.
+     */
+    public function edit($id)
+    {
+        $model = $this->currentModel
+            ->with(['contact.company', 'campaign', 'sequence'])
+            ->find($id);
+
+        if ($model === null) {
+            session()->flash('error', trans('app.not_found'));
+            return redirect(route('admin.demandes.index'));
+        }
+
+        return $this->getView('backend.contents.demandes.crud.form')
+            ->with('title', __('edit'))
+            ->with('model', $model)
+            ->with('route', route('admin.demandes.update', $model->id))
+            ->with($this->getViewVars());
     }
 
     /**

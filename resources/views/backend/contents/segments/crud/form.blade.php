@@ -24,20 +24,69 @@
     </ul>
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.segments.index'])
+@endsection
+
+{{--
+    Segment create/edit form — 2-tab UX.
+
+    Edit mode:
+        - Shared _header-with-tabs partial (currentPage='edit') with 2-tab strip.
+        - Général (active) is a native form pane INSIDE <form>.
+        - Aperçu tab is a cross-route link to view page.
+
+    Create mode:
+        - Simple header card + minimal nav (Général only).
+
+    Selects in the Général pane use plain <select> — no select2 needed (simple dropdowns).
+    Both form-actions calls are present: toolbar variant above + sticky at bottom.
+--}}
+
 <form method="POST" action="{{ $route }}" class="form" id="form_crud">
     @csrf
     @if(isset($model) && $model->id)
         @method('PUT')
     @endif
 
-    <div class="row g-5">
-        {{-- Main information card --}}
-        <div class="col-12">
+    {{-- ── Edit mode: shared hero + 2-tab nav ──────────────────────────── --}}
+    @if(isset($model) && $model->id)
+
+        @include('backend.contents.segments.partials._header-with-tabs', [
+            'model'       => $model,
+            'currentPage' => 'edit',
+        ])
+
+    @else
+        {{-- ── Create mode: simple header + minimal nav (Général only) ── --}}
+        <div class="card mb-5">
+            <div class="card-body py-6">
+                <h2 class="fs-3 fw-bold m-0">
+                    <i class="bi bi-funnel text-primary fs-3 me-2"></i>
+                    Ajouter un segment
+                </h2>
+            </div>
+        </div>
+        <ul class="nav nav-line-tabs nav-line-tabs-2x border-bottom mb-5 fs-5 fw-bold">
+            <li class="nav-item mt-2">
+                <a class="nav-link text-active-primary ms-0 me-10 py-5 active"
+                   data-bs-toggle="tab" href="#segment_general">
+                    <i class="bi bi-funnel me-1"></i>
+                    Général
+                </a>
+            </li>
+        </ul>
+    @endif
+
+    {{-- ── Tab content (form panes only) ────────────────────────────────── --}}
+    <div class="tab-content" id="segment_tab_content">
+
+        {{-- ── Général (default active) ──────────────────────────────────── --}}
+        <div class="tab-pane fade show active" id="segment_general" role="tabpanel">
             <div class="card">
                 <div class="card-header border-0 pt-5">
-                    <h3 class="card-title fw-bolder m-0">
-                        <i class="bi bi-funnel text-primary fs-3 me-2"></i>
-                        Informations du segment
+                    <h3 class="card-title align-items-start flex-column">
+                        <span class="card-label fw-bold fs-3 mb-1">Informations du segment</span>
                     </h3>
                 </div>
                 <div class="card-body border-top p-9">
@@ -57,7 +106,7 @@
                                        required />
                             </div>
 
-                            {{-- Portée (scope) --}}
+                            {{-- Portée (scope) — plain <select>, no select2 needed --}}
                             <div class="fv-row mb-7">
                                 <label class="required fw-semibold fs-6 mb-2">Portée</label>
                                 <select name="scope" class="form-select form-select-solid" required>
@@ -94,36 +143,19 @@
                 </div>
             </div>
         </div>
-    </div>
+        {{-- end Général --}}
 
-    {{-- Action buttons --}}
-    <div class="row g-5 mt-4">
-        <div class="col-12">
-            <div class="d-flex justify-content-end gap-3">
-                @can('view segments')
-                    <a href="{{ route('admin.segments.index') }}" class="btn btn-secondary">
-                        <i class="bi bi-x-circle me-2"></i>
-                        Annuler
-                    </a>
-                @endcan
-
-                <button type="submit" class="btn btn-primary submit" id="submit_btn">
-                    <span class="indicator-label">
-                        <i class="bi bi-check-circle me-2"></i>
-                        Enregistrer
-                    </span>
-                    <span class="indicator-progress">
-                        <span class="spinner-border spinner-border-sm align-middle ms-2"></span>
-                    </span>
-                </button>
-            </div>
-        </div>
     </div>
+    {{-- end tab-content --}}
+
+    {{-- Sticky save bar — shared partial (mirrors top toolbar) --}}
+    @include('backend.elements.form-actions', ['variant' => 'sticky', 'backRoute' => 'admin.segments.index'])
 
 </form>
 
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
 @endpush
 
 </x-default-layout>

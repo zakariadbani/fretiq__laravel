@@ -31,9 +31,11 @@ class SequencesDataTable extends BackendDataTable
             'raw'        => true,
         ],
         'stop_on_reply' => [
-            'title'      => 'Stop sur réponse',
+            'title'      => 'Stop si réponse',
             'orderable'  => false,
             'searchable' => false,
+            'switch'     => true,
+            'typetoggle' => 'status',
             'raw'        => true,
         ],
         'created_at' => [

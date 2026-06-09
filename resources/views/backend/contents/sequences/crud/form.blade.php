@@ -24,19 +24,76 @@
     </ul>
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.sequences.index'])
+@endsection
+
+{{--
+    Sequence create/edit form — hero + tabbar + sticky contract.
+
+    Edit mode:
+        - Shared _header-with-tabs partial (currentPage='edit') with tab strip.
+        - Général (active) is the only native form pane INSIDE <form>.
+        - Aperçu tab deep-links to view page.
+        - Étapes pane is rendered AFTER </form> and moved into
+          #sequence_tab_content by crud-tabs.js (avoids nested forms — the
+          steps pane has its own inline POST forms for addStep/deleteStep).
+
+    Create mode:
+        - Simple header card + minimal nav (Général only).
+          Steps are irrelevant until the sequence exists.
+
+    No select2 used — all inputs are text, number, or checkbox switches.
+    Both form-actions calls preserved: toolbar variant above + sticky variant at bottom.
+--}}
+
 <form method="POST" action="{{ $route }}" class="form" id="form_crud">
     @csrf
     @if(isset($model) && $model->id)
         @method('PUT')
     @endif
 
-    <div class="row g-5">
-        <div class="col-12">
+    {{-- ── Edit mode: shared hero + tab nav ──────────────────────────── --}}
+    @if(isset($model) && $model->id)
+
+        @include('backend.contents.sequences.partials._header-with-tabs', [
+            'model'       => $model,
+            'currentPage' => 'edit',
+        ])
+
+    @else
+        {{-- ── Create mode: simple header + minimal nav (Général only) ── --}}
+        <div class="card mb-5">
+            <div class="card-body py-6">
+                <h2 class="fs-3 fw-bold m-0">
+                    <i class="bi bi-layers text-primary fs-3 me-2"></i>
+                    Créer une séquence
+                </h2>
+            </div>
+        </div>
+        <ul class="nav nav-line-tabs nav-line-tabs-2x border-bottom mb-5 fs-5 fw-bold">
+            <li class="nav-item mt-2">
+                <a class="nav-link text-active-primary ms-0 me-10 py-5 active"
+                   data-bs-toggle="tab" href="#sequence_general">
+                    <i class="bi bi-layers me-1"></i>
+                    Général
+                </a>
+            </li>
+        </ul>
+    @endif
+
+    {{-- ── Tab content (form panes only) ────────────────────────────────── --}}
+    {{-- data-out-of-form-panes: consumed by crud-tabs.js to move out-of-form panes into this container. --}}
+    <div class="tab-content" id="sequence_tab_content"
+         data-out-of-form-panes='["sequence_steps"]'>
+
+        {{-- ── Général (default active) ──────────────────────────────────── --}}
+        {{-- All required/validated fields are here — validation errors surface on the visible pane. --}}
+        <div class="tab-pane fade show active" id="sequence_general" role="tabpanel">
             <div class="card">
                 <div class="card-header border-0 pt-5">
-                    <h3 class="card-title fw-bolder m-0">
-                        <i class="bi bi-layers text-primary fs-3 me-2"></i>
-                        Informations de la séquence
+                    <h3 class="card-title align-items-start flex-column">
+                        <span class="card-label fw-bold fs-3 mb-1">Informations de la séquence</span>
                     </h3>
                 </div>
                 <div class="card-body border-top p-9">
@@ -97,36 +154,264 @@
                 </div>
             </div>
         </div>
-    </div>
+        {{-- end Général --}}
 
-    {{-- Action buttons --}}
-    <div class="row g-5 mt-4">
-        <div class="col-12">
-            <div class="d-flex justify-content-end gap-3">
-                @can('view sequences')
-                    <a href="{{ route('admin.sequences.index') }}" class="btn btn-secondary">
-                        <i class="bi bi-x-circle me-2"></i>
-                        Annuler
-                    </a>
-                @endcan
+        {{--
+            Étapes pane is NOT inside the form.
+            It is rendered AFTER </form> (below) and moved into this
+            #sequence_tab_content div by crud-tabs.js on page load.
+            This avoids nested-form issues (steps pane has its own POST forms).
+        --}}
 
-                <button type="submit" class="btn btn-primary submit" id="submit_btn">
-                    <span class="indicator-label">
-                        <i class="bi bi-check-circle me-2"></i>
-                        Enregistrer
-                    </span>
-                    <span class="indicator-progress">
-                        <span class="spinner-border spinner-border-sm align-middle ms-2"></span>
-                    </span>
-                </button>
-            </div>
-        </div>
     </div>
+    {{-- end tab-content --}}
+
+    {{-- Sticky save bar — shared partial (mirrors top toolbar) --}}
+    @include('backend.elements.form-actions', ['variant' => 'sticky', 'backRoute' => 'admin.sequences.index'])
 
 </form>
 
+{{-- ── Out-of-form panes (edit mode only) ───────────────────────────────── --}}
+{{-- crud-tabs.js moves these into #sequence_tab_content after DOMContentLoaded --}}
+@if(isset($model) && $model->id)
+
+    <div class="tab-pane fade" id="sequence_steps" role="tabpanel" data-crud-pane>
+
+        {{-- ── Step Builder ─────────────────────────────────────────────────── --}}
+        <div class="card mb-5">
+            <div class="card-header border-0 pt-5">
+                <h3 class="card-title fw-bolder m-0">
+                    <i class="bi bi-list-ol text-info fs-3 me-2"></i>
+                    Étapes de la séquence
+                </h3>
+            </div>
+            <div class="card-body border-top p-0">
+
+                @if($model->steps->isNotEmpty())
+                <div class="table-responsive">
+                    <table class="table table-row-dashed table-row-gray-300 align-middle gs-0 gy-3 mb-0">
+                        <thead>
+                            <tr class="fw-bold text-muted bg-light">
+                                <th class="ps-7">N°</th>
+                                <th>Délai (jours)</th>
+                                <th>Modèle</th>
+                                <th>Sujet</th>
+                                @can('edit sequences')
+                                <th class="text-end pe-7">Actions</th>
+                                @endcan
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach($model->steps as $step)
+                            <tr>
+                                <td class="ps-7">
+                                    <span class="badge badge-circle badge-light-primary">{{ $step->step_no }}</span>
+                                </td>
+                                <td>
+                                    <span class="fw-semibold">
+                                        {{ $step->delay_days === 0 ? 'Immédiat' : $step->delay_days . ' jour(s)' }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="fw-semibold">{{ $step->template?->name ?? '—' }}</span>
+                                </td>
+                                <td>
+                                    <span class="text-muted">{{ $step->subject ? e($step->subject) : '(sujet du modèle)' }}</span>
+                                </td>
+                                @can('edit sequences')
+                                <td class="text-end pe-7">
+                                    <form method="POST"
+                                          action="{{ route('admin.sequences.deleteStep', [$model->id, $step->id]) }}"
+                                          onsubmit="return confirm('Supprimer cette étape ?');">
+                                        @csrf
+                                        @method('DELETE')
+                                        <button type="submit" class="btn btn-sm btn-icon btn-light-danger">
+                                            <i class="bi bi-trash fs-5"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                                @endcan
+                            </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+                @else
+                    <div class="text-center py-8 text-muted">
+                        <i class="bi bi-list-ol fs-2x mb-3 d-block"></i>
+                        Aucune étape définie. Ajoutez la première étape ci-dessous.
+                    </div>
+                @endif
+
+            </div>
+
+            {{-- Add step inline form --}}
+            @can('edit sequences')
+            <div class="card-footer border-top pt-5 pb-6 px-9">
+                <h5 class="fw-bold mb-5 text-gray-700">
+                    <i class="bi bi-plus-circle text-primary me-2"></i>
+                    Ajouter une étape
+                </h5>
+                <form method="POST" action="{{ route('admin.sequences.addStep', $model->id) }}">
+                    @csrf
+                    <div class="row g-4 align-items-end">
+
+                        <div class="col-md-2">
+                            <label class="required fw-semibold fs-7 mb-2">Délai (jours)</label>
+                            <input type="number"
+                                   name="delay_days"
+                                   class="form-control form-control-solid form-control-sm"
+                                   placeholder="0"
+                                   min="0"
+                                   value="{{ old('delay_days', 1) }}"
+                                   required />
+                            <div class="form-text text-muted fs-8">0 = immédiat</div>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="required fw-semibold fs-7 mb-2">Modèle d'email</label>
+                            <select name="template_id" class="form-select form-select-solid form-select-sm" required>
+                                <option value="">Sélectionner un modèle...</option>
+                                @foreach($templates as $tpl)
+                                    <option value="{{ $tpl->id }}" {{ old('template_id') == $tpl->id ? 'selected' : '' }}>
+                                        {{ e($tpl->name) }}
+                                    </option>
+                                @endforeach
+                            </select>
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="fw-semibold fs-7 mb-2">Sujet <span class="text-muted">(optionnel)</span></label>
+                            <input type="text"
+                                   name="subject"
+                                   class="form-control form-control-solid form-control-sm"
+                                   placeholder="Laissez vide pour utiliser le sujet du modèle"
+                                   value="{{ old('subject') }}" />
+                        </div>
+
+                        <div class="col-md-2">
+                            <button type="submit" class="btn btn-primary btn-sm w-100">
+                                <i class="bi bi-plus me-1"></i>
+                                Ajouter
+                            </button>
+                        </div>
+
+                    </div>
+                </form>
+            </div>
+            @endcan
+        </div>
+
+        {{-- ── Enrollments (Inscriptions) ───────────────────────────────────── --}}
+        @php
+            $enrollments = $model->enrollments()->with('contact')->orderByDesc('created_at')->get();
+            $enrollmentStatuses = config('global.data.sequence_enrollment_statuses', []);
+        @endphp
+
+        <div class="card">
+            <div class="card-header border-0 pt-5">
+                <h3 class="card-title fw-bolder m-0">
+                    <i class="bi bi-person-check text-success fs-3 me-2"></i>
+                    Inscriptions ({{ $enrollments->count() }})
+                </h3>
+            </div>
+            <div class="card-body border-top p-0">
+
+                @if($enrollments->isNotEmpty())
+                <div class="table-responsive">
+                    <table class="table table-row-dashed table-row-gray-300 align-middle gs-0 gy-3 mb-0">
+                        <thead>
+                            <tr class="fw-bold text-muted bg-light">
+                                <th class="ps-7">Contact</th>
+                                <th>Étape actuelle</th>
+                                <th>Statut</th>
+                                <th>Prochain envoi</th>
+                                @can('edit sequences')
+                                <th class="text-end pe-7">Actions</th>
+                                @endcan
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach($enrollments as $enrollment)
+                            @php
+                                $statusCfg = $enrollmentStatuses[$enrollment->status] ?? [];
+                            @endphp
+                            <tr>
+                                <td class="ps-7 fw-semibold">
+                                    {{ $enrollment->contact?->email ? e($enrollment->contact->email) : '—' }}
+                                </td>
+                                <td>
+                                    <span class="badge badge-light-primary">
+                                        Étape {{ $enrollment->current_step ?? 0 }}
+                                    </span>
+                                </td>
+                                <td>
+                                    @if($statusCfg)
+                                        <span class="badge badge-light-{{ $statusCfg['color'] }}">{{ $statusCfg['label'] }}</span>
+                                    @else
+                                        <span class="text-muted">—</span>
+                                    @endif
+                                </td>
+                                <td>
+                                    {{ $enrollment->next_send_at?->format('d/m/Y H:i') ?? '—' }}
+                                </td>
+                                @can('edit sequences')
+                                <td class="text-end pe-7">
+                                    <div class="d-flex gap-1 justify-content-end">
+                                        @if($enrollment->status === 'active')
+                                            <form method="POST"
+                                                  action="{{ route('admin.sequences.pauseEnrollment', [$model->id, $enrollment->id]) }}">
+                                                @csrf
+                                                <button type="submit" class="btn btn-sm btn-light-warning" title="Mettre en pause">
+                                                    <i class="bi bi-pause fs-6"></i> Pause
+                                                </button>
+                                            </form>
+                                        @endif
+                                        @if($enrollment->status === 'paused')
+                                            <form method="POST"
+                                                  action="{{ route('admin.sequences.resumeEnrollment', [$model->id, $enrollment->id]) }}">
+                                                @csrf
+                                                <button type="submit" class="btn btn-sm btn-light-success" title="Reprendre">
+                                                    <i class="bi bi-play fs-6"></i> Reprendre
+                                                </button>
+                                            </form>
+                                        @endif
+                                        @if(in_array($enrollment->status, ['active', 'paused']))
+                                            <form method="POST"
+                                                  action="{{ route('admin.sequences.stopEnrollment', [$model->id, $enrollment->id]) }}"
+                                                  onsubmit="return confirm('Stopper définitivement cette inscription ?');">
+                                                @csrf
+                                                <button type="submit" class="btn btn-sm btn-light-danger" title="Stopper">
+                                                    <i class="bi bi-stop-circle fs-6"></i> Stopper
+                                                </button>
+                                            </form>
+                                        @endif
+                                    </div>
+                                </td>
+                                @endcan
+                            </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+                @else
+                    <div class="text-center py-8 text-muted">
+                        <i class="bi bi-person-x fs-2x mb-3 d-block"></i>
+                        Aucune inscription pour cette séquence.
+                    </div>
+                @endif
+
+            </div>
+        </div>
+
+    </div>
+    {{-- end out-of-form Étapes --}}
+
+@endif
+
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
 @endpush
 
 </x-default-layout>

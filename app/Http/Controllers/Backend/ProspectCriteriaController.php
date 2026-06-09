@@ -41,6 +41,8 @@ class ProspectCriteriaController extends BackendController
             prefixName:       'admin',
             titleField:       'name',
         ));
+
+        $this->viewConfigClass = \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::class;
     }
 
     /**

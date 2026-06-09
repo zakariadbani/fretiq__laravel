@@ -22,133 +22,93 @@
     </ul>
 @endsection
 
-{{-- Action buttons --}}
-<div class="d-flex align-items-center gap-2 mb-6">
-    @can('view campaign_templates')
-        <a href="{{ route('admin.campaign_templates.index') }}" class="btn btn-sm fw-bold btn-light">
-            <i class="bi bi-arrow-left me-1"></i>
-            Retour à la liste
-        </a>
-    @endcan
+{{--
+    CampaignTemplate view — hero + 2-tab UX (contract parity).
+    Hero card + shared tab strip via _header-with-tabs partial.
+    Tab pane IDs: template_apercu / template_general.
+    Aperçu is native (default active on view); Général deep-links to edit page.
 
-    @can('edit campaign_templates')
-        <a href="{{ route('admin.campaign_templates.edit', $model->id) }}" class="btn btn-sm fw-bold btn-primary">
-            <i class="bi bi-pencil me-1"></i>
-            Modifier
-        </a>
-    @endcan
-</div>
+    Email preview: the iframe srcdoc uses {{ e($model->html_content) }} — Blade escapes
+    the HTML content into the srcdoc attribute, which the browser then parses safely.
+    The sandbox="allow-same-origin" attribute is preserved from the original view.
+    No {!! !!} raw output is used on html_content.
+--}}
 
-<div class="row g-5">
+{{-- Shared hero + tab nav --}}
+@include('backend.contents.campaign_templates.partials._header-with-tabs', [
+    'model'       => $model,
+    'currentPage' => 'view',
+])
 
-    {{-- Template details --}}
-    <div class="col-lg-4">
-        <div class="card h-100">
-            <div class="card-header border-0 pt-5">
-                <h3 class="card-title fw-bolder m-0">
-                    <i class="bi bi-envelope text-primary fs-3 me-2"></i>
-                    Informations
-                </h3>
-            </div>
-            <div class="card-body border-top">
+{{-- Tab content --}}
+<div class="tab-content">
 
-                <div class="row mb-7">
-                    <label class="col-lg-5 fw-bold text-muted">Nom</label>
-                    <div class="col-lg-7">
-                        <span class="fw-bolder fs-6 text-gray-900">{{ e($model->name) }}</span>
+    {{-- ── Tab 1: Aperçu (default active on view) ────────────────────────── --}}
+    <div class="tab-pane fade show active" id="template_apercu" role="tabpanel">
+
+        {{-- Generic apercu: details table (left) + stat cards + quick actions (right) --}}
+        @include('backend.partials.crud._apercu', [
+            'model'  => $model,
+            'config' => \App\Crud\ViewConfigs\CampaignTemplateViewConfig::make($model),
+        ])
+
+        {{-- Email preview — preserved from original view.blade.php --}}
+        <div class="row g-6 g-xl-9 mt-2">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header border-0 pt-5">
+                        <h3 class="card-title fw-bolder m-0">
+                            <i class="bi bi-eye text-success fs-3 me-2"></i>
+                            Aperçu du contenu
+                        </h3>
+                        {{-- Variables hint --}}
+                        <div class="card-toolbar">
+                            <div class="d-flex gap-2 flex-wrap">
+                                <span class="badge badge-light-primary">
+                                    <code class="fs-8">@{{contact.name}}</code> — Prénom contact
+                                </span>
+                                <span class="badge badge-light-primary">
+                                    <code class="fs-8">@{{company.name}}</code> — Société
+                                </span>
+                                <span class="badge badge-light-warning">
+                                    <code class="fs-8">@{{unsubscribe_url}}</code> — Lien désabonnement
+                                </span>
+                            </div>
+                        </div>
                     </div>
-                </div>
-
-                <div class="row mb-7">
-                    <label class="col-lg-5 fw-bold text-muted">Sujet</label>
-                    <div class="col-lg-7">
-                        <span class="fw-semibold">{{ e($model->subject) }}</span>
-                    </div>
-                </div>
-
-                @if($model->preview_text)
-                <div class="row mb-7">
-                    <label class="col-lg-5 fw-bold text-muted">Prévisualisation</label>
-                    <div class="col-lg-7">
-                        <span class="fw-semibold text-muted fs-7">{{ e($model->preview_text) }}</span>
-                    </div>
-                </div>
-                @endif
-
-                <div class="row mb-7">
-                    <label class="col-lg-5 fw-bold text-muted">Campagnes</label>
-                    <div class="col-lg-7">
-                        <span class="badge badge-light-primary">{{ $model->campaigns->count() }}</span>
-                    </div>
-                </div>
-
-                <div class="row mb-0">
-                    <label class="col-lg-5 fw-bold text-muted">Créé le</label>
-                    <div class="col-lg-7">
-                        <span class="fw-semibold">{{ $model->created_at?->format('d/m/Y H:i') ?? '—' }}</span>
-                    </div>
-                </div>
-
-            </div>
-        </div>
-
-        {{-- Variables hint card --}}
-        <div class="card mt-5">
-            <div class="card-header border-0 pt-5">
-                <h3 class="card-title fw-bolder m-0">
-                    <i class="bi bi-braces text-warning fs-3 me-2"></i>
-                    Variables disponibles
-                </h3>
-            </div>
-            <div class="card-body border-top">
-                <div class="d-flex flex-column gap-3">
-                    <div>
-                        <code class="text-primary">{{"{{"}}contact.name{{"}}"}}</code>
-                        <div class="text-muted fs-8 mt-1">Prénom du contact destinataire</div>
-                    </div>
-                    <div>
-                        <code class="text-primary">{{"{{"}}company.name{{"}}"}}</code>
-                        <div class="text-muted fs-8 mt-1">Nom de la société du contact</div>
-                    </div>
-                    <div>
-                        <code class="text-warning">{{"{{"}}unsubscribe_url{{"}}"}}</code>
-                        <div class="text-muted fs-8 mt-1">URL de désabonnement (obligatoire)</div>
+                    <div class="card-body border-top p-0">
+                        @if($model->html_content)
+                            <iframe
+                                srcdoc="{{ e($model->html_content) }}"
+                                class="w-100 border-0 rounded-bottom"
+                                style="min-height: 600px;"
+                                sandbox="allow-same-origin"
+                                title="Aperçu du modèle"></iframe>
+                        @else
+                            <div class="text-center py-8 text-muted">
+                                <i class="bi bi-envelope-x fs-2x mb-3 d-block"></i>
+                                Aucun contenu HTML défini pour ce modèle.
+                            </div>
+                        @endif
                     </div>
                 </div>
             </div>
         </div>
+        {{-- end email preview --}}
+
     </div>
+    {{-- end Aperçu --}}
 
-    {{-- HTML preview --}}
-    <div class="col-lg-8">
-        <div class="card h-100">
-            <div class="card-header border-0 pt-5">
-                <h3 class="card-title fw-bolder m-0">
-                    <i class="bi bi-eye text-success fs-3 me-2"></i>
-                    Aperçu du contenu
-                </h3>
-            </div>
-            <div class="card-body border-top p-0">
-                @if($model->html_content)
-                    <iframe
-                        srcdoc="{{ e($model->html_content) }}"
-                        class="w-100 border-0 rounded-bottom"
-                        style="min-height: 600px;"
-                        sandbox="allow-same-origin"
-                        title="Aperçu du modèle"></iframe>
-                @else
-                    <div class="text-center py-8 text-muted">
-                        <i class="bi bi-envelope-x fs-2x mb-3 d-block"></i>
-                        Aucun contenu HTML défini pour ce modèle.
-                    </div>
-                @endif
-            </div>
-        </div>
-    </div>
+    {{--
+        Tab 2 (Général) is NOT a native pane here —
+        it deep-links to the edit page via the tab nav. No pane div needed.
+    --}}
 
 </div>
+{{-- end tab-content --}}
 
 @push('scripts')
+    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
     <script>
         // Auto-resize iframe to content height once loaded
         document.addEventListener('DOMContentLoaded', function () {

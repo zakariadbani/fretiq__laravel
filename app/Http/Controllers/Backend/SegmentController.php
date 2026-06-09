@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Backend;
 
+use App\Crud\ViewConfigs\SegmentViewConfig;
 use App\DataTables\Backend\SegmentsDataTable;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
@@ -15,6 +16,9 @@ class SegmentController extends BackendController
     public function __construct(Request $request, Segment $model, SegmentsDataTable $dataTable)
     {
         parent::__construct($request, $model, $dataTable);
+
+        // Assigned at runtime to avoid a trait+class property default conflict.
+        $this->viewConfigClass = SegmentViewConfig::class;
 
         $this->middleware('permission:view segments')->only(['index', 'view']);
         $this->middleware('permission:create segments')->only(['create', 'store']);
@@ -32,6 +36,41 @@ class SegmentController extends BackendController
             prefixName:       'admin',
             titleField:       'name',
         ));
+    }
+
+    /**
+     * Override view() to inject contacts count stats for ViewConfig/apercu.
+     */
+    public function view($id)
+    {
+        $model = $this->currentModel->find($id);
+
+        if ($model == null) {
+            session()->flash('error', trans('app.not_found'));
+            return redirect(route('admin.segments.index'));
+        }
+
+        $stats  = $this->segmentStats($model);
+        $config = SegmentViewConfig::make($model, $stats);
+
+        $view = $this->getView('backend.contents.segments.crud.view');
+        $view
+            ->with('title', 'Aperçu')
+            ->with('model', $model)
+            ->with('viewConfig', $config)
+            ->with('stats', $stats);
+
+        return $view;
+    }
+
+    /**
+     * Compute lightweight stats for the ViewConfig.
+     */
+    private function segmentStats(Segment $segment): array
+    {
+        return [
+            'contacts_count' => $segment->contactsCount(),
+        ];
     }
 
     /**

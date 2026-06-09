@@ -24,15 +24,68 @@
     </ul>
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.sender_identities.index'])
+@endsection
+
+{{--
+    SenderIdentity create/edit form — hero + tabbar + sticky contract.
+
+    Edit mode:
+        - Shared _header-with-tabs partial (currentPage='edit') with tab strip.
+        - Général (active) is the only native form pane INSIDE <form>.
+        - Aperçu tab deep-links to view page.
+
+    Create mode:
+        - Simple header card + minimal nav (Général only).
+
+    No select2 used — all inputs are plain text/checkbox. No hidden panes.
+    Both form-actions calls preserved: toolbar variant above + sticky variant at bottom.
+--}}
+
 <form method="POST" action="{{ $route }}" class="form" id="form_crud">
     @csrf
     @if(isset($model) && $model->id)
         @method('PUT')
     @endif
 
-    <div class="row g-5">
-        <div class="col-12">
-            <div class="card">
+    {{-- ── Edit mode: shared hero + tab nav ──────────────────────────── --}}
+    @if(isset($model) && $model->id)
+
+        @include('backend.contents.sender_identities.partials._header-with-tabs', [
+            'model'       => $model,
+            'currentPage' => 'edit',
+        ])
+
+    @else
+        {{-- ── Create mode: simple header + minimal nav (Général only) ── --}}
+        <div class="card mb-5">
+            <div class="card-body py-6">
+                <h2 class="fs-3 fw-bold m-0">
+                    <i class="bi bi-person-badge text-primary fs-3 me-2"></i>
+                    Ajouter une identité d'expéditeur
+                </h2>
+            </div>
+        </div>
+        <ul class="nav nav-line-tabs nav-line-tabs-2x border-bottom mb-5 fs-5 fw-bold">
+            <li class="nav-item mt-2">
+                <a class="nav-link text-active-primary ms-0 me-10 py-5 active"
+                   data-bs-toggle="tab" href="#sender_general">
+                    <i class="bi bi-person-badge me-1"></i>
+                    Général
+                </a>
+            </li>
+        </ul>
+    @endif
+
+    {{-- ── Tab content (form panes only) ────────────────────────────────── --}}
+    <div class="tab-content" id="sender_tab_content">
+
+        {{-- ── Général (default active) ──────────────────────────────────── --}}
+        <div class="tab-pane fade show active" id="sender_general" role="tabpanel">
+
+            {{-- Identity information card --}}
+            <div class="card mb-5">
                 <div class="card-header border-0 pt-5">
                     <h3 class="card-title fw-bolder m-0">
                         <i class="bi bi-person-badge text-primary fs-3 me-2"></i>
@@ -141,37 +194,21 @@
 
                 </div>
             </div>
-        </div>
-    </div>
 
-    {{-- Action buttons --}}
-    <div class="row g-5 mt-4">
-        <div class="col-12">
-            <div class="d-flex justify-content-end gap-3">
-                @can('view sender_identities')
-                    <a href="{{ route('admin.sender_identities.index') }}" class="btn btn-secondary">
-                        <i class="bi bi-x-circle me-2"></i>
-                        Annuler
-                    </a>
-                @endcan
-
-                <button type="submit" class="btn btn-primary submit" id="submit_btn">
-                    <span class="indicator-label">
-                        <i class="bi bi-check-circle me-2"></i>
-                        Enregistrer
-                    </span>
-                    <span class="indicator-progress">
-                        <span class="spinner-border spinner-border-sm align-middle ms-2"></span>
-                    </span>
-                </button>
-            </div>
         </div>
+        {{-- end Général --}}
+
     </div>
+    {{-- end tab-content --}}
+
+    {{-- Sticky save bar — shared partial (mirrors top toolbar) --}}
+    @include('backend.elements.form-actions', ['variant' => 'sticky', 'backRoute' => 'admin.sender_identities.index'])
 
 </form>
 
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
 @endpush
 
 </x-default-layout>

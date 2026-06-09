@@ -24,16 +24,66 @@
     </ul>
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.campaigns.index'])
+@endsection
+
 {{--
-    Campaign Builder — single-page form (MVP choice).
-    A multi-step stepper (KT Stepper) is marked as a future enhancement.
-    Approach: clear section cards, AJAX submit via crud-form-handler.js.
+    Campaign Builder — multi-section flat form (MVP choice).
+    ui-ux-spec describes a future multi-step KT Stepper; the current implementation
+    uses clear section cards with AJAX submit via crud-form-handler.js.
+
+    Edit mode:
+        - Shared _header-with-tabs partial (currentPage='edit') with 2-tab strip.
+        - Général tab is the active edit pane (contains all sections, inside <form>).
+        - Aperçu tab is a cross-route link to view page.
+
+    Create mode:
+        - Simple header card, no tabbar (no existing model yet).
+        - Same sections, no tab pane wrapping.
+
+    Both form-actions calls are present:
+        - toolbar variant in @section('toolbar_actions') above.
+        - sticky variant at the bottom of the form.
+
+    All selects use plain <select> (not select2) — they are inside the Général pane
+    which is the active tab, so width is fine, but using plain selects is safer here
+    since the schedule type switcher shows/hides sub-panels dynamically.
 --}}
 
 <form method="POST" action="{{ $route }}" class="form" id="form_crud">
     @csrf
     @if(isset($model) && $model->id)
         @method('PUT')
+    @endif
+
+    {{-- ── Edit mode: shared hero + 2-tab nav ──────────────────────────── --}}
+    @if(isset($model) && $model->id)
+        @include('backend.contents.campaigns.partials._header-with-tabs', [
+            'model'       => $model,
+            'currentPage' => 'edit',
+        ])
+    @else
+        {{-- ── Create mode: simple header card ──────────────────────────── --}}
+        <div class="card mb-6">
+            <div class="card-body py-4 d-flex align-items-center gap-4">
+                <div class="symbol symbol-40px symbol-circle me-2">
+                    <span class="symbol-label bg-light-primary">
+                        <i class="bi bi-megaphone text-primary fs-3"></i>
+                    </span>
+                </div>
+                <div>
+                    <h3 class="card-title fw-bolder m-0 fs-4">Nouvelle campagne</h3>
+                    <span class="text-muted fs-7">Remplissez les champs ci-dessous pour créer la campagne.</span>
+                </div>
+            </div>
+        </div>
+    @endif
+
+    {{-- ── Tab pane wrapper (edit mode: Général tab; create mode: bare content) ── --}}
+    @if(isset($model) && $model->id)
+    <div class="tab-content">
+    <div class="tab-pane fade show active" id="campaign_general" role="tabpanel">
     @endif
 
     <div class="row g-5">
@@ -302,34 +352,19 @@
 
     </div>
 
-    {{-- Action buttons --}}
-    <div class="row g-5 mt-4">
-        <div class="col-12">
-            <div class="d-flex justify-content-end gap-3">
-                @can('view campaigns')
-                    <a href="{{ route('admin.campaigns.index') }}" class="btn btn-secondary">
-                        <i class="bi bi-x-circle me-2"></i>
-                        Annuler
-                    </a>
-                @endcan
+    {{-- ── Sticky action bar (standard contract) ──────────────────────── --}}
+    @include('backend.elements.form-actions', ['variant' => 'sticky', 'backRoute' => 'admin.campaigns.index'])
 
-                <button type="submit" class="btn btn-primary submit" id="submit_btn">
-                    <span class="indicator-label">
-                        <i class="bi bi-check-circle me-2"></i>
-                        Enregistrer le brouillon
-                    </span>
-                    <span class="indicator-progress">
-                        <span class="spinner-border spinner-border-sm align-middle ms-2"></span>
-                    </span>
-                </button>
-            </div>
-        </div>
-    </div>
+    @if(isset($model) && $model->id)
+    </div>{{-- end campaign_general tab-pane --}}
+    </div>{{-- end tab-content --}}
+    @endif
 
 </form>
 
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
 
     @if(class_exists(\App\Services\Campaign\SegmentService::class))
     <script>

@@ -22,93 +22,33 @@
     </ul>
 @endsection
 
-{{-- Action buttons --}}
-<div class="d-flex align-items-center gap-2 mb-6">
-    @can('view sender_identities')
-        <a href="{{ route('admin.sender_identities.index') }}" class="btn btn-sm fw-bold btn-light">
-            <i class="bi bi-arrow-left me-1"></i>
-            Retour à la liste
-        </a>
-    @endcan
+{{--
+    SenderIdentity view — hero + tabbar + aperçu contract.
+    Tab pane IDs: sender_apercu / sender_general.
+    Aperçu is native (default active); Général deep-links to edit.
+    is_default is shown as a hero tile (Par défaut badge), not a second status-bar.
+    is_active is the hero status-bar toggle.
+--}}
 
-    @can('edit sender_identities')
-        <a href="{{ route('admin.sender_identities.edit', $model->id) }}" class="btn btn-sm fw-bold btn-primary">
-            <i class="bi bi-pencil me-1"></i>
-            Modifier
-        </a>
-    @endcan
-</div>
+{{-- Shared hero + tab nav --}}
+@include('backend.contents.sender_identities.partials._header-with-tabs', [
+    'model'       => $model,
+    'currentPage' => 'view',
+])
 
-<div class="row g-5">
+{{-- Tab content --}}
+<div class="tab-content">
 
-    {{-- Identity details --}}
-    <div class="col-lg-6">
-        <div class="card h-100">
-            <div class="card-header border-0 pt-5">
-                <h3 class="card-title fw-bolder m-0">
-                    <i class="bi bi-person-badge text-primary fs-3 me-2"></i>
-                    Informations de l'identité
-                </h3>
-            </div>
-            <div class="card-body border-top">
+    {{-- ── Tab 1: Aperçu (default active on view) ────────────────────────── --}}
+    <div class="tab-pane fade show active" id="sender_apercu" role="tabpanel">
+        @include('backend.partials.crud._apercu', [
+            'model'  => $model,
+            'config' => \App\Crud\ViewConfigs\SenderIdentityViewConfig::make($model),
+        ])
 
-                <div class="row mb-7">
-                    <label class="col-lg-4 fw-bold text-muted">Nom</label>
-                    <div class="col-lg-8">
-                        <span class="fw-bolder fs-6 text-gray-900">{{ e($model->name) }}</span>
-                    </div>
-                </div>
-
-                <div class="row mb-7">
-                    <label class="col-lg-4 fw-bold text-muted">Email</label>
-                    <div class="col-lg-8">
-                        <span class="fw-semibold">{{ e($model->email) }}</span>
-                    </div>
-                </div>
-
-                <div class="row mb-7">
-                    <label class="col-lg-4 fw-bold text-muted">Répondre à</label>
-                    <div class="col-lg-8">
-                        <span class="fw-semibold">{{ $model->reply_to ? e($model->reply_to) : '—' }}</span>
-                    </div>
-                </div>
-
-                <div class="row mb-7">
-                    <label class="col-lg-4 fw-bold text-muted">Par défaut</label>
-                    <div class="col-lg-8">
-                        @if($model->is_default)
-                            <span class="badge badge-light-success">Oui</span>
-                        @else
-                            <span class="badge badge-light-secondary">Non</span>
-                        @endif
-                    </div>
-                </div>
-
-                <div class="row mb-7">
-                    <label class="col-lg-4 fw-bold text-muted">Statut</label>
-                    <div class="col-lg-8">
-                        @if($model->is_active)
-                            <span class="badge badge-light-success">Actif</span>
-                        @else
-                            <span class="badge badge-light-danger">Inactif</span>
-                        @endif
-                    </div>
-                </div>
-
-                <div class="row mb-0">
-                    <label class="col-lg-4 fw-bold text-muted">Créé le</label>
-                    <div class="col-lg-8">
-                        <span class="fw-semibold">{{ $model->created_at?->format('d/m/Y H:i') ?? '—' }}</span>
-                    </div>
-                </div>
-
-            </div>
-        </div>
-    </div>
-
-    {{-- Signature HTML --}}
-    <div class="col-lg-6">
-        <div class="card h-100">
+        {{-- Signature HTML card — preserved from original view, placed inside aperçu pane --}}
+        @if($model->signature_html)
+        <div class="card mt-5">
             <div class="card-header border-0 pt-5">
                 <h3 class="card-title fw-bolder m-0">
                     <i class="bi bi-code-slash text-info fs-3 me-2"></i>
@@ -116,27 +56,32 @@
                 </h3>
             </div>
             <div class="card-body border-top">
-                @if($model->signature_html)
-                    <div class="mb-4">
-                        <div class="fs-7 text-muted fw-semibold mb-2">Aperçu</div>
-                        <div class="border rounded p-4 bg-light" style="min-height: 80px;">
-                            {!! $model->signature_html !!}
-                        </div>
+                <div class="mb-4">
+                    <div class="fs-7 text-muted fw-semibold mb-2">Aperçu</div>
+                    <div class="border rounded p-4 bg-light" style="min-height: 80px;">
+                        {!! $model->signature_html !!}
                     </div>
-                    <div>
-                        <div class="fs-7 text-muted fw-semibold mb-2">Code HTML</div>
-                        <pre class="bg-white border rounded p-4 mb-0 fs-8 text-gray-700" style="white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto;">{{ e($model->signature_html) }}</pre>
-                    </div>
-                @else
-                    <div class="text-center py-8 text-muted">
-                        <i class="bi bi-code-slash fs-2x mb-3 d-block"></i>
-                        Aucune signature définie pour cette identité.
-                    </div>
-                @endif
+                </div>
+                <div>
+                    <div class="fs-7 text-muted fw-semibold mb-2">Code HTML</div>
+                    <pre class="bg-white border rounded p-4 mb-0 fs-8 text-gray-700" style="white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto;">{{ e($model->signature_html) }}</pre>
+                </div>
             </div>
         </div>
+        @endif
     </div>
+    {{-- end Aperçu --}}
+
+    {{--
+        Tab 2 (Général) is NOT a native pane here —
+        it deep-links to the edit page via the tab nav. No pane div needed.
+    --}}
 
 </div>
+{{-- end tab-content --}}
+
+@push('scripts')
+    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
+@endpush
 
 </x-default-layout>
