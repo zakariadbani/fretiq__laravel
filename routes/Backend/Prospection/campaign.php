@@ -1,0 +1,22 @@
+<?php
+
+use App\Http\Controllers\Backend\CampaignController;
+use Illuminate\Support\Facades\Route;
+
+Route::controller(CampaignController::class)->prefix('admin')->name('admin.')->group(function () {
+    Route::get('/campaigns', 'index')->name('campaigns.index');
+    Route::get('/campaigns/create', 'create')->name('campaigns.create');
+    Route::post('/campaigns', 'store')->name('campaigns.store');
+
+    // Action routes — before {id} to avoid ambiguity
+    Route::get('/campaigns/segment-count/{id}', 'segmentCount')->name('campaigns.segmentCount');
+    Route::post('/campaigns/{id}/schedule', 'schedule')->name('campaigns.schedule');
+    Route::post('/campaigns/{id}/send', 'sendNow')->name('campaigns.sendNow');
+    Route::post('/campaigns/{id}/recipients/{recipientId}/replied', 'markReplied')->name('campaigns.markReplied');
+
+    Route::get('/campaigns/{id}', 'view')->name('campaigns.view');
+    Route::get('/campaigns/{id}/edit', 'edit')->name('campaigns.edit');
+    Route::put('/campaigns/{id}', 'update')->name('campaigns.update');
+    Route::delete('/campaigns/{id}', 'delete')->name('campaigns.delete');
+    Route::put('/campaigns/executeSwitch/{id}', 'executeSwitch')->name('campaigns.executeSwitch');
+});

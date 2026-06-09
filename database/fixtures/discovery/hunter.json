@@ -1,0 +1,120 @@
+{
+    "bolloretransport.com": {
+        "organization": "Bolloré Transport & Logistics",
+        "industry": "Transportation",
+        "country": "FR",
+        "emails": [
+            {
+                "value": "contact@bolloretransport.com",
+                "type": "generic",
+                "first_name": null,
+                "last_name": null,
+                "position": null,
+                "confidence": 92,
+                "verification": { "result": "deliverable" }
+            },
+            {
+                "value": "marie.martin@bolloretransport.com",
+                "type": "personal",
+                "first_name": "Marie",
+                "last_name": "Martin",
+                "position": "Responsable Commerciale",
+                "confidence": 84,
+                "verification": { "result": "deliverable" }
+            },
+            {
+                "value": "operations@bolloretransport.com",
+                "type": "generic",
+                "first_name": null,
+                "last_name": null,
+                "position": "Operations",
+                "confidence": 78,
+                "verification": { "result": "risky" }
+            }
+        ]
+    },
+    "geodis.com": {
+        "organization": "GEODIS",
+        "industry": "Logistics",
+        "country": "FR",
+        "emails": [
+            {
+                "value": "fret@geodis.com",
+                "type": "generic",
+                "first_name": null,
+                "last_name": null,
+                "position": "Freight",
+                "confidence": 89,
+                "verification": { "result": "deliverable" }
+            },
+            {
+                "value": "jean-pierre.dupont@geodis.com",
+                "type": "personal",
+                "first_name": "Jean-Pierre",
+                "last_name": "Dupont",
+                "position": "Directeur Commercial",
+                "confidence": 81,
+                "verification": { "result": "deliverable" }
+            }
+        ]
+    },
+    "clasquin.com": {
+        "organization": "Clasquin",
+        "industry": "Freight & Forwarding",
+        "country": "FR",
+        "emails": [
+            {
+                "value": "commercial@clasquin.com",
+                "type": "generic",
+                "first_name": null,
+                "last_name": null,
+                "position": "Commercial",
+                "confidence": 91,
+                "verification": { "result": "deliverable" }
+            },
+            {
+                "value": "sophie.lemaire@clasquin.com",
+                "type": "personal",
+                "first_name": "Sophie",
+                "last_name": "Lemaire",
+                "position": "Chargée d'affaires Fret Aérien",
+                "confidence": 76,
+                "verification": { "result": "risky" }
+            },
+            {
+                "value": "info@clasquin.com",
+                "type": "generic",
+                "first_name": null,
+                "last_name": null,
+                "position": null,
+                "confidence": 95,
+                "verification": { "result": "deliverable" }
+            }
+        ]
+    },
+    "__default__": {
+        "organization": null,
+        "industry": "Transportation",
+        "country": "FR",
+        "emails": [
+            {
+                "value": "contact@example-freight.com",
+                "type": "generic",
+                "first_name": null,
+                "last_name": null,
+                "position": null,
+                "confidence": 70,
+                "verification": { "result": "unknown" }
+            },
+            {
+                "value": "john.doe@example-freight.com",
+                "type": "personal",
+                "first_name": "John",
+                "last_name": "Doe",
+                "position": "Sales Manager",
+                "confidence": 65,
+                "verification": { "result": "risky" }
+            }
+        ]
+    }
+}

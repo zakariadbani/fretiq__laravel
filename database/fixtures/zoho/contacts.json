@@ -1,0 +1,70 @@
+{
+    "data": [
+        {
+            "id": "5309063000000200001",
+            "Full_Name": "Jean-Pierre Martin",
+            "Email": "jp.martin@transports-dupont.fr",
+            "Title": "Directeur Commercial",
+            "Phone": "+33 1 23 45 67 90",
+            "Account_Name": {
+                "name": "Transports Dupont SAS",
+                "id": "5309063000000100001"
+            },
+            "Modified_Time": "2026-05-10T10:00:00+00:00"
+        },
+        {
+            "id": "5309063000000200002",
+            "Full_Name": "Fatima Benali",
+            "Email": "f.benali@atlas-logistique.ma",
+            "Title": "Responsable Import-Export",
+            "Phone": "+212 6 61 22 33 44",
+            "Account_Name": {
+                "name": "Logistique Atlas SARL",
+                "id": "5309063000000100002"
+            },
+            "Modified_Time": "2026-05-11T10:00:00+00:00"
+        },
+        {
+            "id": "5309063000000200003",
+            "Full_Name": "Thomas Leclerc",
+            "Email": "t.leclerc@marseille-cargo.com",
+            "Title": "Responsable Logistique",
+            "Phone": "+33 4 91 00 11 33",
+            "Account_Name": {
+                "name": "Marseille Cargo & Co",
+                "id": "5309063000000100004"
+            },
+            "Modified_Time": "2026-05-12T10:00:00+00:00"
+        },
+        {
+            "id": "5309063000000200004",
+            "Full_Name": "Karim Nassiri",
+            "Email": null,
+            "Title": "Chef de Zone",
+            "Phone": "+212 5 22 99 88 77",
+            "Account_Name": {
+                "name": "Logistique Atlas SARL",
+                "id": "5309063000000100002"
+            },
+            "Modified_Time": "2026-05-13T10:00:00+00:00"
+        },
+        {
+            "id": "5309063000000200005",
+            "Full_Name": "Sophie Renard",
+            "Email": null,
+            "Title": "Assistante de Direction",
+            "Phone": null,
+            "Account_Name": {
+                "name": "Euro Fret International",
+                "id": "5309063000000100003"
+            },
+            "Modified_Time": "2026-05-14T10:00:00+00:00"
+        }
+    ],
+    "info": {
+        "count": 5,
+        "more_records": false,
+        "page": 1,
+        "per_page": 200
+    }
+}

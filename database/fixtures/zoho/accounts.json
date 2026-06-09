@@ -1,0 +1,46 @@
+{
+    "data": [
+        {
+            "id": "5309063000000100001",
+            "Account_Name": "Transports Dupont SAS",
+            "Website": "https://www.transports-dupont.fr",
+            "Industry": "Transportation",
+            "Billing_Country": "France",
+            "Phone": "+33 1 23 45 67 89",
+            "Modified_Time": "2026-05-01T10:00:00+00:00"
+        },
+        {
+            "id": "5309063000000100002",
+            "Account_Name": "Logistique Atlas SARL",
+            "Website": "https://atlas-logistique.ma",
+            "Industry": "Logistics",
+            "Billing_Country": "Maroc",
+            "Phone": "+212 5 22 11 22 33",
+            "Modified_Time": "2026-05-02T10:00:00+00:00"
+        },
+        {
+            "id": "5309063000000100003",
+            "Account_Name": "Euro Fret International",
+            "Website": null,
+            "Industry": null,
+            "Billing_Country": "Belgium",
+            "Phone": null,
+            "Modified_Time": "2026-05-03T10:00:00+00:00"
+        },
+        {
+            "id": "5309063000000100004",
+            "Account_Name": "Marseille Cargo & Co",
+            "Website": "https://www.marseille-cargo.com/fr/accueil",
+            "Industry": "Freight",
+            "Billing_Country": "France",
+            "Phone": "+33 4 91 00 11 22",
+            "Modified_Time": "2026-05-04T10:00:00+00:00"
+        }
+    ],
+    "info": {
+        "count": 4,
+        "more_records": false,
+        "page": 1,
+        "per_page": 200
+    }
+}

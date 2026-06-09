@@ -1,0 +1,6080 @@
+@font-face {
+  font-family: 'keenicons-filled';
+  src:  url('fonts/keenicons-filled.eot?m91vhs');
+  src:  url('fonts/keenicons-filled.eot?m91vhs#iefix') format('embedded-opentype'),
+    url('fonts/keenicons-filled.ttf?m91vhs') format('truetype'),
+    url('fonts/keenicons-filled.woff?m91vhs') format('woff'),
+    url('fonts/keenicons-filled.svg?m91vhs#keenicons-filled') format('svg');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+.ki-filled {
+  /* use !important to prevent issues with browser extensions that change fonts */
+  font-family: 'keenicons-filled' !important;
+  speak: never;
+  font-style: normal;
+  font-weight: normal;
+  font-variant: normal;
+  text-transform: none;
+  line-height: 1;
+
+  /* Better Font Rendering =========== */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.ki-element-plus.ki-filled:after {
+  content: "\e900";
+  
+  opacity: 0.2;
+}
+.ki-element-plus.ki-filled:before {
+  content: "\e901";
+  position: absolute;
+  
+}
+.ki-slider-horizontal.ki-filled:after {
+  content: "\e902";
+  
+  opacity: 0.2;
+}
+.ki-slider-horizontal.ki-filled:before {
+  content: "\e903";
+  position: absolute;
+  
+}
+.ki-slider-horizontal-2.ki-filled:after {
+  content: "\e904";
+  
+  opacity: 0.2;
+}
+.ki-slider-horizontal-2.ki-filled:before {
+  content: "\e905";
+  position: absolute;
+  
+}
+.ki-element-1.ki-filled:after {
+  content: "\e906";
+  
+  opacity: 0.2;
+}
+.ki-element-1.ki-filled:before {
+  content: "\e907";
+  position: absolute;
+  
+}
+.ki-element-equal.ki-filled:after {
+  content: "\e908";
+  
+  opacity: 0.2;
+}
+.ki-element-equal.ki-filled:before {
+  content: "\e909";
+  position: absolute;
+  
+}
+.ki-element-3.ki-filled:after {
+  content: "\e90a";
+  
+  opacity: 0.2;
+}
+.ki-element-3.ki-filled:before {
+  content: "\e90b";
+  position: absolute;
+  
+}
+.ki-element-2.ki-filled:after {
+  content: "\e90c";
+  
+  opacity: 0.2;
+}
+.ki-element-2.ki-filled:before {
+  content: "\e90d";
+  position: absolute;
+  
+}
+.ki-element-10.ki-filled:after {
+  content: "\e90e";
+  
+  opacity: 0.2;
+}
+.ki-element-10.ki-filled:before {
+  content: "\e90f";
+  position: absolute;
+  
+}
+.ki-element-6.ki-filled:after {
+  content: "\e910";
+  
+  opacity: 0.2;
+}
+.ki-element-6.ki-filled:before {
+  content: "\e911";
+  position: absolute;
+  
+}
+.ki-element-7.ki-filled:after {
+  content: "\e912";
+  
+  opacity: 0.2;
+}
+.ki-element-7.ki-filled:before {
+  content: "\e913";
+  position: absolute;
+  
+}
+.ki-element-11.ki-filled:after {
+  content: "\e914";
+  
+  opacity: 0.2;
+}
+.ki-element-11.ki-filled:before {
+  content: "\e915";
+  position: absolute;
+  
+}
+.ki-element-5.ki-filled:after {
+  content: "\e916";
+  
+  opacity: 0.2;
+}
+.ki-element-5.ki-filled:before {
+  content: "\e917";
+  position: absolute;
+  
+}
+.ki-element-4.ki-filled:after {
+  content: "\e918";
+  
+  opacity: 0.2;
+}
+.ki-element-4.ki-filled:before {
+  content: "\e919";
+  position: absolute;
+  
+}
+.ki-element-12.ki-filled:after {
+  content: "\e91a";
+  
+  opacity: 0.2;
+}
+.ki-element-12.ki-filled:before {
+  content: "\e91b";
+  position: absolute;
+  
+}
+.ki-element-9.ki-filled:after {
+  content: "\e91c";
+  
+  opacity: 0.2;
+}
+.ki-element-9.ki-filled:before {
+  content: "\e91d";
+  position: absolute;
+  
+}
+.ki-element-8.ki-filled:after {
+  content: "\e91e";
+  
+  opacity: 0.2;
+}
+.ki-element-8.ki-filled:before {
+  content: "\e91f";
+  position: absolute;
+  
+}
+.ki-grid-2.ki-filled:after {
+  content: "\e920";
+  
+  opacity: 0.2;
+}
+.ki-grid-2.ki-filled:before {
+  content: "\e921";
+  position: absolute;
+  
+}
+.ki-row-vertical.ki-filled:after {
+  content: "\e922";
+  
+  opacity: 0.2;
+}
+.ki-row-vertical.ki-filled:before {
+  content: "\e923";
+  position: absolute;
+  
+}
+.ki-slider-vertica.ki-filled:after {
+  content: "\e924";
+  
+  opacity: 0.2;
+}
+.ki-slider-vertica.ki-filled:before {
+  content: "\e925";
+  position: absolute;
+  
+}
+.ki-kanban.ki-filled:after {
+  content: "\e926";
+  
+  opacity: 0.2;
+}
+.ki-kanban.ki-filled:before {
+  content: "\e927";
+  position: absolute;
+  
+}
+.ki-row-horizontal.ki-filled:after {
+  content: "\e928";
+  
+  opacity: 0.2;
+}
+.ki-row-horizontal.ki-filled:before {
+  content: "\e929";
+  position: absolute;
+  
+}
+.ki-slider-vertical.ki-filled:after {
+  content: "\e92a";
+  
+  opacity: 0.2;
+}
+.ki-slider-vertical.ki-filled:before {
+  content: "\e92b";
+  position: absolute;
+  
+}
+.ki-bar-chart.ki-filled:after {
+  content: "\e92c";
+  
+  opacity: 0.2;
+}
+.ki-bar-chart.ki-filled:before {
+  content: "\e92d";
+  position: absolute;
+  
+}
+.ki-maximize.ki-filled:after {
+  content: "\e92e";
+  
+  opacity: 0.2;
+}
+.ki-maximize.ki-filled:before {
+  content: "\e92f";
+  position: absolute;
+  
+}
+.ki-fatrows.ki-filled:after {
+  content: "\e930";
+  
+  opacity: 0.2;
+}
+.ki-fatrows.ki-filled:before {
+  content: "\e931";
+  position: absolute;
+  
+}
+.ki-slider-vertical-2.ki-filled:after {
+  content: "\e932";
+  
+  opacity: 0.2;
+}
+.ki-slider-vertical-2.ki-filled:before {
+  content: "\e933";
+  position: absolute;
+  
+}
+.ki-grid.ki-filled:after {
+  content: "\e934";
+  
+  opacity: 0.2;
+}
+.ki-grid.ki-filled:before {
+  content: "\e935";
+  position: absolute;
+  
+}
+.ki-film.ki-filled:after {
+  content: "\e936";
+  
+}
+.ki-film.ki-filled:before {
+  content: "\e937";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-gavel.ki-filled:after {
+  content: "\e938";
+  
+}
+.ki-gavel.ki-filled:before {
+  content: "\e939";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-building.ki-filled:after {
+  content: "\e93a";
+  
+  opacity: 0.2;
+}
+.ki-building.ki-filled:before {
+  content: "\e93b";
+  position: absolute;
+  
+}
+.ki-building-columns.ki-filled:after {
+  content: "\e93c";
+  
+  opacity: 0.2;
+}
+.ki-building-columns.ki-filled:before {
+  content: "\e93d";
+  position: absolute;
+  
+}
+.ki-utilities.ki-filled:after {
+  content: "\e93e";
+  
+}
+.ki-utilities.ki-filled:before {
+  content: "\e93f";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-globe.ki-filled:after {
+  content: "\e940";
+  
+}
+.ki-globe.ki-filled:before {
+  content: "\e941";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-money-bill.ki-filled:after {
+  content: "\e942";
+  
+}
+.ki-money-bill.ki-filled:before {
+  content: "\e943";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-ash-register.ki-filled:after {
+  content: "\e944";
+  
+}
+.ki-ash-register.ki-filled:before {
+  content: "\e945";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-chart-waterfall.ki-filled:after {
+  content: "\e946";
+  
+  opacity: 0.2;
+}
+.ki-chart-waterfall.ki-filled:before {
+  content: "\e947";
+  position: absolute;
+  
+}
+.ki-diagram-subtask.ki-filled:after {
+  content: "\e948";
+  
+}
+.ki-diagram-subtask.ki-filled:before {
+  content: "\e949";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-acrylics-reline-materials.ki-filled:after {
+  content: "\e94a";
+  
+}
+.ki-acrylics-reline-materials.ki-filled:before {
+  content: "\e94b";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-chart-user.ki-filled:after {
+  content: "\e94c";
+  
+}
+.ki-chart-user.ki-filled:before {
+  content: "\e94d";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-truck-front.ki-filled:after {
+  content: "\e94e";
+  
+}
+.ki-truck-front.ki-filled:before {
+  content: "\e94f";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-drone-front.ki-filled:after {
+  content: "\e950";
+  
+}
+.ki-drone-front.ki-filled:before {
+  content: "\e951";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-information-technology.ki-filled:after {
+  content: "\e952";
+  
+}
+.ki-information-technology.ki-filled:before {
+  content: "\e953";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-truck.ki-filled:after {
+  content: "\e954";
+  
+}
+.ki-truck.ki-filled:before {
+  content: "\e955";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-consumer-staples.ki-filled:after {
+  content: "\e956";
+  
+}
+.ki-consumer-staples.ki-filled:before {
+  content: "\e957";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-satellite-communication.ki-filled:after {
+  content: "\e958";
+  
+}
+.ki-satellite-communication.ki-filled:before {
+  content: "\e959";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-tax-management.ki-filled:after {
+  content: "\e95a";
+  
+}
+.ki-tax-management.ki-filled:before {
+  content: "\e95b";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-excavator.ki-filled:after {
+  content: "\e95c";
+  
+}
+.ki-excavator.ki-filled:before {
+  content: "\e95d";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-arena-car.ki-filled:after {
+  content: "\e95e";
+  
+}
+.ki-arena-car.ki-filled:before {
+  content: "\e95f";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-industry.ki-filled:after {
+  content: "\e960";
+  
+}
+.ki-industry.ki-filled:before {
+  content: "\e961";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-sign-hanging.ki-filled:after {
+  content: "\e962";
+  
+}
+.ki-sign-hanging.ki-filled:before {
+  content: "\e963";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-tank.ki-filled:after {
+  content: "\e964";
+  
+}
+.ki-tank.ki-filled:before {
+  content: "\e965";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-palette.ki-filled:after {
+  content: "\e966";
+  
+}
+.ki-palette.ki-filled:before {
+  content: "\e967";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-health-care.ki-filled:after {
+  content: "\e968";
+  
+}
+.ki-health-care.ki-filled:before {
+  content: "\e969";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-eco-farming.ki-filled:after {
+  content: "\e96a";
+  
+}
+.ki-eco-farming.ki-filled:before {
+  content: "\e96b";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-oil-well.ki-filled:after {
+  content: "\e96c";
+  
+}
+.ki-oil-well.ki-filled:before {
+  content: "\e96d";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-hotel.ki-filled:after {
+  content: "\e96e";
+  
+}
+.ki-hotel.ki-filled:before {
+  content: "\e96f";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-arena-shop.ki-filled:after {
+  content: "\e970";
+  
+}
+.ki-arena-shop.ki-filled:before {
+  content: "\e971";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-tv.ki-filled:after {
+  content: "\e972";
+  
+}
+.ki-tv.ki-filled:before {
+  content: "\e973";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-server.ki-filled:after {
+  content: "\e974";
+  
+}
+.ki-server.ki-filled:before {
+  content: "\e975";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-tv-retro.ki-filled:after {
+  content: "\e976";
+  
+}
+.ki-tv-retro.ki-filled:before {
+  content: "\e977";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-industry-windows.ki-filled:after {
+  content: "\e978";
+  
+}
+.ki-industry-windows.ki-filled:before {
+  content: "\e979";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-farm.ki-filled:after {
+  content: "\e97a";
+  
+}
+.ki-farm.ki-filled:before {
+  content: "\e97b";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-arena-plane.ki-filled:after {
+  content: "\e97c";
+  
+}
+.ki-arena-plane.ki-filled:before {
+  content: "\e97d";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-file-contract.ki-filled:after {
+  content: "\e97e";
+  
+}
+.ki-file-contract.ki-filled:before {
+  content: "\e97f";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-financials.ki-filled:after {
+  content: "\e980";
+  
+}
+.ki-financials.ki-filled:before {
+  content: "\e981";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-photo-film-music.ki-filled:after {
+  content: "\e982";
+  
+}
+.ki-photo-film-music.ki-filled:before {
+  content: "\e983";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-energy.ki-filled:after {
+  content: "\e984";
+  
+}
+.ki-energy.ki-filled:before {
+  content: "\e985";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-city.ki-filled:after {
+  content: "\e986";
+  
+}
+.ki-city.ki-filled:before {
+  content: "\e987";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-agritech.ki-filled:after {
+  content: "\e988";
+  
+}
+.ki-agritech.ki-filled:before {
+  content: "\e989";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-consumer-discretionary.ki-filled:after {
+  content: "\e98a";
+  
+}
+.ki-consumer-discretionary.ki-filled:before {
+  content: "\e98b";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-materials-1.ki-filled:after {
+  content: "\e98c";
+  
+}
+.ki-materials-1.ki-filled:before {
+  content: "\e98d";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-space-station-moon-construction.ki-filled:after {
+  content: "\e98e";
+  
+}
+.ki-space-station-moon-construction.ki-filled:before {
+  content: "\e98f";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-photo-film.ki-filled:after {
+  content: "\e990";
+  
+}
+.ki-photo-film.ki-filled:before {
+  content: "\e991";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-conveyor-belt-boxes.ki-filled:after {
+  content: "\e992";
+  
+}
+.ki-conveyor-belt-boxes.ki-filled:before {
+  content: "\e993";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-drugs.ki-filled:after {
+  content: "\e994";
+  
+}
+.ki-drugs.ki-filled:before {
+  content: "\e995";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-bridge-suspension.ki-filled:after {
+  content: "\e996";
+  
+  opacity: 0.2;
+}
+.ki-bridge-suspension.ki-filled:before {
+  content: "\e997";
+  position: absolute;
+  
+}
+.ki-chart-pyramid.ki-filled:after {
+  content: "\e998";
+  
+  opacity: 0.2;
+}
+.ki-chart-pyramid.ki-filled:before {
+  content: "\e999";
+  position: absolute;
+  
+}
+.ki-real-estate.ki-filled:after {
+  content: "\e99a";
+  
+}
+.ki-real-estate.ki-filled:before {
+  content: "\e99b";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-network-wired.ki-filled:after {
+  content: "\e99c";
+  
+}
+.ki-network-wired.ki-filled:before {
+  content: "\e99d";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-agriculture.ki-filled:after {
+  content: "\e99e";
+  
+}
+.ki-agriculture.ki-filled:before {
+  content: "\e99f";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-map-zone.ki-filled:after {
+  content: "\e9a0";
+  
+}
+.ki-map-zone.ki-filled:before {
+  content: "\e9a1";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-signal-tower.ki-filled:after {
+  content: "\e9a2";
+  
+}
+.ki-signal-tower.ki-filled:before {
+  content: "\e9a3";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-camera-movie.ki-filled:after {
+  content: "\e9a4";
+  
+}
+.ki-camera-movie.ki-filled:before {
+  content: "\e9a5";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-house.ki-filled:after {
+  content: "\e9a6";
+  
+}
+.ki-house.ki-filled:before {
+  content: "\e9a7";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-tax-statement.ki-filled:after {
+  content: "\e9a8";
+  
+}
+.ki-tax-statement.ki-filled:before {
+  content: "\e9a9";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-money-bill-transfer.ki-filled:after {
+  content: "\e9aa";
+  
+}
+.ki-money-bill-transfer.ki-filled:before {
+  content: "\e9ab";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-mouse.ki-filled:after {
+  content: "\e9ac";
+  
+  opacity: 0.2;
+}
+.ki-mouse.ki-filled:before {
+  content: "\e9ad";
+  position: absolute;
+  
+}
+.ki-screen.ki-filled:after {
+  content: "\e9ae";
+  
+  opacity: 0.2;
+}
+.ki-screen.ki-filled:before {
+  content: "\e9af";
+  position: absolute;
+  
+}
+.ki-laptop.ki-filled:after {
+  content: "\e9b0";
+  
+  opacity: 0.2;
+}
+.ki-laptop.ki-filled:before {
+  content: "\e9b1";
+  position: absolute;
+  
+}
+.ki-external-drive.ki-filled:after {
+  content: "\e9b2";
+  
+  opacity: 0.2;
+}
+.ki-external-drive.ki-filled:before {
+  content: "\e9b3";
+  position: absolute;
+  
+}
+.ki-calculatoror.ki-filled:after {
+  content: "\e9b4";
+  
+  opacity: 0.2;
+}
+.ki-calculatoror.ki-filled:before {
+  content: "\e9b5";
+  position: absolute;
+  
+}
+.ki-electronic-clock.ki-filled:after {
+  content: "\e9b6";
+  
+  opacity: 0.2;
+}
+.ki-electronic-clock.ki-filled:before {
+  content: "\e9b7";
+  position: absolute;
+  
+}
+.ki-phone.ki-filled:after {
+  content: "\e9b8";
+  
+  opacity: 0.2;
+}
+.ki-phone.ki-filled:before {
+  content: "\e9b9";
+  position: absolute;
+  
+}
+.ki-router.ki-filled:after {
+  content: "\e9ba";
+  
+  opacity: 0.2;
+}
+.ki-router.ki-filled:before {
+  content: "\e9bb";
+  position: absolute;
+  
+}
+.ki-simcard.ki-filled:after {
+  content: "\e9bc";
+  
+  opacity: 0.2;
+}
+.ki-simcard.ki-filled:before {
+  content: "\e9bd";
+  position: absolute;
+  
+}
+.ki-printer.ki-filled:after {
+  content: "\e9be";
+  
+  opacity: 0.2;
+}
+.ki-printer.ki-filled:before {
+  content: "\e9bf";
+  position: absolute;
+  
+}
+.ki-speaker.ki-filled:after {
+  content: "\e9c0";
+  
+  opacity: 0.2;
+}
+.ki-speaker.ki-filled:before {
+  content: "\e9c1";
+  position: absolute;
+  
+}
+.ki-simcard-2.ki-filled:after {
+  content: "\e9c2";
+  
+  opacity: 0.2;
+}
+.ki-simcard-2.ki-filled:before {
+  content: "\e9c3";
+  position: absolute;
+  
+}
+.ki-airpod.ki-filled:after {
+  content: "\e9c4";
+  
+  opacity: 0.2;
+}
+.ki-airpod.ki-filled:before {
+  content: "\e9c5";
+  position: absolute;
+  
+}
+.ki-wifi.ki-filled:after {
+  content: "\e9c6";
+  
+  opacity: 0.2;
+}
+.ki-wifi.ki-filled:before {
+  content: "\e9c7";
+  position: absolute;
+  
+}
+.ki-bluetooth.ki-filled:after {
+  content: "\e9c8";
+  
+  opacity: 0.2;
+}
+.ki-bluetooth.ki-filled:before {
+  content: "\e9c9";
+  position: absolute;
+  
+}
+.ki-devices-2.ki-filled:after {
+  content: "\e9ca";
+  
+  opacity: 0.2;
+}
+.ki-devices-2.ki-filled:before {
+  content: "\e9cb";
+  position: absolute;
+  
+}
+.ki-keyboard.ki-filled:after {
+  content: "\e9cc";
+  
+  opacity: 0.2;
+}
+.ki-keyboard.ki-filled:before {
+  content: "\e9cd";
+  position: absolute;
+  
+}
+.ki-desktop-mobile.ki-filled:after {
+  content: "\e9ce";
+  
+  opacity: 0.2;
+}
+.ki-desktop-mobile.ki-filled:before {
+  content: "\e9cf";
+  position: absolute;
+  
+}
+.ki-call-2.ki-filled:after {
+  content: "\e9d0";
+  
+  opacity: 0.2;
+}
+.ki-call-2.ki-filled:before {
+  content: "\e9d1";
+  position: absolute;
+  
+}
+.ki-devices.ki-filled:after {
+  content: "\e9d2";
+  
+  opacity: 0.2;
+}
+.ki-devices.ki-filled:before {
+  content: "\e9d3";
+  position: absolute;
+  
+}
+.ki-pad.ki-filled:after {
+  content: "\e9d4";
+  
+  opacity: 0.2;
+}
+.ki-pad.ki-filled:before {
+  content: "\e9d5";
+  position: absolute;
+  
+}
+.ki-megaphone-1.ki-filled:after {
+  content: "\e9d6";
+  
+  opacity: 0.2;
+}
+.ki-megaphone-1.ki-filled:before {
+  content: "\e9d7";
+  position: absolute;
+  
+}
+.ki-notification-on.ki-filled:after {
+  content: "\e9d8";
+  
+  opacity: 0.2;
+}
+.ki-notification-on.ki-filled:before {
+  content: "\e9d9";
+  position: absolute;
+  
+}
+.ki-notification-status.ki-filled:after {
+  content: "\e9da";
+  
+  opacity: 0.2;
+}
+.ki-notification-status.ki-filled:before {
+  content: "\e9db";
+  position: absolute;
+  
+}
+.ki-notification-bing.ki-filled:after {
+  content: "\e9dc";
+  
+  opacity: 0.2;
+}
+.ki-notification-bing.ki-filled:before {
+  content: "\e9dd";
+  position: absolute;
+  
+}
+.ki-notification.ki-filled:after {
+  content: "\e9de";
+  
+  opacity: 0.2;
+}
+.ki-notification.ki-filled:before {
+  content: "\e9df";
+  position: absolute;
+  
+}
+.ki-notification-1.ki-filled:after {
+  content: "\e9e0";
+  
+  opacity: 0.2;
+}
+.ki-notification-1.ki-filled:before {
+  content: "\e9e1";
+  position: absolute;
+  
+}
+.ki-notification-favorite.ki-filled:after {
+  content: "\e9e2";
+  
+  opacity: 0.2;
+}
+.ki-notification-favorite.ki-filled:before {
+  content: "\e9e3";
+  position: absolute;
+  
+}
+.ki-notification-circle.ki-filled:after {
+  content: "\e9e4";
+  
+  opacity: 0.2;
+}
+.ki-notification-circle.ki-filled:before {
+  content: "\e9e5";
+  position: absolute;
+  
+}
+.ki-message-notify.ki-filled:after {
+  content: "\e9e6";
+  
+  opacity: 0.2;
+}
+.ki-message-notify.ki-filled:before {
+  content: "\e9e7";
+  position: absolute;
+  
+}
+.ki-message-minus.ki-filled:after {
+  content: "\e9e8";
+  
+  opacity: 0.2;
+}
+.ki-message-minus.ki-filled:before {
+  content: "\e9e9";
+  position: absolute;
+  
+}
+.ki-message-edit.ki-filled:after {
+  content: "\e9ea";
+  
+  opacity: 0.2;
+}
+.ki-message-edit.ki-filled:before {
+  content: "\e9eb";
+  position: absolute;
+  
+}
+.ki-address-book.ki-filled:after {
+  content: "\e9ec";
+  
+  opacity: 0.2;
+}
+.ki-address-book.ki-filled:before {
+  content: "\e9ed";
+  position: absolute;
+  
+}
+.ki-messages.ki-filled:after {
+  content: "\e9ee";
+  
+  opacity: 0.2;
+}
+.ki-messages.ki-filled:before {
+  content: "\e9ef";
+  position: absolute;
+  
+}
+.ki-message-text.ki-filled:after {
+  content: "\e9f0";
+  
+  opacity: 0.2;
+}
+.ki-message-text.ki-filled:before {
+  content: "\e9f1";
+  position: absolute;
+  
+}
+.ki-directbox-default.ki-filled:after {
+  content: "\e9f2";
+  
+  opacity: 0.2;
+}
+.ki-directbox-default.ki-filled:before {
+  content: "\e9f3";
+  position: absolute;
+  
+}
+.ki-sms.ki-filled:after {
+  content: "\e9f4";
+  
+  opacity: 0.2;
+}
+.ki-sms.ki-filled:before {
+  content: "\e9f5";
+  position: absolute;
+  
+}
+.ki-message-add.ki-filled:after {
+  content: "\e9f6";
+  
+  opacity: 0.2;
+}
+.ki-message-add.ki-filled:before {
+  content: "\e9f7";
+  position: absolute;
+  
+}
+.ki-message-text-2.ki-filled:after {
+  content: "\e9f8";
+  
+  opacity: 0.2;
+}
+.ki-message-text-2.ki-filled:before {
+  content: "\e9f9";
+  position: absolute;
+  
+}
+.ki-moon.ki-filled:after {
+  content: "\e9fa";
+  
+  opacity: 0.2;
+}
+.ki-moon.ki-filled:before {
+  content: "\e9fb";
+  position: absolute;
+  
+}
+.ki-drop.ki-filled:after {
+  content: "\e9fc";
+  
+  opacity: 0.2;
+}
+.ki-drop.ki-filled:before {
+  content: "\e9fd";
+  position: absolute;
+  
+}
+.ki-sun.ki-filled:after {
+  content: "\e9fe";
+  
+  opacity: 0.2;
+}
+.ki-sun.ki-filled:before {
+  content: "\e9ff";
+  position: absolute;
+  
+}
+.ki-night-day.ki-filled:after {
+  content: "\ea00";
+  
+  opacity: 0.2;
+}
+.ki-night-day.ki-filled:before {
+  content: "\ea01";
+  position: absolute;
+  
+}
+.ki-office-bag.ki-filled:after {
+  content: "\ea02";
+  
+  opacity: 0.2;
+}
+.ki-office-bag.ki-filled:before {
+  content: "\ea03";
+  position: absolute;
+  
+}
+.ki-calculator.ki-filled:after {
+  content: "\ea04";
+  
+  opacity: 0.2;
+}
+.ki-calculator.ki-filled:before {
+  content: "\ea05";
+  position: absolute;
+  
+}
+.ki-financial-schedule.ki-filled:after {
+  content: "\ea06";
+  
+  opacity: 0.2;
+}
+.ki-financial-schedule.ki-filled:before {
+  content: "\ea07";
+  position: absolute;
+  
+}
+.ki-xmr.ki-filled:after {
+  content: "\ea08";
+  
+  opacity: 0.2;
+}
+.ki-xmr.ki-filled:before {
+  content: "\ea09";
+  position: absolute;
+  
+}
+.ki-binance-usd-busd.ki-filled:after {
+  content: "\ea0a";
+  
+  opacity: 0.2;
+}
+.ki-binance-usd-busd.ki-filled:before {
+  content: "\ea0b";
+  position: absolute;
+  
+}
+.ki-issue-money.ki-filled:after {
+  content: "\ea0c";
+  
+  opacity: 0.2;
+}
+.ki-issue-money.ki-filled:before {
+  content: "\ea0d";
+  position: absolute;
+  
+}
+.ki-educare-ekt.ki-filled:after {
+  content: "\ea0e";
+  
+  opacity: 0.2;
+}
+.ki-educare-ekt.ki-filled:before {
+  content: "\ea0f";
+  position: absolute;
+  
+}
+.ki-save-deposit.ki-filled:after {
+  content: "\ea10";
+  
+  opacity: 0.2;
+}
+.ki-save-deposit.ki-filled:before {
+  content: "\ea11";
+  position: absolute;
+  
+}
+.ki-trello.ki-filled:after {
+  content: "\ea12";
+  
+  opacity: 0.2;
+}
+.ki-trello.ki-filled:before {
+  content: "\ea13";
+  position: absolute;
+  
+}
+.ki-bank.ki-filled:after {
+  content: "\ea14";
+  
+  opacity: 0.2;
+}
+.ki-bank.ki-filled:before {
+  content: "\ea15";
+  position: absolute;
+  
+}
+.ki-two-credit-cart.ki-filled:after {
+  content: "\ea16";
+  
+  opacity: 0.2;
+}
+.ki-two-credit-cart.ki-filled:before {
+  content: "\ea17";
+  position: absolute;
+  
+}
+.ki-vibe-vibe.ki-filled:after {
+  content: "\ea18";
+  
+  opacity: 0.2;
+}
+.ki-vibe-vibe.ki-filled:before {
+  content: "\ea19";
+  position: absolute;
+  
+}
+.ki-investment-structure.ki-filled:before {
+  content: "\ea1a";
+}
+.ki-ocean.ki-filled:before {
+  content: "\ea1b";
+}
+.ki-bill.ki-filled:after {
+  content: "\ea1c";
+  
+  opacity: 0.2;
+}
+.ki-bill.ki-filled:before {
+  content: "\ea1d";
+  position: absolute;
+  
+}
+.ki-paypal.ki-filled:after {
+  content: "\ea1e";
+  
+  opacity: 0.2;
+}
+.ki-paypal.ki-filled:before {
+  content: "\ea1f";
+  position: absolute;
+  
+}
+.ki-credit-cart.ki-filled:after {
+  content: "\ea20";
+  
+  opacity: 0.2;
+}
+.ki-credit-cart.ki-filled:before {
+  content: "\ea21";
+  position: absolute;
+  
+}
+.ki-building-chart.ki-filled:after {
+  content: "\ea22";
+  
+}
+.ki-building-chart.ki-filled:before {
+  content: "\ea23";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-enjin-coin-enj.ki-filled:after {
+  content: "\ea24";
+  
+  opacity: 0.2;
+}
+.ki-enjin-coin-enj.ki-filled:before {
+  content: "\ea25";
+  position: absolute;
+  
+}
+.ki-lts.ki-filled:after {
+  content: "\ea26";
+  
+  opacity: 0.2;
+}
+.ki-lts.ki-filled:before {
+  content: "\ea27";
+  position: absolute;
+  
+}
+.ki-dash.ki-filled:after {
+  content: "\ea28";
+  
+  opacity: 0.2;
+}
+.ki-dash.ki-filled:before {
+  content: "\ea29";
+  position: absolute;
+  
+}
+.ki-theta-theta.ki-filled:after {
+  content: "\ea2a";
+  
+  opacity: 0.2;
+}
+.ki-theta-theta.ki-filled:before {
+  content: "\ea2b";
+  position: absolute;
+  
+}
+.ki-price-tag.ki-filled:after {
+  content: "\ea2c";
+  
+  opacity: 0.2;
+}
+.ki-price-tag.ki-filled:before {
+  content: "\ea2d";
+  position: absolute;
+  
+}
+.ki-wallet.ki-filled:after {
+  content: "\ea2e";
+  
+  opacity: 0.2;
+}
+.ki-wallet.ki-filled:before {
+  content: "\ea2f";
+  position: absolute;
+  
+}
+.ki-bitcoin.ki-filled:after {
+  content: "\ea30";
+  
+  opacity: 0.2;
+}
+.ki-bitcoin.ki-filled:before {
+  content: "\ea31";
+  position: absolute;
+  
+}
+.ki-euro.ki-filled:after {
+  content: "\ea32";
+  
+  opacity: 0.2;
+}
+.ki-euro.ki-filled:before {
+  content: "\ea33";
+  position: absolute;
+  
+}
+.ki-nexo.ki-filled:after {
+  content: "\ea34";
+  
+  opacity: 0.2;
+}
+.ki-nexo.ki-filled:before {
+  content: "\ea35";
+  position: absolute;
+  
+}
+.ki-celsius-cel.ki-filled:after {
+  content: "\ea36";
+  
+  opacity: 0.2;
+}
+.ki-celsius-cel.ki-filled:before {
+  content: "\ea37";
+  position: absolute;
+  
+}
+.ki-avalanche-avax.ki-filled:after {
+  content: "\ea38";
+  
+  opacity: 0.2;
+}
+.ki-avalanche-avax.ki-filled:before {
+  content: "\ea39";
+  position: absolute;
+  
+}
+.ki-wanchain-wan.ki-filled:after {
+  content: "\ea3a";
+  
+  opacity: 0.2;
+}
+.ki-wanchain-wan.ki-filled:before {
+  content: "\ea3b";
+  position: absolute;
+  
+}
+.ki-binance.ki-filled:after {
+  content: "\ea3c";
+  
+  opacity: 0.2;
+}
+.ki-binance.ki-filled:before {
+  content: "\ea3d";
+  position: absolute;
+  
+}
+.ki-dollar.ki-filled:after {
+  content: "\ea3e";
+  
+  opacity: 0.2;
+}
+.ki-dollar.ki-filled:before {
+  content: "\ea3f";
+  position: absolute;
+  
+}
+.ki-text-circle.ki-filled:before {
+  content: "\ea40";
+}
+.ki-text-number.ki-filled:before {
+  content: "\ea41";
+}
+.ki-textalign-center.ki-filled:before {
+  content: "\ea42";
+}
+.ki-text-underline.ki-filled:after {
+  content: "\ea43";
+  
+}
+.ki-text-underline.ki-filled:before {
+  content: "\ea44";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-text-strikethrough.ki-filled:after {
+  content: "\ea45";
+  
+  opacity: 0.2;
+}
+.ki-text-strikethrough.ki-filled:before {
+  content: "\ea46";
+  position: absolute;
+  
+}
+.ki-textalign-right.ki-filled:before {
+  content: "\ea47";
+}
+.ki-text-bold.ki-filled:after {
+  content: "\ea48";
+  
+  opacity: 0.2;
+}
+.ki-text-bold.ki-filled:before {
+  content: "\ea49";
+  position: absolute;
+  
+}
+.ki-text-italic.ki-filled:after {
+  content: "\ea4a";
+  
+  opacity: 0.2;
+}
+.ki-text-italic.ki-filled:before {
+  content: "\ea4b";
+  position: absolute;
+  
+}
+.ki-textalign-justifycenter.ki-filled:before {
+  content: "\ea4c";
+}
+.ki-textalign-left.ki-filled:before {
+  content: "\ea4d";
+}
+.ki-burger-menu-2.ki-filled:after {
+  content: "\ea4e";
+  
+  opacity: 0.2;
+}
+.ki-burger-menu-2.ki-filled:before {
+  content: "\ea4f";
+  position: absolute;
+  
+}
+.ki-burger-menu-3.ki-filled:after {
+  content: "\ea50";
+  
+  opacity: 0.1;
+}
+.ki-burger-menu-3.ki-filled:before {
+  content: "\ea51";
+  position: absolute;
+  
+}
+.ki-burger-menu-1.ki-filled:after {
+  content: "\ea52";
+  
+  opacity: 0.2;
+}
+.ki-burger-menu-1.ki-filled:before {
+  content: "\ea53";
+  position: absolute;
+  
+}
+.ki-burger-menu-4.ki-filled:before {
+  content: "\ea54";
+}
+.ki-burger-menu-5.ki-filled:before {
+  content: "\ea55";
+}
+.ki-burger-menu-6.ki-filled:before {
+  content: "\ea56";
+}
+.ki-burger-menu.ki-filled:after {
+  content: "\ea57";
+  
+  opacity: 0.2;
+}
+.ki-burger-menu.ki-filled:before {
+  content: "\ea58";
+  position: absolute;
+  
+}
+.ki-pulse.ki-filled:after {
+  content: "\ea59";
+  
+  opacity: 0.2;
+}
+.ki-pulse.ki-filled:before {
+  content: "\ea5a";
+  position: absolute;
+  
+}
+.ki-pill.ki-filled:after {
+  content: "\ea5b";
+  
+  opacity: 0.2;
+}
+.ki-pill.ki-filled:before {
+  content: "\ea5c";
+  position: absolute;
+  
+}
+.ki-mask.ki-filled:after {
+  content: "\ea5d";
+  
+  opacity: 0.2;
+}
+.ki-mask.ki-filled:before {
+  content: "\ea5e";
+  position: absolute;
+  
+}
+.ki-syringe.ki-filled:after {
+  content: "\ea5f";
+  
+  opacity: 0.2;
+}
+.ki-syringe.ki-filled:before {
+  content: "\ea60";
+  position: absolute;
+  
+}
+.ki-test-tubes.ki-filled:after {
+  content: "\ea61";
+  
+  opacity: 0.2;
+}
+.ki-test-tubes.ki-filled:before {
+  content: "\ea62";
+  position: absolute;
+  
+}
+.ki-flask.ki-filled:after {
+  content: "\ea63";
+  
+  opacity: 0.2;
+}
+.ki-flask.ki-filled:before {
+  content: "\ea64";
+  position: absolute;
+  
+}
+.ki-first-aid-kit.ki-filled:after {
+  content: "\ea65";
+  
+  opacity: 0.2;
+}
+.ki-first-aid-kit.ki-filled:before {
+  content: "\ea66";
+  position: absolute;
+  
+}
+.ki-thermometer.ki-filled:after {
+  content: "\ea67";
+  
+  opacity: 0.2;
+}
+.ki-thermometer.ki-filled:before {
+  content: "\ea68";
+  position: absolute;
+  
+}
+.ki-bandage.ki-filled:after {
+  content: "\ea69";
+  
+  opacity: 0.2;
+}
+.ki-bandage.ki-filled:before {
+  content: "\ea6a";
+  position: absolute;
+  
+}
+.ki-virus.ki-filled:after {
+  content: "\ea6b";
+  
+  opacity: 0.2;
+}
+.ki-virus.ki-filled:before {
+  content: "\ea6c";
+  position: absolute;
+  
+}
+.ki-capsule.ki-filled:after {
+  content: "\ea6d";
+  
+  opacity: 0.2;
+}
+.ki-capsule.ki-filled:before {
+  content: "\ea6e";
+  position: absolute;
+  
+}
+.ki-users.ki-filled:after {
+  content: "\ea6f";
+  
+  opacity: 0.2;
+}
+.ki-users.ki-filled:before {
+  content: "\ea70";
+  position: absolute;
+  
+}
+.ki-profile-circle.ki-filled:after {
+  content: "\ea71";
+  
+  opacity: 0.2;
+}
+.ki-profile-circle.ki-filled:before {
+  content: "\ea72";
+  position: absolute;
+  
+}
+.ki-add-user.ki-filled:after {
+  content: "\ea73";
+  
+  opacity: 0.2;
+}
+.ki-add-user.ki-filled:before {
+  content: "\ea74";
+  position: absolute;
+  
+}
+.ki-user-edit.ki-filled:after {
+  content: "\ea75";
+  
+  opacity: 0.2;
+}
+.ki-user-edit.ki-filled:before {
+  content: "\ea76";
+  position: absolute;
+  
+}
+.ki-people.ki-filled:after {
+  content: "\ea77";
+  
+  opacity: 0.2;
+}
+.ki-people.ki-filled:before {
+  content: "\ea78";
+  position: absolute;
+  
+}
+.ki-user-tick.ki-filled:after {
+  content: "\ea79";
+  
+  opacity: 0.2;
+}
+.ki-user-tick.ki-filled:before {
+  content: "\ea7a";
+  position: absolute;
+  
+}
+.ki-user-square.ki-filled:after {
+  content: "\ea7b";
+  
+  opacity: 0.2;
+}
+.ki-user-square.ki-filled:before {
+  content: "\ea7c";
+  position: absolute;
+  
+}
+.ki-user.ki-filled:after {
+  content: "\ea7d";
+  
+  opacity: 0.2;
+}
+.ki-user.ki-filled:before {
+  content: "\ea7e";
+  position: absolute;
+  
+}
+.ki-heart.ki-filled:after {
+  content: "\ea7f";
+  
+  opacity: 0.2;
+}
+.ki-heart.ki-filled:before {
+  content: "\ea80";
+  position: absolute;
+  
+}
+.ki-like-shapes.ki-filled:after {
+  content: "\ea81";
+  
+  opacity: 0.2;
+}
+.ki-like-shapes.ki-filled:before {
+  content: "\ea82";
+  position: absolute;
+  
+}
+.ki-lovely.ki-filled:after {
+  content: "\ea83";
+  
+  opacity: 0.2;
+}
+.ki-lovely.ki-filled:before {
+  content: "\ea84";
+  position: absolute;
+  
+}
+.ki-question-2.ki-filled:after {
+  content: "\ea85";
+  
+  opacity: 0.2;
+}
+.ki-question-2.ki-filled:before {
+  content: "\ea86";
+  position: absolute;
+  
+}
+.ki-support-24.ki-filled:after {
+  content: "\ea87";
+  
+  opacity: 0.2;
+}
+.ki-support-24.ki-filled:before {
+  content: "\ea88";
+  position: absolute;
+  
+}
+.ki-like-2.ki-filled:after {
+  content: "\ea89";
+  
+  opacity: 0.2;
+}
+.ki-like-2.ki-filled:before {
+  content: "\ea8a";
+  position: absolute;
+  
+}
+.ki-like-tag.ki-filled:after {
+  content: "\ea8b";
+  
+  opacity: 0.2;
+}
+.ki-like-tag.ki-filled:before {
+  content: "\ea8c";
+  position: absolute;
+  
+}
+.ki-medal-star.ki-filled:after {
+  content: "\ea8d";
+  
+  opacity: 0.2;
+}
+.ki-medal-star.ki-filled:before {
+  content: "\ea8e";
+  position: absolute;
+  
+}
+.ki-message-question.ki-filled:after {
+  content: "\ea8f";
+  
+  opacity: 0.2;
+}
+.ki-message-question.ki-filled:before {
+  content: "\ea90";
+  position: absolute;
+  
+}
+.ki-dislike.ki-filled:after {
+  content: "\ea91";
+  
+  opacity: 0.2;
+}
+.ki-dislike.ki-filled:before {
+  content: "\ea92";
+  position: absolute;
+  
+}
+.ki-question.ki-filled:after {
+  content: "\ea93";
+  
+  opacity: 0.2;
+}
+.ki-question.ki-filled:before {
+  content: "\ea94";
+  position: absolute;
+  
+}
+.ki-information-3.ki-filled:after {
+  content: "\ea95";
+  
+  opacity: 0.2;
+}
+.ki-information-3.ki-filled:before {
+  content: "\ea96";
+  position: absolute;
+  
+}
+.ki-information-2.ki-filled:after {
+  content: "\ea97";
+  
+  opacity: 0.2;
+}
+.ki-information-2.ki-filled:before {
+  content: "\ea98";
+  position: absolute;
+  
+}
+.ki-information-1.ki-filled:after {
+  content: "\ea99";
+  
+  opacity: 0.2;
+}
+.ki-information-1.ki-filled:before {
+  content: "\ea9a";
+  position: absolute;
+  
+}
+.ki-information-4.ki-filled:after {
+  content: "\ea9b";
+  
+  opacity: 0.2;
+}
+.ki-information-4.ki-filled:before {
+  content: "\ea9c";
+  position: absolute;
+  
+}
+.ki-like.ki-filled:after {
+  content: "\ea9d";
+  
+  opacity: 0.2;
+}
+.ki-like.ki-filled:before {
+  content: "\ea9e";
+  position: absolute;
+  
+}
+.ki-heart-circle.ki-filled:after {
+  content: "\ea9f";
+  
+  opacity: 0.2;
+}
+.ki-heart-circle.ki-filled:before {
+  content: "\eaa0";
+  position: absolute;
+  
+}
+.ki-parcel-tracking.ki-filled:after {
+  content: "\eaa1";
+  
+  opacity: 0.2;
+}
+.ki-parcel-tracking.ki-filled:before {
+  content: "\eaa2";
+  position: absolute;
+  
+}
+.ki-delivery-geolocation.ki-filled:after {
+  content: "\eaa3";
+  
+  opacity: 0.2;
+}
+.ki-delivery-geolocation.ki-filled:before {
+  content: "\eaa4";
+  position: absolute;
+  
+}
+.ki-airplane.ki-filled:after {
+  content: "\eaa5";
+  
+  opacity: 0.2;
+}
+.ki-airplane.ki-filled:before {
+  content: "\eaa6";
+  position: absolute;
+  
+}
+.ki-courier-express.ki-filled:after {
+  content: "\eaa7";
+  
+  opacity: 0.2;
+}
+.ki-courier-express.ki-filled:before {
+  content: "\eaa8";
+  position: absolute;
+  
+}
+.ki-car.ki-filled:after {
+  content: "\eaa9";
+  
+  opacity: 0.2;
+}
+.ki-car.ki-filled:before {
+  content: "\eaaa";
+  position: absolute;
+  
+}
+.ki-delivery-2.ki-filled:after {
+  content: "\eaab";
+  
+  opacity: 0.2;
+}
+.ki-delivery-2.ki-filled:before {
+  content: "\eaac";
+  position: absolute;
+  
+}
+.ki-delivery-3.ki-filled:after {
+  content: "\eaad";
+  
+  opacity: 0.2;
+}
+.ki-delivery-3.ki-filled:before {
+  content: "\eaae";
+  position: absolute;
+  
+}
+.ki-delivery-door.ki-filled:after {
+  content: "\eaaf";
+  
+  opacity: 0.2;
+}
+.ki-delivery-door.ki-filled:before {
+  content: "\eab0";
+  position: absolute;
+  
+}
+.ki-cube-2.ki-filled:after {
+  content: "\eab1";
+  
+  opacity: 0.2;
+}
+.ki-cube-2.ki-filled:before {
+  content: "\eab2";
+  position: absolute;
+  
+}
+.ki-bus.ki-filled:after {
+  content: "\eab3";
+  
+  opacity: 0.2;
+}
+.ki-bus.ki-filled:before {
+  content: "\eab4";
+  position: absolute;
+  
+}
+.ki-cube-3.ki-filled:after {
+  content: "\eab5";
+  
+  opacity: 0.2;
+}
+.ki-cube-3.ki-filled:before {
+  content: "\eab6";
+  position: absolute;
+  
+}
+.ki-airplane-square.ki-filled:after {
+  content: "\eab7";
+  
+  opacity: 0.2;
+}
+.ki-airplane-square.ki-filled:before {
+  content: "\eab8";
+  position: absolute;
+  
+}
+.ki-logistic.ki-filled:after {
+  content: "\eab9";
+  
+  opacity: 0.2;
+}
+.ki-logistic.ki-filled:before {
+  content: "\eaba";
+  position: absolute;
+  
+}
+.ki-support.ki-filled:after {
+  content: "\eabb";
+  
+  opacity: 0.2;
+}
+.ki-support.ki-filled:before {
+  content: "\eabc";
+  position: absolute;
+  
+}
+.ki-courier.ki-filled:after {
+  content: "\eabd";
+  
+  opacity: 0.2;
+}
+.ki-courier.ki-filled:before {
+  content: "\eabe";
+  position: absolute;
+  
+}
+.ki-delivery-3-1.ki-filled:after {
+  content: "\eabf";
+  
+  opacity: 0.2;
+}
+.ki-delivery-3-1.ki-filled:before {
+  content: "\eac0";
+  position: absolute;
+  
+}
+.ki-bank-reserve.ki-filled:after {
+  content: "\eac1";
+  
+  opacity: 0.2;
+}
+.ki-bank-reserve.ki-filled:before {
+  content: "\eac2";
+  position: absolute;
+  
+}
+.ki-bank-reserve .ki-filled:before {
+  content: "\eac3";
+  position: absolute;
+  
+}
+.ki-ship.ki-filled:after {
+  content: "\eac4";
+  
+  opacity: 0.2;
+}
+.ki-ship.ki-filled:before {
+  content: "\eac5";
+  position: absolute;
+  
+}
+.ki-delivery.ki-filled:after {
+  content: "\eac6";
+  
+  opacity: 0.1;
+}
+.ki-delivery.ki-filled:before {
+  content: "\eac7";
+  position: absolute;
+  
+}
+.ki-delivery-time.ki-filled:after {
+  content: "\eac8";
+  
+  opacity: 0.2;
+}
+.ki-delivery-time.ki-filled:before {
+  content: "\eac9";
+  position: absolute;
+  
+}
+.ki-parcel.ki-filled:after {
+  content: "\eaca";
+  
+  opacity: 0.2;
+}
+.ki-parcel.ki-filled:before {
+  content: "\eacb";
+  position: absolute;
+  
+}
+.ki-calendar-remove.ki-filled:after {
+  content: "\eacc";
+  
+  opacity: 0.2;
+}
+.ki-calendar-remove.ki-filled:before {
+  content: "\eacd";
+  position: absolute;
+  
+}
+.ki-timer.ki-filled:after {
+  content: "\eace";
+  
+  opacity: 0.2;
+}
+.ki-timer.ki-filled:before {
+  content: "\eacf";
+  position: absolute;
+  
+}
+.ki-calendar-8.ki-filled:after {
+  content: "\ead0";
+  
+  opacity: 0.2;
+}
+.ki-calendar-8.ki-filled:before {
+  content: "\ead1";
+  position: absolute;
+  
+}
+.ki-calendar.ki-filled:after {
+  content: "\ead2";
+  
+  opacity: 0.2;
+}
+.ki-calendar.ki-filled:before {
+  content: "\ead3";
+  position: absolute;
+  
+}
+.ki-calendar-edit.ki-filled:after {
+  content: "\ead4";
+  
+  opacity: 0.2;
+}
+.ki-calendar-edit.ki-filled:before {
+  content: "\ead5";
+  position: absolute;
+  
+}
+.ki-watch.ki-filled:after {
+  content: "\ead6";
+  
+  opacity: 0.2;
+}
+.ki-watch.ki-filled:before {
+  content: "\ead7";
+  position: absolute;
+  
+}
+.ki-time.ki-filled:after {
+  content: "\ead8";
+  
+  opacity: 0.2;
+}
+.ki-time.ki-filled:before {
+  content: "\ead9";
+  position: absolute;
+  
+}
+.ki-calendar-tick.ki-filled:after {
+  content: "\eada";
+  
+  opacity: 0.2;
+}
+.ki-calendar-tick.ki-filled:before {
+  content: "\eadb";
+  position: absolute;
+  
+}
+.ki-calendar-2.ki-filled:after {
+  content: "\eadc";
+  
+  opacity: 0.2;
+}
+.ki-calendar-2.ki-filled:before {
+  content: "\eadd";
+  position: absolute;
+  
+}
+.ki-calendar-search.ki-filled:after {
+  content: "\eade";
+  
+  opacity: 0.2;
+}
+.ki-calendar-search.ki-filled:before {
+  content: "\eadf";
+  position: absolute;
+  
+}
+.ki-calendar-add.ki-filled:after {
+  content: "\eae0";
+  
+  opacity: 0.2;
+}
+.ki-calendar-add.ki-filled:before {
+  content: "\eae1";
+  position: absolute;
+  
+}
+.ki-vuesax.ki-filled:after {
+  content: "\eae2";
+  
+  opacity: 0.2;
+}
+.ki-vuesax.ki-filled:before {
+  content: "\eae3";
+  position: absolute;
+  
+}
+.ki-apple.ki-filled:after {
+  content: "\eae4";
+  
+  opacity: 0.2;
+}
+.ki-apple.ki-filled:before {
+  content: "\eae5";
+  position: absolute;
+  
+}
+.ki-yii.ki-filled:after {
+  content: "\eae6";
+  
+  opacity: 0.2;
+}
+.ki-yii.ki-filled:before {
+  content: "\eae7";
+  position: absolute;
+  
+}
+.ki-soft.ki-filled:after {
+  content: "\eae8";
+  
+  opacity: 0.2;
+}
+.ki-soft.ki-filled:before {
+  content: "\eae9";
+  position: absolute;
+  
+}
+.ki-slack.ki-filled:after {
+  content: "\eaea";
+  
+  opacity: 0.2;
+}
+.ki-slack.ki-filled:before {
+  content: "\eaeb";
+  position: absolute;
+  
+}
+.ki-html.ki-filled:after {
+  content: "\eaec";
+  
+  opacity: 0.2;
+}
+.ki-html.ki-filled:before {
+  content: "\eaed";
+  position: absolute;
+  
+}
+.ki-react.ki-filled:after {
+  content: "\eaee";
+  
+  opacity: 0.2;
+}
+.ki-react.ki-filled:before {
+  content: "\eaef";
+  position: absolute;
+  
+}
+.ki-pails.ki-filled:after {
+  content: "\eaf0";
+  
+  opacity: 0.2;
+}
+.ki-pails.ki-filled:before {
+  content: "\eaf1";
+  position: absolute;
+  
+}
+.ki-illustrator.ki-filled:after {
+  content: "\eaf2";
+  
+  opacity: 0.2;
+}
+.ki-illustrator.ki-filled:before {
+  content: "\eaf3";
+  position: absolute;
+  
+}
+.ki-twitch.ki-filled:after {
+  content: "\eaf4";
+  
+  opacity: 0.2;
+}
+.ki-twitch.ki-filled:before {
+  content: "\eaf5";
+  position: absolute;
+  
+}
+.ki-photoshop.ki-filled:after {
+  content: "\eaf6";
+  
+  opacity: 0.2;
+}
+.ki-photoshop.ki-filled:before {
+  content: "\eaf7";
+  position: absolute;
+  
+}
+.ki-google.ki-filled:after {
+  content: "\eaf8";
+  
+  opacity: 0.2;
+}
+.ki-google.ki-filled:before {
+  content: "\eaf9";
+  position: absolute;
+  
+}
+.ki-css.ki-filled:after {
+  content: "\eafa";
+  
+  opacity: 0.2;
+}
+.ki-css.ki-filled:before {
+  content: "\eafb";
+  position: absolute;
+  
+}
+.ki-laravel.ki-filled:after {
+  content: "\eafc";
+  
+  opacity: 0.2;
+}
+.ki-laravel.ki-filled:before {
+  content: "\eafd";
+  position: absolute;
+  
+}
+.ki-js-2.ki-filled:after {
+  content: "\eafe";
+  
+  opacity: 0.2;
+}
+.ki-js-2.ki-filled:before {
+  content: "\eaff";
+  position: absolute;
+  
+}
+.ki-spotify.ki-filled:after {
+  content: "\eb00";
+  
+  opacity: 0.2;
+}
+.ki-spotify.ki-filled:before {
+  content: "\eb01";
+  position: absolute;
+  
+}
+.ki-xd.ki-filled:after {
+  content: "\eb02";
+  
+  opacity: 0.2;
+}
+.ki-xd.ki-filled:before {
+  content: "\eb03";
+  position: absolute;
+  
+}
+.ki-ts.ki-filled:after {
+  content: "\eb04";
+  
+  opacity: 0.2;
+}
+.ki-ts.ki-filled:before {
+  content: "\eb05";
+  position: absolute;
+  
+}
+.ki-soft-2.ki-filled:after {
+  content: "\eb06";
+  
+  opacity: 0.2;
+}
+.ki-soft-2.ki-filled:before {
+  content: "\eb07";
+  position: absolute;
+  
+}
+.ki-python.ki-filled:after {
+  content: "\eb08";
+  
+  opacity: 0.2;
+}
+.ki-python.ki-filled:before {
+  content: "\eb09";
+  position: absolute;
+  
+}
+.ki-soft-3.ki-filled:after {
+  content: "\eb0a";
+  
+  opacity: 0.2;
+}
+.ki-soft-3.ki-filled:before {
+  content: "\eb0b";
+  position: absolute;
+  
+}
+.ki-angular.ki-filled:after {
+  content: "\eb0c";
+  
+  opacity: 0.2;
+}
+.ki-angular.ki-filled:before {
+  content: "\eb0d";
+  position: absolute;
+  
+}
+.ki-google-play.ki-filled:after {
+  content: "\eb0e";
+  
+  opacity: 0.2;
+}
+.ki-google-play.ki-filled:before {
+  content: "\eb0f";
+  position: absolute;
+  
+}
+.ki-dj.ki-filled:after {
+  content: "\eb10";
+  
+  opacity: 0.2;
+}
+.ki-dj.ki-filled:before {
+  content: "\eb11";
+  position: absolute;
+  
+}
+.ki-github.ki-filled:after {
+  content: "\eb12";
+  
+  opacity: 0.2;
+}
+.ki-github.ki-filled:before {
+  content: "\eb13";
+  position: absolute;
+  
+}
+.ki-spring-framework.ki-filled:after {
+  content: "\eb14";
+  
+  opacity: 0.2;
+}
+.ki-spring-framework.ki-filled:before {
+  content: "\eb15";
+  position: absolute;
+  
+}
+.ki-js.ki-filled:after {
+  content: "\eb16";
+  
+  opacity: 0.2;
+}
+.ki-js.ki-filled:before {
+  content: "\eb17";
+  position: absolute;
+  
+}
+.ki-vue.ki-filled:after {
+  content: "\eb18";
+  
+  opacity: 0.2;
+}
+.ki-vue.ki-filled:before {
+  content: "\eb19";
+  position: absolute;
+  
+}
+.ki-android.ki-filled:after {
+  content: "\eb1a";
+  
+  opacity: 0.2;
+}
+.ki-android.ki-filled:before {
+  content: "\eb1b";
+  position: absolute;
+  
+}
+.ki-microsoft.ki-filled:after {
+  content: "\eb1c";
+  
+  opacity: 0.2;
+}
+.ki-microsoft.ki-filled:before {
+  content: "\eb1d";
+  position: absolute;
+  
+}
+.ki-xaomi.ki-filled:after {
+  content: "\eb1e";
+  
+  opacity: 0.2;
+}
+.ki-xaomi.ki-filled:before {
+  content: "\eb1f";
+  position: absolute;
+  
+}
+.ki-dropbox.ki-filled:after {
+  content: "\eb20";
+  
+  opacity: 0.2;
+}
+.ki-dropbox.ki-filled:before {
+  content: "\eb21";
+  position: absolute;
+  
+}
+.ki-figma.ki-filled:after {
+  content: "\eb22";
+  
+  opacity: 0.2;
+}
+.ki-figma.ki-filled:before {
+  content: "\eb23";
+  position: absolute;
+  
+}
+.ki-bootstrap.ki-filled:after {
+  content: "\eb24";
+  
+  opacity: 0.2;
+}
+.ki-bootstrap.ki-filled:before {
+  content: "\eb25";
+  position: absolute;
+  
+}
+.ki-file-sheet.ki-filled:after {
+  content: "\eb26";
+  
+  opacity: 0.2;
+}
+.ki-file-sheet.ki-filled:before {
+  content: "\eb27";
+  position: absolute;
+  
+}
+.ki-folder.ki-filled:after {
+  content: "\eb28";
+  
+  opacity: 0.2;
+}
+.ki-folder.ki-filled:before {
+  content: "\eb29";
+  position: absolute;
+  
+}
+.ki-delete-folder.ki-filled:after {
+  content: "\eb2a";
+  
+  opacity: 0.2;
+}
+.ki-delete-folder.ki-filled:before {
+  content: "\eb2b";
+  position: absolute;
+  
+}
+.ki-tablet-down.ki-filled:after {
+  content: "\eb2c";
+  
+  opacity: 0.2;
+}
+.ki-tablet-down.ki-filled:before {
+  content: "\eb2d";
+  position: absolute;
+  
+}
+.ki-add-files.ki-filled:after {
+  content: "\eb2e";
+  
+  opacity: 0.2;
+}
+.ki-add-files.ki-filled:before {
+  content: "\eb2f";
+  position: absolute;
+  
+}
+.ki-tablet.ki-filled:after {
+  content: "\eb30";
+  
+  opacity: 0.2;
+}
+.ki-tablet.ki-filled:before {
+  content: "\eb31";
+  position: absolute;
+  
+}
+.ki-tablet-text-down.ki-filled:after {
+  content: "\eb32";
+  
+  opacity: 0.2;
+}
+.ki-tablet-text-down.ki-filled:before {
+  content: "\eb33";
+  position: absolute;
+  
+}
+.ki-search-list.ki-filled:after {
+  content: "\eb34";
+  
+  opacity: 0.2;
+}
+.ki-search-list.ki-filled:before {
+  content: "\eb35";
+  position: absolute;
+  
+}
+.ki-tablet-text-up.ki-filled:after {
+  content: "\eb36";
+  
+  opacity: 0.2;
+}
+.ki-tablet-text-up.ki-filled:before {
+  content: "\eb37";
+  position: absolute;
+  
+}
+.ki-notepad-edit.ki-filled:after {
+  content: "\eb38";
+  
+  opacity: 0.2;
+}
+.ki-notepad-edit.ki-filled:before {
+  content: "\eb39";
+  position: absolute;
+  
+}
+.ki-folder-down.ki-filled:after {
+  content: "\eb3a";
+  
+  opacity: 0.2;
+}
+.ki-folder-down.ki-filled:before {
+  content: "\eb3b";
+  position: absolute;
+  
+}
+.ki-income-account.ki-filled:after {
+  content: "\eb3c";
+  
+  opacity: 0.2;
+}
+.ki-income-account.ki-filled:before {
+  content: "\eb3d";
+  position: absolute;
+  
+}
+.ki-update-folder.ki-filled:after {
+  content: "\eb3e";
+  
+  opacity: 0.2;
+}
+.ki-update-folder.ki-filled:before {
+  content: "\eb3f";
+  position: absolute;
+  
+}
+.ki-tablet-ok.ki-filled:after {
+  content: "\eb40";
+  
+}
+.ki-tablet-ok.ki-filled:before {
+  content: "\eb41";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-tablet-up.ki-filled:after {
+  content: "\eb42";
+  
+  opacity: 0.2;
+}
+.ki-tablet-up.ki-filled:before {
+  content: "\eb43";
+  position: absolute;
+  
+}
+.ki-questionnaire-tablet.ki-filled:after {
+  content: "\eb44";
+  
+  opacity: 0.2;
+}
+.ki-questionnaire-tablet.ki-filled:before {
+  content: "\eb45";
+  position: absolute;
+  
+}
+.ki-add-notepad.ki-filled:after {
+  content: "\eb46";
+  
+  opacity: 0.2;
+}
+.ki-add-notepad.ki-filled:before {
+  content: "\eb47";
+  position: absolute;
+  
+}
+.ki-update-file.ki-filled:after {
+  content: "\eb48";
+  
+  opacity: 0.2;
+}
+.ki-update-file.ki-filled:before {
+  content: "\eb49";
+  position: absolute;
+  
+}
+.ki-tab-tablet.ki-filled:after {
+  content: "\eb4a";
+  
+  opacity: 0.2;
+}
+.ki-tab-tablet.ki-filled:before {
+  content: "\eb4b";
+  position: absolute;
+  
+}
+.ki-filter-tablet.ki-filled:after {
+  content: "\eb4c";
+  
+  opacity: 0.2;
+}
+.ki-filter-tablet.ki-filled:before {
+  content: "\eb4d";
+  position: absolute;
+  
+}
+.ki-file-down.ki-filled:after {
+  content: "\eb4e";
+  
+  opacity: 0.2;
+}
+.ki-file-down.ki-filled:before {
+  content: "\eb4f";
+  position: absolute;
+  
+}
+.ki-folder-added.ki-filled:after {
+  content: "\eb50";
+  
+  opacity: 0.2;
+}
+.ki-folder-added.ki-filled:before {
+  content: "\eb51";
+  position: absolute;
+  
+}
+.ki-folder-up.ki-filled:after {
+  content: "\eb52";
+  
+  opacity: 0.2;
+}
+.ki-folder-up.ki-filled:before {
+  content: "\eb53";
+  position: absolute;
+  
+}
+.ki-like-folder.ki-filled:after {
+  content: "\eb54";
+  
+  opacity: 0.2;
+}
+.ki-like-folder.ki-filled:before {
+  content: "\eb55";
+  position: absolute;
+  
+}
+.ki-document.ki-filled:after {
+  content: "\eb56";
+  
+  opacity: 0.2;
+}
+.ki-document.ki-filled:before {
+  content: "\eb57";
+  position: absolute;
+  
+}
+.ki-notepad-bookmark.ki-filled:after {
+  content: "\eb58";
+  
+  opacity: 0.2;
+}
+.ki-notepad-bookmark.ki-filled:before {
+  content: "\eb59";
+  position: absolute;
+  
+}
+.ki-notepad.ki-filled:after {
+  content: "\eb5a";
+  
+  opacity: 0.2;
+}
+.ki-notepad.ki-filled:before {
+  content: "\eb5b";
+  position: absolute;
+  
+}
+.ki-file-right.ki-filled:after {
+  content: "\eb5c";
+  
+  opacity: 0.2;
+}
+.ki-file-right.ki-filled:before {
+  content: "\eb5d";
+  position: absolute;
+  
+}
+.ki-some-files.ki-filled:after {
+  content: "\eb5e";
+  
+  opacity: 0.2;
+}
+.ki-some-files.ki-filled:before {
+  content: "\eb5f";
+  position: absolute;
+  
+}
+.ki-file-deleted.ki-filled:after {
+  content: "\eb60";
+  
+  opacity: 0.2;
+}
+.ki-file-deleted.ki-filled:before {
+  content: "\eb61";
+  position: absolute;
+  
+}
+.ki-file-left.ki-filled:after {
+  content: "\eb62";
+  
+  opacity: 0.2;
+}
+.ki-file-left.ki-filled:before {
+  content: "\eb63";
+  position: absolute;
+  
+}
+.ki-add-folder.ki-filled:after {
+  content: "\eb64";
+  
+  opacity: 0.2;
+}
+.ki-add-folder.ki-filled:before {
+  content: "\eb65";
+  position: absolute;
+  
+}
+.ki-delete-files.ki-filled:after {
+  content: "\eb66";
+  
+  opacity: 0.2;
+}
+.ki-delete-files.ki-filled:before {
+  content: "\eb67";
+  position: absolute;
+  
+}
+.ki-files.ki-filled:after {
+  content: "\eb68";
+  
+  opacity: 0.2;
+}
+.ki-files.ki-filled:before {
+  content: "\eb69";
+  position: absolute;
+  
+}
+.ki-minus-folder.ki-filled:after {
+  content: "\eb6a";
+  
+  opacity: 0.2;
+}
+.ki-minus-folder.ki-filled:before {
+  content: "\eb6b";
+  position: absolute;
+  
+}
+.ki-file-up.ki-filled:after {
+  content: "\eb6c";
+  
+  opacity: 0.2;
+}
+.ki-file-up.ki-filled:before {
+  content: "\eb6d";
+  position: absolute;
+  
+}
+.ki-file-added.ki-filled:after {
+  content: "\eb6e";
+  
+  opacity: 0.2;
+}
+.ki-file-added.ki-filled:before {
+  content: "\eb6f";
+  position: absolute;
+  
+}
+.ki-tablet-delete.ki-filled:after {
+  content: "\eb70";
+  
+  opacity: 0.2;
+}
+.ki-tablet-delete.ki-filled:before {
+  content: "\eb71";
+  position: absolute;
+  
+}
+.ki-emoji-angry.ki-filled:after {
+  content: "\eb72";
+  
+  opacity: 0.2;
+}
+.ki-emoji-angry.ki-filled:before {
+  content: "\eb73";
+  position: absolute;
+  
+}
+.ki-emoji-laught.ki-filled:after {
+  content: "\eb74";
+  
+  opacity: 0.2;
+}
+.ki-emoji-laught.ki-filled:before {
+  content: "\eb75";
+  position: absolute;
+  
+}
+.ki-emoji-sad.ki-filled:after {
+  content: "\eb76";
+  
+  opacity: 0.2;
+}
+.ki-emoji-sad.ki-filled:before {
+  content: "\eb77";
+  position: absolute;
+  
+}
+.ki-emoji-smile.ki-filled:after {
+  content: "\eb78";
+  
+  opacity: 0.2;
+}
+.ki-emoji-smile.ki-filled:before {
+  content: "\eb79";
+  position: absolute;
+  
+}
+.ki-emoji-neutral.ki-filled:after {
+  content: "\eb7a";
+  
+  opacity: 0.2;
+}
+.ki-emoji-neutral.ki-filled:before {
+  content: "\eb7b";
+  position: absolute;
+  
+}
+.ki-chart-simple.ki-filled:after {
+  content: "\eb7c";
+  
+  opacity: 0.2;
+}
+.ki-chart-simple.ki-filled:before {
+  content: "\eb7d";
+  position: absolute;
+  
+}
+.ki-graph.ki-filled:after {
+  content: "\eb7e";
+  
+  opacity: 0.2;
+}
+.ki-graph.ki-filled:before {
+  content: "\eb7f";
+  position: absolute;
+  
+}
+.ki-chart-line-star.ki-filled:after {
+  content: "\eb80";
+  
+  opacity: 0.2;
+}
+.ki-chart-line-star.ki-filled:before {
+  content: "\eb81";
+  position: absolute;
+  
+}
+.ki-graph-up.ki-filled:after {
+  content: "\eb82";
+  
+  opacity: 0.2;
+}
+.ki-graph-up.ki-filled:before {
+  content: "\eb83";
+  position: absolute;
+  
+}
+.ki-chart-simple-2.ki-filled:after {
+  content: "\eb84";
+  
+  opacity: 0.2;
+}
+.ki-chart-simple-2.ki-filled:before {
+  content: "\eb85";
+  position: absolute;
+  
+}
+.ki-chart-pie-simple.ki-filled:after {
+  content: "\eb86";
+  
+  opacity: 0.2;
+}
+.ki-chart-pie-simple.ki-filled:before {
+  content: "\eb87";
+  position: absolute;
+  
+}
+.ki-chart-simple-3.ki-filled:after {
+  content: "\eb88";
+  
+  opacity: 0.2;
+}
+.ki-chart-simple-3.ki-filled:before {
+  content: "\eb89";
+  position: absolute;
+  
+}
+.ki-chart-line-up.ki-filled:before {
+  content: "\eb8a";
+}
+.ki-badge.ki-filled:after {
+  content: "\eb8b";
+  
+  opacity: 0.2;
+}
+.ki-badge.ki-filled:before {
+  content: "\eb8c";
+  position: absolute;
+  
+}
+.ki-chart-line-up-2.ki-filled:after {
+  content: "\eb8d";
+  
+  opacity: 0.2;
+}
+.ki-chart-line-up-2.ki-filled:before {
+  content: "\eb8e";
+  position: absolute;
+  
+}
+.ki-graph-4.ki-filled:after {
+  content: "\eb8f";
+  
+  opacity: 0.2;
+}
+.ki-graph-4.ki-filled:before {
+  content: "\eb90";
+  position: absolute;
+  
+}
+.ki-chart-line-down-2.ki-filled:after {
+  content: "\eb91";
+  
+  opacity: 0.2;
+}
+.ki-chart-line-down-2.ki-filled:before {
+  content: "\eb92";
+  position: absolute;
+  
+}
+.ki-chart-pie-4.ki-filled:after {
+  content: "\eb93";
+  
+  opacity: 0.2;
+}
+.ki-chart-pie-4.ki-filled:before {
+  content: "\eb94";
+  position: absolute;
+  
+}
+.ki-chart-pie-too.ki-filled:after {
+  content: "\eb95";
+  
+  opacity: 0.1;
+}
+.ki-chart-pie-too.ki-filled:before {
+  content: "\eb96";
+  position: absolute;
+  
+}
+.ki-chart-line-down.ki-filled:before {
+  content: "\eb97";
+}
+.ki-graph-2.ki-filled:after {
+  content: "\eb98";
+  
+  opacity: 0.2;
+}
+.ki-graph-2.ki-filled:before {
+  content: "\eb99";
+  position: absolute;
+  
+}
+.ki-chart-pie-3.ki-filled:after {
+  content: "\eb9a";
+  
+  opacity: 0.2;
+}
+.ki-chart-pie-3.ki-filled:before {
+  content: "\eb9b";
+  position: absolute;
+  
+}
+.ki-graph-3.ki-filled:after {
+  content: "\eb9c";
+  
+  opacity: 0.2;
+}
+.ki-graph-3.ki-filled:before {
+  content: "\eb9d";
+  position: absolute;
+  
+}
+.ki-chart.ki-filled:after {
+  content: "\eb9e";
+  
+  opacity: 0.2;
+}
+.ki-chart.ki-filled:before {
+  content: "\eb9f";
+  position: absolute;
+  
+}
+.ki-chart-line.ki-filled:after {
+  content: "\eba0";
+  
+  opacity: 0.2;
+}
+.ki-chart-line.ki-filled:before {
+  content: "\eba1";
+  position: absolute;
+  
+}
+.ki-bookmark.ki-filled:after {
+  content: "\eba2";
+  
+  opacity: 0.2;
+}
+.ki-bookmark.ki-filled:before {
+  content: "\eba3";
+  position: absolute;
+  
+}
+.ki-brifecase-cros.ki-filled:after {
+  content: "\eba4";
+  
+  opacity: 0.2;
+}
+.ki-brifecase-cros.ki-filled:before {
+  content: "\eba5";
+  position: absolute;
+  
+}
+.ki-brifecase-tick.ki-filled:after {
+  content: "\eba6";
+  
+  opacity: 0.2;
+}
+.ki-brifecase-tick.ki-filled:before {
+  content: "\eba7";
+  position: absolute;
+  
+}
+.ki-award.ki-filled:after {
+  content: "\eba8";
+  
+  opacity: 0.2;
+}
+.ki-award.ki-filled:before {
+  content: "\eba9";
+  position: absolute;
+  
+}
+.ki-teacher.ki-filled:after {
+  content: "\ebaa";
+  
+  opacity: 0.2;
+}
+.ki-teacher.ki-filled:before {
+  content: "\ebab";
+  position: absolute;
+  
+}
+.ki-book.ki-filled:after {
+  content: "\ebac";
+  
+  opacity: 0.2;
+}
+.ki-book.ki-filled:before {
+  content: "\ebad";
+  position: absolute;
+  
+}
+.ki-book-open.ki-filled:after {
+  content: "\ebae";
+  
+  opacity: 0.2;
+}
+.ki-book-open.ki-filled:before {
+  content: "\ebaf";
+  position: absolute;
+  
+}
+.ki-note-2.ki-filled:after {
+  content: "\ebb0";
+  
+  opacity: 0.2;
+}
+.ki-note-2.ki-filled:before {
+  content: "\ebb1";
+  position: absolute;
+  
+}
+.ki-note.ki-filled:after {
+  content: "\ebb2";
+  
+  opacity: 0.2;
+}
+.ki-note.ki-filled:before {
+  content: "\ebb3";
+  position: absolute;
+  
+}
+.ki-bookmark-2.ki-filled:after {
+  content: "\ebb4";
+  
+  opacity: 0.2;
+}
+.ki-bookmark-2.ki-filled:before {
+  content: "\ebb5";
+  position: absolute;
+  
+}
+.ki-clipboard.ki-filled:after {
+  content: "\ebb6";
+  
+  opacity: 0.2;
+}
+.ki-clipboard.ki-filled:before {
+  content: "\ebb7";
+  position: absolute;
+  
+}
+.ki-briefcase.ki-filled:after {
+  content: "\ebb8";
+  
+  opacity: 0.2;
+}
+.ki-briefcase.ki-filled:before {
+  content: "\ebb9";
+  position: absolute;
+  
+}
+.ki-brifecase-timer.ki-filled:after {
+  content: "\ebba";
+  
+  opacity: 0.2;
+}
+.ki-brifecase-timer.ki-filled:before {
+  content: "\ebbb";
+  position: absolute;
+  
+}
+.ki-geolocation.ki-filled:after {
+  content: "\ebbc";
+  
+  opacity: 0.2;
+}
+.ki-geolocation.ki-filled:before {
+  content: "\ebbd";
+  position: absolute;
+  
+}
+.ki-route.ki-filled:after {
+  content: "\ebbe";
+  
+  opacity: 0.2;
+}
+.ki-route.ki-filled:before {
+  content: "\ebbf";
+  position: absolute;
+  
+}
+.ki-compass.ki-filled:after {
+  content: "\ebc0";
+  
+  opacity: 0.2;
+}
+.ki-compass.ki-filled:before {
+  content: "\ebc1";
+  position: absolute;
+  
+}
+.ki-pointers.ki-filled:after {
+  content: "\ebc2";
+  
+  opacity: 0.2;
+}
+.ki-pointers.ki-filled:before {
+  content: "\ebc3";
+  position: absolute;
+  
+}
+.ki-focus.ki-filled:after {
+  content: "\ebc4";
+  
+  opacity: 0.2;
+}
+.ki-focus.ki-filled:before {
+  content: "\ebc5";
+  position: absolute;
+  
+}
+.ki-flag.ki-filled:after {
+  content: "\ebc6";
+  
+  opacity: 0.2;
+}
+.ki-flag.ki-filled:before {
+  content: "\ebc7";
+  position: absolute;
+  
+}
+.ki-satellite.ki-filled:after {
+  content: "\ebc8";
+  
+  opacity: 0.2;
+}
+.ki-satellite.ki-filled:before {
+  content: "\ebc9";
+  position: absolute;
+  
+}
+.ki-telephone-geolocation.ki-filled:after {
+  content: "\ebca";
+  
+  opacity: 0.2;
+}
+.ki-telephone-geolocation.ki-filled:before {
+  content: "\ebcb";
+  position: absolute;
+  
+}
+.ki-map.ki-filled:after {
+  content: "\ebcc";
+  
+  opacity: 0.2;
+}
+.ki-map.ki-filled:before {
+  content: "\ebcd";
+  position: absolute;
+  
+}
+.ki-geolocation-home.ki-filled:after {
+  content: "\ebce";
+  
+  opacity: 0.2;
+}
+.ki-geolocation-home.ki-filled:before {
+  content: "\ebcf";
+  position: absolute;
+  
+}
+.ki-arrow-up-down.ki-filled:before {
+  content: "\ebd0";
+}
+.ki-dots-vertical.ki-filled:before {
+  content: "\ebd1";
+}
+.ki-minus.ki-filled:before {
+  content: "\ebd2";
+}
+.ki-left.ki-filled:before {
+  content: "\ebd3";
+}
+.ki-cross-circle.ki-filled:after {
+  content: "\ebd4";
+  
+  opacity: 0.2;
+}
+.ki-cross-circle.ki-filled:before {
+  content: "\ebd5";
+  position: absolute;
+  
+}
+.ki-entrance-up.ki-filled:after {
+  content: "\ebd6";
+  
+  opacity: 0.2;
+}
+.ki-entrance-up.ki-filled:before {
+  content: "\ebd7";
+  position: absolute;
+  
+}
+.ki-arrows-circle.ki-filled:before {
+  content: "\ebd8";
+}
+.ki-minus-squared.ki-filled:after {
+  content: "\ebd9";
+  
+  opacity: 0.2;
+}
+.ki-minus-squared.ki-filled:before {
+  content: "\ebda";
+  position: absolute;
+  
+}
+.ki-right-square.ki-filled:after {
+  content: "\ebdb";
+  
+  opacity: 0.2;
+}
+.ki-right-square.ki-filled:before {
+  content: "\ebdc";
+  position: absolute;
+  
+}
+.ki-arrow-mix.ki-filled:before {
+  content: "\ebdd";
+}
+.ki-double-right.ki-filled:before {
+  content: "\ebde";
+}
+.ki-to-right.ki-filled:after {
+  content: "\ebdf";
+  
+  opacity: 0.2;
+}
+.ki-to-right.ki-filled:before {
+  content: "\ebe0";
+  position: absolute;
+  
+}
+.ki-exit-right.ki-filled:after {
+  content: "\ebe1";
+  
+  opacity: 0.2;
+}
+.ki-exit-right.ki-filled:before {
+  content: "\ebe2";
+  position: absolute;
+  
+}
+.ki-arrow-down-right.ki-filled:before {
+  content: "\ebe3";
+}
+.ki-minus-circle.ki-filled:after {
+  content: "\ebe4";
+  
+  opacity: 0.2;
+}
+.ki-minus-circle.ki-filled:before {
+  content: "\ebe5";
+  position: absolute;
+  
+}
+.ki-cross.ki-filled:before {
+  content: "\ebe6";
+}
+.ki-arrow-left.ki-filled:before {
+  content: "\ebe7";
+}
+.ki-arrow-up-refraction.ki-filled:before {
+  content: "\ebe8";
+}
+.ki-black-right-line.ki-filled:before {
+  content: "\ebe9";
+}
+.ki-arrow-up.ki-filled:before {
+  content: "\ebea";
+}
+.ki-double-right-arrow.ki-filled:after {
+  content: "\ebeb";
+  
+  opacity: 0.2;
+}
+.ki-double-right-arrow.ki-filled:before {
+  content: "\ebec";
+  position: absolute;
+  
+}
+.ki-black-up.ki-filled:before {
+  content: "\ebed";
+}
+.ki-double-up.ki-filled:before {
+  content: "\ebee";
+}
+.ki-black-down.ki-filled:before {
+  content: "\ebef";
+}
+.ki-arrow-back.ki-filled:after {
+  content: "\ebf0";
+  
+  opacity: 0.2;
+}
+.ki-arrow-back.ki-filled:before {
+  content: "\ebf1";
+  position: absolute;
+  
+}
+.ki-plus-circle.ki-filled:after {
+  content: "\ebf2";
+  
+  opacity: 0.2;
+}
+.ki-plus-circle.ki-filled:before {
+  content: "\ebf3";
+  position: absolute;
+  
+}
+.ki-double-down.ki-filled:before {
+  content: "\ebf4";
+}
+.ki-to-left.ki-filled:after {
+  content: "\ebf5";
+  
+  opacity: 0.2;
+}
+.ki-to-left.ki-filled:before {
+  content: "\ebf6";
+  position: absolute;
+  
+}
+.ki-dots-square.ki-filled:after {
+  content: "\ebf7";
+  
+  opacity: 0.2;
+}
+.ki-dots-square.ki-filled:before {
+  content: "\ebf8";
+  position: absolute;
+  
+}
+.ki-arrow-down-wide-narrow.ki-filled:before {
+  content: "\ebf9";
+}
+.ki-exit-down.ki-filled:after {
+  content: "\ebfa";
+  
+  opacity: 0.2;
+}
+.ki-exit-down.ki-filled:before {
+  content: "\ebfb";
+  position: absolute;
+  
+}
+.ki-arrow-up-right.ki-filled:before {
+  content: "\ebfc";
+}
+.ki-up-diagonal.ki-filled:before {
+  content: "\ebfd";
+}
+.ki-dots-square-vertical.ki-filled:after {
+  content: "\ebfe";
+  
+  opacity: 0.2;
+}
+.ki-dots-square-vertical.ki-filled:before {
+  content: "\ebff";
+  position: absolute;
+  
+}
+.ki-right.ki-filled:before {
+  content: "\ec00";
+}
+.ki-check-circle.ki-filled:after {
+  content: "\ec01";
+  
+  opacity: 0.2;
+}
+.ki-check-circle.ki-filled:before {
+  content: "\ec02";
+  position: absolute;
+  
+}
+.ki-double-left-arrow.ki-filled:after {
+  content: "\ec03";
+  
+  opacity: 0.2;
+}
+.ki-double-left-arrow.ki-filled:before {
+  content: "\ec04";
+  position: absolute;
+  
+}
+.ki-black-left-line.ki-filled:before {
+  content: "\ec05";
+}
+.ki-arrows-loop.ki-filled:before {
+  content: "\ec06";
+}
+.ki-left-square.ki-filled:after {
+  content: "\ec07";
+  
+  opacity: 0.2;
+}
+.ki-left-square.ki-filled:before {
+  content: "\ec08";
+  position: absolute;
+  
+}
+.ki-entrance-left.ki-filled:after {
+  content: "\ec09";
+  
+  opacity: 0.2;
+}
+.ki-entrance-left.ki-filled:before {
+  content: "\ec0a";
+  position: absolute;
+  
+}
+.ki-cross-square.ki-filled:after {
+  content: "\ec0b";
+  
+  opacity: 0.2;
+}
+.ki-cross-square.ki-filled:before {
+  content: "\ec0c";
+  position: absolute;
+  
+}
+.ki-arrow-circle-right.ki-filled:after {
+  content: "\ec0d";
+  
+  opacity: 0.2;
+}
+.ki-arrow-circle-right.ki-filled:before {
+  content: "\ec0e";
+  position: absolute;
+  
+}
+.ki-exit-left.ki-filled:after {
+  content: "\ec0f";
+  
+  opacity: 0.2;
+}
+.ki-exit-left.ki-filled:before {
+  content: "\ec10";
+  position: absolute;
+  
+}
+.ki-check.ki-filled:before {
+  content: "\ec11";
+}
+.ki-plus.ki-filled:before {
+  content: "\ec12";
+}
+.ki-hash.ki-filled:before {
+  content: "\ec13";
+}
+.ki-arrow-zigzag.ki-filled:before {
+  content: "\ec14";
+}
+.ki-arrow-circle-left.ki-filled:after {
+  content: "\ec15";
+  
+  opacity: 0.2;
+}
+.ki-arrow-circle-left.ki-filled:before {
+  content: "\ec16";
+  position: absolute;
+  
+}
+.ki-double-left.ki-filled:before {
+  content: "\ec17";
+}
+.ki-black-right.ki-filled:before {
+  content: "\ec18";
+}
+.ki-arrow-down-refraction.ki-filled:before {
+  content: "\ec19";
+}
+.ki-list-chevrons-up-down.ki-filled:before {
+  content: "\ec1a";
+}
+.ki-check-squared.ki-filled:after {
+  content: "\ec1b";
+  
+  opacity: 0.2;
+}
+.ki-check-squared.ki-filled:before {
+  content: "\ec1c";
+  position: absolute;
+  
+}
+.ki-black-left.ki-filled:before {
+  content: "\ec1d";
+}
+.ki-arrow-two-diagonals.ki-filled:before {
+  content: "\ec1e";
+}
+.ki-arrow-right.ki-filled:before {
+  content: "\ec1f";
+}
+.ki-entrance-right.ki-filled:after {
+  content: "\ec20";
+  
+  opacity: 0.2;
+}
+.ki-entrance-right.ki-filled:before {
+  content: "\ec21";
+  position: absolute;
+  
+}
+.ki-up.ki-filled:before {
+  content: "\ec22";
+}
+.ki-double-check-circle.ki-filled:after {
+  content: "\ec23";
+  
+  opacity: 0.2;
+}
+.ki-double-check-circle.ki-filled:before {
+  content: "\ec24";
+  position: absolute;
+  
+}
+.ki-arrow-down-left.ki-filled:before {
+  content: "\ec25";
+}
+.ki-arrow-up-wide-narrow.ki-filled:before {
+  content: "\ec26";
+}
+.ki-dots-circle.ki-filled:after {
+  content: "\ec27";
+  
+  opacity: 0.2;
+}
+.ki-dots-circle.ki-filled:before {
+  content: "\ec28";
+  position: absolute;
+  
+}
+.ki-drag.ki-filled:before {
+  content: "\ec29";
+}
+.ki-down-square.ki-filled:after {
+  content: "\ec2a";
+  
+  opacity: 0.2;
+}
+.ki-down-square.ki-filled:before {
+  content: "\ec2b";
+  position: absolute;
+  
+}
+.ki-up-square.ki-filled:after {
+  content: "\ec2c";
+  
+}
+.ki-up-square.ki-filled:before {
+  content: "\ec2d";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-exit-up.ki-filled:after {
+  content: "\ec2e";
+  
+  opacity: 0.2;
+}
+.ki-exit-up.ki-filled:before {
+  content: "\ec2f";
+  position: absolute;
+  
+}
+.ki-down.ki-filled:before {
+  content: "\ec30";
+}
+.ki-arrow-up-left.ki-filled:before {
+  content: "\ec31";
+}
+.ki-plus-squared.ki-filled:after {
+  content: "\ec32";
+  
+  opacity: 0.2;
+}
+.ki-plus-squared.ki-filled:before {
+  content: "\ec33";
+  position: absolute;
+  
+}
+.ki-double-check.ki-filled:before {
+  content: "\ec34";
+}
+.ki-up-down.ki-filled:before {
+  content: "\ec35";
+}
+.ki-arrow-right-left.ki-filled:before {
+  content: "\ec36";
+}
+.ki-dots-horizontal.ki-filled:before {
+  content: "\ec37";
+}
+.ki-arrow-down.ki-filled:before {
+  content: "\ec38";
+}
+.ki-right-left.ki-filled:before {
+  content: "\ec39";
+}
+.ki-dots-circle-vertical.ki-filled:after {
+  content: "\ec3a";
+  
+  opacity: 0.2;
+}
+.ki-dots-circle-vertical.ki-filled:before {
+  content: "\ec3b";
+  position: absolute;
+  
+}
+.ki-exit-right-corner.ki-filled:after {
+  content: "\ec3c";
+  
+  opacity: 0.2;
+}
+.ki-exit-right-corner.ki-filled:before {
+  content: "\ec3d";
+  position: absolute;
+  
+}
+.ki-happyemoji.ki-filled:after {
+  content: "\ec3e";
+  
+  opacity: 0.2;
+}
+.ki-happyemoji.ki-filled:before {
+  content: "\ec3f";
+  position: absolute;
+  
+}
+.ki-chrome.ki-filled:after {
+  content: "\ec40";
+  
+  opacity: 0.2;
+}
+.ki-chrome.ki-filled:before {
+  content: "\ec41";
+  position: absolute;
+  
+}
+.ki-menu.ki-filled:after {
+  content: "\ec42";
+  
+  opacity: 0.2;
+}
+.ki-menu.ki-filled:before {
+  content: "\ec43";
+  position: absolute;
+  
+}
+.ki-cloud-download.ki-filled:after {
+  content: "\ec44";
+  
+  opacity: 0.2;
+}
+.ki-cloud-download.ki-filled:before {
+  content: "\ec45";
+  position: absolute;
+  
+}
+.ki-rocket.ki-filled:after {
+  content: "\ec46";
+  
+  opacity: 0.2;
+}
+.ki-rocket.ki-filled:before {
+  content: "\ec47";
+  position: absolute;
+  
+}
+.ki-status.ki-filled:after {
+  content: "\ec48";
+  
+  opacity: 0.2;
+}
+.ki-status.ki-filled:before {
+  content: "\ec49";
+  position: absolute;
+  
+}
+.ki-diamonds.ki-filled:after {
+  content: "\ec4a";
+  
+  opacity: 0.2;
+}
+.ki-diamonds.ki-filled:before {
+  content: "\ec4b";
+  position: absolute;
+  
+}
+.ki-cup.ki-filled:after {
+  content: "\ec4c";
+  
+  opacity: 0.2;
+}
+.ki-cup.ki-filled:before {
+  content: "\ec4d";
+  position: absolute;
+  
+}
+.ki-cloud.ki-filled:after {
+  content: "\ec4e";
+  
+  opacity: 0.2;
+}
+.ki-cloud.ki-filled:before {
+  content: "\ec4f";
+  position: absolute;
+  
+}
+.ki-switch.ki-filled:after {
+  content: "\ec50";
+  
+  opacity: 0.2;
+}
+.ki-switch.ki-filled:before {
+  content: "\ec51";
+  position: absolute;
+  
+}
+.ki-filter.ki-filled:after {
+  content: "\ec52";
+  
+  opacity: 0.2;
+}
+.ki-filter.ki-filled:before {
+  content: "\ec53";
+  position: absolute;
+  
+}
+.ki-tree.ki-filled:after {
+  content: "\ec54";
+  
+  opacity: 0.2;
+}
+.ki-tree.ki-filled:before {
+  content: "\ec55";
+  position: absolute;
+  
+}
+.ki-filter-square.ki-filled:after {
+  content: "\ec56";
+  
+  opacity: 0.2;
+}
+.ki-filter-square.ki-filled:before {
+  content: "\ec57";
+  position: absolute;
+  
+}
+.ki-paper-plan.ki-filled:after {
+  content: "\ec58";
+  
+  opacity: 0.2;
+}
+.ki-paper-plan.ki-filled:before {
+  content: "\ec59";
+  position: absolute;
+  
+}
+.ki-magnifier.ki-filled:after {
+  content: "\ec5a";
+  
+  opacity: 0.2;
+}
+.ki-magnifier.ki-filled:before {
+  content: "\ec5b";
+  position: absolute;
+  
+}
+.ki-sort.ki-filled:after {
+  content: "\ec5c";
+  
+  opacity: 0.2;
+}
+.ki-sort.ki-filled:before {
+  content: "\ec5d";
+  position: absolute;
+  
+}
+.ki-share.ki-filled:after {
+  content: "\ec5e";
+  
+  opacity: 0.2;
+}
+.ki-share.ki-filled:before {
+  content: "\ec5f";
+  position: absolute;
+  
+}
+.ki-gift.ki-filled:after {
+  content: "\ec60";
+  
+  opacity: 0.2;
+}
+.ki-gift.ki-filled:before {
+  content: "\ec61";
+  position: absolute;
+  
+}
+.ki-call.ki-filled:after {
+  content: "\ec62";
+  
+}
+.ki-call.ki-filled:before {
+  content: "\ec63";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-command.ki-filled:before {
+  content: "\ec64";
+}
+.ki-home-1.ki-filled:after {
+  content: "\ec65";
+  
+  opacity: 0.2;
+}
+.ki-home-1.ki-filled:before {
+  content: "\ec66";
+  position: absolute;
+  
+}
+.ki-mouse-circle.ki-filled:after {
+  content: "\ec67";
+  
+  opacity: 0.2;
+}
+.ki-mouse-circle.ki-filled:before {
+  content: "\ec68";
+  position: absolute;
+  
+}
+.ki-home-2.ki-filled:after {
+  content: "\ec69";
+  
+  opacity: 0.2;
+}
+.ki-home-2.ki-filled:before {
+  content: "\ec6a";
+  position: absolute;
+  
+}
+.ki-cd.ki-filled:after {
+  content: "\ec6b";
+  
+}
+.ki-cd.ki-filled:before {
+  content: "\ec6c";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-star.ki-filled:after {
+  content: "\ec6d";
+  
+  opacity: 0.2;
+}
+.ki-star.ki-filled:before {
+  content: "\ec6e";
+  position: absolute;
+  
+}
+.ki-trash.ki-filled:after {
+  content: "\ec6f";
+  
+  opacity: 0.2;
+}
+.ki-trash.ki-filled:before {
+  content: "\ec70";
+  position: absolute;
+  
+}
+.ki-disk.ki-filled:after {
+  content: "\ec71";
+  
+  opacity: 0.2;
+}
+.ki-disk.ki-filled:before {
+  content: "\ec72";
+  position: absolute;
+  
+}
+.ki-home-3.ki-filled:after {
+  content: "\ec73";
+  
+  opacity: 0.2;
+}
+.ki-home-3.ki-filled:before {
+  content: "\ec74";
+  position: absolute;
+  
+}
+.ki-cloud-add.ki-filled:after {
+  content: "\ec75";
+  
+  opacity: 0.2;
+}
+.ki-cloud-add.ki-filled:before {
+  content: "\ec76";
+  position: absolute;
+  
+}
+.ki-autobrightness.ki-filled:after {
+  content: "\ec77";
+  
+  opacity: 0.2;
+}
+.ki-autobrightness.ki-filled:before {
+  content: "\ec78";
+  position: absolute;
+  
+}
+.ki-tag-cross.ki-filled:after {
+  content: "\ec79";
+  
+  opacity: 0.2;
+}
+.ki-tag-cross.ki-filled:before {
+  content: "\ec7a";
+  position: absolute;
+  
+}
+.ki-verify.ki-filled:after {
+  content: "\ec7b";
+  
+  opacity: 0.2;
+}
+.ki-verify.ki-filled:before {
+  content: "\ec7c";
+  position: absolute;
+  
+}
+.ki-picture.ki-filled:after {
+  content: "\ec7d";
+  
+  opacity: 0.2;
+}
+.ki-picture.ki-filled:before {
+  content: "\ec7e";
+  position: absolute;
+  
+}
+.ki-filter-edit.ki-filled:after {
+  content: "\ec7f";
+  
+  opacity: 0.2;
+}
+.ki-filter-edit.ki-filled:before {
+  content: "\ec80";
+  position: absolute;
+  
+}
+.ki-paper-plane.ki-filled:after {
+  content: "\ec81";
+  
+  opacity: 0.2;
+}
+.ki-paper-plane.ki-filled:before {
+  content: "\ec82";
+  position: absolute;
+  
+}
+.ki-crown.ki-filled:after {
+  content: "\ec83";
+  
+  opacity: 0.2;
+}
+.ki-crown.ki-filled:before {
+  content: "\ec84";
+  position: absolute;
+  
+}
+.ki-cloud-change.ki-filled:after {
+  content: "\ec85";
+  
+  opacity: 0.2;
+}
+.ki-cloud-change.ki-filled:before {
+  content: "\ec86";
+  position: absolute;
+  
+}
+.ki-safe-home.ki-filled:after {
+  content: "\ec87";
+  
+  opacity: 0.2;
+}
+.ki-safe-home.ki-filled:before {
+  content: "\ec88";
+  position: absolute;
+  
+}
+.ki-flash-circle.ki-filled:after {
+  content: "\ec89";
+  
+  opacity: 0.2;
+}
+.ki-flash-circle.ki-filled:before {
+  content: "\ec8a";
+  position: absolute;
+  
+}
+.ki-rescue.ki-filled:after {
+  content: "\ec8b";
+  
+  opacity: 0.2;
+}
+.ki-rescue.ki-filled:before {
+  content: "\ec8c";
+  position: absolute;
+  
+}
+.ki-crown-2.ki-filled:after {
+  content: "\ec8d";
+  
+  opacity: 0.2;
+}
+.ki-crown-2.ki-filled:before {
+  content: "\ec8e";
+  position: absolute;
+  
+}
+.ki-slider.ki-filled:after {
+  content: "\ec8f";
+  
+  opacity: 0.2;
+}
+.ki-slider.ki-filled:before {
+  content: "\ec90";
+  position: absolute;
+  
+}
+.ki-ranking.ki-filled:after {
+  content: "\ec91";
+  
+  opacity: 0.2;
+}
+.ki-ranking.ki-filled:before {
+  content: "\ec92";
+  position: absolute;
+  
+}
+.ki-cursor.ki-filled:after {
+  content: "\ec93";
+  
+  opacity: 0.2;
+}
+.ki-cursor.ki-filled:before {
+  content: "\ec94";
+  position: absolute;
+  
+}
+.ki-emoji-happy.ki-filled:after {
+  content: "\ec95";
+  
+  opacity: 0.2;
+}
+.ki-emoji-happy.ki-filled:before {
+  content: "\ec96";
+  position: absolute;
+  
+}
+.ki-icon.ki-filled:after {
+  content: "\ec97";
+  
+  opacity: 0.2;
+}
+.ki-icon.ki-filled:before {
+  content: "\ec98";
+  position: absolute;
+  
+}
+.ki-coffee.ki-filled:after {
+  content: "\ec99";
+  
+  opacity: 0.2;
+}
+.ki-coffee.ki-filled:before {
+  content: "\ec9a";
+  position: absolute;
+  
+}
+.ki-wifi-square.ki-filled:after {
+  content: "\ec9b";
+  
+  opacity: 0.2;
+}
+.ki-wifi-square.ki-filled:before {
+  content: "\ec9c";
+  position: absolute;
+  
+}
+.ki-pin.ki-filled:after {
+  content: "\ec9d";
+  
+  opacity: 0.2;
+}
+.ki-pin.ki-filled:before {
+  content: "\ec9e";
+  position: absolute;
+  
+}
+.ki-archive.ki-filled:after {
+  content: "\ec9f";
+  
+  opacity: 0.2;
+}
+.ki-archive.ki-filled:before {
+  content: "\eca0";
+  position: absolute;
+  
+}
+.ki-paper-clip.ki-filled:after {
+  content: "\eca1";
+  
+  opacity: 0.2;
+}
+.ki-paper-clip.ki-filled:before {
+  content: "\eca2";
+  position: absolute;
+  
+}
+.ki-trash-square.ki-filled:after {
+  content: "\eca3";
+  
+  opacity: 0.2;
+}
+.ki-trash-square.ki-filled:before {
+  content: "\eca4";
+  position: absolute;
+  
+}
+.ki-wifi-home.ki-filled:after {
+  content: "\eca5";
+  
+  opacity: 0.2;
+}
+.ki-wifi-home.ki-filled:before {
+  content: "\eca6";
+  position: absolute;
+  
+}
+.ki-filter-search.ki-filled:after {
+  content: "\eca7";
+  
+  opacity: 0.2;
+}
+.ki-filter-search.ki-filled:before {
+  content: "\eca8";
+  position: absolute;
+  
+}
+.ki-cloud-upload.ki-filled:after {
+  content: "\eca9";
+  
+}
+.ki-cloud-upload.ki-filled:before {
+  content: "\ecaa";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-filter-tick.ki-filled:after {
+  content: "\ecab";
+  
+  opacity: 0.2;
+}
+.ki-filter-tick.ki-filled:before {
+  content: "\ecac";
+  position: absolute;
+  
+}
+.ki-mouse-square.ki-filled:after {
+  content: "\ecad";
+  
+  opacity: 0.2;
+}
+.ki-mouse-square.ki-filled:before {
+  content: "\ecae";
+  position: absolute;
+  
+}
+.ki-home.ki-filled:after {
+  content: "\ecaf";
+  
+  opacity: 0.2;
+}
+.ki-home.ki-filled:before {
+  content: "\ecb0";
+  position: absolute;
+  
+}
+.ki-milk.ki-filled:after {
+  content: "\ecb1";
+  
+  opacity: 0.2;
+}
+.ki-milk.ki-filled:before {
+  content: "\ecb2";
+  position: absolute;
+  
+}
+.ki-information.ki-filled:after {
+  content: "\ecb3";
+  
+  opacity: 0.2;
+}
+.ki-information.ki-filled:before {
+  content: "\ecb4";
+  position: absolute;
+  
+}
+.ki-ghost.ki-filled:after {
+  content: "\ecb5";
+  
+  opacity: 0.2;
+}
+.ki-ghost.ki-filled:before {
+  content: "\ecb6";
+  position: absolute;
+  
+}
+.ki-subtitle.ki-filled:after {
+  content: "\ecb7";
+  
+  opacity: 0.2;
+}
+.ki-subtitle.ki-filled:before {
+  content: "\ecb8";
+  position: absolute;
+  
+}
+.ki-security-user.ki-filled:after {
+  content: "\ecb9";
+  
+  opacity: 0.2;
+}
+.ki-security-user.ki-filled:before {
+  content: "\ecba";
+  position: absolute;
+  
+}
+.ki-shield-slash.ki-filled:after {
+  content: "\ecbb";
+  
+  opacity: 0.2;
+}
+.ki-shield-slash.ki-filled:before {
+  content: "\ecbc";
+  position: absolute;
+  
+}
+.ki-eye.ki-filled:after {
+  content: "\ecbd";
+  
+  opacity: 0.2;
+}
+.ki-eye.ki-filled:before {
+  content: "\ecbe";
+  position: absolute;
+  
+}
+.ki-lock-2.ki-filled:after {
+  content: "\ecbf";
+  
+  opacity: 0.2;
+}
+.ki-lock-2.ki-filled:before {
+  content: "\ecc0";
+  position: absolute;
+  
+}
+.ki-scan-barcode.ki-filled:after {
+  content: "\ecc1";
+  
+  opacity: 0.2;
+}
+.ki-scan-barcode.ki-filled:before {
+  content: "\ecc2";
+  position: absolute;
+  
+}
+.ki-lock-3.ki-filled:after {
+  content: "\ecc3";
+  
+  opacity: 0.2;
+}
+.ki-lock-3.ki-filled:before {
+  content: "\ecc4";
+  position: absolute;
+  
+}
+.ki-ensure.ki-filled:after {
+  content: "\ecc5";
+  
+  opacity: 0.2;
+}
+.ki-ensure.ki-filled:before {
+  content: "\ecc6";
+  position: absolute;
+  
+}
+.ki-eye-slash.ki-filled:after {
+  content: "\ecc7";
+  
+  opacity: 0.2;
+}
+.ki-eye-slash.ki-filled:before {
+  content: "\ecc8";
+  position: absolute;
+  
+}
+.ki-key-square.ki-filled:after {
+  content: "\ecc9";
+  
+  opacity: 0.2;
+}
+.ki-key-square.ki-filled:before {
+  content: "\ecca";
+  position: absolute;
+  
+}
+.ki-shield-cross.ki-filled:after {
+  content: "\eccb";
+  
+  opacity: 0.2;
+}
+.ki-shield-cross.ki-filled:before {
+  content: "\eccc";
+  position: absolute;
+  
+}
+.ki-shield.ki-filled:after {
+  content: "\eccd";
+  
+  opacity: 0.2;
+}
+.ki-shield.ki-filled:before {
+  content: "\ecce";
+  position: absolute;
+  
+}
+.ki-key.ki-filled:after {
+  content: "\eccf";
+  
+  opacity: 0.2;
+}
+.ki-key.ki-filled:before {
+  content: "\ecd0";
+  position: absolute;
+  
+}
+.ki-lock.ki-filled:after {
+  content: "\ecd1";
+  
+  opacity: 0.2;
+}
+.ki-lock.ki-filled:before {
+  content: "\ecd2";
+  position: absolute;
+  
+}
+.ki-shield-tick.ki-filled:after {
+  content: "\ecd3";
+  
+  opacity: 0.2;
+}
+.ki-shield-tick.ki-filled:before {
+  content: "\ecd4";
+  position: absolute;
+  
+}
+.ki-password-check.ki-filled:after {
+  content: "\ecd5";
+  
+  opacity: 0.2;
+}
+.ki-password-check.ki-filled:before {
+  content: "\ecd6";
+  position: absolute;
+  
+}
+.ki-shield-search.ki-filled:after {
+  content: "\ecd7";
+  
+  opacity: 0.2;
+}
+.ki-shield-search.ki-filled:before {
+  content: "\ecd8";
+  position: absolute;
+  
+}
+.ki-archive-tick.ki-filled:after {
+  content: "\ecd9";
+  
+  opacity: 0.2;
+}
+.ki-archive-tick.ki-filled:before {
+  content: "\ecda";
+  position: absolute;
+  
+}
+.ki-save-2.ki-filled:after {
+  content: "\ecdb";
+  
+  opacity: 0.2;
+}
+.ki-save-2.ki-filled:before {
+  content: "\ecdc";
+  position: absolute;
+  
+}
+.ki-receipt-square.ki-filled:after {
+  content: "\ecdd";
+  
+  opacity: 0.2;
+}
+.ki-receipt-square.ki-filled:before {
+  content: "\ecde";
+  position: absolute;
+  
+}
+.ki-book-square.ki-filled:after {
+  content: "\ecdf";
+  
+  opacity: 0.2;
+}
+.ki-book-square.ki-filled:before {
+  content: "\ece0";
+  position: absolute;
+  
+}
+.ki-basket.ki-filled:after {
+  content: "\ece1";
+  
+  opacity: 0.2;
+}
+.ki-basket.ki-filled:before {
+  content: "\ece2";
+  position: absolute;
+  
+}
+.ki-lots-shopping.ki-filled:after {
+  content: "\ece3";
+  
+  opacity: 0.2;
+}
+.ki-lots-shopping.ki-filled:before {
+  content: "\ece4";
+  position: absolute;
+  
+}
+.ki-barcode.ki-filled:after {
+  content: "\ece5";
+  
+  opacity: 0.2;
+}
+.ki-barcode.ki-filled:before {
+  content: "\ece6";
+  position: absolute;
+  
+}
+.ki-percentage.ki-filled:after {
+  content: "\ece7";
+  
+  opacity: 0.2;
+}
+.ki-percentage.ki-filled:before {
+  content: "\ece8";
+  position: absolute;
+  
+}
+.ki-package.ki-filled:after {
+  content: "\ece9";
+  
+  opacity: 0.2;
+}
+.ki-package.ki-filled:before {
+  content: "\ecea";
+  position: absolute;
+  
+}
+.ki-discount.ki-filled:after {
+  content: "\eceb";
+  
+  opacity: 0.2;
+}
+.ki-discount.ki-filled:before {
+  content: "\ecec";
+  position: absolute;
+  
+}
+.ki-purchase.ki-filled:after {
+  content: "\eced";
+  
+  opacity: 0.2;
+}
+.ki-purchase.ki-filled:before {
+  content: "\ecee";
+  position: absolute;
+  
+}
+.ki-tag.ki-filled:after {
+  content: "\ecef";
+  
+  opacity: 0.2;
+}
+.ki-tag.ki-filled:before {
+  content: "\ecf0";
+  position: absolute;
+  
+}
+.ki-shop.ki-filled:after {
+  content: "\ecf1";
+  
+  opacity: 0.2;
+}
+.ki-shop.ki-filled:before {
+  content: "\ecf2";
+  position: absolute;
+  
+}
+.ki-handcart.ki-filled:after {
+  content: "\ecf3";
+  
+  opacity: 0.2;
+}
+.ki-handcart.ki-filled:before {
+  content: "\ecf4";
+  position: absolute;
+  
+}
+.ki-cheque.ki-filled:after {
+  content: "\ecf5";
+  
+  opacity: 0.2;
+}
+.ki-cheque.ki-filled:before {
+  content: "\ecf6";
+  position: absolute;
+  
+}
+.ki-basket-ok.ki-filled:after {
+  content: "\ecf7";
+  
+  opacity: 0.2;
+}
+.ki-basket-ok.ki-filled:before {
+  content: "\ecf8";
+  position: absolute;
+  
+}
+.ki-artificial-intelligence.ki-filled:after {
+  content: "\ecf9";
+  
+  opacity: 0.2;
+}
+.ki-artificial-intelligence.ki-filled:before {
+  content: "\ecfa";
+  position: absolute;
+  
+}
+.ki-technology-4.ki-filled:after {
+  content: "\ecfb";
+  
+  opacity: 0.2;
+}
+.ki-technology-4.ki-filled:before {
+  content: "\ecfc";
+  position: absolute;
+  
+}
+.ki-technology-1.ki-filled:after {
+  content: "\ecfd";
+  
+  opacity: 0.1;
+}
+.ki-technology-1.ki-filled:before {
+  content: "\ecfe";
+  position: absolute;
+  
+}
+.ki-fingerprint-scanning.ki-filled:before {
+  content: "\ecff";
+}
+.ki-electricity.ki-filled:after {
+  content: "\ed00";
+  
+  opacity: 0.2;
+}
+.ki-electricity.ki-filled:before {
+  content: "\ed01";
+  position: absolute;
+  
+}
+.ki-technology-2.ki-filled:after {
+  content: "\ed02";
+  
+  opacity: 0.2;
+}
+.ki-technology-2.ki-filled:before {
+  content: "\ed03";
+  position: absolute;
+  
+}
+.ki-technology-3.ki-filled:after {
+  content: "\ed04";
+  
+  opacity: 0.2;
+}
+.ki-technology-3.ki-filled:before {
+  content: "\ed05";
+  position: absolute;
+  
+}
+.ki-face-id.ki-filled:after {
+  content: "\ed06";
+  
+  opacity: 0.2;
+}
+.ki-face-id.ki-filled:before {
+  content: "\ed07";
+  position: absolute;
+  
+}
+.ki-wlan.ki-filled:before {
+  content: "\ed08";
+}
+.ki-joystick.ki-filled:after {
+  content: "\ed09";
+  
+  opacity: 0.2;
+}
+.ki-joystick.ki-filled:before {
+  content: "\ed0a";
+  position: absolute;
+  
+}
+.ki-click.ki-filled:after {
+  content: "\ed0b";
+  
+  opacity: 0.2;
+}
+.ki-click.ki-filled:before {
+  content: "\ed0c";
+  position: absolute;
+  
+}
+.ki-fasten.ki-filled:after {
+  content: "\ed0d";
+  
+  opacity: 0.2;
+}
+.ki-fasten.ki-filled:before {
+  content: "\ed0e";
+  position: absolute;
+  
+}
+.ki-investmentstructure.ki-filled:before {
+  content: "\ed0f";
+}
+.ki-data.ki-filled:after {
+  content: "\ed10";
+  
+  opacity: 0.2;
+}
+.ki-data.ki-filled:before {
+  content: "\ed11";
+  position: absolute;
+  
+}
+.ki-message-programming.ki-filled:after {
+  content: "\ed12";
+  
+  opacity: 0.2;
+}
+.ki-message-programming.ki-filled:before {
+  content: "\ed13";
+  position: absolute;
+  
+}
+.ki-square-brackets.ki-filled:after {
+  content: "\ed14";
+  
+  opacity: 0.2;
+}
+.ki-square-brackets.ki-filled:before {
+  content: "\ed15";
+  position: absolute;
+  
+}
+.ki-wrench.ki-filled:after {
+  content: "\ed16";
+  
+  opacity: 0.2;
+}
+.ki-wrench.ki-filled:before {
+  content: "\ed17";
+  position: absolute;
+  
+}
+.ki-scroll.ki-filled:after {
+  content: "\ed18";
+  
+  opacity: 0.2;
+}
+.ki-scroll.ki-filled:before {
+  content: "\ed19";
+  position: absolute;
+  
+}
+.ki-loading.ki-filled:before {
+  content: "\ed1a";
+}
+.ki-code.ki-filled:after {
+  content: "\ed1b";
+  
+  opacity: 0.2;
+}
+.ki-code.ki-filled:before {
+  content: "\ed1c";
+  position: absolute;
+  
+}
+.ki-wireframe.ki-filled:after {
+  content: "\ed1d";
+  
+  opacity: 0.2;
+}
+.ki-wireframe.ki-filled:before {
+  content: "\ed1e";
+  position: absolute;
+  
+}
+.ki-disconnect.ki-filled:after {
+  content: "\ed1f";
+  
+  opacity: 0.2;
+}
+.ki-disconnect.ki-filled:before {
+  content: "\ed20";
+  position: absolute;
+  
+}
+.ki-underlining.ki-filled:after {
+  content: "\ed21";
+  
+  opacity: 0.2;
+}
+.ki-underlining.ki-filled:before {
+  content: "\ed22";
+  position: absolute;
+  
+}
+.ki-behance.ki-filled:before {
+  content: "\ed23";
+}
+.ki-tiktok.ki-filled:after {
+  content: "\ed24";
+  
+  opacity: 0.2;
+}
+.ki-tiktok.ki-filled:before {
+  content: "\ed25";
+  position: absolute;
+  
+}
+.ki-twitter.ki-filled:after {
+  content: "\ed26";
+  
+  opacity: 0.2;
+}
+.ki-twitter.ki-filled:before {
+  content: "\ed27";
+  position: absolute;
+  
+}
+.ki-dribbble.ki-filled:after {
+  content: "\ed28";
+  
+  opacity: 0.2;
+}
+.ki-dribbble.ki-filled:before {
+  content: "\ed29";
+  position: absolute;
+  
+}
+.ki-youtube.ki-filled:after {
+  content: "\ed2a";
+  
+  opacity: 0.2;
+}
+.ki-youtube.ki-filled:before {
+  content: "\ed2b";
+  position: absolute;
+  
+}
+.ki-social-media.ki-filled:after {
+  content: "\ed2c";
+  
+  opacity: 0.2;
+}
+.ki-social-media.ki-filled:before {
+  content: "\ed2d";
+  position: absolute;
+  
+}
+.ki-whatsapp.ki-filled:after {
+  content: "\ed2e";
+  
+  opacity: 0.2;
+}
+.ki-whatsapp.ki-filled:before {
+  content: "\ed2f";
+  position: absolute;
+  
+}
+.ki-facebook.ki-filled:after {
+  content: "\ed30";
+  
+  opacity: 0.2;
+}
+.ki-facebook.ki-filled:before {
+  content: "\ed31";
+  position: absolute;
+  
+}
+.ki-classmates.ki-filled:after {
+  content: "\ed32";
+  
+  opacity: 0.2;
+}
+.ki-classmates.ki-filled:before {
+  content: "\ed33";
+  position: absolute;
+  
+}
+.ki-snapchat.ki-filled:after {
+  content: "\ed34";
+  
+  opacity: 0.2;
+}
+.ki-snapchat.ki-filled:before {
+  content: "\ed35";
+  position: absolute;
+  
+}
+.ki-instagram.ki-filled:after {
+  content: "\ed36";
+  
+  opacity: 0.2;
+}
+.ki-instagram.ki-filled:before {
+  content: "\ed37";
+  position: absolute;
+  
+}
+.ki-color-swatch.ki-filled:after {
+  content: "\ed38";
+  
+  opacity: 0.2;
+}
+.ki-color-swatch.ki-filled:before {
+  content: "\ed39";
+  position: absolute;
+  
+}
+.ki-copy-success.ki-filled:after {
+  content: "\ed3a";
+  
+  opacity: 0.2;
+}
+.ki-copy-success.ki-filled:before {
+  content: "\ed3b";
+  position: absolute;
+  
+}
+.ki-bucket-square.ki-filled:after {
+  content: "\ed3c";
+  
+  opacity: 0.2;
+}
+.ki-bucket-square.ki-filled:before {
+  content: "\ed3d";
+  position: absolute;
+  
+}
+.ki-colors-square.ki-filled:after {
+  content: "\ed3e";
+  
+  opacity: 0.2;
+}
+.ki-colors-square.ki-filled:before {
+  content: "\ed3f";
+  position: absolute;
+  
+}
+.ki-pencil.ki-filled:after {
+  content: "\ed40";
+  
+  opacity: 0.2;
+}
+.ki-pencil.ki-filled:before {
+  content: "\ed41";
+  position: absolute;
+  
+}
+.ki-frame.ki-filled:after {
+  content: "\ed42";
+  
+  opacity: 0.2;
+}
+.ki-frame.ki-filled:before {
+  content: "\ed43";
+  position: absolute;
+  
+}
+.ki-feather.ki-filled:after {
+  content: "\ed44";
+  
+  opacity: 0.2;
+}
+.ki-feather.ki-filled:before {
+  content: "\ed45";
+  position: absolute;
+  
+}
+.ki-glass.ki-filled:after {
+  content: "\ed46";
+  
+  opacity: 0.2;
+}
+.ki-glass.ki-filled:before {
+  content: "\ed47";
+  position: absolute;
+  
+}
+.ki-bucket.ki-filled:after {
+  content: "\ed48";
+  
+  opacity: 0.2;
+}
+.ki-bucket.ki-filled:before {
+  content: "\ed49";
+  position: absolute;
+  
+}
+.ki-text.ki-filled:after {
+  content: "\ed4a";
+  
+  opacity: 0.2;
+}
+.ki-text.ki-filled:before {
+  content: "\ed4b";
+  position: absolute;
+  
+}
+.ki-copy.ki-filled:after {
+  content: "\ed4c";
+  
+  opacity: 0.2;
+}
+.ki-copy.ki-filled:before {
+  content: "\ed4d";
+  position: absolute;
+  
+}
+.ki-additem.ki-filled:after {
+  content: "\ed4e";
+  
+  opacity: 0.2;
+}
+.ki-additem.ki-filled:before {
+  content: "\ed4f";
+  position: absolute;
+  
+}
+.ki-disguise.ki-filled:after {
+  content: "\ed50";
+  
+  opacity: 0.2;
+}
+.ki-disguise.ki-filled:before {
+  content: "\ed51";
+  position: absolute;
+  
+}
+.ki-size.ki-filled:after {
+  content: "\ed52";
+  
+  opacity: 0.2;
+}
+.ki-size.ki-filled:before {
+  content: "\ed53";
+  position: absolute;
+  
+}
+.ki-brush.ki-filled:after {
+  content: "\ed54";
+  
+  opacity: 0.2;
+}
+.ki-brush.ki-filled:before {
+  content: "\ed55";
+  position: absolute;
+  
+}
+.ki-design-2.ki-filled:after {
+  content: "\ed56";
+  
+  opacity: 0.2;
+}
+.ki-design-2.ki-filled:before {
+  content: "\ed57";
+  position: absolute;
+  
+}
+.ki-design-1.ki-filled:after {
+  content: "\ed58";
+  
+  opacity: 0.2;
+}
+.ki-design-1.ki-filled:before {
+  content: "\ed59";
+  position: absolute;
+  
+}
+.ki-paintbucket.ki-filled:after {
+  content: "\ed5a";
+  
+  opacity: 0.2;
+}
+.ki-paintbucket.ki-filled:before {
+  content: "\ed5b";
+  position: absolute;
+  
+}
+.ki-eraser.ki-filled:after {
+  content: "\ed5c";
+  
+  opacity: 0.2;
+}
+.ki-eraser.ki-filled:before {
+  content: "\ed5d";
+  position: absolute;
+  
+}
+.ki-setting-3.ki-filled:after {
+  content: "\ed5e";
+  
+  opacity: 0.2;
+}
+.ki-setting-3.ki-filled:before {
+  content: "\ed5f";
+  position: absolute;
+  
+}
+.ki-setting-2.ki-filled:after {
+  content: "\ed60";
+  
+  opacity: 0.2;
+}
+.ki-setting-2.ki-filled:before {
+  content: "\ed61";
+  position: absolute;
+  
+}
+.ki-setting-4.ki-filled:after {
+  content: "\ed62";
+  
+  opacity: 0.2;
+}
+.ki-setting-4.ki-filled:before {
+  content: "\ed63";
+  position: absolute;
+  
+}
+.ki-more-2.ki-filled:after {
+  content: "\ed64";
+  
+  opacity: 0.2;
+}
+.ki-more-2.ki-filled:before {
+  content: "\ed65";
+  position: absolute;
+  
+}
+.ki-toggle-off-circle.ki-filled:after {
+  content: "\ed66";
+  
+  opacity: 0.2;
+}
+.ki-toggle-off-circle.ki-filled:before {
+  content: "\ed67";
+  position: absolute;
+  
+}
+.ki-setting.ki-filled:after {
+  content: "\ed68";
+  
+  opacity: 0.2;
+}
+.ki-setting.ki-filled:before {
+  content: "\ed69";
+  position: absolute;
+  
+}
+.ki-category.ki-filled:after {
+  content: "\ed6a";
+  
+  opacity: 0.2;
+}
+.ki-category.ki-filled:before {
+  content: "\ed6b";
+  position: absolute;
+  
+}
+.ki-toggle-off.ki-filled:after {
+  content: "\ed6c";
+  
+}
+.ki-toggle-off.ki-filled:before {
+  content: "\ed6d";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-toggle-on-circle.ki-filled:after {
+  content: "\ed6e";
+  
+  opacity: 0.2;
+}
+.ki-toggle-on-circle.ki-filled:before {
+  content: "\ed6f";
+  position: absolute;
+  
+}
+.ki-toggle-on.ki-filled:after {
+  content: "\ed70";
+  
+  opacity: 0.2;
+}
+.ki-toggle-on.ki-filled:before {
+  content: "\ed71";
+  position: absolute;
+  
+}
+.ki-abstract-16.ki-filled:after {
+  content: "\ed72";
+  
+  opacity: 0.2;
+}
+.ki-abstract-16.ki-filled:before {
+  content: "\ed73";
+  position: absolute;
+  
+}
+.ki-abstract-6.ki-filled:after {
+  content: "\ed74";
+  
+  opacity: 0.2;
+}
+.ki-abstract-6.ki-filled:before {
+  content: "\ed75";
+  position: absolute;
+  
+}
+.ki-abstract-7.ki-filled:after {
+  content: "\ed76";
+  
+}
+.ki-abstract-7.ki-filled:before {
+  content: "\ed77";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-abstract-17.ki-filled:after {
+  content: "\ed78";
+  
+  opacity: 0.2;
+}
+.ki-abstract-17.ki-filled:before {
+  content: "\ed79";
+  position: absolute;
+  
+}
+.ki-abstract-15.ki-filled:after {
+  content: "\ed7a";
+  
+  opacity: 0.2;
+}
+.ki-abstract-15.ki-filled:before {
+  content: "\ed7b";
+  position: absolute;
+  
+}
+.ki-abstract-29.ki-filled:after {
+  content: "\ed7c";
+  
+  opacity: 0.2;
+}
+.ki-abstract-29.ki-filled:before {
+  content: "\ed7d";
+  position: absolute;
+  
+}
+.ki-abstract-5.ki-filled:after {
+  content: "\ed7e";
+  
+  opacity: 0.2;
+}
+.ki-abstract-5.ki-filled:before {
+  content: "\ed7f";
+  position: absolute;
+  
+}
+.ki-abstract-4.ki-filled:after {
+  content: "\ed80";
+  
+  opacity: 0.2;
+}
+.ki-abstract-4.ki-filled:before {
+  content: "\ed81";
+  position: absolute;
+  
+}
+.ki-abstract-28.ki-filled:after {
+  content: "\ed82";
+  
+  opacity: 0.2;
+}
+.ki-abstract-28.ki-filled:before {
+  content: "\ed83";
+  position: absolute;
+  
+}
+.ki-abstract-14.ki-filled:after {
+  content: "\ed84";
+  
+  opacity: 0.2;
+}
+.ki-abstract-14.ki-filled:before {
+  content: "\ed85";
+  position: absolute;
+  
+}
+.ki-abstract-38.ki-filled:after {
+  content: "\ed86";
+  
+  opacity: 0.2;
+}
+.ki-abstract-38.ki-filled:before {
+  content: "\ed87";
+  position: absolute;
+  
+}
+.ki-abstract-10.ki-filled:after {
+  content: "\ed88";
+  
+  opacity: 0.2;
+}
+.ki-abstract-10.ki-filled:before {
+  content: "\ed89";
+  position: absolute;
+  
+}
+.ki-abstract-1.ki-filled:after {
+  content: "\ed8a";
+  
+  opacity: 0.2;
+}
+.ki-abstract-1.ki-filled:before {
+  content: "\ed8b";
+  position: absolute;
+  
+}
+.ki-abstract-11.ki-filled:after {
+  content: "\ed8c";
+  
+  opacity: 0.2;
+}
+.ki-abstract-11.ki-filled:before {
+  content: "\ed8d";
+  position: absolute;
+  
+}
+.ki-abstract-39.ki-filled:after {
+  content: "\ed8e";
+  
+  opacity: 0.2;
+}
+.ki-abstract-39.ki-filled:before {
+  content: "\ed8f";
+  position: absolute;
+  
+}
+.ki-abstract-13.ki-filled:after {
+  content: "\ed90";
+  
+  opacity: 0.2;
+}
+.ki-abstract-13.ki-filled:before {
+  content: "\ed91";
+  position: absolute;
+  
+}
+.ki-abstract-3.ki-filled:after {
+  content: "\ed92";
+  
+  opacity: 0.2;
+}
+.ki-abstract-3.ki-filled:before {
+  content: "\ed93";
+  position: absolute;
+  
+}
+.ki-abstract-2.ki-filled:after {
+  content: "\ed94";
+  
+  opacity: 0.2;
+}
+.ki-abstract-2.ki-filled:before {
+  content: "\ed95";
+  position: absolute;
+  
+}
+.ki-abstract-12.ki-filled:after {
+  content: "\ed96";
+  
+  opacity: 0.2;
+}
+.ki-abstract-12.ki-filled:before {
+  content: "\ed97";
+  position: absolute;
+  
+}
+.ki-abstract-49.ki-filled:after {
+  content: "\ed98";
+  
+  opacity: 0.2;
+}
+.ki-abstract-49.ki-filled:before {
+  content: "\ed99";
+  position: absolute;
+  
+}
+.ki-abstract-48.ki-filled:after {
+  content: "\ed9a";
+  
+  opacity: 0.2;
+}
+.ki-abstract-48.ki-filled:before {
+  content: "\ed9b";
+  position: absolute;
+  
+}
+.ki-abstract-40.ki-filled:after {
+  content: "\ed9c";
+  
+  opacity: 0.2;
+}
+.ki-abstract-40.ki-filled:before {
+  content: "\ed9d";
+  position: absolute;
+  
+}
+.ki-abstract-41.ki-filled:after {
+  content: "\ed9e";
+  
+  opacity: 0.2;
+}
+.ki-abstract-41.ki-filled:before {
+  content: "\ed9f";
+  position: absolute;
+  
+}
+.ki-abstract-43.ki-filled:after {
+  content: "\eda0";
+  
+  opacity: 0.2;
+}
+.ki-abstract-43.ki-filled:before {
+  content: "\eda1";
+  position: absolute;
+  
+}
+.ki-abstract-42.ki-filled:after {
+  content: "\eda2";
+  
+  opacity: 0.2;
+}
+.ki-abstract-42.ki-filled:before {
+  content: "\eda3";
+  position: absolute;
+  
+}
+.ki-abstract-46.ki-filled:after {
+  content: "\eda4";
+  
+  opacity: 0.2;
+}
+.ki-abstract-46.ki-filled:before {
+  content: "\eda5";
+  position: absolute;
+  
+}
+.ki-abstract-47.ki-filled:after {
+  content: "\eda6";
+  
+  opacity: 0.2;
+}
+.ki-abstract-47.ki-filled:before {
+  content: "\eda7";
+  position: absolute;
+  
+}
+.ki-abstract-45.ki-filled:before {
+  content: "\eda8";
+}
+.ki-abstract.ki-filled:after {
+  content: "\eda9";
+  
+  opacity: 0.2;
+}
+.ki-abstract.ki-filled:before {
+  content: "\edaa";
+  position: absolute;
+  
+}
+.ki-abstract-44.ki-filled:after {
+  content: "\edab";
+  
+  opacity: 0.2;
+}
+.ki-abstract-44.ki-filled:before {
+  content: "\edac";
+  position: absolute;
+  
+}
+.ki-abstract-37.ki-filled:after {
+  content: "\edad";
+  
+  opacity: 0.2;
+}
+.ki-abstract-37.ki-filled:before {
+  content: "\edae";
+  position: absolute;
+  
+}
+.ki-abstract-23.ki-filled:after {
+  content: "\edaf";
+  
+  opacity: 0.2;
+}
+.ki-abstract-23.ki-filled:before {
+  content: "\edb0";
+  position: absolute;
+  
+}
+.ki-abstract-22.ki-filled:after {
+  content: "\edb1";
+  
+  opacity: 0.2;
+}
+.ki-abstract-22.ki-filled:before {
+  content: "\edb2";
+  position: absolute;
+  
+}
+.ki-abstract-36.ki-filled:after {
+  content: "\edb3";
+  
+  opacity: 0.2;
+}
+.ki-abstract-36.ki-filled:before {
+  content: "\edb4";
+  position: absolute;
+  
+}
+.ki-abstract-20.ki-filled:after {
+  content: "\edb5";
+  
+  opacity: 0.2;
+}
+.ki-abstract-20.ki-filled:before {
+  content: "\edb6";
+  position: absolute;
+  
+}
+.ki-abstract-34.ki-filled:after {
+  content: "\edb7";
+  
+  opacity: 0.2;
+}
+.ki-abstract-34.ki-filled:before {
+  content: "\edb8";
+  position: absolute;
+  
+}
+.ki-abstract-35.ki-filled:after {
+  content: "\edb9";
+  
+}
+.ki-abstract-35.ki-filled:before {
+  content: "\edba";
+  position: absolute;
+  
+  opacity: 0.2;
+}
+.ki-abstract-21.ki-filled:after {
+  content: "\edbb";
+  
+  opacity: 0.2;
+}
+.ki-abstract-21.ki-filled:before {
+  content: "\edbc";
+  position: absolute;
+  
+}
+.ki-abstract-19.ki-filled:after {
+  content: "\edbd";
+  
+  opacity: 0.2;
+}
+.ki-abstract-19.ki-filled:before {
+  content: "\edbe";
+  position: absolute;
+  
+}
+.ki-abstract-25.ki-filled:after {
+  content: "\edbf";
+  
+  opacity: 0.2;
+}
+.ki-abstract-25.ki-filled:before {
+  content: "\edc0";
+  position: absolute;
+  
+}
+.ki-abstract-31.ki-filled:after {
+  content: "\edc1";
+  
+  opacity: 0.2;
+}
+.ki-abstract-31.ki-filled:before {
+  content: "\edc2";
+  position: absolute;
+  
+}
+.ki-abstract-9.ki-filled:after {
+  content: "\edc3";
+  
+  opacity: 0.2;
+}
+.ki-abstract-9.ki-filled:before {
+  content: "\edc4";
+  position: absolute;
+  
+}
+.ki-abstract-8.ki-filled:after {
+  content: "\edc5";
+  
+  opacity: 0.2;
+}
+.ki-abstract-8.ki-filled:before {
+  content: "\edc6";
+  position: absolute;
+  
+}
+.ki-abstract-30.ki-filled:after {
+  content: "\edc7";
+  
+  opacity: 0.2;
+}
+.ki-abstract-30.ki-filled:before {
+  content: "\edc8";
+  position: absolute;
+  
+}
+.ki-abstract-24.ki-filled:after {
+  content: "\edc9";
+  
+  opacity: 0.2;
+}
+.ki-abstract-24.ki-filled:before {
+  content: "\edca";
+  position: absolute;
+  
+}
+.ki-abstract-18.ki-filled:after {
+  content: "\edcb";
+  
+  opacity: 0.2;
+}
+.ki-abstract-18.ki-filled:before {
+  content: "\edcc";
+  position: absolute;
+  
+}
+.ki-abstract-32.ki-filled:after {
+  content: "\edcd";
+  
+  opacity: 0.2;
+}
+.ki-abstract-32.ki-filled:before {
+  content: "\edce";
+  position: absolute;
+  
+}
+.ki-abstract-26.ki-filled:after {
+  content: "\edcf";
+  
+  opacity: 0.2;
+}
+.ki-abstract-26.ki-filled:before {
+  content: "\edd0";
+  position: absolute;
+  
+}
+.ki-abstract-27.ki-filled:after {
+  content: "\edd1";
+  
+  opacity: 0.2;
+}
+.ki-abstract-27.ki-filled:before {
+  content: "\edd2";
+  position: absolute;
+  
+}
+.ki-abstract-33.ki-filled:after {
+  content: "\edd3";
+  
+  opacity: 0.2;
+}
+.ki-abstract-33.ki-filled:before {
+  content: "\edd4";
+  position: absolute;
+  
+}
