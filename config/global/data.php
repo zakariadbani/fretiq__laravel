@@ -111,6 +111,16 @@ return [
     ],
 
     //---------------------------------------------------------------------------
+    // Découvertes — statut d'exécution
+    //---------------------------------------------------------------------------
+    'discovery_run_statuses' => [
+        'pending'   => ['label' => 'En attente', 'color' => 'secondary'],
+        'running'   => ['label' => 'En cours',   'color' => 'primary'],
+        'completed' => ['label' => 'Terminée',   'color' => 'success'],
+        'failed'    => ['label' => 'Échouée',    'color' => 'danger'],
+    ],
+
+    //---------------------------------------------------------------------------
     // Destinataires de campagne — statut
     //---------------------------------------------------------------------------
     'campaign_recipient_statuses' => [
@@ -391,6 +401,82 @@ return [
         'YE' => 'Yémen',
         'ZM' => 'Zambie',
         'ZW' => 'Zimbabwe',
+    ],
+
+    //---------------------------------------------------------------------------
+    // Prospection — secteurs cibles (vocabulaire requêtes SerpAPI)
+    // Valeurs libres utilisées directement dans les requêtes Google — ne pas modifier
+    // sans vérifier l'impact sur la découverte existante.
+    //---------------------------------------------------------------------------
+    'prospect_sectors' => [
+        'Transport & Logistique',
+        'Agroalimentaire',
+        'Industrie manufacturière',
+        'Chimie & Pharmaceutique',
+        'Automobile',
+        'Aéronautique',
+        'Textile & Habillement',
+        'E-commerce',
+        'Grande distribution',
+        'BTP & Matériaux',
+        'Énergie',
+        'Électronique & High-tech',
+        'Cosmétique & Parfumerie',
+        'Vins & Spiritueux',
+        'Machines & Équipements industriels',
+        'Maritime & Portuaire',
+    ],
+
+    //---------------------------------------------------------------------------
+    // Prospection — postes cibles (groupés par fonction)
+    // Structure group => [postes] — miroir volontaire du schéma DB futur.
+    //---------------------------------------------------------------------------
+    'prospect_positions' => [
+        'Direction Générale' => [
+            'Directeur Général',
+            'PDG',
+            'Gérant',
+            'Directeur des Opérations',
+        ],
+        'Logistique & Supply Chain' => [
+            'Directeur Logistique',
+            'Responsable Logistique',
+            'Directeur Supply Chain',
+            'Responsable Supply Chain',
+            'Responsable Transport',
+            'Responsable Entrepôt',
+        ],
+        'Achats' => [
+            'Directeur Achats',
+            'Responsable Achats',
+            'Acheteur Transport',
+        ],
+        'Import / Export' => [
+            'Responsable Import/Export',
+            'Responsable ADV',
+            'Responsable Douane',
+            'Commercial Export',
+        ],
+    ],
+
+    //---------------------------------------------------------------------------
+    // Groupes "postes recommandés" — preset quick-fill du formulaire critères.
+    // Décideurs fret : exclut volontairement « Direction Générale ».
+    //---------------------------------------------------------------------------
+    'prospect_positions_recommended_groups' => [
+        'Logistique & Supply Chain',
+        'Achats',
+        'Import / Export',
+    ],
+
+    //---------------------------------------------------------------------------
+    // Prospection — codes pays UE-27 (ISO-3166-1 alpha-2)
+    // MA délibérément absent — la sélection UE utilise une union (MA survit).
+    //---------------------------------------------------------------------------
+    'eu_country_codes' => [
+        'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
+        'DE', 'GR', 'HU', 'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL',
+        'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE',
     ],
 
     //---------------------------------------------------------------------------

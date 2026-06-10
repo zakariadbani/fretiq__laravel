@@ -38,7 +38,7 @@ return [
             'driver' => 'database',
             'table' => 'jobs',
             'queue' => 'default',
-            'retry_after' => 90,
+            'retry_after' => 600, // raised from 90 — discovery runs can take up to 300s ($timeout); 600 > timeout+margin
             'after_commit' => false,
         ],
 

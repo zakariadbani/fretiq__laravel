@@ -26,6 +26,8 @@ class PlannerController extends Controller
      */
     public function index()
     {
+        addVendors(['fullcalendar']);
+
         return view('backend.contents.planner.index');
     }
 

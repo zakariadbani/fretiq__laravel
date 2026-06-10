@@ -39,8 +39,8 @@
     Create mode:
         - Simple header card + minimal nav (Général only).
 
-    No select2 used — all inputs are text/number or plain multi-select.
-    Both form-actions calls preserved: toolbar variant above + sticky variant at bottom.
+    All multi-value fields use <x-crud.select-multi> component (select2, data-tags where allowed).
+    is_active uses hidden input + checkbox pattern (D9) so deactivation always posts is_active=0.
 --}}
 
 <form method="POST" action="{{ $route }}" class="form" id="form_crud">
@@ -130,15 +130,16 @@
                         {{-- Right column --}}
                         <div class="col-lg-6">
 
-                            {{-- Actif --}}
+                            {{-- Actif — D9: hidden input ensures is_active=0 always posts when unchecked --}}
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2 d-block">Statut</label>
                                 <div class="d-flex align-items-center justify-content-between border border-dashed rounded p-4">
                                     <div>
                                         <div class="fw-semibold text-gray-800 fs-6">Activer ce critère</div>
-                                        <div class="text-muted fs-7">Active le critère pour les prochains runs de découverte.</div>
+                                        <div class="text-muted fs-7">Un critère inactif ne peut pas lancer de découverte.</div>
                                     </div>
                                     <div class="form-check form-check-solid form-switch ms-4">
+                                        <input type="hidden" name="is_active" value="0" />
                                         <input class="form-check-input h-20px w-30px"
                                                type="checkbox"
                                                name="is_active"
@@ -170,30 +171,37 @@
                         {{-- Left column --}}
                         <div class="col-lg-6">
 
-                            {{-- Secteurs --}}
+                            {{-- Secteurs — select2 with free-tag entry --}}
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Secteurs</label>
-                                <input type="text"
-                                       name="sectors"
-                                       class="form-control form-control-solid"
-                                       placeholder="Transport, Logistique, Maritime..."
-                                       value="{{ old('sectors', is_array($model->sectors ?? null) ? implode(', ', $model->sectors) : ($model->sectors ?? '')) }}" />
-                                <div class="form-text text-muted mt-1">
-                                    Séparez par des virgules.
-                                </div>
+                                <x-crud.select-multi
+                                    name="sectors"
+                                    :options="$sectorsList"
+                                    :selected="old('sectors', $model->sectors ?? [])"
+                                    :tags="true"
+                                    placeholder="Recherchez et sélectionnez — entrées libres autorisées."
+                                    hint="Recherchez et sélectionnez — entrées libres autorisées." />
                             </div>
 
-                            {{-- Pays --}}
+                            {{-- Pays — strict select2 (no tags) + FR+MA preselect on create --}}
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Pays</label>
-                                <input type="text"
-                                       name="countries"
-                                       class="form-control form-control-solid"
-                                       placeholder="France, Allemagne, Belgique..."
-                                       value="{{ old('countries', is_array($model->countries ?? null) ? implode(', ', $model->countries) : ($model->countries ?? '')) }}" />
-                                <div class="form-text text-muted mt-1">
-                                    Séparez par des virgules.
+                                <div class="d-flex align-items-center gap-2 mb-2">
+                                    <button type="button" class="btn btn-sm btn-light-primary" id="btn_ue27">
+                                        <i class="bi bi-globe-europe-africa me-1"></i>UE-27
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-light-danger" id="btn_clear_countries">
+                                        <i class="bi bi-x-circle me-1"></i>Effacer
+                                    </button>
                                 </div>
+                                <x-crud.select-multi
+                                    name="countries"
+                                    :options="$countries"
+                                    :selected="old('countries', $model->countries ?? ($model->id ?? null ? [] : ['FR', 'MA']))"
+                                    :tags="false"
+                                    placeholder="Recherchez et sélectionnez un ou plusieurs pays."
+                                    hint="Vide = découverte sur France + Maroc par défaut."
+                                    :labelSuffix="true" />
                             </div>
 
                         </div>
@@ -201,35 +209,36 @@
                         {{-- Right column --}}
                         <div class="col-lg-6">
 
-                            {{-- Tailles d'entreprise — plain multi-select (no select2: hidden at init would break width) --}}
+                            {{-- Tailles d'entreprise — select2 multi --}}
                             <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Tailles d'entreprise</label>
-                                <select name="company_sizes[]"
-                                        class="form-select form-select-solid"
-                                        multiple>
-                                    @foreach($companySizes as $key => $label)
-                                        <option value="{{ $key }}"
-                                            {{ in_array($key, old('company_sizes', $model->company_sizes ?? [])) ? 'selected' : '' }}>
-                                            {{ is_array($label) ? ($label['label'] ?? $key) : $label }}
-                                        </option>
-                                    @endforeach
-                                </select>
-                                <div class="form-text text-muted mt-1">
-                                    Maintenez Ctrl pour sélectionner plusieurs tailles.
-                                </div>
+                                <label class="fw-semibold fs-6 mb-2">Tailles d'entreprise<span class="badge badge-light-warning fs-8 ms-2 text-nowrap">Phase 2/3</span></label>
+                                <x-crud.select-multi
+                                    name="company_sizes"
+                                    :options="$companySizes"
+                                    :selected="old('company_sizes', $model->company_sizes ?? [])"
+                                    placeholder="Sélectionner des tailles..."
+                                    hint="Optionnel. Laisser vide si inconnu — sans effet sur la découverte actuelle." />
                             </div>
 
-                            {{-- Postes cibles --}}
+                            {{-- Postes cibles — grouped optgroups with free-tag entry --}}
                             <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Postes cibles</label>
-                                <input type="text"
-                                       name="target_positions"
-                                       class="form-control form-control-solid"
-                                       placeholder="Directeur Achats, DSI, Responsable Logistique..."
-                                       value="{{ old('target_positions', is_array($model->target_positions ?? null) ? implode(', ', $model->target_positions) : ($model->target_positions ?? '')) }}" />
-                                <div class="form-text text-muted mt-1">
-                                    Séparez par des virgules.
+                                <label class="fw-semibold fs-6 mb-2">Postes cibles<span class="badge badge-light-warning fs-8 ms-2 text-nowrap">Phase 2/3</span></label>
+                                <div class="d-flex align-items-center gap-2 mb-2">
+                                    <button type="button" class="btn btn-sm btn-light-info" id="btn_postes_reco">
+                                        <i class="bi bi-stars me-1"></i>Postes recommandés
+                                    </button>
+                                    <button type="button" class="btn btn-sm btn-light-danger" id="btn_clear_positions">
+                                        <i class="bi bi-x-circle me-1"></i>Effacer
+                                    </button>
+                                    <span id="postes_cap_note" class="text-warning fs-8 align-self-center d-none">Limité à 50 postes.</span>
                                 </div>
+                                <x-crud.select-multi
+                                    name="target_positions"
+                                    :options="$positionGroups"
+                                    :selected="old('target_positions', $model->target_positions ?? [])"
+                                    :tags="true"
+                                    placeholder="Recherchez et sélectionnez — entrées libres autorisées."
+                                    hint="Optionnel — préremplit l'intention de ciblage (sans effet sur la découverte actuelle). Cliquez « Postes recommandés » ou laissez vide." />
                             </div>
 
                         </div>
@@ -243,6 +252,33 @@
     </div>
     {{-- end tab-content --}}
 
+    {{-- ── SerpAPI query preview (edit mode only — needs persisted record) ── --}}
+    @if(isset($model) && $model->id)
+    <div class="card mb-5" id="card-query-preview">
+        <div class="card-header border-0 pt-5">
+            <h3 class="card-title fw-bolder m-0">
+                <i class="bi bi-search text-warning fs-3 me-2"></i>
+                Aperçu des requêtes SerpAPI
+            </h3>
+            <div class="card-toolbar">
+                <span class="text-muted fs-7 me-3">Basé sur les critères enregistrés</span>
+                <button type="button" class="btn btn-sm btn-light-warning" id="btn-refresh-queries">
+                    <i class="bi bi-arrow-clockwise me-1"></i>
+                    Actualiser
+                </button>
+            </div>
+        </div>
+        <div class="card-body border-top p-9">
+            <div id="query-preview-content">
+                <div class="text-muted fs-7">
+                    <i class="bi bi-hourglass-split me-1"></i>
+                    Chargement des requêtes…
+                </div>
+            </div>
+        </div>
+    </div>
+    @endif
+
     {{-- Sticky save bar — shared partial (mirrors top toolbar) --}}
     @include('backend.elements.form-actions', ['variant' => 'sticky', 'backRoute' => 'admin.prospect_criteria.index'])
 
@@ -251,6 +287,85 @@
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
+    <script>
+        @if(isset($model) && $model->id)
+        (function () {
+            var previewUrl = '{{ route('admin.prospect_criteria.preview_queries', $model->id) }}';
+            var $container = $('#query-preview-content');
+
+            function loadQueries() {
+                $container.html(
+                    '<div class="text-muted fs-7"><i class="bi bi-hourglass-split me-1"></i>Chargement des requêtes…</div>'
+                );
+                $.getJSON(previewUrl, function (data) {
+                    var queries = data.queries || [];
+                    if (queries.length === 0) {
+                        $container.html(
+                            '<div class="text-muted fs-7"><i class="bi bi-exclamation-circle me-1"></i>Aucune requête générée — renseignez au moins un secteur ou un pays.</div>'
+                        );
+                        return;
+                    }
+                    var html = '<ul class="list-unstyled mb-0">';
+                    $.each(queries, function (i, q) {
+                        html += '<li class="d-flex align-items-start mb-2">'
+                              + '<span class="badge badge-light-warning me-2 mt-1 fs-8">' + (i + 1) + '</span>'
+                              + '<span class="text-gray-700 fs-7">' + $('<div>').text(q).html() + '</span>'
+                              + '</li>';
+                    });
+                    html += '</ul>';
+                    $container.html(html);
+                }).fail(function () {
+                    $container.html(
+                        '<div class="text-danger fs-7"><i class="bi bi-x-circle me-1"></i>Erreur lors du chargement des requêtes.</div>'
+                    );
+                });
+            }
+
+            // Load on page ready
+            $(loadQueries);
+
+            // Refresh button
+            $('#btn-refresh-queries').on('click', loadQueries);
+        })();
+        @endif
+
+        $(function () {
+            // UE-27 / Effacer quick-pick buttons (D6, union semantics).
+            // EU27 list sourced from PHP config — never hard-coded in JS.
+            const EU27 = @json($euCodes);
+            const $c = $('select[name="countries[]"]');
+
+            // UE-27: union — keeps already-selected non-EU codes (e.g. MA).
+            $('#btn_ue27').on('click', function () {
+                const current = $c.val() || [];
+                $c.val([...new Set([...current, ...EU27])]).trigger('change');
+            });
+
+            // Effacer: clear the countries select.
+            $('#btn_clear_countries').on('click', function () {
+                $c.val([]).trigger('change');
+            });
+
+            // Postes recommandés / Effacer quick-pick buttons.
+            const RECO = @json($recommendedPositions);
+            const $p = $('#form_crud select[name="target_positions[]"]');
+            const POS_MAX = 50; // mirrors ProspectCriteria rules() max:50
+            $('#btn_postes_reco').on('click', function () {
+                const union = [...new Set([...($p.val() || []), ...RECO])];
+                const capped = union.slice(0, POS_MAX);
+                $p.val(capped).trigger('change');
+                $('#postes_cap_note').toggleClass('d-none', union.length <= POS_MAX);
+            });
+            $('#btn_clear_positions').on('click', function () {
+                $p.val([]).trigger('change');
+                $('#postes_cap_note').addClass('d-none');
+            });
+
+            // Guarded select2 fallback init — Metronic data-control="select2" auto-init may
+            // already cover these; only initialise controls that have not been touched yet.
+            $('#form_crud select[multiple]').not('.select2-hidden-accessible').select2();
+        });
+    </script>
 @endpush
 
 </x-default-layout>

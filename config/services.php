@@ -78,8 +78,10 @@ return [
     |--------------------------------------------------------------------------
     */
     'serpapi' => [
-        'api_key' => env('SERPAPI_API_KEY'),
-        'driver'  => env('DISCOVERY_DRIVER', 'local'),
+        'api_key'              => env('SERPAPI_API_KEY'),
+        'driver'               => env('DISCOVERY_DRIVER', 'local'),
+        // D10: cap per-run query count to avoid UE-27 × sectors multiplication (700+ queries).
+        'max_queries_per_run'  => env('SERPAPI_MAX_QUERIES_PER_RUN', 40),
     ],
 
     'hunter' => [

@@ -45,30 +45,108 @@
             'config' => \App\Crud\ViewConfigs\SegmentViewConfig::make($model, $stats ?? null),
         ])
 
-        {{-- Domain-specific: Filtre (JSON) — preserved below the generic apercu --}}
+        {{-- Domain-specific: Ciblage card — replaces the raw JSON card --}}
+        @php
+            $filter         = is_array($model->filter) ? $model->filter : [];
+            $countries      = config('global.data.company_countries', []);
+            $contactStatuses = config('global.data.contact_statuses', []);
+
+            // sectors — scalar legacy support: cast to array
+            $sectors = $filter['sector'] ?? [];
+            if (!is_array($sectors)) { $sectors = (array) $sectors; }
+
+            // countries — scalar legacy support
+            $filterCountries = $filter['country'] ?? [];
+            if (!is_array($filterCountries)) { $filterCountries = (array) $filterCountries; }
+
+            // status — always single scalar or missing
+            $filterStatus = $filter['status'] ?? null;
+
+            // Funnel data (passed from controller as $stats['funnel'])
+            $funnel = $stats['funnel'] ?? null;
+            $funnelParts = [];
+            if (is_array($funnel)) {
+                if (!empty($funnel['matched']))             { $funnelParts[] = ['label' => (string)$funnel['matched'] . ' correspondants',   'class' => '']; }
+                if (!empty($funnel['suppressed']))          { $funnelParts[] = ['label' => '− ' . $funnel['suppressed'] . ' suppression',     'class' => '']; }
+                if (!empty($funnel['cold_excluded']))       { $funnelParts[] = ['label' => '− ' . $funnel['cold_excluded'] . ' envoi à froid', 'class' => 'text-warning']; }
+                if (!empty($funnel['personal_excluded']))   { $funnelParts[] = ['label' => '− ' . $funnel['personal_excluded'] . ' personnels', 'class' => '']; }
+                if (!empty($funnel['duplicates_excluded'])) { $funnelParts[] = ['label' => '− ' . $funnel['duplicates_excluded'] . ' doublons', 'class' => '']; }
+                if (isset($funnel['final']))                { $funnelParts[] = ['label' => '= ' . $funnel['final'] . ' destinataires',          'class' => 'fw-semibold']; }
+            }
+        @endphp
         <div class="row g-5 mt-2">
             <div class="col-12">
                 <div class="card">
                     <div class="card-header border-0 pt-5">
                         <h3 class="card-title fw-bolder m-0">
-                            <i class="bi bi-braces text-info fs-3 me-2"></i>
-                            Filtre (JSON)
+                            <i class="bi bi-crosshair text-info fs-3 me-2"></i>
+                            Ciblage
                         </h3>
                     </div>
-                    <div class="card-body border-top">
-                        @if($model->filter)
-                            <pre class="bg-light rounded p-4 mb-0 fs-7 text-gray-700" style="white-space: pre-wrap; word-break: break-all;">{{ json_encode($model->filter, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) }}</pre>
-                        @else
-                            <div class="text-center py-8 text-muted">
-                                <i class="bi bi-braces fs-2x mb-3 d-block"></i>
-                                Aucun filtre défini pour ce segment.
+                    <div class="card-body border-top pt-5">
+
+                        {{-- Row: Secteurs d'activité --}}
+                        <div class="d-flex align-items-start mb-4">
+                            <span class="fw-semibold text-gray-700 w-200px flex-shrink-0">Secteurs d'activité</span>
+                            <div>
+                                @if(empty($sectors))
+                                    <span class="text-muted">Tous</span>
+                                @else
+                                    @foreach($sectors as $s)
+                                        <span class="badge badge-light me-1 mb-1">{{ e($s) }}</span>
+                                    @endforeach
+                                @endif
+                            </div>
+                        </div>
+
+                        {{-- Row: Pays --}}
+                        <div class="d-flex align-items-start mb-4">
+                            <span class="fw-semibold text-gray-700 w-200px flex-shrink-0">Pays</span>
+                            <div>
+                                @if(empty($filterCountries))
+                                    <span class="text-muted">Tous</span>
+                                @else
+                                    @foreach($filterCountries as $iso)
+                                        <span class="badge badge-light me-1 mb-1">{{ $countries[$iso] ?? e($iso) }}</span>
+                                    @endforeach
+                                @endif
+                            </div>
+                        </div>
+
+                        {{-- Row: Statut du contact --}}
+                        <div class="d-flex align-items-start mb-4">
+                            <span class="fw-semibold text-gray-700 w-200px flex-shrink-0">Statut du contact</span>
+                            <div>
+                                @if(!$filterStatus)
+                                    <span class="text-muted">Tous</span>
+                                @else
+                                    @php
+                                        $statusCfg   = $contactStatuses[$filterStatus] ?? [];
+                                        $statusLabel = $statusCfg['label'] ?? $filterStatus;
+                                        $statusColor = $statusCfg['color'] ?? 'secondary';
+                                    @endphp
+                                    <span class="badge badge-light-{{ e($statusColor) }}">{{ e($statusLabel) }}</span>
+                                @endif
+                            </div>
+                        </div>
+
+                        {{-- Funnel line (only when stats are available) --}}
+                        @if(!empty($funnelParts))
+                            <div class="border-top pt-4 mt-2">
+                                <p class="fs-7 text-muted mb-0">
+                                    @foreach($funnelParts as $i => $part)
+                                        @if($i > 0)<span class="mx-1 text-gray-400">·</span>@endif
+                                        <span class="{{ $part['class'] }}">{{ $part['label'] }}</span>
+                                    @endforeach
+                                </p>
                             </div>
                         @endif
+
                     </div>
                 </div>
             </div>
         </div>
-        {{-- end Filter JSON card --}}
+        {{-- end Ciblage card --}}
     </div>
     {{-- end Aperçu --}}
 

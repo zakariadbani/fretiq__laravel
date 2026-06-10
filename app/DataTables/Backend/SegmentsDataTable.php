@@ -23,14 +23,8 @@ class SegmentsDataTable extends BackendDataTable
             'raw'        => true,
         ],
         'contacts_count' => [
-            'title'      => '≈ Contacts',
+            'title'      => 'Destinataires',
             'orderable'  => false,
-            'searchable' => false,
-            'raw'        => true,
-        ],
-        'last_built_at' => [
-            'title'      => 'Dernière construction',
-            'orderable'  => true,
             'searchable' => false,
             'raw'        => true,
         ],
@@ -58,29 +52,13 @@ class SegmentsDataTable extends BackendDataTable
     /**
      * Get query source for DataTable.
      *
-     * Eagerly computes the scope-aware contact count via a correlated subquery
-     * to avoid the N+1 produced by calling contactsCount() per row.
-     * The subquery mirrors the logic in Segment::contactsCount():
-     *   - scope 'client'   → contacts joined to companies where relationship = 'client'
-     *   - scope 'prospect' → contacts joined to companies where relationship = 'prospect'
-     *   - scope 'mixed'    → all contacts joined to companies (no relationship filter)
+     * Plain query — contacts_count is now computed per-row via contactsCount()
+     * (full compliance pipeline) in createEditColumns(). The old correlated
+     * subquery only applied scope-level counting and diverged from send reality.
      */
     public function query()
     {
-        return $this->currentModel->newQuery()->selectRaw(
-            'segments.*,
-            (
-                SELECT COUNT(*)
-                FROM contacts
-                INNER JOIN companies ON contacts.company_id = companies.id
-                WHERE contacts.deleted_at IS NULL
-                AND (
-                    segments.scope = \'mixed\'
-                    OR (segments.scope = \'client\'   AND companies.relationship = \'client\')
-                    OR (segments.scope = \'prospect\' AND companies.relationship = \'prospect\')
-                )
-            ) AS computed_contacts_count'
-        );
+        return $this->currentModel->newQuery();
     }
 
     /**
@@ -102,13 +80,27 @@ class SegmentsDataTable extends BackendDataTable
         });
 
         $this->datatables->editColumn('contacts_count', function (Segment $row) {
-            $count = (int) ($row->computed_contacts_count ?? 0);
+            // Coût: pipeline complet par ligne — acceptable à l'échelle actuelle;
+            // revoir avec cache (last_built_at) au-delà de 50 segments / 50k contacts (D5/D12).
+            $count = $row->contactsCount();
             return '<span class="badge badge-light-primary">' . $count . '</span>';
         });
+    }
 
-        $this->datatables->editColumn('last_built_at', function (Segment $row) {
-            return $row->last_built_at ? $row->last_built_at->format('d/m/Y H:i') : '<span class="text-muted">—</span>';
-        });
+    /**
+     * Override html() to inject a French emptyTable message.
+     * The language.emptyTable key is the DataTables option that replaces
+     * "No data available in table" when the server returns zero rows.
+     * parent::html() already sets scrollX / drawCallback / buttons via parameters();
+     * this call merges 'language' on top of those.
+     */
+    public function html()
+    {
+        return parent::html()->parameters([
+            'language' => [
+                'emptyTable' => 'Aucun segment — créez votre premier segment pour cibler vos campagnes.',
+            ],
+        ]);
     }
 
     protected function getEntityName(): string

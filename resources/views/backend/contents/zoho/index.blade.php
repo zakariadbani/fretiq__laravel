@@ -20,9 +20,9 @@
     </ul>
 @endsection
 
-{{-- Sync action button (top of content, permission-gated) --}}
-@can('sync zoho')
-    <div class="d-flex justify-content-end mb-5">
+{{-- Action buttons (top of content, permission-gated) --}}
+<div class="d-flex justify-content-end gap-3 mb-5">
+    @can('sync zoho')
         <form method="POST" action="{{ route('admin.zoho.sync') }}" class="d-inline">
             @csrf
             <button type="submit" class="btn btn-sm fw-bold btn-primary">
@@ -30,8 +30,18 @@
                 Synchroniser maintenant
             </button>
         </form>
-    </div>
-@endcan
+    @endcan
+
+    @can('create campaign_templates')
+        <form method="POST" action="{{ route('admin.zoho.sync_templates') }}" class="d-inline">
+            @csrf
+            <button type="submit" class="btn btn-sm fw-bold btn-light-info">
+                <i class="bi bi-cloud-download fs-4"></i>
+                Importer les modèles d'email
+            </button>
+        </form>
+    @endcan
+</div>
 
 {{-- Flash messages --}}
 @if (session('success'))

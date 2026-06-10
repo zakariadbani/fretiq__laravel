@@ -58,9 +58,12 @@
             <div class="card-body border-top">
                 <div class="mb-4">
                     <div class="fs-7 text-muted fw-semibold mb-2">Aperçu</div>
-                    <div class="border rounded p-4 bg-light" style="min-height: 80px;">
-                        {!! $model->signature_html !!}
-                    </div>
+                    <iframe
+                        srcdoc="{{ $model->signature_html }}"
+                        class="w-100 border-0 rounded"
+                        style="min-height: 120px;"
+                        sandbox="allow-same-origin"
+                        title="Aperçu de la signature"></iframe>
                 </div>
                 <div>
                     <div class="fs-7 text-muted fw-semibold mb-2">Code HTML</div>

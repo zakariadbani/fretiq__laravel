@@ -39,8 +39,9 @@
     Create mode:
         - Simple header card + minimal nav (Général only — no apercu until record exists).
 
-    The html_content textarea is preserved exactly from the original form.
-    No TinyMCE/CKEditor is wired — plain textarea with font-monospace class.
+    html_content is edited with TinyMCE 5 (theme vendor bundle, fullpage plugin
+    for full-document email HTML). The textarea stays in the DOM as source of
+    truth for FormData/FormValidation; tinymce-html-field.js handles sync.
     No select2 — CampaignTemplate has no enum/relation selects; no width issue.
 
     Both form-actions calls are preserved:
@@ -172,21 +173,27 @@
                                 <code class="fs-8">@verbatim{{unsubscribe_url}}@endverbatim</code> — Lien désabonnement
                             </span>
                         </div>
+                        <div class="form-text text-muted mt-2 fs-8">
+                            Envoi via Zoho : ces variables sont converties automatiquement en merge tags Zoho.
+                        </div>
                     </div>
                 </div>
                 <div class="card-body border-top p-9">
 
+                    {{-- html_content — TinyMCE WYSIWYG (fullpage : HTML email complet <html><head><style>) --}}
                     <div class="fv-row mb-0">
-                        <label class="required fw-semibold fs-6 mb-2">Contenu HTML</label>
-                        {{-- Plain textarea for MVP — TinyMCE initialization not included in this kit build --}}
+                        <label class="required fw-semibold fs-6 mb-2" for="html_content">Contenu HTML</label>
+
                         <textarea name="html_content"
                                   class="form-control form-control-solid font-monospace"
                                   rows="20"
                                   id="html_content"
-                                  placeholder="&lt;p&gt;Bonjour @verbatim{{contact.name}}@endverbatim,&lt;/p&gt;..."
+                                  data-tinymce-html-field
                                   required>{{ old('html_content', $model->html_content ?? '') }}</textarea>
+
                         <div class="form-text text-muted mt-1">
                             HTML complet de l'email. Insérez <code>@verbatim{{unsubscribe_url}}@endverbatim</code> dans le lien de désabonnement.
+                            Bouton <code>&lt;/&gt;</code> de la barre d'outils pour éditer le code source.
                         </div>
                     </div>
 
@@ -205,8 +212,10 @@
 </form>
 
 @push('scripts')
+    <script src="{{ asset('assets/plugins/custom/tinymce/tinymce.js') }}?v={{ filemtime(public_path('assets/plugins/custom/tinymce/tinymce.js')) }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/tinymce-html-field.js') }}?v={{ filemtime(public_path('assets/js/custom/backend/tinymce-html-field.js')) }}"></script>
 @endpush
 
 </x-default-layout>

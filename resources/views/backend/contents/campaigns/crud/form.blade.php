@@ -46,9 +46,10 @@
         - toolbar variant in @section('toolbar_actions') above.
         - sticky variant at the bottom of the form.
 
-    All selects use plain <select> (not select2) — they are inside the Général pane
-    which is the active tab, so width is fine, but using plain selects is safer here
-    since the schedule type switcher shows/hides sub-panels dynamically.
+    Selects use select2 via data-control="select2" (Metronic KTApp auto-init). A
+    select2→native-change bridge in the @push('scripts') block re-emits a native change
+    on select2 selection, so FormValidation and the native change handlers (segment count,
+    subject hint, schedule switcher) all fire.
 --}}
 
 <form method="POST" action="{{ $route }}" class="form" id="form_crud">
@@ -117,7 +118,7 @@
                         <div class="col-lg-6">
                             <div class="fv-row mb-7">
                                 <label class="required fw-semibold fs-6 mb-2">Identité d'expéditeur</label>
-                                <select name="sender_identity_id" class="form-select form-select-solid" required>
+                                <select name="sender_identity_id" class="form-select form-select-solid" data-control="select2" data-placeholder="Sélectionner une identité..." required>
                                     <option value="">Sélectionner une identité...</option>
                                     @foreach($senderIdentities as $identity)
                                         <option value="{{ $identity->id }}"
@@ -154,6 +155,8 @@
                                 <select name="segment_id"
                                         class="form-select form-select-solid"
                                         id="segment_select"
+                                        data-control="select2"
+                                        data-placeholder="Sélectionner un segment..."
                                         required>
                                     <option value="">Sélectionner un segment...</option>
                                     @foreach($segments as $segment)
@@ -179,7 +182,7 @@
                         <div class="col-lg-6">
                             <div class="fv-row mb-7">
                                 <label class="required fw-semibold fs-6 mb-2">Modèle d'email</label>
-                                <select name="template_id" class="form-select form-select-solid" id="template_select" required>
+                                <select name="template_id" class="form-select form-select-solid" id="template_select" data-control="select2" data-placeholder="Sélectionner un modèle..." required>
                                     <option value="">Sélectionner un modèle...</option>
                                     @foreach($templates as $template)
                                         <option value="{{ $template->id }}"
@@ -228,7 +231,7 @@
                         <div class="col-lg-4">
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Type de planification</label>
-                                <select name="schedule_type" class="form-select form-select-solid" id="schedule_type_select">
+                                <select name="schedule_type" class="form-select form-select-solid" id="schedule_type_select" data-control="select2" data-hide-search="true">
                                     @foreach($scheduleTypes as $key => $data)
                                         <option value="{{ $key }}"
                                             {{ old('schedule_type', $model->schedule_type ?? 'one_shot') === $key ? 'selected' : '' }}>
@@ -277,7 +280,7 @@
                         <div class="col-lg-3">
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Fréquence</label>
-                                <select name="recurrence_frequency" class="form-select form-select-solid">
+                                <select name="recurrence_frequency" class="form-select form-select-solid" data-control="select2" data-hide-search="true">
                                     @foreach($recurrenceFrequencies as $key => $label)
                                         <option value="{{ $key }}"
                                             {{ old('recurrence_frequency', $recurrence['frequency'] ?? 'weekly') === $key ? 'selected' : '' }}>
@@ -328,7 +331,7 @@
                         <div class="col-lg-5">
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Séquence active</label>
-                                <select name="sequence_id" class="form-select form-select-solid">
+                                <select name="sequence_id" class="form-select form-select-solid" data-control="select2" data-placeholder="Sélectionner une séquence...">
                                     <option value="">Sélectionner une séquence...</option>
                                     @foreach($sequences as $seq)
                                         <option value="{{ $seq->id }}"
@@ -369,6 +372,15 @@
     @if(class_exists(\App\Services\Campaign\SegmentService::class))
     <script>
         document.addEventListener('DOMContentLoaded', function () {
+
+            // ── select2 → native change bridge ──────────────────────
+            // select2 fires `change` via jQuery .trigger() only, which does NOT reach
+            // native addEventListener('change') handlers. Re-emit a native bubbling change
+            // on select2 selection so FormValidation (native Trigger plugin) and the native
+            // change handlers below (segment count, subject hint, schedule switcher) all fire.
+            $('#form_crud').on('select2:select select2:unselect select2:clear', '[data-control="select2"]', function () {
+                this.dispatchEvent(new Event('change', { bubbles: true }));
+            });
 
             // ── Segment live count via AJAX ─────────────────────────
             const segmentSelect = document.getElementById('segment_select');

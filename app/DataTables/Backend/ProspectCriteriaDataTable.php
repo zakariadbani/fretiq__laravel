@@ -88,7 +88,10 @@ class ProspectCriteriaDataTable extends BackendDataTable
             if (empty($countries)) {
                 return '<span class="text-muted">—</span>';
             }
-            return e(implode(', ', array_map('trim', $countries)));
+            // Map ISO-2 codes → French labels; unknown values pass through unchanged.
+            $countryLabels = config('global.data.company_countries', []);
+            $labels = array_map(fn($v) => $countryLabels[$v] ?? $v, $countries);
+            return e(implode(', ', $labels));
         });
 
         // Extend the action column with a "Lancer la découverte" button (permission-gated).
@@ -106,6 +109,18 @@ class ProspectCriteriaDataTable extends BackendDataTable
                     . ' data-bs-toggle="tooltip"'
                     . ' title="Lancer la d&#233;couverte">'
                     . '<i class="bi bi-play-fill fs-4"></i>'
+                    . '</button>';
+            }
+
+            // Duplicate button (create prospect_criteria permission)
+            if ($user?->can('create prospect_criteria')) {
+                $duplicateUrl = e(route('admin.prospect_criteria.duplicate', $id));
+                $html .= '<button type="button"'
+                    . ' class="btn btn-icon btn-bg-light btn-active-color-primary btn-sm me-1"'
+                    . ' onclick="submitPostForm(\'' . $duplicateUrl . '\', \'' . $csrf . '\')"'
+                    . ' data-bs-toggle="tooltip"'
+                    . ' title="Dupliquer">'
+                    . '<i class="bi bi-copy fs-4"></i>'
                     . '</button>';
             }
 

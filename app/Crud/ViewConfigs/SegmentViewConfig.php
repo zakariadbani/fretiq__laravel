@@ -59,6 +59,8 @@ class SegmentViewConfig
         ];
 
         // ── Detail rows ───────────────────────────────────────────────────────
+        // NOTE: « Dernière construction » (last_built_at) row removed 2026-06-10.
+        // Column exists but is unused until the cache-stamp feature is wired (see TODOS.md D10).
         $detailRows = [];
         if ($hasId) {
             $detailRows = [
@@ -66,9 +68,6 @@ class SegmentViewConfig
                 ['label' => 'Portée', 'value' => $model->scope, 'type' => 'enum', 'configKey' => 'segment_scopes'],
                 ['label' => 'Créé le', 'value' => $model->created_at, 'type' => 'date'],
             ];
-            if ($model->last_built_at) {
-                $detailRows[] = ['label' => 'Dernière construction', 'value' => $model->last_built_at, 'type' => 'date'];
-            }
         }
 
         // ── Stat cards ────────────────────────────────────────────────────────
@@ -76,9 +75,11 @@ class SegmentViewConfig
             [
                 'icon'  => 'bi-people',
                 'color' => 'primary',
-                'label' => 'Contacts dans le segment',
+                'label' => 'Destinataires',
                 'value' => $contactsCount,
-                'hint'  => $contactsCount === null ? 'Calcul en attente' : null,
+                'hint'  => $contactsCount === null
+                    ? 'Calcul en attente'
+                    : 'Nombre réel après filtres, suppressions et règles d\'envoi',
             ],
         ];
 
@@ -108,7 +109,7 @@ class SegmentViewConfig
             'subtitle'      => $subtitle,
             'tiles'         => $hasId ? [
                 ['icon' => 'bi-funnel', 'color' => $scopeColor, 'value' => $scopeLabel ?? '—', 'caption' => 'Portée'],
-                ['icon' => 'bi-people', 'color' => 'primary',   'value' => $contactsCount ?? '—', 'caption' => 'Contacts'],
+                ['icon' => 'bi-people', 'color' => 'primary',   'value' => $contactsCount ?? '—', 'caption' => 'Destinataires'],
                 ['icon' => 'bi-calendar3', 'color' => 'secondary', 'value' => $model->created_at ? $model->created_at->format('d/m/Y') : '—', 'caption' => 'Créé le'],
             ] : [],
             'toggle'        => $toggle,

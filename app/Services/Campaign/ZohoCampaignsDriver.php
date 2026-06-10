@@ -32,6 +32,43 @@ use Illuminate\Support\Facades\Log;
  */
 class ZohoCampaignsDriver implements CampaignsClient
 {
+    /**
+     * Map of local template placeholders → Zoho Campaigns predefined merge tags.
+     *
+     * Tags are doc-sourced (Zoho Campaigns predefined merge tags).
+     * The unsubscribe tag $[LI:UNSUBSCRIBE]$ is intended for use inside an href attribute.
+     *
+     * IMPORTANT — $[COMPANY]$ is UNVERIFIED: the exact company-field merge tag must be
+     * confirmed against the live merge-tag list during Phase 5 tinker verification
+     * (project hard rule: Zoho behavior requires empirical STATUS 200 verification —
+     * docs alone are insufficient). The subscriber field 'Company' is populated at
+     * addListSubscribers time; the merge tag name must match whatever Zoho exposes.
+     * Correct the map if the live merge-tag list differs.
+     */
+    private const MERGE_TAG_MAP = [
+        '{{contact.name}}'    => '$[FNAME]$',
+        '{{contact.email}}'   => '$[EMAIL]$',
+        '{{company.name}}'    => '$[COMPANY]$',   // UNVERIFIED — confirm tag name live
+        '{{unsubscribe_url}}' => '$[LI:UNSUBSCRIBE]$',
+    ];
+
+    /**
+     * Translate local template placeholders to Zoho Campaigns merge tags.
+     *
+     * Performs a simple str_replace of all known placeholders. Unknown/other
+     * tags (e.g. {{contact.phone}}) are passed through untouched.
+     *
+     * @param  string  $text  Subject line or HTML content containing local placeholders.
+     * @return string         Text with local placeholders replaced by Zoho merge tags.
+     */
+    public static function translateMergeTags(string $text): string
+    {
+        return str_replace(
+            array_keys(self::MERGE_TAG_MAP),
+            array_values(self::MERGE_TAG_MAP),
+            $text
+        );
+    }
     public function __construct(
         private readonly ZohoCampaignsClient $zohoClient,
     ) {}
@@ -109,10 +146,11 @@ class ZohoCampaignsDriver implements CampaignsClient
 
         // ── 2. Subscribe eligible contacts to the Zoho list ───────────────────
         $contactPayload = $contacts->map(function ($contact) {
+            // Contact has a single `name` column (no first_name / last_name split).
+            // Full name goes into 'First Name' so $[FNAME]$ renders it.
             return [
                 'Contact Email' => $contact->email,
-                'First Name'    => $contact->first_name ?? '',
-                'Last Name'     => $contact->last_name ?? '',
+                'First Name'    => $contact->name ?? '',
                 'Company'       => optional($contact->company)->name ?? '',
             ];
         })->values()->toArray();
@@ -126,8 +164,11 @@ class ZohoCampaignsDriver implements CampaignsClient
         $this->zohoClient->addListSubscribers($listKey, $contactPayload);
 
         // ── 3. Create the campaign in Zoho ─────────────────────────────────────
-        $subject   = $campaign->subject ?: $template->subject;
-        $fromEmail = $sender?->email ?? config('mail.from.address', 'noreply@fretiq.fr');
+        // Translate local placeholders ({{contact.name}} etc.) to Zoho merge tags
+        // before submitting to the API — recipients would otherwise see literal braces.
+        $subject     = self::translateMergeTags($campaign->subject ?: $template->subject);
+        $htmlContent = self::translateMergeTags($template->html_content);
+        $fromEmail   = $sender?->email ?? config('mail.from.address', 'noreply@fretiq.fr');
 
         Log::info('[ZohoCampaignsDriver] Création de la campagne Zoho.', [
             'run_id'    => $run->id,
@@ -141,7 +182,7 @@ class ZohoCampaignsDriver implements CampaignsClient
             subject:     $subject,
             fromEmail:   $fromEmail,
             listKey:     $listKey,
-            htmlContent: $template->html_content,
+            htmlContent: $htmlContent,
         );
 
         // Extract the campaign key from Zoho's response.

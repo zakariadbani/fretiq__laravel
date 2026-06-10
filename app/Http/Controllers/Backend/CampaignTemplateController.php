@@ -6,6 +6,7 @@ use App\DataTables\Backend\CampaignTemplatesDataTable;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
 use App\Models\CampaignTemplate;
+use App\Services\Zoho\ZohoCrmTemplatesService;
 use Illuminate\Http\Request;
 
 class CampaignTemplateController extends BackendController
@@ -51,5 +52,30 @@ class CampaignTemplateController extends BackendController
                 'dataTableConfig' => $this->currentDataTable->getIndexConfig(),
             ]
         );
+    }
+
+    /**
+     * Import email templates from Zoho CRM into campaign_templates.
+     *
+     * Controller-side permission enforcement (belt + suspenders — Blade @can is
+     * presentational only; the gate must be enforced here).
+     */
+    public function importFromZoho(Request $request)
+    {
+        abort_unless($request->user()->can('create campaign_templates'), 403);
+
+        try {
+            $result = app(ZohoCrmTemplatesService::class)->import();
+
+            session()->flash(
+                'success',
+                "Modèles importés : {$result['imported']} créés, {$result['updated']} mis à jour, {$result['skipped']} ignorés."
+            );
+        } catch (\Throwable $e) {
+            $message = mb_substr($e->getMessage(), 0, 200);
+            session()->flash('error', "Erreur lors de l'import des modèles : {$message}");
+        }
+
+        return redirect()->route('admin.campaign_templates.index');
     }
 }

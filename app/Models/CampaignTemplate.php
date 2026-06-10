@@ -28,6 +28,7 @@ class CampaignTemplate extends Model
         'html_content',
         'preview_text',
         'thumbnail_path',
+        'zoho_template_id',
     ];
 
     // ── Relationships ──────────────────────────────────────────────────────────

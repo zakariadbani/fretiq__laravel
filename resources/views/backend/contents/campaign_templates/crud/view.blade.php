@@ -28,10 +28,12 @@
     Tab pane IDs: template_apercu / template_general.
     Aperçu is native (default active on view); Général deep-links to edit page.
 
-    Email preview: the iframe srcdoc uses {{ e($model->html_content) }} — Blade escapes
-    the HTML content into the srcdoc attribute, which the browser then parses safely.
-    The sandbox="allow-same-origin" attribute is preserved from the original view.
-    No {!! !!} raw output is used on html_content.
+    Email preview: the iframe srcdoc uses {{ $model->html_content }} — Blade's single
+    escape encodes the HTML into the srcdoc attribute (XSS-safe: quotes become &quot;
+    so they can't break out). The browser decodes the attribute once and srcdoc parses
+    it as a document, rendering the email. NOTE: do NOT wrap in e() — that double-escapes
+    and the email renders as raw source text. Mirrors sender_identities/crud/view.blade.php.
+    sandbox="allow-same-origin" (no allow-scripts) blocks any script in the email.
 --}}
 
 {{-- Shared hero + tab nav --}}
@@ -79,7 +81,7 @@
                     <div class="card-body border-top p-0">
                         @if($model->html_content)
                             <iframe
-                                srcdoc="{{ e($model->html_content) }}"
+                                srcdoc="{{ $model->html_content }}"
                                 class="w-100 border-0 rounded-bottom"
                                 style="min-height: 600px;"
                                 sandbox="allow-same-origin"

@@ -49,11 +49,16 @@ mix.sass(`${dir}/sass/style.scss`, `public/assets/css/style.bundle.css`, {sassOp
 
 // Build custom 3rd party plugins
 (glob.sync(`resources/mix/vendors/**/*.js`) || []).forEach(file => {
-    mix.scripts(require('./' + file), `public/assets/${file.replace(path.normalize('resources/mix/vendors/'), 'plugins/custom/')}`);
+    mix.scripts(require('./' + file), `public/assets/${file.replace('resources/mix/vendors/', 'plugins/custom/')}`);
 });
 (glob.sync(`resources/mix/vendors/**/*.scss`) || []).forEach(file => {
-    mix.sass(file, `public/assets/${file.replace(path.normalize('resources/mix/vendors/'), 'plugins/custom/').replace('scss', 'css')}`);
+    mix.sass(file, `public/assets/${file.replace('resources/mix/vendors/', 'plugins/custom/').replace('scss', 'css')}`);
 });
+
+// TinyMCE lazy-loads skin/content CSS from its baseURL at runtime (cannot be JS-bundled).
+// The bundle compiles to public/assets/plugins/custom/tinymce/tinymce.js, so baseURL
+// resolves to /assets/plugins/custom/tinymce — copy the skins next to it.
+mix.copyDirectory('node_modules/tinymce/skins', 'public/assets/plugins/custom/tinymce/skins');
 
 // JS pages (single page use)
 (glob.sync(`${dir}/js/custom/**/*.js`) || []).forEach(file => {

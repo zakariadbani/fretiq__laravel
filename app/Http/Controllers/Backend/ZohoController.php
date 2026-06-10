@@ -7,6 +7,7 @@ use App\Models\ZohoSyncLog;
 use App\Models\ZohoToken;
 use App\Services\Zoho\CampaignsReadinessService;
 use App\Services\Zoho\ZohoCrmSyncService;
+use App\Services\Zoho\ZohoCrmTemplatesService;
 use Illuminate\Http\Request;
 
 class ZohoController extends Controller
@@ -16,6 +17,7 @@ class ZohoController extends Controller
         $this->middleware(['auth', 'verified']);
         $this->middleware('permission:view zoho')->only(['index']);
         $this->middleware('permission:sync zoho')->only(['sync']);
+        $this->middleware('permission:create campaign_templates')->only(['syncTemplates']);
     }
 
     /**
@@ -97,6 +99,29 @@ class ZohoController extends Controller
         } catch (\Throwable $e) {
             $message = mb_substr($e->getMessage(), 0, 200);
             session()->flash('error', "Erreur lors de la synchronisation : {$message}");
+        }
+
+        return redirect()->route('admin.zoho.index');
+    }
+
+    /**
+     * Import email templates from Zoho CRM into campaign_templates.
+     *
+     * Synchronous, on-demand. Redirects back to the Zoho dashboard with a
+     * French flash message summarising the import counts.
+     */
+    public function syncTemplates(Request $request)
+    {
+        try {
+            $result = app(ZohoCrmTemplatesService::class)->import();
+
+            session()->flash(
+                'success',
+                "Modèles importés : {$result['imported']} créés, {$result['updated']} mis à jour, {$result['skipped']} ignorés."
+            );
+        } catch (\Throwable $e) {
+            $message = mb_substr($e->getMessage(), 0, 200);
+            session()->flash('error', "Erreur lors de l'import des modèles : {$message}");
         }
 
         return redirect()->route('admin.zoho.index');

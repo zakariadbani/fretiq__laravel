@@ -33,7 +33,17 @@
 
         {{-- Toolbar --}}
         <div class="card-toolbar">
-            <div class="d-flex justify-content-end" data-kt-table-toolbar="base">
+            <div class="d-flex justify-content-end gap-3" data-kt-table-toolbar="base">
+
+                @can('create campaign_templates')
+                <form method="POST" action="{{ route('admin.campaign_templates.import_zoho') }}" class="d-inline">
+                    @csrf
+                    <button type="submit" class="btn btn-light-info fw-bold">
+                        <i class="bi bi-cloud-download fs-2"></i>
+                        Importer depuis Zoho
+                    </button>
+                </form>
+                @endcan
 
                 @can('create campaign_templates')
                 <a href="{{ route('admin.campaign_templates.create') }}" class="btn btn-primary">

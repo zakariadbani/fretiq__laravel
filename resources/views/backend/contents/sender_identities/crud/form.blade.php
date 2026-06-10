@@ -176,17 +176,37 @@
                         </div>
                     </div>
 
-                    {{-- Signature HTML --}}
+                    {{-- Signature HTML — Quill WYSIWYG with raw-HTML toggle --}}
                     <div class="row">
                         <div class="col-12">
-                            <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Signature HTML <span class="text-muted fs-7">(optionnel)</span></label>
+                            <div class="fv-row mb-7"
+                                 data-quill-html-field
+                                 data-quill-placeholder="Cordialement, …">
+
+                                {{-- Label row: label left, toggle button right --}}
+                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                    <label class="fw-semibold fs-6 mb-0">Signature HTML <span class="text-muted fs-7">(optionnel)</span></label>
+                                    <button type="button"
+                                            class="btn btn-sm btn-light"
+                                            data-quill-toggle
+                                            title="Basculer HTML brut">
+                                        <i class="bi bi-code-slash"></i> HTML
+                                    </button>
+                                </div>
+
+                                {{-- Quill editor wrapper (toolbar + editor mount hidden/shown together) --}}
+                                <div data-quill-editor-wrap>
+                                    <div data-quill-editor class="min-h-150px"></div>
+                                </div>
+
+                                {{-- Original textarea — source of truth for FormData; hidden when in visual mode --}}
                                 <textarea name="signature_html"
-                                          class="form-control form-control-solid font-monospace"
+                                          class="form-control form-control-solid font-monospace d-none"
                                           rows="8"
                                           placeholder="<p>Cordialement,<br><strong>Votre nom</strong><br>TCL France</p>">{{ old('signature_html', $model->signature_html ?? '') }}</textarea>
+
                                 <div class="form-text text-muted mt-1">
-                                    HTML brut — sera inséré en bas de chaque email.
+                                    Sera inséré en bas de chaque email.
                                 </div>
                             </div>
                         </div>
@@ -209,6 +229,7 @@
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/quill-html-field.js') }}"></script>
 @endpush
 
 </x-default-layout>

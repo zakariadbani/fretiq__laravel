@@ -21,9 +21,18 @@
     @endcan
 
     @can('run discovery')
+        @php
+            // Start disabled when a run is currently in flight (pending or running).
+            // The real guard is server-side (discover() returns 409 if in-flight);
+            // this is a cosmetic / UX convenience only.
+            $discoveryInFlight = \Illuminate\Support\Facades\Schema::hasTable('discovery_runs')
+                && in_array(optional($model->latestDiscoveryRun)->status, ['pending', 'running'], true);
+        @endphp
         <button type="button"
+                id="launch-discovery-btn"
                 class="btn btn-sm btn-light-success"
-                onclick="launchDiscovery({{ (int) $model->id }}, '{{ csrf_token() }}')">
+                onclick="launchDiscovery({{ (int) $model->id }}, '{{ csrf_token() }}')"
+                {{ $discoveryInFlight ? 'disabled' : '' }}>
             <i class="bi bi-play-fill me-1"></i>
             Lancer la découverte
         </button>

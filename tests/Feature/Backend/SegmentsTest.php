@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Backend;
 
+use App\Models\Segment;
 use App\Models\User;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
@@ -13,8 +14,9 @@ use Tests\TestCase;
  *
  * Pattern mirrors CompaniesTest / PermissionsTest.
  * The Crudable::store() trait returns JSON {message, model, redirect} on success (HTTP 200).
- * The SegmentController::beforeSave() hook json_decodes the textarea filter string to an array
- * before passing it to the model validator (nullable|array rule).
+ * The form posts structured filter fields (filter[country][], filter[sector][], filter[status]);
+ * SegmentController::beforeSave() cleans them into a nested array (or null when empty) before
+ * the model validator runs.
  */
 class SegmentsTest extends TestCase
 {
@@ -82,8 +84,9 @@ class SegmentsTest extends TestCase
     /**
      * Storing a segment creates a DB record and returns HTTP 200.
      *
-     * The filter is posted as a JSON string; SegmentController::beforeSave()
-     * json_decodes it to an array before the Eloquent cast and validator see it.
+     * The filter is posted as structured arrays (filter[country][], etc.);
+     * SegmentController::beforeSave() cleans them; the validator enforces
+     * filter.country as an array of ISO-2 codes.
      */
     public function test_store_creates_segment(): void
     {
@@ -91,7 +94,7 @@ class SegmentsTest extends TestCase
             ->post('/admin/segments', [
                 'name'   => 'Clients France',
                 'scope'  => 'client',
-                'filter' => '{"country":"FR"}',
+                'filter' => ['country' => ['FR']],
             ]);
 
         $response->assertStatus(200);
@@ -100,5 +103,8 @@ class SegmentsTest extends TestCase
             'name'  => 'Clients France',
             'scope' => 'client',
         ]);
+
+        $segment = Segment::where('name', 'Clients France')->firstOrFail();
+        $this->assertSame(['country' => ['FR']], $segment->filter);
     }
 }

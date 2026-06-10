@@ -3,6 +3,7 @@
 namespace App\Crud\ViewConfigs;
 
 use App\Models\ProspectCriteria;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * ViewConfig descriptor for the ProspectCriteria detail/edit pages.
@@ -28,13 +29,16 @@ class ProspectCriteriaViewConfig
         // ── Subtitle pills ────────────────────────────────────────────────────
         $subtitle = [];
         if ($hasId) {
+            $countryLabels = config('global.data.company_countries', []);
+
             $sectors = is_array($model->sectors) ? $model->sectors : [];
             if (!empty($sectors)) {
                 $subtitle[] = ['icon' => 'bi-briefcase', 'text' => implode(', ', array_slice($sectors, 0, 2))];
             }
             $countries = is_array($model->countries) ? $model->countries : [];
             if (!empty($countries)) {
-                $subtitle[] = ['icon' => 'bi-geo-alt', 'text' => implode(', ', array_slice($countries, 0, 2))];
+                $mapped = array_map(fn($v) => $countryLabels[$v] ?? $v, array_slice($countries, 0, 2));
+                $subtitle[] = ['icon' => 'bi-geo-alt', 'text' => implode(', ', $mapped)];
             }
             if ($model->daily_limit) {
                 $subtitle[] = ['icon' => 'bi-clock', 'text' => $model->daily_limit . ' / jour'];
@@ -67,7 +71,7 @@ class ProspectCriteriaViewConfig
                 'route'       => route('admin.prospect_criteria.executeSwitch', $model->id),
                 'permission'  => 'edit prospect_criteria',
                 'title'       => 'Critère actif',
-                'description' => 'Inclure ce critère dans la découverte automatique.',
+                'description' => 'Un critère inactif ne peut pas lancer de découverte.',
                 'success'     => 'Critère mis à jour',
                 'error'       => 'Échec de la mise à jour',
                 'icon'        => 'bi-check-circle-fill',
@@ -83,27 +87,50 @@ class ProspectCriteriaViewConfig
         // ── Detail rows ───────────────────────────────────────────────────────
         $detailRows = [];
         if ($hasId) {
+            $countryLabels = config('global.data.company_countries', []);
+
             $sectors   = is_array($model->sectors)          ? $model->sectors          : [];
             $countries = is_array($model->countries)        ? $model->countries        : [];
             $sizes     = is_array($model->company_sizes)    ? $model->company_sizes    : [];
             $positions = is_array($model->target_positions) ? $model->target_positions : [];
 
+            // Map ISO codes → French labels (passthrough on unknown values).
+            $countryDisplay = array_map(fn($v) => $countryLabels[$v] ?? $v, $countries);
+
             $detailRows = [
                 ['label' => 'Nom',              'value' => $model->name,       'type' => 'text'],
                 ['label' => 'Actif',            'value' => $model->is_active,  'type' => 'boolean'],
                 ['label' => 'Limite / jour',    'value' => $model->daily_limit ? $model->daily_limit . ' contacts/j' : null, 'type' => 'text'],
-                ['label' => 'Secteurs',         'value' => !empty($sectors)   ? implode(', ', $sectors)   : null, 'type' => 'tags'],
-                ['label' => 'Pays',             'value' => !empty($countries) ? implode(', ', $countries) : null, 'type' => 'tags'],
-                ['label' => 'Tailles',          'value' => !empty($sizes)     ? implode(', ', $sizes)     : null, 'type' => 'tags'],
-                ['label' => 'Postes cibles',    'value' => !empty($positions) ? implode(', ', $positions) : null, 'type' => 'tags'],
-                ['label' => 'Créé le',          'value' => $model->created_at, 'type' => 'date'],
+                ['label' => 'Secteurs',         'value' => !empty($sectors)        ? implode(', ', $sectors)        : null, 'type' => 'tags'],
+                ['label' => 'Pays',             'value' => !empty($countryDisplay) ? implode(', ', $countryDisplay) : null, 'type' => 'tags'],
+                ['label' => 'Tailles',          'value' => !empty($sizes)          ? implode(', ', $sizes)          : null, 'type' => 'tags'],
+                ['label' => 'Postes cibles',    'value' => !empty($positions)      ? implode(', ', $positions)      : null, 'type' => 'tags'],
+                ['label' => 'Créé le',          'value' => $model->created_at,     'type' => 'date'],
             ];
         }
 
         // ── Stat cards ────────────────────────────────────────────────────────
+        // CTA N: all-time attributed total (companies with this criteria_id).
         $discoveredCount = ($hasId && isset($stats['discovered_total']))
             ? $stats['discovered_total']
             : ($hasId ? $model->companies()->count() : null);
+
+        // Discovery run stat — guard with Schema::hasTable so the page renders
+        // safely before the discovery_runs migration has been executed.
+        $latestRun         = null;
+        $runStatusLabel    = 'Jamais lancée';
+        $runStatusColor    = 'secondary';
+        $runContactsCount  = null;
+
+        if ($hasId && Schema::hasTable('discovery_runs')) {
+            $latestRun = $model->latestDiscoveryRun;
+            if ($latestRun) {
+                $runStatusCfg   = config('global.data.discovery_run_statuses.' . $latestRun->status, []);
+                $runStatusLabel = $runStatusCfg['label'] ?? $latestRun->status;
+                $runStatusColor = $runStatusCfg['color'] ?? 'secondary';
+                $runContactsCount = $latestRun->contacts_count;
+            }
+        }
 
         $statCards = [
             [
@@ -120,6 +147,20 @@ class ProspectCriteriaViewConfig
                 'value' => $hasId ? ($model->daily_limit ?? 0) : null,
                 'hint'  => null,
             ],
+            [
+                'icon'  => 'bi-arrow-repeat',
+                'color' => $runStatusColor,
+                'label' => 'Dernière découverte',
+                'value' => $hasId ? $runStatusLabel : null,
+                'hint'  => (!$hasId || $latestRun === null) ? 'Données disponibles après la première découverte' : null,
+            ],
+            [
+                'icon'  => 'bi-person-lines-fill',
+                'color' => 'info',
+                'label' => 'Contacts (dernière exéc.)',
+                'value' => $runContactsCount,
+                'hint'  => $runContactsCount === null ? 'Données disponibles après la première découverte' : null,
+            ],
         ];
 
         // ── Quick actions ─────────────────────────────────────────────────────
@@ -133,6 +174,14 @@ class ProspectCriteriaViewConfig
                 'color'      => 'light-success',
                 'permission' => 'run discovery',
                 'onclick'    => 'launchDiscovery(' . $modelId . ', \'' . e($csrfToken) . '\')',
+            ];
+            $duplicateUrl = route('admin.prospect_criteria.duplicate', $modelId);
+            $quickActions[] = [
+                'label'      => 'Dupliquer',
+                'icon'       => 'bi-copy',
+                'color'      => 'light-primary',
+                'permission' => 'create prospect_criteria',
+                'onclick'    => 'submitPostForm(\'' . e($duplicateUrl) . '\', \'' . e($csrfToken) . '\')',
             ];
         }
 

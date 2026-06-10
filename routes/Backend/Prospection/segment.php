@@ -7,6 +7,7 @@ Route::controller(SegmentController::class)->prefix('admin')->name('admin.')->gr
     Route::get('/segments', 'index')->name('segments.index');
     Route::get('/segments/create', 'create')->name('segments.create');
     Route::post('/segments', 'store')->name('segments.store');
+    Route::post('/segments/preview', 'preview')->middleware('throttle:60,1')->name('segments.preview');
     Route::get('/segments/{id}', 'view')->name('segments.view');
     Route::get('/segments/{id}/edit', 'edit')->name('segments.edit');
     Route::put('/segments/{id}', 'update')->name('segments.update');

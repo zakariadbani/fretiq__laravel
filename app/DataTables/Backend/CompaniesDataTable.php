@@ -102,7 +102,38 @@ class CompaniesDataTable extends BackendDataTable
      */
     public function query()
     {
-        return $this->currentModel->newQuery()->withCount('contacts');
+        $query = $this->currentModel->newQuery()->withCount('contacts');
+
+        // Filter by criteria_id when present — validate as a strict positive integer
+        // so 0, null, blank, and non-numeric values are silently ignored (not a silent
+        // fall-through: we only apply the constraint when the value is unambiguous).
+        $raw = $this->currentRequest->input('criteria_id');
+        if ($raw !== null && $raw !== '' && ctype_digit((string) $raw) && (int) $raw > 0) {
+            $query->where('criteria_id', (int) $raw);
+        }
+
+        return $query;
+    }
+
+    /**
+     * Override html() to inject criteria_id as a persistent AJAX data param so
+     * yajra keeps it across filter/reset cycles (datatables-utils.js rebuilds the
+     * URL from the filter DOM on reset, which would wipe URL query params).
+     * Only adds the param when criteria_id is present in the current request.
+     */
+    public function html()
+    {
+        $builder = parent::html();
+
+        $criteriaId = $this->currentRequest->input('criteria_id');
+        if ($criteriaId !== null && $criteriaId !== '' && ctype_digit((string) $criteriaId) && (int) $criteriaId > 0) {
+            // minifiedAjax('', null, ['criteria_id' => N]) injects:
+            //   data.criteria_id = N;
+            // inside the ajax data function, surviving every filter/reset.
+            $builder->minifiedAjax('', null, ['criteria_id' => (int) $criteriaId]);
+        }
+
+        return $builder;
     }
 
     /**

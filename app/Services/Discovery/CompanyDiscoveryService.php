@@ -172,9 +172,20 @@ class CompanyDiscoveryService
 
     /**
      * Build SerpAPI search queries from criteria.
-     * Falls back to sensible freight / TCL-relevant defaults when fields are empty.
+     *
+     * Pure criteria → string[] function; no side effects, no HTTP.
+     * Public visibility enables unit testing and the future preview endpoint (D12).
+     *
+     * Falls back to France + Maroc (sensible TCL defaults) when countries is empty.
+     * ISO-2 codes are mapped to French labels via config('global.data.company_countries').
+     * Legacy free-text values (e.g. "France") and unknown codes pass through unchanged.
+     *
+     * Result is sliced to config('services.serpapi.max_queries_per_run', 40) — D10.
+     *
+     * @param  ProspectCriteria  $criteria
+     * @return list<string>
      */
-    private function buildQueries(ProspectCriteria $criteria): array
+    public function buildQueries(ProspectCriteria $criteria): array
     {
         $sectors   = $criteria->sectors   ?? [];
         $countries = $criteria->countries ?? [];
@@ -191,7 +202,25 @@ class CompanyDiscoveryService
 
         $queries = [];
 
-        $countryTokens = ! empty($countries) ? $countries : ['France', 'Maroc'];
+        // ISO-2 → French label mapping (D10 / D12).
+        // Legacy free-text ("France") and unknown codes pass through unchanged.
+        $labels = config('global.data.company_countries', []);
+        $raw    = ! empty($countries) ? $countries : ['France', 'Maroc'];
+
+        $countryTokens = array_map(function ($v) use ($labels) {
+            if (isset($labels[$v])) {
+                // ISO code → French label
+                return $labels[$v];
+            }
+            // Passthrough: already a label or junk.
+            // Log at debug only when $v is neither a key NOR a value in company_countries.
+            if (! in_array($v, $labels, true)) {
+                Log::debug('[CompanyDiscoveryService] Unrecognised country token — passing through.', [
+                    'token' => $v,
+                ]);
+            }
+            return $v;
+        }, $raw);
 
         foreach ($countryTokens as $country) {
             // Sector-specific queries
@@ -206,7 +235,25 @@ class CompanyDiscoveryService
             }
         }
 
-        return array_values(array_unique(array_filter($queries)));
+        $queries = array_values(array_unique(array_filter($queries)));
+
+        // D10: budget slice — cap query list to avoid 700+ queries from UE-27 × sectors.
+        // 27 countries × (6 keywords + 2×sectors) can exceed 700 × 600 ms.
+        // daily_limit caps results, not queries; the budget caps API consumption.
+        $budget  = (int) config('services.serpapi.max_queries_per_run', 40);
+        $total   = count($queries);
+        if ($total > $budget) {
+            $dropped = $total - $budget;
+            Log::info('[CompanyDiscoveryService] Query budget exceeded — dropping queries.', [
+                'criteria_id' => $criteria->id,
+                'total'       => $total,
+                'budget'      => $budget,
+                'dropped'     => $dropped,
+            ]);
+            $queries = array_slice($queries, 0, $budget);
+        }
+
+        return $queries;
     }
 
     private function isLocal(): bool

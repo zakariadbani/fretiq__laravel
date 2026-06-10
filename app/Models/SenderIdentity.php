@@ -48,11 +48,12 @@ class SenderIdentity extends Model
     public function rules(): array
     {
         return [
-            'name'       => 'required|string|max:255',
-            'email'      => 'required|email|max:191',
-            'reply_to'   => 'nullable|email|max:191',
-            'is_default' => 'boolean',
-            'is_active'  => 'boolean',
+            'name'           => 'required|string|max:255',
+            'email'          => 'required|email|max:191',
+            'reply_to'       => 'nullable|email|max:191',
+            'signature_html' => 'nullable|string',
+            'is_default'     => 'boolean',
+            'is_active'      => 'boolean',
         ];
     }
 }

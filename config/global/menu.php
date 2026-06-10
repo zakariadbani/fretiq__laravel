@@ -48,16 +48,6 @@ return [
         ],
 
         [
-            'title' => 'Segments',
-            'permission' => 'view segments',
-            'icon' => [
-                'svg' => 'filter',
-                'font' => '<i class="bi bi-funnel fs-2"></i>',
-            ],
-            'path' => 'admin/segments',
-        ],
-
-        [
             'title' => 'Critères de découverte',
             'permission' => 'view prospect_criteria',
             'icon' => [
@@ -72,18 +62,18 @@ return [
         //---------------------------------------------------------------------------
         [
             'content' => 'Campagnes',
-            'permission' => ['view campaigns', 'view campaign_templates'],
+            'permission' => ['view campaigns', 'view campaign_templates', 'view segments'],
             'classes' => ['content' => 'pt-8 pb-2'],
         ],
 
         [
-            'title' => 'Campagnes',
-            'permission' => 'view campaigns',
+            'title' => 'Segments',
+            'permission' => 'view segments',
             'icon' => [
-                'svg' => 'flash-circle',
-                'font' => '<i class="bi bi-rocket fs-2"></i>',
+                'svg' => 'filter',
+                'font' => '<i class="bi bi-funnel fs-2"></i>',
             ],
-            'path' => 'admin/campaigns',
+            'path' => 'admin/segments',
         ],
 
         [
@@ -104,6 +94,16 @@ return [
                 'font' => '<i class="bi bi-list-ol fs-2"></i>',
             ],
             'path' => 'admin/sequences',
+        ],
+
+        [
+            'title' => 'Campagnes',
+            'permission' => 'view campaigns',
+            'icon' => [
+                'svg' => 'flash-circle',
+                'font' => '<i class="bi bi-rocket fs-2"></i>',
+            ],
+            'path' => 'admin/campaigns',
         ],
 
         [

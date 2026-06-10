@@ -95,6 +95,23 @@
         });
 
         /**
+         * Generic helper: submit a hidden POST form to the given URL with a CSRF token.
+         * Used by the "Dupliquer" row action button.
+         */
+        window.submitPostForm = function (url, csrfToken) {
+            var form = document.createElement('form');
+            form.method = 'POST';
+            form.action = url;
+            var csrf = document.createElement('input');
+            csrf.type  = 'hidden';
+            csrf.name  = '_token';
+            csrf.value = csrfToken;
+            form.appendChild(csrf);
+            document.body.appendChild(form);
+            form.submit();
+        };
+
+        /**
          * "Lancer la découverte" action — called from the row action button.
          * Sends a POST to the discover endpoint and shows a Swal/toastr notification.
          */
