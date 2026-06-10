@@ -11,6 +11,7 @@ use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStepSend;
 use App\Models\Suppression;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\URL;
@@ -60,14 +61,41 @@ class SequenceService
             return $existing;
         }
 
-        $enrollment = SequenceEnrollment::create([
-            'sequence_id'  => $seq->id,
-            'contact_id'   => $contact->id,
-            'campaign_id'  => $campaign?->id,
-            'current_step' => 0,
-            'status'       => 'active',
-            'next_send_at' => now(),
-        ]);
+        try {
+            $enrollment = SequenceEnrollment::create([
+                'sequence_id'  => $seq->id,
+                'contact_id'   => $contact->id,
+                'campaign_id'  => $campaign?->id,
+                'current_step' => 0,
+                'status'       => 'active',
+                'next_send_at' => now(),
+            ]);
+        } catch (QueryException $e) {
+            // SQLSTATE 23000 = integrity constraint violation; MySQL error code 1062 =
+            // duplicate entry. Only treat 23000+1062 together as a duplicate-key violation
+            // from the UNIQUE(sequence_id, contact_id) constraint.
+            // 23000 alone also covers FK violations (e.g. 1452 — unknown parent key) which
+            // must be re-thrown, not silently swallowed.
+            $sqlstate  = $e->errorInfo[0] ?? '';
+            $errorCode = (int) ($e->errorInfo[1] ?? 0);
+
+            if ($sqlstate === '23000' && $errorCode === 1062) {
+                $existing = SequenceEnrollment::where('sequence_id', $seq->id)
+                    ->where('contact_id', $contact->id)
+                    ->first();
+
+                Log::info('[SequenceService] Duplicate enrollment caught (race or non-active row exists) — returning existing.', [
+                    'sequence_id'    => $seq->id,
+                    'contact_id'     => $contact->id,
+                    'enrollment_id'  => $existing?->id,
+                ]);
+
+                return $existing;
+            }
+
+            // Any other QueryException is unexpected — rethrow.
+            throw $e;
+        }
 
         Log::info('[SequenceService] Contact enrolled.', [
             'enrollment_id' => $enrollment->id,
@@ -124,7 +152,7 @@ class SequenceService
     public function sendStep(SequenceEnrollment $e): void
     {
         // Always reload with relations to avoid stale state on retry.
-        $e->load(['contact.company', 'sequence']);
+        $e->load(['contact.company', 'sequence', 'campaign.senderIdentity']);
 
         $contact  = $e->contact;
         $sequence = $e->sequence;
@@ -215,6 +243,11 @@ class SequenceService
         $subjectLine = $step->subject ?: ($template->subject ?? '');
 
         // ── 9. Send via real Mailable — OUTSIDE any DB transaction ───────────
+        // Resolve sender identity: prefer the originating campaign's sender identity;
+        // fall back to config('mail.from') when there is no campaign attribution or
+        // the campaign's sender identity was deleted/null.
+        $senderIdentity = $e->campaign?->senderIdentity ?? null;
+
         try {
             $mailable = new SequenceStepMailable(
                 step: $step,
@@ -222,6 +255,7 @@ class SequenceService
                 subjectLine: $subjectLine,
                 trackingToken: $token,
                 unsubscribeUrl: $unsubscribeUrl,
+                senderIdentity: $senderIdentity,
             );
 
             Mail::to($contact->email)->send($mailable);

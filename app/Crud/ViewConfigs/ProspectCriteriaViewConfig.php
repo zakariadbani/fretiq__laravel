@@ -79,9 +79,14 @@ class ProspectCriteriaViewConfig
         }
 
         // ── Tabs ──────────────────────────────────────────────────────────────
+        $runsCount = ($hasId && Schema::hasTable('discovery_runs'))
+            ? $model->discoveryRuns()->count()
+            : null;
+
         $tabs = [
-            ['key' => 'apercu',  'label' => 'Aperçu',  'icon' => 'bi-grid',   'mode' => 'view'],
-            ['key' => 'general', 'label' => 'Général', 'icon' => 'bi-sliders', 'mode' => 'edit'],
+            ['key' => 'apercu',     'label' => 'Aperçu',     'icon' => 'bi-grid',         'mode' => 'view'],
+            ['key' => 'historique', 'label' => 'Historique', 'icon' => 'bi-clock-history', 'mode' => 'view', 'count' => $runsCount],
+            ['key' => 'general',    'label' => 'Général',    'icon' => 'bi-sliders',       'mode' => 'edit'],
         ];
 
         // ── Detail rows ───────────────────────────────────────────────────────

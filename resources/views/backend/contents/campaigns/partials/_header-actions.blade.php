@@ -26,6 +26,8 @@
     @endcan
 
     @can('send campaigns')
+        {{-- Planifier: hidden for sequence campaigns (drip cadence ignores scheduling) --}}
+        @if($model->schedule_type !== 'sequence')
         <button type="button"
                 class="btn btn-sm fw-bold btn-info"
                 id="btn-schedule"
@@ -34,14 +36,21 @@
             <i class="bi bi-calendar-check me-1"></i>
             Planifier
         </button>
+        @endif
 
         <button type="button"
                 class="btn btn-sm fw-bold btn-success"
                 id="btn-send-now"
                 data-campaign-id="{{ $model->id }}"
+                data-schedule-type="{{ $model->schedule_type }}"
                 data-url="{{ route('admin.campaigns.sendNow', $model->id) }}">
-            <i class="bi bi-send me-1"></i>
-            Envoyer maintenant
+            @if($model->schedule_type === 'sequence')
+                <i class="bi bi-play-circle me-1"></i>
+                Démarrer la séquence
+            @else
+                <i class="bi bi-send me-1"></i>
+                Envoyer maintenant
+            @endif
         </button>
     @endcan
 

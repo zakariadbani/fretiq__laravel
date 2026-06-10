@@ -150,8 +150,18 @@ return [
         //---------------------------------------------------------------------------
         [
             'content' => 'Administration',
-            'permission' => ['view users', 'manage roles', 'manage permissions', 'view sender_identities'],
+            'permission' => ['view users', 'manage roles', 'manage permissions', 'view sender_identities', 'manage packages'],
             'classes' => ['content' => 'pt-8 pb-2'],
+        ],
+
+        [
+            'title' => 'Packs',
+            'permission' => 'manage packages',
+            'icon' => [
+                'svg' => 'abstract-26',
+                'font' => '<i class="bi bi-box-seam fs-2"></i>',
+            ],
+            'path' => 'admin/packages',
         ],
 
         [

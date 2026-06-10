@@ -1,9 +1,9 @@
 {{--
-    Thin shim: ProspectCriteria hero + tab nav.
+    Thin shim: Package hero + tab nav.
     Resolves config from $viewConfig (injected by controller) or builds it on-the-fly.
     Delegates rendering to the generic backend.partials.crud._tabbar partial.
 
-    Usage: @include('backend.contents.prospect_criteria.partials._header-with-tabs', [
+    Usage: @include('backend.contents.packages.partials._header-with-tabs', [
         'model'       => $model,
         'currentPage' => 'view|edit',
     ])
@@ -11,17 +11,15 @@
 
 @php
     $isView = ($currentPage ?? 'view') === 'view';
-    $config = $viewConfig ?? \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::make($model);
+    $config = $viewConfig ?? \App\Crud\ViewConfigs\PackageViewConfig::make($model);
 @endphp
 
 @include('backend.partials.crud._tabbar', [
     'model'       => $model,
     'currentPage' => $currentPage ?? 'view',
     'config'      => $config,
-    'actions'     => $__env->make('backend.contents.prospect_criteria.partials._header-actions', [
-                         'model'          => $model,
-                         'isView'         => $isView,
-                         'quotaRemaining' => $quotaRemaining ?? null,
-                         'quotaPackage'   => $quotaPackage   ?? null,
+    'actions'     => $__env->make('backend.contents.packages.partials._header-actions', [
+                         'model'  => $model,
+                         'isView' => $isView,
                      ], \Illuminate\Support\Arr::except(get_defined_vars(), ['__data', '__path']))->render(),
 ])

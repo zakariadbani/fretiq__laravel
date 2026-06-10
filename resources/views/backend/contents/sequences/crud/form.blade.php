@@ -188,12 +188,23 @@
             <div class="card-body border-top p-0">
 
                 @if($model->steps->isNotEmpty())
+                @php
+                    $stepsOrdered = $model->steps->sortBy('step_no')->values();
+                    $cumulativeDays = 0;
+                    $stepTimeline = [];
+                    foreach ($stepsOrdered as $s) {
+                        $cumulativeDays += $s->delay_days;
+                        $stepTimeline[$s->id] = $cumulativeDays === 0 ? 'Jour 0' : 'J+' . $cumulativeDays;
+                    }
+                    $firstStepId = $stepsOrdered->first()?->id;
+                    $lastStepId  = $stepsOrdered->last()?->id;
+                @endphp
                 <div class="table-responsive">
                     <table class="table table-row-dashed table-row-gray-300 align-middle gs-0 gy-3 mb-0">
                         <thead>
                             <tr class="fw-bold text-muted bg-light">
                                 <th class="ps-7">N°</th>
-                                <th>Délai (jours)</th>
+                                <th>Calendrier</th>
                                 <th>Modèle</th>
                                 <th>Sujet</th>
                                 @can('edit sequences')
@@ -202,15 +213,16 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach($model->steps as $step)
+                            @foreach($stepsOrdered as $step)
                             <tr>
                                 <td class="ps-7">
                                     <span class="badge badge-circle badge-light-primary">{{ $step->step_no }}</span>
                                 </td>
                                 <td>
-                                    <span class="fw-semibold">
-                                        {{ $step->delay_days === 0 ? 'Immédiat' : $step->delay_days . ' jour(s)' }}
-                                    </span>
+                                    <span class="fw-semibold text-primary">{{ $stepTimeline[$step->id] }}</span>
+                                    @if($step->delay_days > 0)
+                                        <br><span class="text-muted fs-8">+{{ $step->delay_days }} j après l'étape précédente</span>
+                                    @endif
                                 </td>
                                 <td>
                                     <span class="fw-semibold">{{ $step->template?->name ?? '—' }}</span>
@@ -220,15 +232,35 @@
                                 </td>
                                 @can('edit sequences')
                                 <td class="text-end pe-7">
-                                    <form method="POST"
-                                          action="{{ route('admin.sequences.deleteStep', [$model->id, $step->id]) }}"
-                                          onsubmit="return confirm('Supprimer cette étape ?');">
-                                        @csrf
-                                        @method('DELETE')
-                                        <button type="submit" class="btn btn-sm btn-icon btn-light-danger">
-                                            <i class="bi bi-trash fs-5"></i>
-                                        </button>
-                                    </form>
+                                    <div class="d-flex gap-1 justify-content-end">
+                                        @if($step->id !== $firstStepId)
+                                            <form method="POST"
+                                                  action="{{ route('admin.sequences.moveStepUp', [$model->id, $step->id]) }}">
+                                                @csrf
+                                                <button type="submit" class="btn btn-sm btn-light" title="Monter">
+                                                    <i class="bi bi-arrow-up fs-6"></i>
+                                                </button>
+                                            </form>
+                                        @endif
+                                        @if($step->id !== $lastStepId)
+                                            <form method="POST"
+                                                  action="{{ route('admin.sequences.moveStepDown', [$model->id, $step->id]) }}">
+                                                @csrf
+                                                <button type="submit" class="btn btn-sm btn-light" title="Descendre">
+                                                    <i class="bi bi-arrow-down fs-6"></i>
+                                                </button>
+                                            </form>
+                                        @endif
+                                        <form method="POST"
+                                              action="{{ route('admin.sequences.deleteStep', [$model->id, $step->id]) }}"
+                                              onsubmit="return confirm('Supprimer cette étape ?');">
+                                            @csrf
+                                            @method('DELETE')
+                                            <button type="submit" class="btn btn-sm btn-icon btn-light-danger">
+                                                <i class="bi bi-trash fs-5"></i>
+                                            </button>
+                                        </form>
+                                    </div>
                                 </td>
                                 @endcan
                             </tr>
@@ -270,14 +302,27 @@
 
                         <div class="col-md-4">
                             <label class="required fw-semibold fs-7 mb-2">Modèle d'email</label>
-                            <select name="template_id" class="form-select form-select-solid form-select-sm" required>
-                                <option value="">Sélectionner un modèle...</option>
-                                @foreach($templates as $tpl)
-                                    <option value="{{ $tpl->id }}" {{ old('template_id') == $tpl->id ? 'selected' : '' }}>
-                                        {{ e($tpl->name) }}
-                                    </option>
-                                @endforeach
-                            </select>
+                            @if($templates->isEmpty())
+                                <div class="form-text text-muted fs-7 pt-2">
+                                    Aucun modèle —
+                                    @can('create campaign_templates')
+                                        <a href="{{ route('admin.campaign_templates.create') }}" target="_blank">Créer un modèle</a>
+                                    @else
+                                        <span>Créer un modèle</span>
+                                    @endcan
+                                </div>
+                                {{-- Hidden required field to prevent orphaned form submission --}}
+                                <input type="hidden" name="template_id" value="" />
+                            @else
+                                <select name="template_id" class="form-select form-select-solid form-select-sm" required>
+                                    <option value="">Sélectionner un modèle...</option>
+                                    @foreach($templates as $tpl)
+                                        <option value="{{ $tpl->id }}" {{ old('template_id') == $tpl->id ? 'selected' : '' }}>
+                                            {{ e($tpl->name) }}
+                                        </option>
+                                    @endforeach
+                                </select>
+                            @endif
                         </div>
 
                         <div class="col-md-4">
@@ -290,7 +335,7 @@
                         </div>
 
                         <div class="col-md-2">
-                            <button type="submit" class="btn btn-primary btn-sm w-100">
+                            <button type="submit" class="btn btn-primary btn-sm w-100" {{ $templates->isEmpty() ? 'disabled' : '' }}>
                                 <i class="bi bi-plus me-1"></i>
                                 Ajouter
                             </button>
@@ -302,7 +347,7 @@
             @endcan
         </div>
 
-        {{-- ── Enrollments (Inscriptions) ───────────────────────────────────── --}}
+        {{-- ── Suivi des contacts ───────────────────────────────────────────── --}}
         @php
             $enrollments = $model->enrollments()->with('contact')->orderByDesc('created_at')->get();
             $enrollmentStatuses = config('global.data.sequence_enrollment_statuses', []);
@@ -312,7 +357,7 @@
             <div class="card-header border-0 pt-5">
                 <h3 class="card-title fw-bolder m-0">
                     <i class="bi bi-person-check text-success fs-3 me-2"></i>
-                    Inscriptions ({{ $enrollments->count() }})
+                    Suivi des contacts ({{ $enrollments->count() }})
                 </h3>
             </div>
             <div class="card-body border-top p-0">

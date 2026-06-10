@@ -4,6 +4,7 @@ namespace App\DataTables\Backend;
 
 use App\DataTables\BackendDataTable;
 use App\Models\ProspectCriteria;
+use App\Services\Quota\DiscoveryQuotaService;
 use Illuminate\Http\Request;
 
 class ProspectCriteriaDataTable extends BackendDataTable
@@ -26,6 +27,18 @@ class ProspectCriteriaDataTable extends BackendDataTable
             'searchable' => false,
             'raw'        => true,
         ],
+        'companies_count' => [
+            'title'      => 'Entreprises',
+            'orderable'  => true,
+            'searchable' => false,
+            'raw'        => true,
+        ],
+        'contacts_count' => [
+            'title'      => 'Contacts',
+            'orderable'  => true,
+            'searchable' => false,
+            'raw'        => true,
+        ],
         'daily_limit' => [
             'title'      => 'Limite/jour',
             'orderable'  => true,
@@ -37,6 +50,12 @@ class ProspectCriteriaDataTable extends BackendDataTable
             'searchable' => false,
             'switch'     => true,
             'typetoggle' => 'status',
+            'raw'        => true,
+        ],
+        'last_discovery' => [
+            'title'      => 'Dernière découverte',
+            'orderable'  => false,
+            'searchable' => false,
             'raw'        => true,
         ],
         'created_at' => [
@@ -54,9 +73,28 @@ class ProspectCriteriaDataTable extends BackendDataTable
         ],
     ];
 
-    public function __construct(ProspectCriteria $model, Request $request)
+    /**
+     * Computed once per DataTable render: whether today's quota is exhausted.
+     * null = unlimited or tables not yet migrated; false = credits remain; true = 0.
+     *
+     * @var bool|null
+     */
+    protected ?bool $quotaExhausted = null;
+
+    public function __construct(ProspectCriteria $model, Request $request, DiscoveryQuotaService $quotaService)
     {
         parent::__construct($model, $request);
+
+        // Compute quota state once for all rows — avoids N+1 DB reads.
+        // Wrapped in QueryException catch so the DataTable still renders
+        // when the quota tables do not yet exist (pre-migration dev DB).
+        try {
+            $remaining = $quotaService->remainingTodayForDisplay();
+            // null = unlimited (never exhausted); 0 = exhausted
+            $this->quotaExhausted = ($remaining !== null && $remaining === 0);
+        } catch (\Illuminate\Database\QueryException $e) {
+            $this->quotaExhausted = null; // unknown — allow the button
+        }
     }
 
     /**
@@ -64,7 +102,9 @@ class ProspectCriteriaDataTable extends BackendDataTable
      */
     public function query()
     {
-        return $this->currentModel->newQuery();
+        return $this->currentModel->newQuery()
+            ->withCount(['companies', 'contacts'])
+            ->with('latestDiscoveryRun');
     }
 
     /**
@@ -94,6 +134,34 @@ class ProspectCriteriaDataTable extends BackendDataTable
             return e(implode(', ', $labels));
         });
 
+        $this->datatables->editColumn('companies_count', function (ProspectCriteria $row) {
+            $n = (int) ($row->companies_count ?? 0);
+            $class = $n > 0 ? 'badge badge-light-primary' : 'badge badge-light text-muted';
+            return '<span class="' . $class . '">' . $n . '</span>';
+        });
+
+        $this->datatables->editColumn('contacts_count', function (ProspectCriteria $row) {
+            $n = (int) ($row->contacts_count ?? 0);
+            $class = $n > 0 ? 'badge badge-light-info' : 'badge badge-light text-muted';
+            return '<span class="' . $class . '">' . $n . '</span>';
+        });
+
+        $this->datatables->addColumn('last_discovery', function (ProspectCriteria $row) {
+            $run = $row->latestDiscoveryRun;
+            if (!$run) {
+                return '<span class="badge badge-light-secondary">Jamais lancée</span>';
+            }
+            $cfg   = config('global.data.discovery_run_statuses.' . $run->status, []);
+            $label = $cfg['label'] ?? $run->status;
+            $color = $cfg['color'] ?? 'secondary';
+            $html  = '<span class="badge badge-light-' . e($color) . '">' . e($label) . '</span>';
+            $when  = $run->finished_at ?? $run->started_at;
+            if ($when) {
+                $html .= '<div class="text-muted fs-8 mt-1">' . e($when->format('d/m/Y H:i')) . '</div>';
+            }
+            return $html;
+        });
+
         // Extend the action column with a "Lancer la découverte" button (permission-gated).
         $this->datatables->editColumn('action', function (ProspectCriteria $row) {
             $user = auth()->user();
@@ -102,12 +170,21 @@ class ProspectCriteriaDataTable extends BackendDataTable
             $html = '<div class="d-flex justify-content-end flex-shrink-0">';
 
             // Discover button (run discovery permission)
+            // Disabled when quota is exhausted (0 remaining today); enabled when unlimited or has credits.
             if ($user?->can('run discovery')) {
+                $quotaExhausted = $this->quotaExhausted === true;
+                $disabledAttr   = $quotaExhausted ? ' disabled' : '';
+                $tooltipTitle   = $quotaExhausted
+                    ? 'Solde &#233;puis&#233; &#8212; recharge demain &#224; minuit'
+                    : 'Lancer la d&#233;couverte';
+                $onclickAttr    = $quotaExhausted ? '' : ' onclick="launchDiscovery(' . $id . ', \'' . $csrf . '\')"';
+
                 $html .= '<button type="button"'
                     . ' class="btn btn-icon btn-bg-light btn-active-color-success btn-sm me-1"'
-                    . ' onclick="launchDiscovery(' . $id . ', \'' . $csrf . '\')"'
+                    . $onclickAttr
                     . ' data-bs-toggle="tooltip"'
-                    . ' title="Lancer la d&#233;couverte">'
+                    . ' title="' . $tooltipTitle . '"'
+                    . $disabledAttr . '>'
                     . '<i class="bi bi-play-fill fs-4"></i>'
                     . '</button>';
             }

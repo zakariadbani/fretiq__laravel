@@ -57,6 +57,7 @@ class PermissionsSeeder extends Seeder
             'view zoho',
             'sync zoho',
             'run discovery',
+            'manage packages',  // superadmin only — admin/commercial MUST NOT receive this
         ];
 
         foreach ($keywordPermissions as $perm) {
@@ -78,7 +79,12 @@ class PermissionsSeeder extends Seeder
 
         $admin = Role::where('name', 'admin')->where('guard_name', 'web')->first();
         if ($admin) {
-            $admin->syncPermissions($allPermissions);
+            // Admin gets all permissions EXCEPT 'manage packages' — package management
+            // is superadmin-only so the client (admin role) never sees quota management.
+            $adminPermissions = $allPermissions->filter(
+                fn ($p) => $p->name !== 'manage packages'
+            );
+            $admin->syncPermissions($adminPermissions);
         }
 
         // commercial: view/create/edit on business entities + backend.access + run discovery

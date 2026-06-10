@@ -7,6 +7,7 @@ namespace App\Console\Commands;
 use App\Jobs\SyncCampaignStatsJob;
 use App\Models\CampaignRun;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 
 /**
  * CampaignSyncStats — dispatch SyncCampaignStatsJob for all sent campaign runs.
@@ -68,10 +69,42 @@ class CampaignSyncStats extends Command
 
         if ($count === 0) {
             $this->info('Aucun run à synchroniser.');
-            return Command::SUCCESS;
+        } else {
+            $this->info("Dispatché {$count} job(s) de synchronisation.");
         }
 
-        $this->info("Dispatché {$count} job(s) de synchronisation.");
+        // ── Sequence-campaign lifecycle sweep ─────────────────────────────────
+        // Atomic conditional UPDATE: sequence-type campaigns that are 'active',
+        // have at least one enrollment, and have NO remaining active OR paused
+        // enrollments → transition to 'done'.
+        //
+        // Paused enrollments are resumable (user can un-pause), so they block
+        // closure just like active ones. Only terminal statuses (completed/stopped)
+        // are safe to ignore here.
+        //
+        // Single SQL statement — no read-then-write — so a concurrent launchSequence
+        // (which inserts active enrollments before setting status='active') cannot
+        // race this into a wrong 'done'.
+        //
+        // Eventual-consistent: ≤15 min lag before a fully-drained sequence
+        // campaign reaches 'done'. Re-launch from 'done' re-activates (§3.4).
+        $closed = DB::update("
+            UPDATE campaigns
+            SET status = 'done'
+            WHERE schedule_type = 'sequence'
+              AND status = 'active'
+              AND EXISTS (
+                  SELECT 1 FROM sequence_enrollments se
+                  WHERE se.campaign_id = campaigns.id
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM sequence_enrollments se2
+                  WHERE se2.campaign_id = campaigns.id
+                    AND se2.status IN ('active', 'paused')
+              )
+        ");
+
+        $this->info("Séquence-campagnes lifecycle sweep effectué ({$closed} campagne(s) clôturée(s)).");
 
         return Command::SUCCESS;
     }

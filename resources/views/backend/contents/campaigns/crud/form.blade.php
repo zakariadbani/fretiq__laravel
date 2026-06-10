@@ -178,11 +178,11 @@
                             </div>
                         </div>
 
-                        {{-- Modèle d'email --}}
-                        <div class="col-lg-6">
+                        {{-- Modèle d'email (W1: hidden in sequence mode) --}}
+                        <div class="col-lg-6" id="field-template-wrapper">
                             <div class="fv-row mb-7">
-                                <label class="required fw-semibold fs-6 mb-2">Modèle d'email</label>
-                                <select name="template_id" class="form-select form-select-solid" id="template_select" data-control="select2" data-placeholder="Sélectionner un modèle..." required>
+                                <label class="required fw-semibold fs-6 mb-2" id="label-template">Modèle d'email</label>
+                                <select name="template_id" class="form-select form-select-solid" id="template_select" data-control="select2" data-placeholder="Sélectionner un modèle...">
                                     <option value="">Sélectionner un modèle...</option>
                                     @foreach($templates as $template)
                                         <option value="{{ $template->id }}"
@@ -195,8 +195,8 @@
                             </div>
                         </div>
 
-                        {{-- Sujet (override optionnel) --}}
-                        <div class="col-lg-12">
+                        {{-- Sujet (override optionnel — W1: hidden in sequence mode) --}}
+                        <div class="col-lg-12" id="field-subject-wrapper">
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">
                                     Sujet de l'email <span class="text-muted fs-7">(optionnel — remplace le sujet du modèle)</span>
@@ -242,8 +242,8 @@
                             </div>
                         </div>
 
-                        {{-- Fuseau horaire (always shown) --}}
-                        <div class="col-lg-4">
+                        {{-- Fuseau horaire (hidden in sequence mode — drip ignores timezone) --}}
+                        <div class="col-lg-4" id="field-timezone-wrapper">
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Fuseau horaire</label>
                                 <input type="text"
@@ -331,20 +331,71 @@
                         <div class="col-lg-5">
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Séquence active</label>
-                                <select name="sequence_id" class="form-select form-select-solid" data-control="select2" data-placeholder="Sélectionner une séquence...">
-                                    <option value="">Sélectionner une séquence...</option>
-                                    @foreach($sequences as $seq)
-                                        <option value="{{ $seq->id }}"
-                                            {{ old('sequence_id') == $seq->id ? 'selected' : '' }}>
-                                            {{ e($seq->name) }}
-                                        </option>
-                                    @endforeach
-                                </select>
+
+                                @php
+                                    $activeSequences = $sequences->where('is_active', true);
+                                    $currentSequenceId = old('sequence_id', $model->sequence_id ?? '');
+                                @endphp
+
+                                @if($activeSequences->isEmpty())
+                                    {{-- #6 empty-state CTA --}}
+                                    <div class="alert alert-info d-flex align-items-center py-3">
+                                        <i class="bi bi-info-circle-fill fs-4 me-3 text-info"></i>
+                                        <div>
+                                            Aucune séquence active disponible.
+                                            @can('create sequences')
+                                                <a href="{{ route('admin.sequences.create') }}" class="fw-bold ms-1">Créer une séquence</a>
+                                            @endcan
+                                        </div>
+                                    </div>
+                                @else
+                                    <select name="sequence_id"
+                                            id="sequence_select"
+                                            class="form-select form-select-solid"
+                                            data-control="select2"
+                                            data-placeholder="Sélectionner une séquence...">
+                                        <option value="">Sélectionner une séquence...</option>
+                                        @foreach($activeSequences as $seq)
+                                            <option value="{{ $seq->id }}"
+                                                    data-steps="{{ json_encode($seq->steps->map(fn($s) => ['step_no' => $s->step_no, 'delay_days' => $s->delay_days, 'subject' => $s->subject, 'template_name' => $s->template?->name ?? '—'])) }}"
+                                                {{ $currentSequenceId == $seq->id ? 'selected' : '' }}>
+                                                {{ e($seq->name) }}
+                                            </option>
+                                        @endforeach
+                                    </select>
+                                @endif
+
                                 <div class="form-text text-muted mt-1 fs-7">
                                     <i class="bi bi-info-circle me-1"></i>
-                                    En mode séquence, l'inscription des contacts est gérée depuis le module Séquences.
-                                    Le choix ici enregistre uniquement l'association — aucun envoi automatique n'est déclenché depuis ce formulaire.
+                                    Au lancement, les contacts éligibles du segment seront inscrits dans la séquence ; l'envoi des étapes est ensuite automatique (cadence = délais des étapes).
                                 </div>
+
+                                {{-- Edit mode: enrolled count hint (consultant F5) --}}
+                                @if(isset($model) && $model->id && $model->sequence_id)
+                                    @php
+                                        $enrolledHint = \App\Models\SequenceEnrollment::where('campaign_id', $model->id)->count();
+                                    @endphp
+                                    @if($enrolledHint > 0)
+                                        <div class="mt-2">
+                                            <span class="badge badge-light-info">
+                                                <i class="bi bi-people me-1"></i>
+                                                {{ $enrolledHint }} contact(s) déjà inscrits — modifier la séquence n'affecte que les prochains lancements.
+                                            </span>
+                                        </div>
+                                    @endif
+                                @endif
+
+                                {{-- W2 steps preview (populated by JS on sequence select) --}}
+                                <div id="sequence-steps-preview" class="mt-3" style="display:none;">
+                                    <div class="fw-semibold fs-7 text-muted mb-2">Aperçu des étapes :</div>
+                                    <div id="sequence-steps-list"></div>
+                                    <div class="mt-1">
+                                        <a id="sequence-edit-link" href="#" class="fs-7 text-primary" target="_blank">
+                                            <i class="bi bi-pencil me-1"></i>Modifier la séquence
+                                        </a>
+                                    </div>
+                                </div>
+
                             </div>
                         </div>
                     </div>
@@ -467,16 +518,25 @@
             }
 
             // ── Schedule type switcher ───────────────────────────────
-            const scheduleTypeSelect = document.getElementById('schedule_type_select');
-            const fieldsOneShotEl   = document.getElementById('fields-one-shot');
-            const fieldsRecurringEl = document.getElementById('fields-recurring');
-            const fieldsSequenceEl  = document.getElementById('fields-sequence');
+            const scheduleTypeSelect   = document.getElementById('schedule_type_select');
+            const fieldsOneShotEl      = document.getElementById('fields-one-shot');
+            const fieldsRecurringEl    = document.getElementById('fields-recurring');
+            const fieldsSequenceEl     = document.getElementById('fields-sequence');
+            const fieldTemplateWrapper = document.getElementById('field-template-wrapper');
+            const fieldSubjectWrapper  = document.getElementById('field-subject-wrapper');
+            const fieldTimezoneWrapper = document.getElementById('field-timezone-wrapper');
 
             function applyScheduleMode(value) {
                 if (!fieldsOneShotEl || !fieldsRecurringEl || !fieldsSequenceEl) return;
+                const isSequence = value === 'sequence';
                 fieldsOneShotEl.style.display  = value === 'one_shot'  ? '' : 'none';
                 fieldsRecurringEl.style.display = value === 'recurring' ? '' : 'none';
-                fieldsSequenceEl.style.display  = value === 'sequence'  ? '' : 'none';
+                fieldsSequenceEl.style.display  = isSequence  ? '' : 'none';
+
+                // W1: hide template + subject + timezone in sequence mode
+                if (fieldTemplateWrapper) fieldTemplateWrapper.style.display = isSequence ? 'none' : '';
+                if (fieldSubjectWrapper)  fieldSubjectWrapper.style.display  = isSequence ? 'none' : '';
+                if (fieldTimezoneWrapper) fieldTimezoneWrapper.style.display = isSequence ? 'none' : '';
             }
 
             if (scheduleTypeSelect) {
@@ -485,6 +545,89 @@
                 });
                 // Apply on page load
                 applyScheduleMode(scheduleTypeSelect.value);
+            }
+
+            // ── #5 Auto-preselect single active sequence ─────────────────────
+            const sequenceSelect = document.getElementById('sequence_select');
+            if (sequenceSelect) {
+                const nonEmptyOptions = Array.from(sequenceSelect.options).filter(o => o.value !== '');
+                if (nonEmptyOptions.length === 1 && !sequenceSelect.value) {
+                    sequenceSelect.value = nonEmptyOptions[0].value;
+                    // Trigger select2 update
+                    if (window.jQuery) {
+                        $(sequenceSelect).trigger('change');
+                    } else {
+                        sequenceSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                }
+            }
+
+            // ── W2 Sequence steps preview ─────────────────────────────────────
+            const stepsPreview  = document.getElementById('sequence-steps-preview');
+            const stepsList     = document.getElementById('sequence-steps-list');
+            const seqEditLink   = document.getElementById('sequence-edit-link');
+            const seqEditBaseUrl = '{{ url("admin/sequences") }}/';
+
+            function renderStepsPreview(selectEl) {
+                if (!stepsPreview || !stepsList) return;
+                const selected = selectEl ? selectEl.options[selectEl.selectedIndex] : null;
+                if (!selected || !selected.value) {
+                    stepsPreview.style.display = 'none';
+                    return;
+                }
+
+                const stepsData = selected.dataset.steps ? JSON.parse(selected.dataset.steps) : [];
+                if (!stepsData.length) {
+                    stepsPreview.style.display = 'none';
+                    return;
+                }
+
+                // Compute cumulative days for timeline labels.
+                // Build DOM nodes via createElement+textContent to prevent XSS —
+                // step.subject / step.template_name are user-authored strings.
+                let cumulativeDays = 0;
+                const ul = document.createElement('ul');
+                ul.className = 'list-unstyled mb-0';
+                stepsData.forEach(function (step, idx) {
+                    if (idx === 0) {
+                        cumulativeDays = 0;
+                    } else {
+                        cumulativeDays += parseInt(step.delay_days || 0, 10);
+                    }
+                    const dayLabel = cumulativeDays === 0 ? 'Jour 0' : 'J+' + cumulativeDays;
+
+                    const li = document.createElement('li');
+                    li.className = 'd-flex align-items-center gap-2 mb-1 fs-7 text-muted';
+
+                    const badge = document.createElement('span');
+                    badge.className = 'badge badge-light-primary me-1';
+                    badge.textContent = dayLabel;
+
+                    const label = document.createElement('span');
+                    label.textContent = step.subject || step.template_name || ('Étape ' + step.step_no);
+
+                    li.appendChild(badge);
+                    li.appendChild(label);
+                    ul.appendChild(li);
+                });
+
+                stepsList.innerHTML = '';
+                stepsList.appendChild(ul);
+                stepsPreview.style.display = '';
+
+                if (seqEditLink) {
+                    seqEditLink.href = seqEditBaseUrl + selected.value + '/edit';
+                }
+            }
+
+            if (sequenceSelect) {
+                sequenceSelect.addEventListener('change', function () {
+                    renderStepsPreview(this);
+                });
+                // Render on page load if a sequence is already selected
+                if (sequenceSelect.value) {
+                    renderStepsPreview(sequenceSelect);
+                }
             }
         });
     </script>

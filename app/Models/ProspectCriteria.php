@@ -2,9 +2,11 @@
 
 namespace App\Models;
 
+use App\Models\Contact;
 use App\Models\Traits\Validator;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class ProspectCriteria extends Model
@@ -55,6 +57,15 @@ class ProspectCriteria extends Model
     public function companies(): HasMany
     {
         return $this->hasMany(Company::class, 'criteria_id');
+    }
+
+    /**
+     * Contacts reached through this criteria's companies.
+     * Contact -> Company -> ProspectCriteria (companies.criteria_id, contacts.company_id).
+     */
+    public function contacts(): HasManyThrough
+    {
+        return $this->hasManyThrough(Contact::class, Company::class, 'criteria_id', 'company_id', 'id', 'id');
     }
 
     /**

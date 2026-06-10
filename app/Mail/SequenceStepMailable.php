@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use App\Models\Contact;
+use App\Models\SenderIdentity;
 use App\Models\SequenceStep;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Address;
@@ -28,21 +29,33 @@ use Illuminate\Mail\Mailables\Headers;
 class SequenceStepMailable extends Mailable
 {
     public function __construct(
-        private readonly SequenceStep $step,
-        private readonly Contact      $contact,
-        private readonly string       $subjectLine,
-        private readonly string       $trackingToken,
-        private readonly string       $unsubscribeUrl,
+        private readonly SequenceStep    $step,
+        private readonly Contact         $contact,
+        private readonly string          $subjectLine,
+        private readonly string          $trackingToken,
+        private readonly string          $unsubscribeUrl,
+        private readonly ?SenderIdentity $senderIdentity = null,
     ) {}
 
     /**
-     * Build the message envelope (subject + List-Unsubscribe from address).
+     * Build the message envelope (subject + from address).
+     *
+     * When a SenderIdentity is provided (via the originating campaign), its
+     * `email` and `name` columns are used as the From address. Otherwise the
+     * default `mail.from` configured in config/mail.php is used as fallback.
      */
     public function envelope(): Envelope
     {
-        // Sequences do not yet have a per-sequence sender identity in the data model;
-        // the default from address configured in config/mail.php is used. When a
-        // sender_identity is added to sequences in a future sprint, wire it here.
+        if ($this->senderIdentity !== null) {
+            return new Envelope(
+                from: new Address(
+                    $this->senderIdentity->email,
+                    $this->senderIdentity->name ?? '',
+                ),
+                subject: $this->subjectLine,
+            );
+        }
+
         return new Envelope(
             subject: $this->subjectLine,
         );

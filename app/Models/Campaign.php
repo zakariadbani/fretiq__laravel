@@ -27,6 +27,7 @@ class Campaign extends Model
         'segment_id',
         'template_id',
         'sender_identity_id',
+        'sequence_id',
         'name',
         'subject',
         'schedule_type',
@@ -78,11 +79,27 @@ class Campaign extends Model
     }
 
     /**
+     * The sequence associated with this campaign (sequence-type campaigns).
+     */
+    public function sequence(): BelongsTo
+    {
+        return $this->belongsTo(Sequence::class);
+    }
+
+    /**
      * All dispatch runs for this campaign.
      */
     public function runs(): HasMany
     {
         return $this->hasMany(CampaignRun::class);
+    }
+
+    /**
+     * All sequence enrollments attributed to this campaign.
+     */
+    public function sequenceEnrollments(): HasMany
+    {
+        return $this->hasMany(SequenceEnrollment::class);
     }
 
     // ── Validation ─────────────────────────────────────────────────────────────
@@ -97,8 +114,11 @@ class Campaign extends Model
         return [
             'name'               => 'required|string|max:255',
             'segment_id'         => 'required|integer|exists:segments,id',
-            'template_id'        => 'required|integer|exists:campaign_templates,id',
+            // W1: template not required in sequence mode — each step carries its own template.
+            'template_id'        => 'required_unless:schedule_type,sequence|nullable|integer|exists:campaign_templates,id',
             'sender_identity_id' => 'required|integer|exists:sender_identities,id',
+            // sequence_id required when schedule_type is 'sequence'.
+            'sequence_id'        => 'nullable|required_if:schedule_type,sequence|integer|exists:sequences,id',
             'subject'            => 'nullable|string|max:255',
             'schedule_type'      => 'nullable|in:' . implode(',', array_keys(config('global.data.schedule_types', []))),
             'scheduled_at'       => 'nullable|date',

@@ -7,6 +7,7 @@ use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
 use App\Models\EmailTrackingEvent;
+use App\Models\SequenceEnrollment;
 use App\Models\Suppression;
 use App\Services\Campaign\ZohoCampaignsDriver;
 use Illuminate\Support\Facades\DB;
@@ -37,6 +38,7 @@ class CampaignService
     public function __construct(
         private readonly SegmentService   $segmentService,
         private readonly SendWindowGuard  $sendWindowGuard,
+        private readonly SequenceService  $sequenceService,
     ) {}
 
     // ── Scheduling ─────────────────────────────────────────────────────────────
@@ -66,6 +68,94 @@ class CampaignService
         $campaign->update(['status' => 'scheduled']);
 
         return $run;
+    }
+
+    // ── Sequence launch ────────────────────────────────────────────────────────
+
+    /**
+     * Enroll the campaign segment's eligible contacts into the campaign's sequence.
+     *
+     * Returns ['enrolled' => int, 'skipped' => int].
+     *
+     * Guards (all throw InvalidArgumentException with French message):
+     *   - campaign.sequence_id is null           → « Aucune séquence associée. »
+     *   - sequence.is_active is false             → « La séquence est inactive. »
+     *   - sequence has no steps                   → « La séquence n'a aucune étape. »
+     *
+     * Net-new-only semantic: contacts already enrolled in this sequence (ANY status)
+     * are never re-enrolled. Only new contacts (not in sequence_enrollments for this
+     * sequence) are enrolled. The UNIQUE(sequence_id,contact_id) constraint is the
+     * race-proof backstop.
+     *
+     * Synchronous: DB-only writes. Sending is already handled async by the drip engine.
+     *
+     * @throws \InvalidArgumentException  When pre-conditions are not met.
+     */
+    public function launchSequence(Campaign $campaign): array
+    {
+        // ── Guard: sequence must be attached ──────────────────────────────────
+        $sequence = $campaign->sequence;
+
+        if ($sequence === null) {
+            throw new \InvalidArgumentException('Aucune séquence associée.');
+        }
+
+        // ── Guard: sequence must be active ────────────────────────────────────
+        if (! $sequence->is_active) {
+            throw new \InvalidArgumentException('La séquence est inactive.');
+        }
+
+        // ── Guard: sequence must have at least one step ───────────────────────
+        if ($sequence->steps()->count() === 0) {
+            throw new \InvalidArgumentException("La séquence n'a aucune étape.");
+        }
+
+        // ── Resolve eligible contacts via compliance funnel ───────────────────
+        $contacts = $this->segmentService->resolve($campaign->segment);
+
+        if ($contacts->isEmpty()) {
+            return ['enrolled' => 0, 'skipped' => 0];
+        }
+
+        // ── Net-new-only: get all contact IDs already in this sequence (any status) ──
+        $existingContactIds = SequenceEnrollment::where('sequence_id', $sequence->id)
+            ->pluck('contact_id')
+            ->flip(); // Use flip for O(1) key-existence checks.
+
+        $enrolled = 0;
+        $skipped  = 0;
+
+        foreach ($contacts as $contact) {
+            if (isset($existingContactIds[$contact->id])) {
+                $skipped++;
+                continue;
+            }
+
+            $enrollment = $this->sequenceService->enroll($sequence, $contact, $campaign);
+
+            // Count as enrolled only when the row was actually just inserted (new+active).
+            // A race-returned row of any terminal status (completed/stopped) must not
+            // inflate the enrolled count — it will never send, so increment skipped instead.
+            if ($enrollment !== null && $enrollment->wasRecentlyCreated) {
+                $enrolled++;
+            } else {
+                $skipped++;
+            }
+        }
+
+        // ── Activate the campaign (also valid on re-launch from 'done') ───────
+        if ($enrolled > 0) {
+            $campaign->update(['status' => 'active']);
+        }
+
+        Log::info('[CampaignService] launchSequence completed.', [
+            'campaign_id' => $campaign->id,
+            'sequence_id' => $sequence->id,
+            'enrolled'    => $enrolled,
+            'skipped'     => $skipped,
+        ]);
+
+        return ['enrolled' => $enrolled, 'skipped' => $skipped];
     }
 
     // ── Dispatch ───────────────────────────────────────────────────────────────

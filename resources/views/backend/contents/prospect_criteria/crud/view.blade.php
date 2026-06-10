@@ -47,13 +47,19 @@
 
         @include('backend.partials.crud._apercu', [
             'model'  => $model,
-            'config' => \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::make($model),
+            'config' => $viewConfig ?? \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::make($model),
         ])
     </div>
     {{-- end Aperçu --}}
 
+    {{-- ── Tab 2: Historique (native on view) ────────────────────────────── --}}
+    <div class="tab-pane fade" id="criteria_historique" role="tabpanel">
+        @include('backend.contents.prospect_criteria.partials._discovery-history', ['model' => $model])
+    </div>
+    {{-- end Historique --}}
+
     {{--
-        Tab 2 (Général) is NOT a native pane here —
+        Tab 3 (Général) is NOT a native pane here —
         it deep-links to the edit page via the tab nav. No pane div needed.
     --}}
 

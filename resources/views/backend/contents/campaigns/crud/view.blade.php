@@ -58,6 +58,34 @@
             'config' => \App\Crud\ViewConfigs\CampaignViewConfig::make($model, $stats ?? null),
         ])
 
+        {{-- ── Sequence stat: enrolled contacts ─────────────────────────── --}}
+        @if($model->schedule_type === 'sequence')
+        <div class="row g-4 mt-2">
+
+            <div class="col-sm-6 col-xl-4">
+                <div class="card card-flush h-lg-100">
+                    <div class="card-header pt-5">
+                        <div class="card-title d-flex flex-column">
+                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ number_format($enrolledCount ?? 0) }}</span>
+                            <span class="text-gray-500 pt-1 fw-semibold fs-6">Contacts inscrits</span>
+                        </div>
+                    </div>
+                    <div class="card-body pt-0">
+                        @if($model->sequence)
+                            <a href="{{ route('admin.sequences.view', $model->sequence->id) }}" class="fs-7 text-primary">
+                                <i class="bi bi-eye me-1"></i>
+                                Voir le suivi des contacts
+                            </a>
+                        @else
+                            <span class="text-muted fs-7">Aucune séquence associée</span>
+                        @endif
+                    </div>
+                </div>
+            </div>
+
+        </div>
+        @endif
+
         {{-- ── Preserved: KPIs from latest run ──────────────────────────── --}}
         @if($latestRun)
         <div class="row g-4 mt-2">
@@ -367,48 +395,180 @@
             const btnSendNow = document.getElementById('btn-send-now');
             if (btnSendNow) {
                 btnSendNow.addEventListener('click', function () {
-                    const url = this.dataset.url;
-                    this.disabled = true;
+                    const url          = this.dataset.url;
+                    const scheduleType = this.dataset.scheduleType || '';
+                    const self         = this;
+                    self.disabled = true;
 
-                    Swal.fire({
-                        title: 'Envoyer maintenant ?',
-                        html: 'La campagne sera envoyée <strong>immédiatement</strong> aux contacts du segment.<br>Cette action ne peut pas être annulée.',
-                        icon: 'warning',
-                        showCancelButton: true,
-                        confirmButtonText: 'Envoyer',
-                        cancelButtonText: 'Annuler',
-                        buttonsStyling: false,
-                        customClass: {
-                            confirmButton: 'btn btn-success me-2',
-                            cancelButton: 'btn btn-light',
-                        },
-                    }).then((result) => {
-                        if (result.isConfirmed) {
-                            axios.post(url, { _token: '{{ csrf_token() }}' })
-                                .then(function (r) {
-                                    if (r.data.redirect) {
-                                        window.location.replace(r.data.redirect);
+                    if (scheduleType === 'sequence') {
+                        // ── Sequence branch: fetch eligible count then confirm ────
+                        @if($model->segment_id)
+                        axios.get('{{ route("admin.campaigns.segmentCount", $model->segment_id) }}')
+                            .then(function (r) {
+                                const eligibleCount = r.data.count || 0;
+                                Swal.fire({
+                                    title: 'Démarrer la séquence ?',
+                                    html: 'Démarrer la séquence pour ~<strong>' + eligibleCount + '</strong> contact(s) éligible(s).<br>'
+                                        + '<span class="text-muted fs-7">Les contacts déjà inscrits seront ignorés.</span>',
+                                    icon: 'question',
+                                    showCancelButton: true,
+                                    confirmButtonText: 'Démarrer',
+                                    cancelButtonText: 'Annuler',
+                                    buttonsStyling: false,
+                                    customClass: {
+                                        confirmButton: 'btn btn-success me-2',
+                                        cancelButton: 'btn btn-light',
+                                    },
+                                }).then((result) => {
+                                    if (result.isConfirmed) {
+                                        axios.post(url, { _token: '{{ csrf_token() }}' })
+                                            .then(function (r) {
+                                                if (r.data.redirect) {
+                                                    window.location.replace(r.data.redirect);
+                                                } else {
+                                                    window.location.reload();
+                                                }
+                                            })
+                                            .catch(function (err) {
+                                                Swal.fire({
+                                                    icon: 'error',
+                                                    title: 'Erreur',
+                                                    text: err.response?.data?.text || err.response?.data?.message || 'Une erreur est survenue.',
+                                                    buttonsStyling: false,
+                                                    confirmButtonText: 'OK',
+                                                    customClass: { confirmButton: 'btn btn-primary' },
+                                                });
+                                            })
+                                            .finally(function () {
+                                                self.disabled = false;
+                                            });
                                     } else {
-                                        window.location.reload();
+                                        self.disabled = false;
                                     }
-                                })
-                                .catch(function (err) {
-                                    Swal.fire({
-                                        icon: 'error',
-                                        title: 'Erreur',
-                                        text: err.response?.data?.message || 'Une erreur est survenue.',
-                                        buttonsStyling: false,
-                                        confirmButtonText: 'OK',
-                                        customClass: { confirmButton: 'btn btn-primary' },
-                                    });
-                                })
-                                .finally(function () {
-                                    btnSendNow.disabled = false;
                                 });
-                        } else {
-                            btnSendNow.disabled = false;
-                        }
-                    });
+                            })
+                            .catch(function () {
+                                // If count fetch fails, show confirm without count
+                                Swal.fire({
+                                    title: 'Démarrer la séquence ?',
+                                    text: 'Les contacts éligibles du segment seront inscrits dans la séquence.',
+                                    icon: 'question',
+                                    showCancelButton: true,
+                                    confirmButtonText: 'Démarrer',
+                                    cancelButtonText: 'Annuler',
+                                    buttonsStyling: false,
+                                    customClass: {
+                                        confirmButton: 'btn btn-success me-2',
+                                        cancelButton: 'btn btn-light',
+                                    },
+                                }).then((result) => {
+                                    if (result.isConfirmed) {
+                                        axios.post(url, { _token: '{{ csrf_token() }}' })
+                                            .then(function (r) {
+                                                if (r.data.redirect) {
+                                                    window.location.replace(r.data.redirect);
+                                                } else {
+                                                    window.location.reload();
+                                                }
+                                            })
+                                            .catch(function (err) {
+                                                Swal.fire({
+                                                    icon: 'error',
+                                                    title: 'Erreur',
+                                                    text: err.response?.data?.text || err.response?.data?.message || 'Une erreur est survenue.',
+                                                    buttonsStyling: false,
+                                                    confirmButtonText: 'OK',
+                                                    customClass: { confirmButton: 'btn btn-primary' },
+                                                });
+                                            })
+                                            .finally(function () { self.disabled = false; });
+                                    } else {
+                                        self.disabled = false;
+                                    }
+                                });
+                            });
+                        @else
+                        // No segment attached — show simple confirm
+                        Swal.fire({
+                            title: 'Démarrer la séquence ?',
+                            text: 'Les contacts éligibles du segment seront inscrits dans la séquence.',
+                            icon: 'question',
+                            showCancelButton: true,
+                            confirmButtonText: 'Démarrer',
+                            cancelButtonText: 'Annuler',
+                            buttonsStyling: false,
+                            customClass: {
+                                confirmButton: 'btn btn-success me-2',
+                                cancelButton: 'btn btn-light',
+                            },
+                        }).then((result) => {
+                            if (result.isConfirmed) {
+                                axios.post(url, { _token: '{{ csrf_token() }}' })
+                                    .then(function (r) {
+                                        if (r.data.redirect) {
+                                            window.location.replace(r.data.redirect);
+                                        } else {
+                                            window.location.reload();
+                                        }
+                                    })
+                                    .catch(function (err) {
+                                        Swal.fire({
+                                            icon: 'error',
+                                            title: 'Erreur',
+                                            text: err.response?.data?.text || err.response?.data?.message || 'Une erreur est survenue.',
+                                            buttonsStyling: false,
+                                            confirmButtonText: 'OK',
+                                            customClass: { confirmButton: 'btn btn-primary' },
+                                        });
+                                    })
+                                    .finally(function () { self.disabled = false; });
+                            } else {
+                                self.disabled = false;
+                            }
+                        });
+                        @endif
+                    } else {
+                        // ── One-shot / recurring branch (original behavior) ──────
+                        Swal.fire({
+                            title: 'Envoyer maintenant ?',
+                            html: 'La campagne sera envoyée <strong>immédiatement</strong> aux contacts du segment.<br>Cette action ne peut pas être annulée.',
+                            icon: 'warning',
+                            showCancelButton: true,
+                            confirmButtonText: 'Envoyer',
+                            cancelButtonText: 'Annuler',
+                            buttonsStyling: false,
+                            customClass: {
+                                confirmButton: 'btn btn-success me-2',
+                                cancelButton: 'btn btn-light',
+                            },
+                        }).then((result) => {
+                            if (result.isConfirmed) {
+                                axios.post(url, { _token: '{{ csrf_token() }}' })
+                                    .then(function (r) {
+                                        if (r.data.redirect) {
+                                            window.location.replace(r.data.redirect);
+                                        } else {
+                                            window.location.reload();
+                                        }
+                                    })
+                                    .catch(function (err) {
+                                        Swal.fire({
+                                            icon: 'error',
+                                            title: 'Erreur',
+                                            text: err.response?.data?.message || 'Une erreur est survenue.',
+                                            buttonsStyling: false,
+                                            confirmButtonText: 'OK',
+                                            customClass: { confirmButton: 'btn btn-primary' },
+                                        });
+                                    })
+                                    .finally(function () {
+                                        self.disabled = false;
+                                    });
+                            } else {
+                                self.disabled = false;
+                            }
+                        });
+                    }
                 });
             }
         });

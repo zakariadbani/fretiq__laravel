@@ -5,6 +5,8 @@ namespace App\Jobs;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Services\Discovery\DiscoveryPipelineService;
+use App\Services\Quota\DiscoveryQuotaService;
+use Illuminate\Support\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -74,6 +76,18 @@ class RunDiscoveryPipelineJob implements ShouldQueue
         // serialized jobs that were queued before the runId parameter existed.
         $run = isset($this->runId) ? DiscoveryRun::find($this->runId) : null;
 
+        // Pre-flight status check: a terminalized (failed) run must never execute.
+        // The stale terminalizer or a failed() hook may have flipped the row to
+        // 'failed' between dispatch and pick-up. Fresh DB read is authoritative.
+        if ($run !== null && ! in_array($run->status, ['pending', 'running'], true)) {
+            Log::info('[RunDiscoveryPipelineJob] Run is already in a terminal state — aborting.', [
+                'run_id'      => $this->runId,
+                'run_status'  => $run->status,
+                'criteria_id' => $this->criteriaId,
+            ]);
+            return;
+        }
+
         $criteria = ProspectCriteria::find($this->criteriaId);
 
         if (! $criteria) {
@@ -108,6 +122,66 @@ class RunDiscoveryPipelineJob implements ShouldQueue
             'criteria_name' => $criteria->name,
         ]);
 
+        // ── Quota budget check ─────────────────────────────────────────────────
+        // Compute what this attempt is still allowed to process.
+        // budget = credits_reserved − consumed (retry gets only what prior attempt didn't burn).
+        $budget = null; // null = unlimited (no run row / no quota)
+
+        if ($run !== null) {
+            $budget = max(0, $run->credits_reserved - $run->consumed);
+
+            // If limited and the full reservation has been consumed, nothing left.
+            if ($budget === 0) {
+                Log::info('[RunDiscoveryPipelineJob] Budget épuisé (retry) — aborting.', [
+                    'criteria_id'      => $this->criteriaId,
+                    'run_id'           => $this->runId,
+                    'credits_reserved' => $run->credits_reserved,
+                    'consumed'         => $run->consumed,
+                ]);
+                $run->update([
+                    'status'      => 'failed',
+                    'error'       => 'Budget épuisé (retry)',
+                    'finished_at' => now(),
+                ]);
+                return;
+            }
+
+            // Re-check remaining against THIS run's quota_date, excluding our own reservation,
+            // to prevent over-spending when other concurrent runs have used the balance.
+            if ($run->quota_date !== null) {
+                /** @var DiscoveryQuotaService $quotaService */
+                $quotaService = app(DiscoveryQuotaService::class);
+
+                if (! $quotaService->isUnlimited()) {
+                    $remaining = $quotaService->usedOn(
+                        Carbon::parse($run->quota_date),
+                        $run->id  // exclude this run's reservation from the sum
+                    );
+
+                    // remaining here is actually "used by others"; available = daily - used-by-others
+                    $daily     = (int) $quotaService->activePackage()?->daily_credits;
+                    $available = max(0, $daily - $remaining);
+
+                    // Cap budget further to what is available on the quota_date
+                    $budget = min($budget, $available);
+
+                    if ($budget === 0) {
+                        Log::info('[RunDiscoveryPipelineJob] Solde épuisé sur quota_date — aborting.', [
+                            'criteria_id' => $this->criteriaId,
+                            'run_id'      => $this->runId,
+                            'quota_date'  => $run->quota_date->toDateString(),
+                        ]);
+                        $run->update([
+                            'status'      => 'failed',
+                            'error'       => 'Budget épuisé (retry)',
+                            'finished_at' => now(),
+                        ]);
+                        return;
+                    }
+                }
+            }
+        }
+
         // Mark the run as in-progress before we call the pipeline.
         $run?->update([
             'status'     => 'running',
@@ -118,7 +192,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
         $pipeline = app(DiscoveryPipelineService::class);
 
         try {
-            $stats = $pipeline->run($criteria); // returns ['companies'=>int,'contacts'=>int,'skipped'=>int]
+            $stats = $pipeline->run($criteria, $budget, $run); // returns ['companies'=>int,'contacts'=>int,'skipped'=>int]
 
             $run?->update([
                 'status'          => 'completed',

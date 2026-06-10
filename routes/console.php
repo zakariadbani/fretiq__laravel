@@ -74,3 +74,17 @@ Schedule::command('sequences:process')
 Schedule::command('campaign:sync-stats')
     ->everyFifteenMinutes()
     ->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Discovery stale-run terminalizer
+|--------------------------------------------------------------------------
+| Flips zombie discovery runs (pending/running but stale) to failed and
+| releases their unconsumed credit reservations. Runs every minute.
+| withoutOverlapping() prevents a second instance if the previous tick
+| is still iterating over a large backlog.
+*/
+
+Schedule::command('discovery:terminalize-stale')
+    ->everyMinute()
+    ->withoutOverlapping();

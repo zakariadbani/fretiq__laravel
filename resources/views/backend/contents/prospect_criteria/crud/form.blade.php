@@ -252,13 +252,13 @@
     </div>
     {{-- end tab-content --}}
 
-    {{-- ── SerpAPI query preview (edit mode only — needs persisted record) ── --}}
+    {{-- ── Discovery query preview (edit mode only — needs persisted record) ── --}}
     @if(isset($model) && $model->id)
     <div class="card mb-5" id="card-query-preview">
         <div class="card-header border-0 pt-5">
             <h3 class="card-title fw-bolder m-0">
                 <i class="bi bi-search text-warning fs-3 me-2"></i>
-                Aperçu des requêtes SerpAPI
+                Aperçu des requêtes de découverte
             </h3>
             <div class="card-toolbar">
                 <span class="text-muted fs-7 me-3">Basé sur les critères enregistrés</span>

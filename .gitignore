@@ -57,3 +57,5 @@ CLAUDE.md
 icon-audit/
 .screenshots/
 TODOS.md
+graphify-out/
+.claude/settings.local.json

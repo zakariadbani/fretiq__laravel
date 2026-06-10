@@ -3,14 +3,18 @@
 namespace App\Http\Controllers\Backend;
 
 use App\DataTables\Backend\ProspectCriteriaDataTable;
+use App\Exceptions\CriteriaInactiveException;
+use App\Exceptions\DiscoveryRunInFlightException;
+use App\Exceptions\QuotaExhaustedException;
+use App\Exceptions\QuotaLockUnavailableException;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
 use App\Jobs\RunDiscoveryPipelineJob;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Services\Discovery\CompanyDiscoveryService;
+use App\Services\Quota\DiscoveryQuotaService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class ProspectCriteriaController extends BackendController
@@ -52,17 +56,76 @@ class ProspectCriteriaController extends BackendController
     }
 
     /**
-     * Override index() to inject the dynamic filter config for JavaScript.
+     * Override index() to inject the dynamic filter config for JavaScript
+     * and the daily quota badge vars.
      */
-    public function index()
+    public function index(DiscoveryQuotaService $quotaService)
     {
+        [$quotaRemaining, $quotaPackage] = $this->resolveQuotaVars($quotaService);
+
         return $this->currentDataTable->render(
             'backend.contents.prospect_criteria.crud.index',
             [
                 'listTitle'       => $this->listTitle,
                 'dataTableConfig' => $this->currentDataTable->getIndexConfig(),
+                'quotaRemaining'  => $quotaRemaining,
+                'quotaPackage'    => $quotaPackage,
             ]
         );
+    }
+
+    /**
+     * Override view() to inject quota badge vars alongside the standard view vars.
+     *
+     * @param  int                   $id
+     * @param  DiscoveryQuotaService $quotaService
+     * @return \Illuminate\Http\RedirectResponse|\Illuminate\View\View
+     */
+    public function view($id, DiscoveryQuotaService $quotaService)
+    {
+        // Resolve the model via parent Crudable logic.
+        $model = $this->currentModel->find((int) $id);
+
+        if ($model === null) {
+            session()->flash('error', trans('app.not_found'));
+            return redirect(route('admin.prospect_criteria.index'));
+        }
+
+        $view = $this->getView('backend.contents.prospect_criteria.crud.view');
+        $view->with('title', __('overview'))
+             ->with('model', $model);
+
+        $viewConfig = $this->buildViewConfig($model);
+        if ($viewConfig !== null) {
+            $view->with('viewConfig', $viewConfig);
+        }
+
+        [$quotaRemaining, $quotaPackage] = $this->resolveQuotaVars($quotaService);
+        $view->with('quotaRemaining', $quotaRemaining)
+             ->with('quotaPackage', $quotaPackage);
+
+        return $view;
+    }
+
+    /**
+     * Safely read today's quota remaining and active package.
+     *
+     * Wraps in a try/catch for QueryException so pages render correctly even when
+     * the quota tables do not yet exist on the dev DB (pre-migration).
+     *
+     * @return array{0: ?int, 1: ?\App\Models\Package}
+     */
+    private function resolveQuotaVars(DiscoveryQuotaService $quotaService): array
+    {
+        try {
+            return [
+                $quotaService->remainingTodayForDisplay(),
+                $quotaService->activePackage(),
+            ];
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Quota tables not yet migrated — treat as unlimited.
+            return [null, null];
+        }
     }
 
     /**
@@ -181,85 +244,88 @@ class ProspectCriteriaController extends BackendController
      *
      * Double-submit guard: a DB transaction with row-lock checks for an already
      * in-flight run (pending|running and not stale). If one is found, returns 409
-     * with the existing run_id. Otherwise creates a DiscoveryRun row (pending) and
-     * dispatches the job AFTER the transaction commits so the worker cannot pick it
-     * up before the row is visible.
+     * with the existing run_id. Otherwise calls DiscoveryQuotaService::reserveRun()
+     * to create the DiscoveryRun row (with quota reservation), then dispatches the
+     * job AFTER the transaction commits so the worker cannot pick it up before the
+     * row is visible.
      *
-     * @param int $id
+     * Quota check: at 0 remaining → 422 JSON "Solde du jour épuisé".
+     * Partial batch: when limited and credits_reserved < daily_limit, the success
+     * message includes the partial count.
+     *
+     * @param  int                    $id
+     * @param  DiscoveryQuotaService  $quotaService
      * @return \Illuminate\Http\JsonResponse
      */
-    public function discover($id)
+    public function discover($id, DiscoveryQuotaService $quotaService)
     {
         $this->authorize('run discovery');
 
-        $result = DB::transaction(function () use ($id) {
-            $criteria = ProspectCriteria::lockForUpdate()->findOrFail((int) $id);
+        // reserveRun() owns the full lock+transaction boundary.
+        // All guards (inactive, in-flight, quota) are checked inside the lock.
+        // Dispatch happens AFTER reserveRun() returns — always after the committed row.
+        $criteria = ProspectCriteria::findOrFail((int) $id);
 
-            if (! $criteria->is_active) {
-                return [
-                    'code' => 422,
-                    'body' => [
-                        'message' => 'error',
-                        'text'    => 'Critère inactif — activez-le avant de lancer la découverte.',
-                    ],
-                ];
-            }
-
-            $latest = $criteria->discoveryRuns()->latest('id')->first();
-
-            if ($latest && in_array($latest->status, ['pending', 'running'], true) && ! $latest->isStale()) {
-                return [
-                    'code' => 409,
-                    'body' => [
-                        'message' => 'error',
-                        'text'    => 'Une découverte est déjà en cours.',
-                        'run_id'  => $latest->id,
-                        'status'  => $latest->status,
-                    ],
-                ];
-            }
-
-            $run = DiscoveryRun::create([
-                'prospect_criteria_id' => $criteria->id,
-                'status'               => 'pending',
-            ]);
-
-            return [
-                'code'        => 200,
-                'criteria_id' => $criteria->id,
-                'run_id'      => $run->id,
-            ];
-        });
-
-        if ($result['code'] === 200) {
-            // Dispatch AFTER the transaction so the worker finds the committed row.
-            // If dispatch itself throws, mark the row failed immediately so no orphan
-            // pending row is left without a backing job.
-            try {
-                RunDiscoveryPipelineJob::dispatch($result['criteria_id'], $result['run_id']);
-            } catch (\Throwable $e) {
-                DiscoveryRun::where('id', $result['run_id'])->update([
-                    'status'      => 'failed',
-                    'error'       => Str::limit('Échec de mise en file : ' . $e->getMessage(), 1000),
-                    'finished_at' => now(),
-                ]);
-
-                return response()->json([
-                    'message' => 'error',
-                    'text'    => 'Impossible de lancer la découverte. Réessayez.',
-                ], 500);
-            }
-
+        try {
+            $run = $quotaService->reserveRun($criteria);
+        } catch (CriteriaInactiveException $e) {
             return response()->json([
-                'message'    => 'success',
-                'text'       => 'Découverte lancée en arrière-plan',
-                'run_id'     => $result['run_id'],
-                'status'     => 'pending',
-                'status_url' => route('admin.prospect_criteria.discovery_status', $result['criteria_id']),
-            ]);
+                'message' => 'error',
+                'text'    => $e->getMessage(),
+            ], 422);
+        } catch (DiscoveryRunInFlightException $e) {
+            return response()->json([
+                'message' => 'error',
+                'text'    => $e->getMessage(),
+                'run_id'  => $e->existingRun->id,
+                'status'  => $e->existingRun->status,
+            ], 409);
+        } catch (QuotaExhaustedException $e) {
+            return response()->json([
+                'message' => 'error',
+                'text'    => $e->getMessage(),
+            ], 422);
+        } catch (QuotaLockUnavailableException $e) {
+            return response()->json([
+                'message' => 'error',
+                'text'    => 'Réservation temporairement indisponible — réessayez dans un instant.',
+            ], 409);
         }
 
-        return response()->json($result['body'], $result['code']);
+        // Dispatch AFTER reserveRun() returns (i.e. after the transaction commits)
+        // so the worker always finds the committed run row.
+        // If dispatch itself throws, mark the row failed immediately so no orphan
+        // pending row is left without a backing job.
+        try {
+            RunDiscoveryPipelineJob::dispatch($criteria->id, $run->id);
+        } catch (\Throwable $e) {
+            DiscoveryRun::where('id', $run->id)->update([
+                'status'      => 'failed',
+                'error'       => Str::limit('Échec de mise en file : ' . $e->getMessage(), 1000),
+                'finished_at' => now(),
+            ]);
+
+            return response()->json([
+                'message' => 'error',
+                'text'    => 'Impossible de lancer la découverte. Réessayez.',
+            ], 500);
+        }
+
+        // Partial-batch message: when limited and we got fewer credits than wanted
+        $wantedBatch = $criteria->daily_limit ?: 20;
+        $isPartial   = (! $quotaService->isUnlimited()) && ($run->credits_reserved < $wantedBatch);
+
+        $successText = $isPartial
+            ? "Découverte lancée — {$run->credits_reserved} entreprises possibles aujourd'hui"
+            : 'Découverte lancée en arrière-plan';
+
+        return response()->json([
+            'message'    => 'success',
+            'text'       => $successText,
+            'run_id'     => $run->id,
+            'status'     => 'pending',
+            'status_url' => route('admin.prospect_criteria.discovery_status', $criteria->id),
+        ]);
     }
 
     /**

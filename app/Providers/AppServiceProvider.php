@@ -61,13 +61,14 @@ class AppServiceProvider extends ServiceProvider
             \App\Services\Campaign\SequenceService::class,
         );
 
-        // CampaignService now depends on SendWindowGuard — bind explicitly so the
-        // container injects the singleton SendWindowGuard instance correctly.
+        // CampaignService depends on SendWindowGuard and SequenceService — bind
+        // explicitly so the container injects the singleton instances correctly.
         $this->app->singleton(
             \App\Services\Campaign\CampaignService::class,
             fn ($app) => new \App\Services\Campaign\CampaignService(
                 segmentService:   $app->make(\App\Services\Campaign\SegmentService::class),
                 sendWindowGuard:  $app->make(\App\Services\Campaign\SendWindowGuard::class),
+                sequenceService:  $app->make(\App\Services\Campaign\SequenceService::class),
             ),
         );
 

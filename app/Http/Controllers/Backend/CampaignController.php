@@ -12,6 +12,7 @@ use App\Models\CampaignRecipient;
 use App\Models\CampaignTemplate;
 use App\Models\Segment;
 use App\Models\Sequence;
+use App\Models\SequenceEnrollment;
 use App\Models\SenderIdentity;
 use App\Services\Campaign\CampaignService;
 use App\Services\Campaign\SegmentService;
@@ -86,6 +87,7 @@ class CampaignController extends BackendController
             'segment',
             'template',
             'senderIdentity',
+            'sequence',
             'runs' => function ($q) {
                 $q->orderByDesc('run_at');
             },
@@ -97,16 +99,18 @@ class CampaignController extends BackendController
             return redirect(route('admin.campaigns.index'));
         }
 
-        $latestRun = $campaign->runs->first();
-        $stats     = $this->campaignStats($campaign);
-        $viewConfig = CampaignViewConfig::make($campaign, $stats);
+        $latestRun      = $campaign->runs->first();
+        $stats          = $this->campaignStats($campaign);
+        $viewConfig     = CampaignViewConfig::make($campaign, $stats);
+        $enrolledCount  = SequenceEnrollment::where('campaign_id', $campaign->id)->count();
 
         return $this->getView('backend.contents.campaigns.crud.view')
             ->with('model', $campaign)
             ->with('latestRun', $latestRun)
             ->with('runs', $campaign->runs)
             ->with('stats', $stats)
-            ->with('viewConfig', $viewConfig);
+            ->with('viewConfig', $viewConfig)
+            ->with('enrolledCount', $enrolledCount);
     }
 
     /**
@@ -166,16 +170,22 @@ class CampaignController extends BackendController
 
     /**
      * Provide select options to the create/edit form views.
+     * Eager-loads sequence steps + template for W2 preview (embedded as JSON).
      */
     protected function getViewVars(): array
     {
+        $sequences = Sequence::where('is_active', true)
+            ->with(['steps' => fn ($q) => $q->with('template')->orderBy('step_no')])
+            ->orderBy('name')
+            ->get();
+
         return [
             'segments'             => Segment::orderBy('name')->get(),
             'templates'            => CampaignTemplate::orderBy('name')->get(),
             'senderIdentities'     => SenderIdentity::where('is_active', true)->orderBy('name')->get(),
             'scheduleTypes'        => config('global.data.schedule_types', []),
             'recurrenceFrequencies'=> config('global.data.recurrence_frequencies', []),
-            'sequences'            => Sequence::where('is_active', true)->orderBy('name')->get(),
+            'sequences'            => $sequences,
         ];
     }
 
@@ -191,6 +201,8 @@ class CampaignController extends BackendController
     {
         $attributes = $this->currentRequest->all();
 
+        // NOTE: beforeSave() runs BEFORE model validation (Crudable trait behavior).
+        // Defensive checks must not assume validated input.
         $scheduleType = $attributes['schedule_type'] ?? 'one_shot';
 
         if ($scheduleType === 'recurring') {
@@ -209,6 +221,19 @@ class CampaignController extends BackendController
 
         // Remove flat recurring helper fields that are not model columns
         unset($attributes['recurrence_frequency'], $attributes['recurrence_interval'], $attributes['recurrence_until']);
+
+        // For non-sequence schedule types, null out sequence_id — prevents stale
+        // sequence associations from a previous edit that changed the schedule type.
+        if ($scheduleType !== 'sequence') {
+            $attributes['sequence_id'] = null;
+        }
+
+        // For sequence schedule type, null out template_id — sequence campaigns carry
+        // templates per step, not at the campaign level. Mirrors the sequence_id null-out
+        // above for symmetry; prevents a stale template_id from a prior one_shot edit.
+        if ($scheduleType === 'sequence') {
+            $attributes['template_id'] = null;
+        }
 
         return $attributes;
     }
@@ -237,6 +262,7 @@ class CampaignController extends BackendController
 
     /**
      * Schedule a one-shot run for the given campaign.
+     * Sequence-type campaigns are rejected — they launch via sendNow().
      * Requires `send campaigns` permission (enforced via middleware).
      *
      * @param int $id
@@ -245,6 +271,16 @@ class CampaignController extends BackendController
     public function schedule($id)
     {
         $campaign = Campaign::findOrFail((int) $id);
+
+        // Defense in depth: sequence campaigns must never reach the one-shot scheduler.
+        // The UI hides the Planifier button for sequence type; this guard is a server-side backstop.
+        if ($campaign->schedule_type === 'sequence') {
+            return response()->json([
+                'message'  => 'error',
+                'text'     => 'Une campagne séquence se lance via "Démarrer la séquence".',
+                'redirect' => route('admin.campaigns.view', $id),
+            ], 422);
+        }
 
         app(CampaignService::class)->scheduleOneShot($campaign);
 
@@ -259,16 +295,48 @@ class CampaignController extends BackendController
 
     /**
      * Schedule + immediately dispatch a send job for the given campaign.
+     * For sequence-type campaigns: enroll the segment contacts into the sequence.
      * Requires `send campaigns` permission (enforced via middleware).
-     * The job runs asynchronously on the database queue driver.
      *
      * @param int $id
      * @return \Illuminate\Http\JsonResponse
      */
     public function sendNow($id)
     {
-        $campaign = Campaign::findOrFail((int) $id);
+        $campaign = Campaign::with('sequence')->findOrFail((int) $id);
 
+        // ── Sequence-type branch ───────────────────────────────────────────────
+        if ($campaign->schedule_type === 'sequence') {
+            try {
+                $result   = app(CampaignService::class)->launchSequence($campaign);
+                $enrolled = $result['enrolled'];
+                $skipped  = $result['skipped'];
+
+                if ($enrolled === 0 && $skipped === 0) {
+                    // Empty segment
+                    session()->flash('warning', 'Aucun contact éligible dans ce segment.');
+                } elseif ($enrolled === 0) {
+                    // All contacts already enrolled
+                    session()->flash('warning', "Aucun contact éligible. ({$skipped} déjà suivis ignorés)");
+                } else {
+                    session()->flash('success', "Séquence démarrée — {$enrolled} contact(s) ajouté(s) ({$skipped} déjà suivis).");
+                }
+
+                return response()->json([
+                    'message'  => 'success',
+                    'text'     => "Séquence démarrée — {$enrolled} contact(s) ajouté(s) ({$skipped} déjà suivis).",
+                    'redirect' => route('admin.campaigns.view', $id),
+                ]);
+            } catch (\InvalidArgumentException $e) {
+                return response()->json([
+                    'message'  => 'error',
+                    'text'     => $e->getMessage(),
+                    'redirect' => route('admin.campaigns.view', $id),
+                ], 422);
+            }
+        }
+
+        // ── One-shot / recurring branch (unchanged) ───────────────────────────
         $run = app(CampaignService::class)->scheduleOneShot($campaign);
 
         SendCampaignJob::dispatch($run->id);

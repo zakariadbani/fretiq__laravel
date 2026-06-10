@@ -18,6 +18,10 @@ class DiscoveryRun extends Model
         'companies_count',
         'contacts_count',
         'skipped_count',
+        'credits_reserved',
+        'consumed',
+        'quota_date',
+        'package_assignment_id',
         'started_at',
         'finished_at',
         'error',
@@ -29,11 +33,14 @@ class DiscoveryRun extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'started_at'      => 'datetime',
-        'finished_at'     => 'datetime',
-        'companies_count' => 'integer',
-        'contacts_count'  => 'integer',
-        'skipped_count'   => 'integer',
+        'started_at'           => 'datetime',
+        'finished_at'          => 'datetime',
+        'companies_count'      => 'integer',
+        'contacts_count'       => 'integer',
+        'skipped_count'        => 'integer',
+        'credits_reserved'     => 'integer',
+        'consumed'             => 'integer',
+        'quota_date'           => 'date',
     ];
 
     // ── Relationships ──────────────────────────────────────────────────────────
@@ -41,6 +48,15 @@ class DiscoveryRun extends Model
     public function prospectCriteria(): BelongsTo
     {
         return $this->belongsTo(ProspectCriteria::class, 'prospect_criteria_id');
+    }
+
+    /**
+     * The package assignment that authorised this run (snapshot at dispatch time).
+     * Nullable — unlimited runs and rows pre-dating this migration leave it null.
+     */
+    public function packageAssignment(): BelongsTo
+    {
+        return $this->belongsTo(PackageAssignment::class);
     }
 
     // ── State helpers ──────────────────────────────────────────────────────────

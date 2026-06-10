@@ -11,6 +11,8 @@ Route::controller(SequenceController::class)->prefix('admin')->name('admin.')->g
     // Step management — before {id} to avoid ambiguity
     Route::post('/sequences/{id}/steps', 'addStep')->name('sequences.addStep');
     Route::delete('/sequences/{id}/steps/{stepId}', 'deleteStep')->name('sequences.deleteStep');
+    Route::post('/sequences/{id}/steps/{stepId}/move-up', 'moveStepUp')->name('sequences.moveStepUp');
+    Route::post('/sequences/{id}/steps/{stepId}/move-down', 'moveStepDown')->name('sequences.moveStepDown');
 
     // Enrollment management
     Route::post('/sequences/{id}/enrollments/{enrId}/pause', 'pauseEnrollment')->name('sequences.pauseEnrollment');

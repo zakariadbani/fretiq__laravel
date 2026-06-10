@@ -4,6 +4,7 @@ namespace App\Services\Discovery;
 
 use App\Models\Company;
 use App\Models\Contact;
+use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use Illuminate\Support\Facades\Log;
 
@@ -81,12 +82,17 @@ class DiscoveryPipelineService
     /**
      * Run the full discovery pipeline for the given criteria.
      *
+     * @param  ProspectCriteria  $criteria
+     * @param  int|null          $cap      External cap from the quota service (credits_reserved − consumed).
+     *                                     null = no external cap; use criteria daily_limit only.
+     * @param  DiscoveryRun|null $run      Live run row for consumed metering (incremented before each Hunter call).
      * @return array{companies: int, contacts: int, skipped: int}
      */
-    public function run(ProspectCriteria $criteria): array
+    public function run(ProspectCriteria $criteria, ?int $cap = null, ?DiscoveryRun $run = null): array
     {
-        $max       = $criteria->daily_limit ?: 20;
-        $stats     = ['companies' => 0, 'contacts' => 0, 'skipped' => 0];
+        // When an external cap is provided, honour both the criteria daily_limit and the cap.
+        $max   = $cap !== null ? min($criteria->daily_limit ?: 20, $cap) : ($criteria->daily_limit ?: 20);
+        $stats = ['companies' => 0, 'contacts' => 0, 'skipped' => 0];
 
         // Step 1: Discover domains via SerpAPI (local fixture or live)
         $candidates = $this->discovery->discover($criteria, $max);
@@ -102,10 +108,38 @@ class DiscoveryPipelineService
 
             if (! $domain) {
                 $stats['skipped']++;
+                // No-domain skips never reach Hunter — must NOT consume a credit.
                 continue;
             }
 
             try {
+                // ── Consumed metering: conditional atomic debit ───────────────
+                // Guarded UPDATE: only debits when the run is still 'running' and
+                // hasn't already reached its budget (consumed < credits_reserved).
+                // Zero rows affected means the run was terminalized (by the stale
+                // terminalizer or a concurrent process) or its budget is exhausted —
+                // both require the loop to stop immediately with partial stats.
+                // Persisted before the Hunter call so a killed worker never loses
+                // the tally.
+                // Only no-domain skips (above) are excluded from metering.
+                if ($run !== null) {
+                    $debited = DiscoveryRun::whereKey($run->id)
+                        ->where('status', 'running')
+                        ->whereColumn('consumed', '<', 'credits_reserved')
+                        ->increment('consumed');
+
+                    if ($debited === 0) {
+                        Log::info('[DiscoveryPipelineService] Debit guard blocked — run terminalized or budget exhausted; returning partial stats.', [
+                            'run_id'      => $run->id,
+                            'criteria_id' => $criteria->id,
+                        ]);
+                        return $stats;
+                    }
+
+                    // Sync the in-memory object so downstream code sees fresh consumed.
+                    $run->consumed = ($run->consumed ?? 0) + 1;
+                }
+
                 // Step 2: Enrich via Hunter
                 $enrichment = $this->hunter->domainSearch($domain);
 

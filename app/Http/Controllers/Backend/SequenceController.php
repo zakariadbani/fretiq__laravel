@@ -11,6 +11,7 @@ use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStep;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class SequenceController extends BackendController
 {
@@ -31,7 +32,7 @@ class SequenceController extends BackendController
         $this->middleware('permission:create sequences')->only(['create', 'store']);
         $this->middleware('permission:edit sequences')->only([
             'edit', 'update', 'executeSwitch',
-            'addStep', 'deleteStep',
+            'addStep', 'deleteStep', 'moveStepUp', 'moveStepDown',
             'pauseEnrollment', 'resumeEnrollment', 'stopEnrollment',
         ]);
         $this->middleware('permission:delete sequences')->only(['delete']);
@@ -135,7 +136,8 @@ class SequenceController extends BackendController
 
         session()->flash('success', 'Étape ajoutée avec succès.');
 
-        return redirect()->route('admin.sequences.view', $sequence->id);
+        return redirect()->back(fallback: route('admin.sequences.view', $sequence->id))
+            ->withFragment('sequence_steps');
     }
 
     /**
@@ -155,7 +157,112 @@ class SequenceController extends BackendController
 
         session()->flash('success', 'Étape supprimée avec succès.');
 
-        return redirect()->route('admin.sequences.view', $sequence->id);
+        return redirect()->back(fallback: route('admin.sequences.view', $sequence->id))
+            ->withFragment('sequence_steps');
+    }
+
+    /**
+     * Move a step up (lower step_no) within the sequence.
+     * POST /sequences/{id}/steps/{stepId}/move-up
+     *
+     * Uses temp-value (step_no = 0) trick to satisfy the unique(sequence_id, step_no)
+     * constraint during the swap: two direct updates would collide mid-transaction.
+     *
+     * @param int $id
+     * @param int $stepId
+     * @return \Illuminate\Http\RedirectResponse
+     */
+    public function moveStepUp($id, $stepId)
+    {
+        $sequence = Sequence::findOrFail((int) $id);
+        $step     = SequenceStep::where('sequence_id', $sequence->id)->findOrFail((int) $stepId);
+
+        // Guard: already the first step — cannot move up
+        $prevStep = SequenceStep::where('sequence_id', $sequence->id)
+            ->where('step_no', '<', $step->step_no)
+            ->orderByDesc('step_no')
+            ->first();
+
+        if ($prevStep === null) {
+            session()->flash('warning', 'Cette étape est déjà en première position.');
+            return redirect()->back(fallback: route('admin.sequences.view', $sequence->id))
+                ->withFragment('sequence_steps');
+        }
+
+        $movingStepNo   = $step->step_no;
+        $neighborStepNo = $prevStep->step_no;
+
+        DB::transaction(function () use ($step, $prevStep, $movingStepNo, $neighborStepNo) {
+            // Lock both rows at the top of the transaction to prevent concurrent
+            // reorder operations on the same sequence from interleaving and
+            // corrupting step_no ordering or deadlocking on the unique index.
+            $ids = collect([$step->id, $prevStep->id])->sort()->values()->all();
+            \App\Models\SequenceStep::whereIn('id', $ids)->lockForUpdate()->get();
+
+            // 1. Move target step to a temp value to release the slot
+            $step->update(['step_no' => 0]);
+            // 2. Move neighbor up into the freed slot
+            $prevStep->update(['step_no' => $movingStepNo]);
+            // 3. Place target step into neighbor's old slot
+            $step->update(['step_no' => $neighborStepNo]);
+        });
+
+        session()->flash('success', 'Étape déplacée.');
+
+        return redirect()->back(fallback: route('admin.sequences.view', $sequence->id))
+            ->withFragment('sequence_steps');
+    }
+
+    /**
+     * Move a step down (higher step_no) within the sequence.
+     * POST /sequences/{id}/steps/{stepId}/move-down
+     *
+     * Uses temp-value (step_no = 0) trick to satisfy the unique(sequence_id, step_no)
+     * constraint during the swap.
+     *
+     * @param int $id
+     * @param int $stepId
+     * @return \Illuminate\Http\RedirectResponse
+     */
+    public function moveStepDown($id, $stepId)
+    {
+        $sequence = Sequence::findOrFail((int) $id);
+        $step     = SequenceStep::where('sequence_id', $sequence->id)->findOrFail((int) $stepId);
+
+        // Guard: already the last step — cannot move down
+        $nextStep = SequenceStep::where('sequence_id', $sequence->id)
+            ->where('step_no', '>', $step->step_no)
+            ->orderBy('step_no')
+            ->first();
+
+        if ($nextStep === null) {
+            session()->flash('warning', 'Cette étape est déjà en dernière position.');
+            return redirect()->back(fallback: route('admin.sequences.view', $sequence->id))
+                ->withFragment('sequence_steps');
+        }
+
+        $movingStepNo   = $step->step_no;
+        $neighborStepNo = $nextStep->step_no;
+
+        DB::transaction(function () use ($step, $nextStep, $movingStepNo, $neighborStepNo) {
+            // Lock both rows at the top of the transaction to prevent concurrent
+            // reorder operations on the same sequence from interleaving and
+            // corrupting step_no ordering or deadlocking on the unique index.
+            $ids = collect([$step->id, $nextStep->id])->sort()->values()->all();
+            \App\Models\SequenceStep::whereIn('id', $ids)->lockForUpdate()->get();
+
+            // 1. Move target step to a temp value to release the slot
+            $step->update(['step_no' => 0]);
+            // 2. Move neighbor down into the freed slot
+            $nextStep->update(['step_no' => $movingStepNo]);
+            // 3. Place target step into neighbor's old slot
+            $step->update(['step_no' => $neighborStepNo]);
+        });
+
+        session()->flash('success', 'Étape déplacée.');
+
+        return redirect()->back(fallback: route('admin.sequences.view', $sequence->id))
+            ->withFragment('sequence_steps');
     }
 
     // ── Enrollment management ──────────────────────────────────────────────────
@@ -180,7 +287,8 @@ class SequenceController extends BackendController
 
         session()->flash('success', 'Inscription mise en pause.');
 
-        return redirect()->route('admin.sequences.view', $sequence->id);
+        return redirect()->back(fallback: route('admin.sequences.view', $sequence->id))
+            ->withFragment('sequence_steps');
     }
 
     /**
@@ -203,7 +311,8 @@ class SequenceController extends BackendController
 
         session()->flash('success', 'Inscription reprise.');
 
-        return redirect()->route('admin.sequences.view', $sequence->id);
+        return redirect()->back(fallback: route('admin.sequences.view', $sequence->id))
+            ->withFragment('sequence_steps');
     }
 
     /**
@@ -226,6 +335,7 @@ class SequenceController extends BackendController
 
         session()->flash('success', 'Inscription stoppée.');
 
-        return redirect()->route('admin.sequences.view', $sequence->id);
+        return redirect()->back(fallback: route('admin.sequences.view', $sequence->id))
+            ->withFragment('sequence_steps');
     }
 }

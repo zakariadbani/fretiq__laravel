@@ -33,7 +33,13 @@
 
         {{-- Toolbar --}}
         <div class="card-toolbar">
-            <div class="d-flex justify-content-end" data-kt-table-toolbar="base">
+            <div class="d-flex justify-content-end align-items-center gap-3" data-kt-table-toolbar="base">
+
+                {{-- Daily quota badge (solde) --}}
+                @include('backend.contents.prospect_criteria.partials._quota-badge', [
+                    'quotaRemaining' => $quotaRemaining ?? null,
+                    'quotaPackage'   => $quotaPackage ?? null,
+                ])
 
                 {{-- Filter button --}}
                 <button type="button"
@@ -114,6 +120,12 @@
         /**
          * "Lancer la découverte" action — called from the row action button.
          * Sends a POST to the discover endpoint and shows a Swal/toastr notification.
+         *
+         * HTTP status mapping:
+         *   200 success  → toastr success with server-provided text (partial or full batch)
+         *   409          → already in-flight info toast
+         *   422          → error toast with server-provided text verbatim (inactive / quota épuisé)
+         *   other        → generic error toast
          */
         window.launchDiscovery = function (id, csrfToken) {
             Swal.fire({
@@ -136,10 +148,22 @@
                     },
                     body: JSON.stringify({}),
                 })
-                .then(function (response) { return response.json(); })
-                .then(function (data) {
-                    if (data.message === 'success') {
+                .then(function (response) {
+                    var httpStatus = response.status;
+                    return response.json().then(function (data) {
+                        return { status: httpStatus, data: data };
+                    });
+                })
+                .then(function (res) {
+                    var httpStatus = res.status;
+                    var data       = res.data;
+
+                    if (httpStatus === 200 && data.message === 'success') {
                         toastr.success(data.text || 'Découverte lancée en arrière-plan', 'Succès');
+                    } else if (httpStatus === 409) {
+                        toastr.info('Une découverte est déjà en cours.', 'En cours');
+                    } else if (httpStatus === 422) {
+                        toastr.error(data.text || 'Le critère est inactif ou invalide.', 'Erreur');
                     } else {
                         toastr.error('Une erreur est survenue.', 'Erreur');
                     }
