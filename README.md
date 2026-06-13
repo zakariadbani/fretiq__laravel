@@ -1,66 +1,130 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# fretiq
 
-<p align="center">
-<a href="https://travis-ci.org/laravel/framework"><img src="https://travis-ci.org/laravel/framework.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+fretiq is a single-tenant prospection SaaS built for TCL France. It automates the manual email campaign workflow used to win new freight demandes (RFQs): it pulls existing clients from Zoho CRM, discovers new prospects via SerpAPI + Hunter, sends targeted email campaigns, tracks engagement, and captures resulting demandes. Scope boundary: prospection only — no RFQ processing, quotation, tariffs, or booking.
 
-## About Laravel
+## Tech stack
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+| Layer | Choice |
+|---|---|
+| Framework | Laravel 11 |
+| PHP | 8.3 |
+| Frontend | Bootstrap 5 + Blade + Livewire 3 + jQuery |
+| Build tool | Laravel Mix / Webpack (NOT Vite — no vite.config.js patterns) |
+| Auth / RBAC | spatie/laravel-permission |
+| DataTables | yajra/laravel-datatables |
+| Database | MySQL 8, database name `fretiq` |
+| Queue | `database` driver |
+| Base kit | Metronic v8.3.3 Laravel starterkit |
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Modules
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+**Prospection**
 
-## Learning Laravel
+- Companies & Contacts — prospect/client database (normalized: company = organisation, contact = person)
+- Segments — filter pipeline to build campaign audiences
+- Campaigns, Campaign Templates, Sequences — campaign engine with drip sequence support
+- Demandes — captured RFQ interest from campaign replies
+- Suppressions — unified opt-out / bounce suppression list
+- Sender Identities — sending addresses
+- Prospect Criteria & Discovery — SerpAPI + Hunter prospect discovery with quotas
+- Packages — discovery quota packages
+- Planner & Prospection Dashboard — KPI / funnel analytics
+- Observability — runtime monitoring
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+**Administration**
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+- Users / Roles / Permissions — backend CRUD user management
+- Zoho — integration status, sync, readiness checklist
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains over 2000 video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Getting started
 
-## Laravel Sponsors
+1. Clone the repo, then install PHP dependencies using the local composer phar (there is no global composer assumption):
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the Laravel [Patreon page](https://patreon.com/taylorotwell).
+   ```bash
+   php composer.phar install
+   ```
 
-### Premium Partners
+2. Copy the environment file and generate the application key:
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Cubet Techno Labs](https://cubettech.com)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[Many](https://www.many.co.uk)**
-- **[Webdock, Fast VPS Hosting](https://www.webdock.io/en)**
-- **[DevSquad](https://devsquad.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[OP.GG](https://op.gg)**
-- **[WebReinvent](https://webreinvent.com/?utm_source=laravel&utm_medium=github&utm_campaign=patreon-sponsors)**
-- **[Lendio](https://lendio.com)**
+   ```bash
+   cp .env.example .env
+   php artisan key:generate
+   ```
 
-## Contributing
+3. Create a MySQL 8 database named `fretiq`, then set the `DB_*` variables in `.env`.
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+4. Run migrations and seeders (one-time setup):
 
-## Code of Conduct
+   ```bash
+   php artisan migrate
+   php artisan db:seed
+   ```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+5. Build frontend assets with Laravel Mix:
 
-## Security Vulnerabilities
+   ```bash
+   npm install
+   npm run dev        # development build with watch
+   npm run production # production build
+   ```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+6. Start the development server:
 
-## License
+   ```bash
+   php artisan serve
+   ```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+   The app is available at http://localhost:8000.
+
+## Running the app
+
+```bash
+# Development server
+php artisan serve
+
+# Queue worker — required for campaign sends and sync jobs
+php artisan queue:work --sleep=3 --tries=3
+
+# Scheduler — run manually in dev
+php artisan schedule:run
+
+# Tests
+php artisan test
+
+# Local mail preview: campaigns in local driver mode send through SMTP on port 1025.
+# Run Mailpit (or equivalent) to preview outgoing emails.
+```
+
+## Campaign driver pattern
+
+Campaign sending goes through a `CampaignsClient` driver interface. The `local` driver (default) simulates sends via Mailpit and a tracking-pixel stub — safe for development. The `zoho` driver (Zoho Campaigns API) exists but is **UNVERIFIED** and must not be enabled in production until live OAuth credentials, empirical API verification, SPF/DKIM/DMARC, bounce handling, and legal sign-off are all in place. Switch via the `ZOHO_CAMPAIGNS_DRIVER` environment variable.
+
+## Key environment flags
+
+| Variable | Purpose |
+|---|---|
+| `ZOHO_CRM_DRIVER` | Zoho CRM sync driver: `local` (dev stub) or `zoho` (live API) |
+| `ZOHO_CAMPAIGNS_DRIVER` | Campaign send driver: `local` (default, Mailpit simulation) or `zoho` (live — see prerequisites above) |
+| `SERPAPI_API_KEY` / `HUNTER_API_KEY` | Prospect discovery APIs |
+| `DISCOVERY_DRIVER` | Discovery driver: `local` or live |
+| `PROSPECTING_COLD_SEND_ENABLED` | Hard gate on cold outreach; keep `false` everywhere except production after legal sign-off |
+| `APP_URL` | Must be a publicly reachable host for open-tracking pixels to register; `localhost` means opens never record (use ngrok or a resolvable local domain when testing tracking) |
+
+## Conventions
+
+All backend CRUD modules follow one pattern: `BackendController` base extended with `Crudable` and `Datatableable` traits, configured via a typed `BackendResource` config object (fail-fast constructor — throws if model class, route prefix, view path, or permission string is missing).
+
+- **Routes:** `admin.{models}.{action}` (plural snake_case), auto-loaded from `routes/Backend/**`. **Views:** `resources/views/backend/contents/{models}/crud/`.
+- Sidebar menu entries in `config/global/menu.php`; shared enums in `config/global/data.php`.
+- **Roles:** `superadmin` (all permissions), `admin` (all permissions), `commercial` (view/create/edit prospection entities only; no delete, no user/role management). Permission naming: `{action} {entity}`, plus the special strings `backend.access` and `send campaigns`.
+
+## Safety rules
+
+- Never use `Mail::raw()` for prospection emails — Gmail silently drops it. Always use a real Mailable class.
+- Campaign sending is gated by the `send campaigns` permission, enforced at the controller layer.
+- Cold sends are additionally gated by `PROSPECTING_COLD_SEND_ENABLED` and stay off without legal sign-off.
+- Secrets live in `.env` only — never committed, never logged.
+
+## Further documentation
+
+Detailed specs, planning documents, and credentials live in sibling directories outside this repo (`../structure/` for specs and planning, `../memory/` for operational notes). See `CLAUDE.md` in the repo root for agent/contributor conventions and hard rules.

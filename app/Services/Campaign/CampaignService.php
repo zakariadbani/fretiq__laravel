@@ -65,7 +65,7 @@ class CampaignService
             ],
         );
 
-        $campaign->update(['status' => 'scheduled']);
+        $campaign->update(['status' => 'active']);
 
         return $run;
     }
@@ -163,19 +163,38 @@ class CampaignService
     /**
      * Find all due scheduled runs and dispatch SendCampaignJob for each.
      *
+     * Runs whose campaign has is_active=false are skipped (run stays 'scheduled',
+     * cursor frozen). The run will be dispatched once the campaign is resumed.
+     *
+     * Note: sendNow() dispatches SendCampaignJob directly, bypassing dispatchDue —
+     * by design (explicit user action). The is_active guard in sendRun() catches
+     * the edge case where a job already in-queue races with a pause action.
+     *
      * @return int  Number of runs dispatched.
      */
     public function dispatchDue(): int
     {
-        $runs = CampaignRun::where('status', 'scheduled')
+        $runs = CampaignRun::with('campaign')
+            ->where('status', 'scheduled')
             ->where('run_at', '<=', now())
             ->get();
 
+        $dispatched = 0;
+
         foreach ($runs as $run) {
+            if ($run->campaign === null || ! $run->campaign->is_active) {
+                Log::info('[CampaignService] dispatchDue: skipping run — campaign is paused (is_active=false).', [
+                    'run_id'      => $run->id,
+                    'campaign_id' => $run->campaign_id,
+                ]);
+                continue;
+            }
+
             SendCampaignJob::dispatch($run->id);
+            $dispatched++;
         }
 
-        return $runs->count();
+        return $dispatched;
     }
 
     // ── Send engine ────────────────────────────────────────────────────────────
@@ -231,6 +250,21 @@ class CampaignService
                 'run_id'      => $run->id,
                 'campaign_tz' => $run->campaign->timezone,
                 'send_window' => $run->campaign->send_window,
+            ]);
+            return;
+        }
+
+        // ── is_active pause guard ─────────────────────────────────────────────
+        // Re-check is_active after claiming the run. A job already queued (up to
+        // tries=5, retryUntil 6h) would otherwise ignore a pause action that
+        // happened after the job was dispatched. Mirrors the send-window defer
+        // pattern: revert to 'scheduled' so the run resumes on the next tick when
+        // the campaign is unpaused.
+        if (! $run->campaign->is_active) {
+            $run->update(['status' => 'scheduled']);
+            Log::info('[CampaignService] Send deferred — campaign is paused (is_active=false).', [
+                'run_id'      => $run->id,
+                'campaign_id' => $run->campaign_id,
             ]);
             return;
         }
@@ -385,6 +419,24 @@ class CampaignService
             Log::info('[CampaignService] Run complété (local).', [
                 'run_id'     => $run->id,
                 'stats_sent' => $sentCount,
+            ]);
+        }
+
+        // ── One-shot auto-done (branch-agnostic) ──────────────────────────────
+        // Once a one-shot campaign's run reaches terminal status 'sent', flip the
+        // campaign to 'done'. This is unconditional: done = dispatched, even when
+        // all recipients failed (stats_sent=0). The report page shows the truth.
+        //
+        // Re-sending a 'done' one-shot via « Envoyer maintenant » re-arms it as
+        // 'active' via scheduleOneShot() (which sets status='active') before the
+        // next sendRun call, so the lifecycle done→active→done works correctly.
+        $run->refresh();
+        if ($run->status === 'sent' && $run->campaign->schedule_type === 'one_shot') {
+            $run->campaign->update(['status' => 'done']);
+
+            Log::info('[CampaignService] One-shot campaign auto-flipped to done.', [
+                'run_id'      => $run->id,
+                'campaign_id' => $run->campaign_id,
             ]);
         }
     }

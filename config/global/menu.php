@@ -150,7 +150,7 @@ return [
         //---------------------------------------------------------------------------
         [
             'content' => 'Administration',
-            'permission' => ['view users', 'manage roles', 'manage permissions', 'view sender_identities', 'manage packages'],
+            'permission' => ['view users', 'manage roles', 'manage permissions', 'view sender_identities', 'manage packages', 'view settings'],
             'classes' => ['content' => 'pt-8 pb-2'],
         ],
 
@@ -222,6 +222,16 @@ return [
                 'font' => '<i class="bi bi-activity fs-2"></i>',
             ],
             'path' => 'admin/observability',
+        ],
+
+        [
+            'title' => 'Paramètres',
+            'permission' => 'view settings',
+            'icon' => [
+                'svg' => 'setting-2',
+                'font' => '<i class="bi bi-gear fs-2"></i>',
+            ],
+            'path' => 'admin/settings',
         ],
 
     ],

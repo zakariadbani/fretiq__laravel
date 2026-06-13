@@ -146,6 +146,16 @@ class CompanyViewConfig
             ];
         }
 
+        if ($hasId && $model->domain && \Illuminate\Support\Facades\Route::has('admin.companies.enrich')) {
+            $quickActions[] = [
+                'label'      => 'Récupérer les contacts',
+                'icon'       => 'bi-person-plus',
+                'color'      => 'light-success',
+                'permission' => 'enrich companies',
+                'onclick'    => "enrichCompany({$model->id}, '" . csrf_token() . "')",
+            ];
+        }
+
         return [
             'route_base'    => 'admin.companies',
             'route_base_id' => 'company',

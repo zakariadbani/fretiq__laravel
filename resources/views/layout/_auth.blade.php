@@ -42,7 +42,7 @@
                 <div class="d-flex flex-column flex-center py-7 py-lg-15 px-5 px-md-15 w-100">
                     <!--begin::Logo-->
                     <a href="{{ route('dashboard') }}" class="mb-0 mb-lg-12">
-                        <img alt="fretiq" src="{{ image('logos/default-dark.svg') }}" class="h-60px h-lg-80px" style="filter: brightness(0) invert(1);"/>
+                        <img alt="fretiq" src="{{ image('logos/default-white.svg') }}" class="h-60px h-lg-80px"/>
                     </a>
                     <!--end::Logo-->
 

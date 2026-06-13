@@ -17,7 +17,8 @@ class PermissionsSeeder extends Seeder
      * Actions:  view, create, edit, delete
      *
      * Keyword permissions: backend.access, send campaigns, manage roles, manage permissions,
-     *                      view zoho, sync zoho, run discovery
+     *                      view zoho, sync zoho, run discovery, view settings, edit settings,
+     *                      enrich companies
      *
      * Role mapping:
      *   superadmin  → all permissions
@@ -57,7 +58,10 @@ class PermissionsSeeder extends Seeder
             'view zoho',
             'sync zoho',
             'run discovery',
-            'manage packages',  // superadmin only — admin/commercial MUST NOT receive this
+            'manage packages',   // superadmin only — admin/commercial MUST NOT receive this
+            'view settings',     // admin/superadmin only — commercial does NOT get this
+            'edit settings',     // admin/superadmin only — commercial does NOT get this
+            'enrich companies',  // commercial can trigger Hunter enrichment manually
         ];
 
         foreach ($keywordPermissions as $perm) {
@@ -87,10 +91,11 @@ class PermissionsSeeder extends Seeder
             $admin->syncPermissions($adminPermissions);
         }
 
-        // commercial: view/create/edit on business entities + backend.access + run discovery
+        // commercial: view/create/edit on business entities + backend.access + run discovery + enrich companies
         // campaign_templates + sender_identities + sequences: view/create/edit (NO delete)
         // suppressions: view/create only (NO edit, NO delete — immutable compliance records)
         // send campaigns: NOT granted — sending is gated to admin/superadmin
+        // view settings / edit settings: NOT granted to commercial
         $commercialEntities = [
             'companies', 'contacts', 'segments', 'campaigns', 'sequences', 'demandes',
             'prospect_criteria', 'campaign_templates', 'sender_identities',
@@ -110,6 +115,7 @@ class PermissionsSeeder extends Seeder
 
         $commercialPermissions[] = 'backend.access';
         $commercialPermissions[] = 'run discovery';
+        $commercialPermissions[] = 'enrich companies';
 
         $commercial = Role::where('name', 'commercial')->where('guard_name', 'web')->first();
         if ($commercial) {

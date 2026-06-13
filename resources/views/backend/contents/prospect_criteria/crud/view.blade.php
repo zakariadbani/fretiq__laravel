@@ -148,6 +148,9 @@
             var elContacts = document.getElementById('discovery-run-contacts');
             if (elContacts) elContacts.textContent = data.contacts_count || 0;
 
+            var elLowScore = document.getElementById('discovery-run-lowscore');
+            if (elLowScore) elLowScore.textContent = data.low_score_count || 0;
+
             // CTA: N from companies_total (attributed total, not run counter)
             var elTotal = document.getElementById('discovery-companies-total');
             if (elTotal && data.companies_total !== undefined) {

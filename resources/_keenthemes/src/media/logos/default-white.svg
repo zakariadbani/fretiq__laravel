@@ -1,0 +1,8 @@
+<svg width="269" height="56" viewBox="0 0 269 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- accent "f" mark — full white -->
+  <rect x="0" y="8" width="10" height="40" rx="3" fill="#ffffff"/>
+  <rect x="0" y="8" width="32" height="10" rx="3" fill="#ffffff"/>
+  <rect x="0" y="26" width="22" height="9" rx="3" fill="#ffffff"/>
+  <!-- wordmark "retiq" — full white -->
+  <text x="46" y="43" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="36" fill="#ffffff" letter-spacing="-0.5">retiq</text>
+</svg>

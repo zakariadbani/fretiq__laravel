@@ -92,6 +92,75 @@
     <script>
         document.addEventListener('DOMContentLoaded', function () {
             DataTableUtils.initializeIndex(@json($dataTableConfig));
+
+            // ── Delegated enrich button handler ──────────────────────────────
+            // Mirrors the delete-btn wiring pattern: click delegated on the table body.
+            var tableId = @json($dataTableConfig['tableId'] ?? 'company');
+            var $tableEl = $('#' + tableId + '-table');
+
+            $tableEl.on('click', '.enrich-btn', function (e) {
+                e.preventDefault();
+
+                var id  = $(this).data('id');
+                var url = $(this).data('url');
+                var $btn = $(this);
+
+                Swal.fire({
+                    title: 'Récupérer les contacts ?',
+                    text: "Cette action interrogera Hunter et consommera 1 crédit de découverte.",
+                    icon: 'question',
+                    showCancelButton: true,
+                    confirmButtonText: 'Récupérer',
+                    cancelButtonText: 'Annuler',
+                    confirmButtonColor: '#009ef7',
+                }).then(function (result) {
+                    if (!result.isConfirmed) return;
+
+                    $btn.prop('disabled', true);
+
+                    fetch(url, {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRF-TOKEN': $('meta[name="csrf-token"]').attr('content'),
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({}),
+                    })
+                    .then(function (response) {
+                        var httpStatus = response.status;
+                        return response.text().then(function (text) {
+                            var data = {};
+                            try {
+                                data = JSON.parse(text);
+                            } catch (e) {
+                                $btn.prop('disabled', false);
+                                toastr.error("Une erreur est survenue — réessayez.", 'Erreur');
+                                return;
+                            }
+
+                            $btn.prop('disabled', false);
+
+                            if (httpStatus === 200) {
+                                toastr.success(data.text || 'Enrichissement réussi.', 'Succès');
+                                // Reload the DataTable without resetting pagination.
+                                var dtApi = $.fn.dataTable.Api('#' + tableId + '-table');
+                                if (dtApi) {
+                                    dtApi.ajax.reload(null, false);
+                                }
+                            } else if (httpStatus === 409 || httpStatus === 422) {
+                                toastr.error(data.text || 'Enrichissement impossible.', 'Erreur');
+                            } else {
+                                toastr.error(data.text || 'Une erreur est survenue.', 'Erreur');
+                            }
+                        });
+                    })
+                    .catch(function () {
+                        $btn.prop('disabled', false);
+                        toastr.error("Une erreur est survenue — réessayez.", 'Erreur');
+                    });
+                });
+            });
         });
     </script>
 @endpush

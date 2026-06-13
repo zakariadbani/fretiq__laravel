@@ -3,14 +3,16 @@
 namespace App\Services\Discovery;
 
 use App\Models\Company;
-use App\Models\Contact;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
+use App\Models\Setting;
+use App\Services\Scoring\LeadScoringService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * DiscoveryPipelineService — orchestrates SerpAPI discovery → Hunter enrichment
- * → Company + Contact upserts for a given ProspectCriteria.
+ * DiscoveryPipelineService — orchestrates SerpAPI discovery → optional scoring
+ * gate → optional Hunter enrichment → Company + Contact upserts.
  *
  * Constructor uses CONCRETE classes only, so app(DiscoveryPipelineService::class)
  * resolves via Laravel's auto-wiring without any manual binding.
@@ -19,11 +21,20 @@ use Illuminate\Support\Facades\Log;
  * Client-relationship guard: companies already marked relationship='client' are never
  *   downgraded to 'prospect'; only criteria_id is updated.
  *
+ * Credit model: 1 crédit = 1 entreprise traitée (candidate that enters the loop).
+ * Resume cursor = run.consumed. Every processed candidate position advances consumed
+ * by exactly 1 via CAS UPDATE AFTER upserts (atomically ensures no double-counting
+ * on retries and detects concurrent ownership changes).
+ *
+ * Scoring gate (when auto_scoring=true):
+ *   score(candidate, criteria) is called for every candidate.
+ *   Enrichment (Hunter call) only runs when score >= min_score_enrich.
+ *   Candidates below the threshold are still counted (companies_count++) so that
+ *   consumed stays exact; they increment low_score_count instead of contacts_count.
+ *
  * email_kind mapping:
  *   Hunter type = 'generic'  →  email_kind = 'role'
  *   Hunter type = 'personal' →  email_kind = 'personal'
- * Both kinds are imported here. The cold-send filter (Phase 3) will exclude
- * 'personal' at send time; discovery gathers all.
  *
  * legal_basis is set to 'legitimate_interest' on every discovered contact per
  * the compliance spec (CNIL B2B cold-discovery basis).
@@ -77,80 +88,122 @@ class DiscoveryPipelineService
     public function __construct(
         private readonly CompanyDiscoveryService  $discovery,
         private readonly HunterEnrichmentService  $hunter,
+        private readonly LeadScoringService       $scoring,
+        private readonly ContactUpsertService     $contactUpsert,
     ) {}
 
     /**
      * Run the full discovery pipeline for the given criteria.
      *
+     * Credit semantics: 1 crédit = 1 entreprise traitée. consumed is the resume cursor.
+     * Counts are persisted incrementally via CAS UPDATE — job completion no longer
+     * writes counts.
+     *
      * @param  ProspectCriteria  $criteria
-     * @param  int|null          $cap      External cap from the quota service (credits_reserved − consumed).
+     * @param  int|null          $cap      External cap (credits_reserved − consumed) from RunDiscoveryPipelineJob.
      *                                     null = no external cap; use criteria daily_limit only.
-     * @param  DiscoveryRun|null $run      Live run row for consumed metering (incremented before each Hunter call).
-     * @return array{companies: int, contacts: int, skipped: int}
+     * @param  DiscoveryRun|null $run      Live run row; consumed is the resume cursor.
+     * @return array{companies: int, contacts: int, skipped: int, low_score: int}
      */
     public function run(ProspectCriteria $criteria, ?int $cap = null, ?DiscoveryRun $run = null): array
     {
         // When an external cap is provided, honour both the criteria daily_limit and the cap.
-        $max   = $cap !== null ? min($criteria->daily_limit ?: 20, $cap) : ($criteria->daily_limit ?: 20);
-        $stats = ['companies' => 0, 'contacts' => 0, 'skipped' => 0];
+        $budget = $cap !== null
+            ? min($criteria->daily_limit ?: 20, $cap)
+            : ($criteria->daily_limit ?: 20);
 
-        // Step 1: Discover domains via SerpAPI (local fixture or live)
-        $candidates = $this->discovery->discover($criteria, $max);
+        $stats = ['companies' => 0, 'contacts' => 0, 'skipped' => 0, 'low_score' => 0];
 
-        $processed = 0;
+        // Read scoring/enrichment settings once per run (avoids repeated DB/cache reads).
+        $autoScoring = (bool) Setting::get('decouverte.auto_scoring', true);
+        $autoEnrich  = (bool) Setting::get('decouverte.auto_enrich', true);
+        $minScore    = (int) Setting::get('decouverte.min_score_enrich', 50);
+
+        // Resume cursor: $offset = number of candidates already processed.
+        // Fetch offset+budget candidates so we can slice from the correct position.
+        $offset = ($run !== null) ? (int) $run->consumed : 0;
+
+        $allCandidates = $this->discovery->discover($criteria, $offset + $budget);
+        $candidates    = array_slice($allCandidates, $offset);
+
+        $completedThisAttempt = 0;
 
         foreach ($candidates as $candidate) {
-            if ($processed >= $max) {
+            if ($completedThisAttempt >= $budget) {
                 break;
             }
 
             $domain = $candidate['domain'] ?? null;
 
+            // Dead branch: CompanyDiscoveryService filters no-domain results in both
+            // drivers; this guard is kept for safety only.
             if (! $domain) {
-                $stats['skipped']++;
-                // No-domain skips never reach Hunter — must NOT consume a credit.
                 continue;
             }
 
-            try {
-                // ── Consumed metering: conditional atomic debit ───────────────
-                // Guarded UPDATE: only debits when the run is still 'running' and
-                // hasn't already reached its budget (consumed < credits_reserved).
-                // Zero rows affected means the run was terminalized (by the stale
-                // terminalizer or a concurrent process) or its budget is exhausted —
-                // both require the loop to stop immediately with partial stats.
-                // Persisted before the Hunter call so a killed worker never loses
-                // the tally.
-                // Only no-domain skips (above) are excluded from metering.
-                if ($run !== null) {
-                    $debited = DiscoveryRun::whereKey($run->id)
-                        ->where('status', 'running')
-                        ->whereColumn('consumed', '<', 'credits_reserved')
-                        ->increment('consumed');
+            // CAS expected position: consumed must equal this value for our UPDATE to land.
+            $expected = $offset + $completedThisAttempt;
 
-                    if ($debited === 0) {
-                        Log::info('[DiscoveryPipelineService] Debit guard blocked — run terminalized or budget exhausted; returning partial stats.', [
+            try {
+                // ── Step 1: Scoring gate ─────────────────────────────────────
+                $score       = null;
+                $explanation = null;
+
+                if ($autoScoring) {
+                    ['score' => $score, 'explanation' => $explanation] =
+                        $this->scoring->score($candidate, $criteria);
+                }
+
+                // ── Step 2: Enrichment decision ──────────────────────────────
+                // Enrich when: auto_enrich is on, AND either scoring is off OR score passes the gate.
+                $shouldEnrich = $autoEnrich && (! $autoScoring || $score >= $minScore);
+
+                // ── Step 3: Hunter enrichment (if gate passed) ───────────────
+                $enrichment = $shouldEnrich ? $this->hunter->domainSearch($domain) : null;
+
+                // ── Step 4: Upsert Company + Contacts ────────────────────────
+                $company = $this->upsertCompany(
+                    $criteria, $domain, $candidate, $enrichment,
+                    $score, $explanation, $autoScoring
+                );
+
+                $contactCount = ($enrichment !== null)
+                    ? $this->contactUpsert->upsertFromHunter($company, $domain, $enrichment['emails'] ?? [])
+                    : 0;
+
+                // ── Step 5: Determine low-score flag ────────────────────────
+                // A candidate is "low score" when auto_enrich is on, scoring is on,
+                // and the score is below the gate.
+                $isLowScore = $autoEnrich && $autoScoring && ($score < $minScore);
+
+                // ── Step 6: CAS debit + incremental stats (AFTER upserts) ───
+                if ($run !== null) {
+                    $advanced = DiscoveryRun::where('id', $run->id)
+                        ->where('status', 'running')
+                        ->where('consumed', $expected)
+                        ->update([
+                            'consumed'       => DB::raw('consumed + 1'),
+                            'companies_count' => DB::raw('companies_count + 1'),
+                            'contacts_count'  => DB::raw('contacts_count + ' . (int) $contactCount),
+                            'low_score_count' => DB::raw('low_score_count + ' . ($isLowScore ? 1 : 0)),
+                        ]);
+
+                    if ($advanced === 0) {
+                        // Run was terminalized or a concurrent process owns the cursor.
+                        Log::info('[DiscoveryPipelineService] CAS debit blocked — run terminalized or cursor mismatch; returning partial stats.', [
                             'run_id'      => $run->id,
                             'criteria_id' => $criteria->id,
+                            'expected'    => $expected,
                         ]);
                         return $stats;
                     }
-
-                    // Sync the in-memory object so downstream code sees fresh consumed.
-                    $run->consumed = ($run->consumed ?? 0) + 1;
                 }
 
-                // Step 2: Enrich via Hunter
-                $enrichment = $this->hunter->domainSearch($domain);
-
-                // Step 3: Upsert Company
-                $company = $this->upsertCompany($criteria, $domain, $candidate, $enrichment);
+                // Local stats for return value and logging.
                 $stats['companies']++;
-
-                // Step 4: Upsert Contacts
-                if ($enrichment) {
-                    $contactCount = $this->upsertContacts($company, $domain, $enrichment['emails'] ?? []);
-                    $stats['contacts'] += $contactCount;
+                $stats['contacts'] += $contactCount;
+                if ($isLowScore) {
+                    $stats['low_score']++;
                 }
             } catch (\Throwable $e) {
                 Log::warning('[DiscoveryPipelineService] Domain processing failed — skipping', [
@@ -158,10 +211,28 @@ class DiscoveryPipelineService
                     'criteria_id' => $criteria->id,
                     'error'       => $e->getMessage(),
                 ]);
+
+                // CAS advance with skipped: consumed still +1 (failing candidate
+                // consumes its credit, keeping the cursor exact). No company/contact
+                // increments — the candidate was not processed successfully.
+                if ($run !== null) {
+                    $advanced = DiscoveryRun::where('id', $run->id)
+                        ->where('status', 'running')
+                        ->where('consumed', $expected)
+                        ->update([
+                            'consumed'      => DB::raw('consumed + 1'),
+                            'skipped_count' => DB::raw('skipped_count + 1'),
+                        ]);
+
+                    if ($advanced === 0) {
+                        return $stats;
+                    }
+                }
+
                 $stats['skipped']++;
             }
 
-            $processed++;
+            $completedThisAttempt++;
         }
 
         return $stats;
@@ -169,11 +240,34 @@ class DiscoveryPipelineService
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    /**
+     * Upsert a company row from discovery data.
+     *
+     * Credit semantics: enrichment_data is only written when $enrichment !== null,
+     * preventing null-wipe of previously enriched data when the scoring gate skips
+     * Hunter for this candidate. ai_score + ai_explanation are only written when
+     * $scored=true to avoid clobbering existing scores when scoring is disabled.
+     *
+     * Client-downgrade guard: companies with relationship='client' are never
+     * downgraded to 'prospect'; only criteria_id is updated.
+     *
+     * @param  ProspectCriteria $criteria
+     * @param  string           $domain
+     * @param  array            $candidate      SerpAPI-normalised candidate.
+     * @param  array|null       $enrichment     Hunter enrichment data (null when gate skipped).
+     * @param  int|null         $score          AI/heuristic score (null when scoring disabled).
+     * @param  string|null      $explanation    Score explanation (null when scoring disabled).
+     * @param  bool             $scored         Whether scoring ran for this candidate.
+     * @return Company
+     */
     private function upsertCompany(
         ProspectCriteria $criteria,
         string $domain,
         array $candidate,
-        ?array $enrichment
+        ?array $enrichment,
+        ?int $score,
+        ?string $explanation,
+        bool $scored
     ): Company {
         /** @var Company|null $existing */
         $existing = Company::where('domain', $domain)->first();
@@ -182,15 +276,27 @@ class DiscoveryPipelineService
 
         // Build attributes to set / update
         $attributes = [
-            'criteria_id'     => $criteria->id,
-            'name'            => $enrichment['organization']
+            'criteria_id' => $criteria->id,
+            'name'        => $enrichment['organization']
                 ?? $candidate['title']
                 ?? $domain,
-            'sector'          => $enrichment['industry'] ?? null,
-            'country'         => $this->mapIso2($enrichment['country'] ?? null),
-            'enrichment_data' => $enrichment['raw'] ?? null,
-            'source'          => 'discovered',
+            'sector'      => $enrichment['industry'] ?? null,
+            'country'     => $this->mapIso2($enrichment['country'] ?? null),
+            'source'      => 'discovered',
         ];
+
+        // Only write enrichment_data when enrichment ran — do not null-wipe
+        // previously enriched data when the scoring gate skips Hunter this pass.
+        if ($enrichment !== null) {
+            $attributes['enrichment_data'] = $enrichment['raw'] ?? null;
+        }
+
+        // Only write scoring fields when scoring actually ran — do not wipe
+        // existing scores when auto_scoring is disabled.
+        if ($scored) {
+            $attributes['ai_score']       = $score;
+            $attributes['ai_explanation'] = $explanation;
+        }
 
         if (! $isClient) {
             // Safe to set / overwrite relationship for non-clients
@@ -209,72 +315,6 @@ class DiscoveryPipelineService
 
         // New company
         return Company::create(array_merge($attributes, ['domain' => $domain]));
-    }
-
-    /**
-     * Upsert contacts for a company. Returns the number of contacts processed.
-     */
-    private function upsertContacts(Company $company, string $domain, array $emails): int
-    {
-        $count = 0;
-
-        foreach ($emails as $emailData) {
-            $emailAddress = $emailData['value'] ?? null;
-
-            if (! $emailAddress) {
-                continue;
-            }
-
-            $firstName  = $emailData['first_name']  ?? '';
-            $lastName   = $emailData['last_name']   ?? '';
-            $name       = trim("{$firstName} {$lastName}");
-
-            if ($name === '') {
-                // Fall back to the local-part of the address
-                $name = strstr($emailAddress, '@', true) ?: $emailAddress;
-            }
-
-            $emailKind = ($emailData['type'] ?? '') === 'generic' ? 'role' : 'personal';
-
-            $verificationResult = data_get($emailData, 'verification.result');
-
-            /** @var Contact|null $existing */
-            $existing = Contact::where('email', $emailAddress)->first();
-
-            if ($existing) {
-                // Idempotent update — keep existing status
-                $existing->fill([
-                    'company_id'               => $company->id,
-                    'name'                     => $name,
-                    'position'                 => $emailData['position'] ?? $existing->position,
-                    'source'                   => 'discovered',
-                    'legal_basis'              => 'legitimate_interest',
-                    'email_kind'               => $emailKind,
-                    'source_url'               => $domain,
-                    'source_captured_at'       => now(),
-                    'email_verification_status'=> $verificationResult,
-                ]);
-                $existing->save();
-            } else {
-                Contact::create([
-                    'company_id'               => $company->id,
-                    'email'                    => $emailAddress,
-                    'name'                     => $name,
-                    'position'                 => $emailData['position'] ?? null,
-                    'source'                   => 'discovered',
-                    'status'                   => 'new',
-                    'legal_basis'              => 'legitimate_interest',
-                    'email_kind'               => $emailKind,
-                    'source_url'               => $domain,
-                    'source_captured_at'       => now(),
-                    'email_verification_status'=> $verificationResult,
-                ]);
-            }
-
-            $count++;
-        }
-
-        return $count;
     }
 
     /**

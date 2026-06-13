@@ -14,10 +14,13 @@ class DiscoveryRun extends Model
      */
     protected $fillable = [
         'prospect_criteria_id',
+        'type',
+        'company_id',
         'status',
         'companies_count',
         'contacts_count',
         'skipped_count',
+        'low_score_count',
         'credits_reserved',
         'consumed',
         'quota_date',
@@ -38,6 +41,7 @@ class DiscoveryRun extends Model
         'companies_count'      => 'integer',
         'contacts_count'       => 'integer',
         'skipped_count'        => 'integer',
+        'low_score_count'      => 'integer',
         'credits_reserved'     => 'integer',
         'consumed'             => 'integer',
         'quota_date'           => 'date',
@@ -57,6 +61,15 @@ class DiscoveryRun extends Model
     public function packageAssignment(): BelongsTo
     {
         return $this->belongsTo(PackageAssignment::class);
+    }
+
+    /**
+     * The company targeted by a type='manual' run.
+     * Nullable — type='discovery' runs leave it null.
+     */
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Company::class, 'company_id');
     }
 
     // ── State helpers ──────────────────────────────────────────────────────────

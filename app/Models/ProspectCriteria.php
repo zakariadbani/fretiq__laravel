@@ -77,11 +77,14 @@ class ProspectCriteria extends Model
     }
 
     /**
-     * The most recent discovery run (uses latestOfMany for a single-row eager-load).
+     * The most recent discovery-type run (uses ofMany for a single-row eager-load).
+     * Only considers rows with type='discovery' so that manual enrichment runs
+     * (type='manual') do not surface as the "latest" run on the criteria panel.
      */
     public function latestDiscoveryRun(): HasOne
     {
-        return $this->hasOne(DiscoveryRun::class, 'prospect_criteria_id')->latestOfMany();
+        return $this->hasOne(DiscoveryRun::class, 'prospect_criteria_id')
+            ->ofMany(['id' => 'max'], fn ($q) => $q->where('type', 'discovery'));
     }
 
     // ── Validation ─────────────────────────────────────────────────────────────

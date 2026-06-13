@@ -12,9 +12,8 @@ use App\Models\Campaign;
  *   - @include('backend.partials.crud._tabbar', ['config' => $viewConfig, ...])
  *   - @include('backend.partials.crud._apercu',  ['config' => $viewConfig, ...])
  *
- * Note: The view page is a report page — hero + tabbar wrap with the apercu pane
- * containing details + stat cards + funnel chart, followed by the preserved runs table
- * block and recipient drill-down inside the apercu pane below _apercu.
+ * Tabs: Aperçu (view-only default) | Général (edit cross-link) |
+ *       Historique (exécutions, view-only) | Destinataires (tous les envois, view-only).
  */
 class CampaignViewConfig
 {
@@ -23,10 +22,10 @@ class CampaignViewConfig
      * Pass null (or a model without ->id) for create mode.
      *
      * @param  Campaign|null  $model
-     * @param  array|null     $stats  Optional pre-computed stats array from CampaignController::campaignStats().
-     *                                When provided, real KPI values and chart series are injected.
+     * @param  array|null     $stats            Optional pre-computed stats from CampaignController::campaignStats().
+     * @param  int|null       $recipientsTotal  Distinct contacts across all runs (null = unknown, badge omitted).
      */
-    public static function make(?Campaign $model, ?array $stats = null): array
+    public static function make(?Campaign $model, ?array $stats = null, ?int $recipientsTotal = null): array
     {
         $hasId = $model && $model->id;
 
@@ -40,10 +39,14 @@ class CampaignViewConfig
         $typeLabel = $typeCfg['label'] ?? null;
         $typeColor = $typeCfg['color'] ?? 'secondary';
 
-        // ── Hero badges (status + schedule type) ──────────────────────────────
+        // ── Hero badges (status + optional pause + schedule type) ────────────
         $badges = [];
         if ($hasId) {
             $badges[] = ['label' => $statusLabel, 'color' => $statusColor];
+            // Show « En pause » warning badge when the campaign is active but paused.
+            if ($model->is_active === false) {
+                $badges[] = ['label' => 'En pause', 'color' => 'warning'];
+            }
             if ($typeLabel) {
                 $badges[] = ['label' => $typeLabel, 'color' => $typeColor];
             }
@@ -99,13 +102,32 @@ class CampaignViewConfig
         }
 
         // ── Status-bar toggle ─────────────────────────────────────────────────
-        // Campaign has no boolean is_active toggle — always null.
+        // is_active toggle — shown for non-sequence campaigns only.
+        // Sequence campaigns are paused via their sequence.is_active (drip engine),
+        // not via campaign.is_active. Mirroring SenderIdentityViewConfig toggle block.
         $toggle = null;
+        if ($hasId && $model->schedule_type !== 'sequence') {
+            $toggle = [
+                'field'       => 'is_active',
+                'route'       => route('admin.campaigns.executeSwitch', $model->id),
+                'permission'  => 'edit campaigns',
+                'title'       => 'Campagne active',
+                'description' => 'Décochez pour mettre en pause (le planificateur ignore la campagne).',
+                'success'     => 'Campagne mise à jour',
+                'error'       => 'Échec de la mise à jour',
+                'icon'        => 'bi-check-circle-fill',
+            ];
+        }
 
         // ── Tabs ──────────────────────────────────────────────────────────────
+        // $runsCount is null when runs relation is not loaded (edit/create) — badge omitted.
+        $runsCount = $model && $model->relationLoaded('runs') ? $model->runs->count() : null;
+
         $tabs = [
-            ['key' => 'apercu',  'label' => 'Aperçu',  'icon' => 'bi-grid',     'mode' => 'view'],
-            ['key' => 'general', 'label' => 'Général', 'icon' => 'bi-megaphone','mode' => 'edit'],
+            ['key' => 'apercu',        'label' => 'Aperçu',        'icon' => 'bi-grid',          'mode' => 'view'],
+            ['key' => 'general',       'label' => 'Général',       'icon' => 'bi-megaphone',     'mode' => 'edit'],
+            ['key' => 'historique',    'label' => 'Historique',    'icon' => 'bi-clock-history', 'mode' => 'view', 'count' => $runsCount],
+            ['key' => 'destinataires', 'label' => 'Destinataires', 'icon' => 'bi-envelope',      'mode' => 'view', 'count' => $recipientsTotal],
         ];
 
         // ── Detail rows ───────────────────────────────────────────────────────

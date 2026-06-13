@@ -8,6 +8,14 @@ use Illuminate\Http\Request;
 
 class CompaniesDataTable extends BackendDataTable
 {
+    /**
+     * Skip GlobalDataTable's default action column renderer so we can inject
+     * our own action column that includes the enrich button.
+     *
+     * @var bool
+     */
+    protected $skipDefaultAction = true;
+
     // Column order mirrors prototype/companies.html.
     // 'raw' => true is required on any column whose editColumn returns HTML
     // (GlobalDataTable::dataTable() only adds a column to rawColumns when raw=true).
@@ -138,15 +146,29 @@ class CompaniesDataTable extends BackendDataTable
 
     /**
      * Build rich columns: avatar name cell, country badge, AI-score progress bar,
-     * relationship/qualification badges, contacts count.
+     * relationship/qualification badges, contacts count, and custom action column.
      *
      * NOTE: every dynamic fragment is e()-escaped to prevent XSS.
      * The DataTable version (PHP closure) and the Blade score component
      * (resources/views/components/companies/score.blade.php) are intentionally
      * kept visually identical — update both if the design changes.
+     *
+     * Action column override: because $skipDefaultAction = true causes GlobalDataTable
+     * to emit '' for the action column, we editColumn('action') here to render our
+     * custom partial that includes the enrich button.
      */
     protected function createEditColumns(): void
     {
+        // ── Custom action column (enrich + standard CRUD) ─────────────────────
+        // GlobalDataTable::dataTable() already ran addColumn('action', fn=>''). We
+        // use editColumn to replace that empty string with our companies-specific
+        // partial that includes the enrich (bi-person-plus) button.
+        $this->datatables->editColumn('action', function (Company $row) {
+            return view(
+                'backend.contents.companies.partials._row-actions',
+                ['model' => $row]
+            )->render();
+        });
         $relationships         = config('global.data.company_relationships', []);
         $qualificationStatuses = config('global.data.company_qualification_statuses', []);
 

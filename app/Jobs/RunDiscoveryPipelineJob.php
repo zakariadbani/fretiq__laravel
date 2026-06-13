@@ -192,14 +192,14 @@ class RunDiscoveryPipelineJob implements ShouldQueue
         $pipeline = app(DiscoveryPipelineService::class);
 
         try {
-            $stats = $pipeline->run($criteria, $budget, $run); // returns ['companies'=>int,'contacts'=>int,'skipped'=>int]
+            $stats = $pipeline->run($criteria, $budget, $run); // returns ['companies'=>int,'contacts'=>int,'skipped'=>int,'low_score'=>int]
 
+            // Counts (companies_count, contacts_count, skipped_count, low_score_count)
+            // are now persisted incrementally by the pipeline's CAS UPDATE after each
+            // upsert. The job completion writes ONLY the terminal status + finished_at.
             $run?->update([
-                'status'          => 'completed',
-                'companies_count' => $stats['companies'] ?? 0,   // explicit remap: service key 'companies' → column 'companies_count'
-                'contacts_count'  => $stats['contacts'] ?? 0,
-                'skipped_count'   => $stats['skipped'] ?? 0,
-                'finished_at'     => now(),
+                'status'      => 'completed',
+                'finished_at' => now(),
             ]);
 
             Log::info('[RunDiscoveryPipelineJob] Pipeline completed', array_merge(

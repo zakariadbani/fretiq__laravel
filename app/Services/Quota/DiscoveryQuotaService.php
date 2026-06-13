@@ -4,8 +4,10 @@ namespace App\Services\Quota;
 
 use App\Exceptions\CriteriaInactiveException;
 use App\Exceptions\DiscoveryRunInFlightException;
+use App\Exceptions\EnrichmentInFlightException;
 use App\Exceptions\QuotaExhaustedException;
 use App\Exceptions\QuotaLockUnavailableException;
+use App\Models\Company;
 use App\Models\DiscoveryRun;
 use App\Models\Package;
 use App\Models\PackageAssignment;
@@ -215,7 +217,10 @@ class DiscoveryQuotaService
                     throw new CriteriaInactiveException();
                 }
 
-                $latest = $criteria->discoveryRuns()->latest('id')->first();
+                $latest = $criteria->discoveryRuns()
+                    ->where('type', 'discovery')
+                    ->latest('id')
+                    ->first();
 
                 if ($latest && in_array($latest->status, ['pending', 'running'], true) && ! $latest->isStale()) {
                     throw new DiscoveryRunInFlightException($latest);
@@ -250,6 +255,85 @@ class DiscoveryQuotaService
         } finally {
             // Release lock AFTER the transaction has committed (the finally block
             // runs after DB::transaction returns, so the commit has already happened).
+            if ($isMySQL) {
+                DB::selectOne('SELECT RELEASE_LOCK(?)', [$lockName]);
+            }
+        }
+    }
+
+    // ── Manual enrichment reservation ─────────────────────────────────────────
+
+    /**
+     * Reserve a manual enrichment run for a single company.
+     *
+     * Uses the same GET_LOCK + transaction protocol as reserveRun() for
+     * serialization. Credits_reserved = 1 and consumed = 1 (debit-before-call
+     * semantics — no refund on Hunter failure).
+     *
+     * Guards (checked inside the lock+transaction):
+     *   - Same-company in-flight: running non-stale manual row for this company → EnrichmentInFlightException (409)
+     *   - Quota exhausted (limited packages only)               → QuotaExhaustedException (422)
+     *
+     * @throws EnrichmentInFlightException    When a non-stale manual run is already running for this company.
+     * @throws QuotaExhaustedException        When the daily balance is 0.
+     * @throws QuotaLockUnavailableException  When the MySQL lock cannot be acquired (fail-closed).
+     */
+    public function reserveManualEnrichment(Company $company): DiscoveryRun
+    {
+        $isMySQL  = DB::getDriverName() === 'mysql';
+        $lockName = 'discovery-quota:' . DB::getDatabaseName();
+
+        // Truncate to 64 chars (MySQL hard limit for GET_LOCK names).
+        $lockName = mb_substr($lockName, 0, 64);
+
+        if ($isMySQL) {
+            $lockResult = DB::selectOne('SELECT GET_LOCK(?, 5) as acquired', [$lockName]);
+            if (! $lockResult || (int) $lockResult->acquired !== 1) {
+                throw new QuotaLockUnavailableException();
+            }
+        }
+
+        try {
+            $run = DB::transaction(function () use ($company) {
+                // Same-company in-flight guard: look for any running manual row
+                // for this company that is not stale.
+                $candidates = DiscoveryRun::where('type', 'manual')
+                    ->where('company_id', $company->id)
+                    ->whereIn('status', ['running'])
+                    ->get();
+
+                foreach ($candidates as $candidate) {
+                    if (! $candidate->isStale()) {
+                        throw new EnrichmentInFlightException();
+                    }
+                }
+
+                // Quota guard.
+                if (! $this->isUnlimited() && $this->remainingOn(Carbon::today()) <= 0) {
+                    throw new QuotaExhaustedException();
+                }
+
+                $today = Carbon::today();
+
+                return DiscoveryRun::create([
+                    'prospect_criteria_id'  => $company->criteria_id ?? null,
+                    'type'                  => 'manual',
+                    'company_id'            => $company->id,
+                    'status'                => 'running',
+                    'credits_reserved'      => 1,
+                    'consumed'              => 1,
+                    'quota_date'            => $today->toDateString(),
+                    'started_at'            => now(),
+                    'companies_count'       => 0,
+                    'contacts_count'        => 0,
+                    'skipped_count'         => 0,
+                    'low_score_count'       => 0,
+                    'package_assignment_id' => PackageAssignment::latestActive()?->id,
+                ]);
+            });
+
+            return $run;
+        } finally {
             if ($isMySQL) {
                 DB::selectOne('SELECT RELEASE_LOCK(?)', [$lockName]);
             }

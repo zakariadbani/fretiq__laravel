@@ -25,15 +25,15 @@
 {{--
     Campaign view — hero+tabbar UX (clic2loc parity).
     Hero card + shared tab strip via _header-with-tabs partial.
-    Tab pane IDs: campaign_apercu / campaign_general.
+    Tab pane IDs: campaign_apercu / campaign_historique / campaign_destinataires.
+    campaign_general deep-links to the edit page (no native pane here).
     Aperçu is the default active pane (native on view page).
-    Général deep-links to the edit page.
 
-    The aperçu pane contains:
-      1. Generic _apercu partial (details + stat cards + funnel chart + opens-over-time chart)
-      2. Preserved KPI header tiles from the original report (latestRun stats)
-      3. Preserved runs table (execution history)
-      4. Preserved recipient drill-down (latest run)
+    Tab layout:
+      1. Aperçu    — _apercu partial + sequence enrolled card + latest-run KPI cards
+      2. Général   — cross-route link to edit page
+      3. Historique — @include(_historique-tab)  full execution history table
+      4. Destinataires — @include(_destinataires-tab)  all recipients across all runs (paginated)
 
     Schedule / SendNow / Planifier buttons: preserved verbatim in _header-actions (hero slot).
     All @can('send campaigns') gates are kept exactly as the original.
@@ -55,7 +55,7 @@
         {{-- Generic apercu: details table (left) + stat cards + charts (right) --}}
         @include('backend.partials.crud._apercu', [
             'model'  => $model,
-            'config' => \App\Crud\ViewConfigs\CampaignViewConfig::make($model, $stats ?? null),
+            'config' => \App\Crud\ViewConfigs\CampaignViewConfig::make($model, $stats ?? null, $recipientsTotal ?? null),
         ])
 
         {{-- ── Sequence stat: enrolled contacts ─────────────────────────── --}}
@@ -193,143 +193,21 @@
             </div>
         @endif
 
-        {{-- ── Preserved: Runs table (execution history) ─────────────────── --}}
-        @if($runs->count())
-        <div class="card mt-5">
-            <div class="card-header border-0 pt-5">
-                <h3 class="card-title fw-bolder m-0">
-                    <i class="bi bi-list-check text-info fs-3 me-2"></i>
-                    Exécutions ({{ $runs->count() }})
-                </h3>
-            </div>
-            <div class="card-body border-top p-0">
-                <div class="table-responsive">
-                    <table class="table table-row-dashed table-row-gray-300 align-middle gs-0 gy-4 mb-0">
-                        <thead>
-                            <tr class="fw-bold text-muted bg-light">
-                                <th class="ps-7">Date</th>
-                                <th>Statut</th>
-                                <th>Envoyés</th>
-                                <th>Ouverts</th>
-                                <th>Clics</th>
-                                <th>Rebonds</th>
-                                <th>Terminé le</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach($runs as $run)
-                            @php
-                                $runStatusCfg = config('global.data.campaign_run_statuses.' . $run->status);
-                            @endphp
-                            <tr>
-                                <td class="ps-7 fw-semibold">{{ $run->run_at?->format('d/m/Y H:i') ?? '—' }}</td>
-                                <td>
-                                    @if($runStatusCfg)
-                                        <span class="badge badge-light-{{ $runStatusCfg['color'] }}">{{ $runStatusCfg['label'] }}</span>
-                                    @else
-                                        <span class="text-muted">—</span>
-                                    @endif
-                                </td>
-                                <td>{{ number_format($run->stats_sent ?? 0) }}</td>
-                                <td>{{ number_format($run->stats_opened ?? 0) }} <span class="text-muted fs-8">({{ $run->openRate() }}%)</span></td>
-                                <td>{{ number_format($run->stats_clicked ?? 0) }} <span class="text-muted fs-8">({{ $run->clickRate() }}%)</span></td>
-                                <td>{{ number_format($run->stats_bounced ?? 0) }}</td>
-                                <td>{{ $run->finished_at?->format('d/m/Y H:i') ?? '—' }}</td>
-                            </tr>
-                            @endforeach
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-        @endif
-
-        {{-- ── Preserved: Recipients drill-down (latest run) ─────────────── --}}
-        @if($latestRun && $latestRun->recipients->count())
-        <div class="card mt-5">
-            <div class="card-header border-0 pt-5">
-                <h3 class="card-title fw-bolder m-0">
-                    <i class="bi bi-people text-success fs-3 me-2"></i>
-                    Destinataires — dernière exécution ({{ $latestRun->recipients->count() }} affichés)
-                </h3>
-            </div>
-            <div class="card-body border-top p-0">
-                <div class="table-responsive">
-                    <table class="table table-row-dashed table-row-gray-300 align-middle gs-0 gy-4 mb-0">
-                        <thead>
-                            <tr class="fw-bold text-muted bg-light">
-                                <th class="ps-7">Email contact</th>
-                                <th>Statut</th>
-                                <th>Ouvert le</th>
-                                <th>Cliqué le</th>
-                                <th>Envoyé le</th>
-                                @can('create demandes')
-                                <th class="text-end pe-7">Action</th>
-                                @endcan
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach($latestRun->recipients->take(100) as $recipient)
-                            @php
-                                $recipientStatusCfg = config('global.data.campaign_recipient_statuses.' . $recipient->status);
-                            @endphp
-                            <tr>
-                                <td class="ps-7 fw-semibold">
-                                    {{ $recipient->contact?->email ? e($recipient->contact->email) : '—' }}
-                                </td>
-                                <td>
-                                    @if($recipientStatusCfg)
-                                        <span class="badge badge-light-{{ $recipientStatusCfg['color'] }}">{{ $recipientStatusCfg['label'] }}</span>
-                                    @else
-                                        <span class="text-muted">—</span>
-                                    @endif
-                                </td>
-                                <td>{{ $recipient->opened_at?->format('d/m/Y H:i') ?? '—' }}</td>
-                                <td>{{ $recipient->clicked_at?->format('d/m/Y H:i') ?? '—' }}</td>
-                                <td>{{ $recipient->sent_at?->format('d/m/Y H:i') ?? '—' }}</td>
-                                @can('create demandes')
-                                <td class="text-end pe-7">
-                                    @if($recipient->status !== 'replied')
-                                    <form method="POST"
-                                          action="{{ route('admin.campaigns.markReplied', [$model->id, $recipient->id]) }}"
-                                          onsubmit="return confirm('Marquer ce contact comme répondu et créer une demande ?');">
-                                        @csrf
-                                        <button type="submit" class="btn btn-sm btn-light-success" title="Marquer répondu → Demande">
-                                            <i class="bi bi-reply me-1"></i>
-                                            Répondu → Demande
-                                        </button>
-                                    </form>
-                                    @else
-                                        <span class="text-muted fs-7">Déjà répondu</span>
-                                    @endif
-                                </td>
-                                @endcan
-                            </tr>
-                            @endforeach
-                        </tbody>
-                    </table>
-                </div>
-                @if($latestRun->recipients->count() > 100)
-                <div class="text-center py-3 text-muted fs-7">
-                    Affichage des 100 premiers destinataires sur {{ $latestRun->recipients->count() }} au total.
-                </div>
-                @endif
-            </div>
-        </div>
-        @elseif($latestRun)
-        <div class="card mt-5">
-            <div class="card-body text-center py-8 text-muted">
-                <i class="bi bi-people fs-2x mb-3 d-block"></i>
-                Aucun destinataire enregistré pour cette exécution.
-            </div>
-        </div>
-        @endif
-
     </div>
     {{-- end campaign_apercu --}}
 
+    {{-- ── Tab: Historique (exécutions) ─────────────────────────────────── --}}
+    <div class="tab-pane fade" id="campaign_historique" role="tabpanel">
+        @include('backend.contents.campaigns.partials._historique-tab')
+    </div>
+
+    {{-- ── Tab: Destinataires (tous les envois) ─────────────────────────── --}}
+    <div class="tab-pane fade" id="campaign_destinataires" role="tabpanel">
+        @include('backend.contents.campaigns.partials._destinataires-tab')
+    </div>
+
     {{--
-        Tab 2 (Général) is NOT a native pane here —
+        Tab Général is NOT a native pane here —
         it deep-links to the edit page via the tab nav. No pane div needed.
     --}}
 

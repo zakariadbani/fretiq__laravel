@@ -37,6 +37,7 @@ class Campaign extends Model
         'timezone',
         'send_window',
         'status',
+        'is_active',
         'driver',
     ];
 
@@ -50,6 +51,7 @@ class Campaign extends Model
         'next_run_at'  => 'datetime',
         'recurrence'   => 'array',
         'send_window'  => 'array',
+        'is_active'    => 'boolean',
     ];
 
     // ── Relationships ──────────────────────────────────────────────────────────
@@ -127,6 +129,7 @@ class Campaign extends Model
             'timezone'           => 'nullable|string|max:64',
             'send_window'        => 'nullable|array',
             'status'             => 'nullable|in:' . implode(',', array_keys(config('global.data.campaign_statuses', []))),
+            'is_active'          => 'nullable|boolean',
             'driver'             => 'nullable|in:local,zoho',
         ];
     }

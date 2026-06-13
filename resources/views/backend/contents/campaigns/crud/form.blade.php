@@ -406,6 +406,45 @@
 
     </div>
 
+    {{-- ── Section 4: Activation (hidden for sequence type) ──────────── --}}
+    {{--
+        is_active pause switch — shown only for non-sequence campaigns.
+        Sequence campaigns are paused via their sequence.is_active (drip engine).
+        Required hidden sibling input BEFORE the checkbox so unchecking posts 0
+        through Crudable::update() ($request->all()). Proven pattern (cf. ProspectCriteria).
+    --}}
+    @if(!(isset($model) && $model->schedule_type === 'sequence'))
+    <div class="col-12" id="field-is-active-wrapper">
+        <div class="card">
+            <div class="card-body py-5 px-9">
+                <div class="d-flex align-items-center gap-4">
+                    <div class="flex-grow-1">
+                        <label class="fw-semibold fs-6 mb-1">Active</label>
+                        <div class="text-muted fs-7">
+                            Décochez pour mettre en pause (le planificateur ignore la campagne).
+                        </div>
+                    </div>
+                    <div>
+                        {{-- Hidden sibling MUST come BEFORE the checkbox --}}
+                        <input type="hidden" name="is_active" value="0">
+                        <div class="form-check form-switch form-check-custom form-check-solid">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   name="is_active"
+                                   value="1"
+                                   id="is_active_toggle"
+                                   {{ old('is_active', $model->is_active ?? true) ? 'checked' : '' }} />
+                            <label class="form-check-label fw-semibold ms-3" for="is_active_toggle">
+                                Active
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    @endif
+
     {{-- ── Sticky action bar (standard contract) ──────────────────────── --}}
     @include('backend.elements.form-actions', ['variant' => 'sticky', 'backRoute' => 'admin.campaigns.index'])
 

@@ -9,9 +9,9 @@
     use Carbon\CarbonInterface;
 
     $hasTable  = Schema::hasTable('discovery_runs');
-    $runs      = $hasTable ? $model->discoveryRuns()->orderByDesc('id')->limit(50)->get() : collect();
+    $runs      = $hasTable ? $model->discoveryRuns()->where('type', 'discovery')->orderByDesc('id')->limit(50)->get() : collect();
     $runsTotal = $hasTable
-        ? ($runs->count() < 50 ? $runs->count() : $model->discoveryRuns()->count())
+        ? ($runs->count() < 50 ? $runs->count() : $model->discoveryRuns()->where('type', 'discovery')->count())
         : 0;
 @endphp
 
@@ -38,6 +38,7 @@
                             <th>Entreprises</th>
                             <th>Contacts</th>
                             <th>Ignorés</th>
+                            <th>Sous seuil</th>
                             <th>Durée</th>
                             <th>Terminé le</th>
                             <th class="pe-7">Erreur</th>
@@ -73,6 +74,7 @@
                             <td>{{ number_format($run->companies_count) }}</td>
                             <td>{{ number_format($run->contacts_count) }}</td>
                             <td><span class="text-muted">{{ number_format($run->skipped_count) }}</span></td>
+                            <td><span class="text-muted">{{ number_format($run->low_score_count ?? 0) }}</span></td>
                             <td>{{ $duree }}</td>
                             <td>{{ $run->finished_at?->format('d/m/Y H:i') ?? '—' }}</td>
                             <td class="pe-7">

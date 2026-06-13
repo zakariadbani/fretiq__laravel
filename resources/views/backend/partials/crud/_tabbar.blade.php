@@ -103,7 +103,8 @@
                 // Deep-link destination when NOT native on this page
                 if (!$native) {
                     if ($mode === 'view') {
-                        $linkRoute = $hasId ? route($routeBase . '.view', $model->id) : '#';
+                        // Append pane hash so the target page opens on the right tab
+                        $linkRoute = $hasId ? (route($routeBase . '.view', $model->id) . '#' . $paneId) : '#';
                     } else {
                         // mode 'edit' or unreachable 'both' branch
                         $linkRoute = $hasId ? (route($routeBase . '.edit', $model->id) . '#' . $paneId) : '#';

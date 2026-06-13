@@ -347,6 +347,7 @@ class ProspectCriteriaController extends BackendController
             'companies_count' => $run?->companies_count ?? 0,
             'contacts_count'  => $run?->contacts_count ?? 0,
             'skipped_count'   => $run?->skipped_count ?? 0,
+            'low_score_count' => (int) ($run?->low_score_count ?? 0),
             'finished_at'     => optional($run?->finished_at)->toIso8601String(),
             'companies_total' => $criteria->companies()->count(),
             'stale'           => $run ? $run->isStale() : false,

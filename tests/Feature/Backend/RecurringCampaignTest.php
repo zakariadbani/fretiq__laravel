@@ -51,6 +51,7 @@ class RecurringCampaignTest extends TestCase
     private function makeRecurringCampaign(
         string $status = 'active',
         ?Carbon $nextRunAt = null,
+        bool $isActive = true,
     ): Campaign {
         $segment  = Segment::create(['name' => 'Clients', 'scope' => 'client']);
         $template = $this->makeTemplate();
@@ -66,6 +67,7 @@ class RecurringCampaignTest extends TestCase
             'next_run_at'        => $nextRunAt ?? now()->subMinute(),
             'timezone'           => 'Europe/Paris',
             'status'             => $status,
+            'is_active'          => $isActive,
         ]);
     }
 
@@ -125,21 +127,35 @@ class RecurringCampaignTest extends TestCase
     }
 
     /**
-     * A recurring campaign with status='paused' must be skipped entirely,
-     * even when next_run_at is in the past.
+     * A recurring campaign with is_active=false must be skipped entirely by the
+     * scheduler, even when next_run_at is in the past and status='active'.
+     * The cursor is frozen — next_run_at is NOT advanced.
      */
     public function test_paused_campaign_skipped(): void
     {
-        $campaign = $this->makeRecurringCampaign('paused', now()->subMinute());
+        $campaign = $this->makeRecurringCampaign(
+            status: 'active',
+            nextRunAt: now()->subMinute(),
+            isActive: false,
+        );
+
+        $originalNextRunAt = $campaign->next_run_at->copy();
 
         $service = app(CampaignSchedulerService::class);
         $count   = $service->generateDueRuns();
 
-        $this->assertSame(0, $count, 'Paused campaign must generate 0 runs');
+        $this->assertSame(0, $count, 'Paused campaign (is_active=false) must generate 0 runs');
 
         $this->assertDatabaseMissing('campaign_runs', [
             'campaign_id' => $campaign->id,
         ]);
+
+        // Cursor must NOT be advanced — the scheduler skips paused campaigns entirely.
+        $campaign->refresh();
+        $this->assertTrue(
+            $campaign->next_run_at->eq($originalNextRunAt),
+            'next_run_at must remain frozen when the campaign is paused',
+        );
     }
 
     /**
@@ -165,5 +181,66 @@ class RecurringCampaignTest extends TestCase
 
         $this->assertSame('2026-06-11', $nextParis->toDateString());
         $this->assertSame('09:00', $nextParis->format('H:i'));
+    }
+
+    /**
+     * DST spring-forward 2026-03-29 (Europe/Paris clocks move 02:00 → 03:00).
+     *
+     * A daily 10:00 Europe/Paris send on 2026-03-28 must land at 10:00 local
+     * on 2026-03-29 — not 11:00 (which Carbon::parse($utc, $tz) would produce
+     * by ignoring the tz arg on an already-Carbon instance).
+     * The returned value must be a UTC Carbon.
+     */
+    public function test_compute_next_run_dst_spring_forward(): void
+    {
+        $service = app(CampaignSchedulerService::class);
+
+        // 10:00 Paris on 2026-03-28 = 09:00 UTC (CET, UTC+1).
+        $from = Carbon::parse('2026-03-28 09:00:00', 'UTC');
+
+        $next = $service->computeNextRun(
+            ['frequency' => 'daily'],
+            $from,
+            'Europe/Paris',
+        );
+
+        $this->assertNotNull($next);
+        $this->assertSame('UTC', $next->timezoneName, 'computeNextRun must return a UTC Carbon');
+
+        // 10:00 Paris on 2026-03-29 = 08:00 UTC (CEST, UTC+2 after spring forward).
+        $nextParis = $next->copy()->setTimezone('Europe/Paris');
+        $this->assertSame('10:00', $nextParis->format('H:i'),
+            'Wall-clock time must remain 10:00 Paris across spring-forward');
+        $this->assertSame('2026-03-29', $nextParis->toDateString());
+    }
+
+    /**
+     * DST fall-back 2026-10-25 (Europe/Paris clocks move 03:00 → 02:00).
+     *
+     * A daily 10:00 Europe/Paris send on 2026-10-24 must land at 10:00 local
+     * on 2026-10-25, not drift to 09:00 or 11:00.
+     * The returned value must be a UTC Carbon.
+     */
+    public function test_compute_next_run_dst_fall_back(): void
+    {
+        $service = app(CampaignSchedulerService::class);
+
+        // 10:00 Paris on 2026-10-24 = 08:00 UTC (CEST, UTC+2).
+        $from = Carbon::parse('2026-10-24 08:00:00', 'UTC');
+
+        $next = $service->computeNextRun(
+            ['frequency' => 'daily'],
+            $from,
+            'Europe/Paris',
+        );
+
+        $this->assertNotNull($next);
+        $this->assertSame('UTC', $next->timezoneName, 'computeNextRun must return a UTC Carbon');
+
+        // 10:00 Paris on 2026-10-25 = 09:00 UTC (CET, UTC+1 after fall-back).
+        $nextParis = $next->copy()->setTimezone('Europe/Paris');
+        $this->assertSame('10:00', $nextParis->format('H:i'),
+            'Wall-clock time must remain 10:00 Paris across fall-back');
+        $this->assertSame('2026-10-25', $nextParis->toDateString());
     }
 }

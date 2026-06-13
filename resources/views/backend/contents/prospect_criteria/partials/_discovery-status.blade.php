@@ -80,6 +80,9 @@
                     &middot;
                     <strong><span id="discovery-run-contacts">{{ $run->contacts_count ?? 0 }}</span></strong>
                     contacts
+                    &middot;
+                    <strong><span id="discovery-run-lowscore">{{ $run->low_score_count ?? 0 }}</span></strong>
+                    sous le seuil de score
                 </div>
 
                 <div class="fs-7 text-muted mb-4">
@@ -94,6 +97,7 @@
                 {{-- Keep the IDs in the DOM even in empty state so the JS can update them --}}
                 <span id="discovery-run-companies" class="d-none">0</span>
                 <span id="discovery-run-contacts" class="d-none">0</span>
+                <span id="discovery-run-lowscore" class="d-none">0</span>
                 <span id="discovery-finished-at" class="d-none">—</span>
             @endif
 

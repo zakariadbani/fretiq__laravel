@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Log;
  * CampaignSchedulerService — materialises recurring CampaignRun rows.
  *
  * Design (queue-idempotency.md §4, campaign-automation.md §3):
- *   - Reads campaigns where schedule_type='recurring', status IN ('scheduled','active'),
+ *   - Reads campaigns where schedule_type='recurring', status='active', is_active=true,
  *     next_run_at IS NOT NULL and <= now().
  *   - For each, inserts a CampaignRun with a deterministic occurrence_key (the unique
  *     DB constraint is the durable backstop — duplicate calls are no-ops).
@@ -36,7 +36,8 @@ class CampaignSchedulerService
         $count = 0;
 
         $campaigns = Campaign::where('schedule_type', 'recurring')
-            ->whereIn('status', ['scheduled', 'active'])
+            ->where('status', 'active')
+            ->where('is_active', true)
             ->whereNotNull('next_run_at')
             ->where('next_run_at', '<=', now())
             ->get();
@@ -105,8 +106,11 @@ class CampaignSchedulerService
      *
      * All arithmetic is performed in the campaign timezone so that DST transitions
      * (e.g. Europe/Paris clocks moving 1 h forward/back) don't drift the send time
-     * by an hour. Carbon parses $from in the given tz and adds the interval using
-     * tz-aware methods, then the result is converted back to UTC for storage.
+     * by an hour. $from is a UTC Carbon instance; we re-interpret it in $tz using
+     * ->copy()->setTimezone($tz) (NOT Carbon::parse($from, $tz) — that ignores the
+     * $tz arg when $from is already a Carbon, keeping UTC and causing DST drift).
+     * Interval math then runs in the local timezone; the result is converted back to
+     * UTC for storage via ->utc().
      *
      * @param  array       $recurrence  Decoded recurrence JSON.
      * @param  Carbon      $from        The current next_run_at (UTC Carbon instance).
@@ -121,8 +125,11 @@ class CampaignSchedulerService
             ? Carbon::parse($recurrence['until'], $tz)->endOfDay()
             : null;
 
-        // Interpret $from in the campaign timezone so DST is handled correctly.
-        $localFrom = Carbon::parse($from, $tz);
+        // Re-interpret the UTC $from in the campaign timezone.
+        // setTimezone() on an existing Carbon instance correctly shifts to the target
+        // tz (preserving the instant), unlike Carbon::parse($from, $tz) which silently
+        // ignores the $tz argument when $from is already a Carbon object.
+        $localFrom = $from->copy()->setTimezone($tz);
 
         $next = match ($frequency) {
             'weekly'  => $localFrom->addWeeks($interval),

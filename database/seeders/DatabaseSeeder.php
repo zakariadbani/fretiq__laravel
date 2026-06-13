@@ -20,6 +20,7 @@ class DatabaseSeeder extends Seeder
             \Database\Seeders\Acl\RolesSeeder::class,
             \Database\Seeders\Acl\PermissionsSeeder::class,
             \Database\Seeders\UsersSeeder::class,
+            \Database\Seeders\SettingsSeeder::class,
         ]);
     }
 }

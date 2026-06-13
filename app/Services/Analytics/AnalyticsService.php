@@ -66,7 +66,7 @@ class AnalyticsService
         return [
             'companies'        => Company::count(),
             'contacts'         => Contact::count(),
-            'active_campaigns' => Campaign::whereIn('status', ['scheduled', 'active'])->count(),
+            'active_campaigns' => Campaign::where('status', 'active')->where('is_active', true)->count(),
             'emails_sent_30d'  => $emailsSent30d,
             'open_rate'        => $openRate,
             'click_rate'       => $clickRate,

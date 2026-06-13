@@ -89,4 +89,13 @@ return [
         'driver'  => env('DISCOVERY_DRIVER', 'local'),
     ],
 
+    'gemini' => [
+        'api_key' => env('GEMINI_API_KEY'),
+        'model'   => env('GEMINI_MODEL', 'gemini-2.0-flash'),
+    ],
+
+    'scoring' => [
+        'driver' => env('SCORING_DRIVER', 'heuristic'), // heuristic|gemini
+    ],
+
 ];

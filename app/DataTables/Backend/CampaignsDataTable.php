@@ -28,11 +28,47 @@ class CampaignsDataTable extends BackendDataTable
             'searchable' => false,
             'raw'        => true,
         ],
-        'scheduled_at' => [
-            'title'      => 'Planifié le',
+        'is_active' => [
+            'title'      => 'Actif',
+            'orderable'  => true,
+            'searchable' => false,
+            'switch'     => true,
+            'typetoggle' => 'status',
+            'raw'        => true,
+        ],
+        'segment_id' => [
+            'title'      => 'Segment',
+            'orderable'  => false,
+            'searchable' => false,
+            'raw'        => true,
+        ],
+        'template_id' => [
+            'title'      => 'Modèle',
+            'orderable'  => false,
+            'searchable' => false,
+            'raw'        => true,
+        ],
+        'sender_identity_id' => [
+            'title'      => 'Expéditeur',
+            'orderable'  => false,
+            'searchable' => false,
+            'raw'        => true,
+        ],
+        'next_run_at' => [
+            'title'      => 'Prochaine occurrence',
             'orderable'  => true,
             'searchable' => false,
             'raw'        => true,
+        ],
+        'runs_count' => [
+            'title'      => 'Exécutions',
+            'orderable'  => true,
+            'searchable' => false,
+        ],
+        'stats_sent_total' => [
+            'title'      => 'Envoyés',
+            'orderable'  => true,
+            'searchable' => false,
         ],
         'created_at' => [
             'title'      => 'Créé le',
@@ -66,7 +102,10 @@ class CampaignsDataTable extends BackendDataTable
      */
     public function query()
     {
-        return $this->currentModel->newQuery()->with(['segment', 'template']);
+        return $this->currentModel->newQuery()
+            ->with(['segment', 'template', 'senderIdentity'])
+            ->withCount('runs')
+            ->withSum('runs as stats_sent_total', 'stats_sent');
     }
 
     /**
@@ -96,13 +135,57 @@ class CampaignsDataTable extends BackendDataTable
             $label = $cfg['label'] ?? $row->status;
             $color = $cfg['color'] ?? 'secondary';
 
-            return '<span class="badge badge-light-' . e($color) . '">' . e($label) . '</span>';
+            $html = '<span class="badge badge-light-' . e($color) . '">' . e($label) . '</span>';
+
+            // Append « En pause » warning badge when the campaign is paused via is_active.
+            if ($row->is_active === false) {
+                $html .= ' <span class="badge badge-light-warning">En pause</span>';
+            }
+
+            return $html;
         });
 
-        $this->datatables->editColumn('scheduled_at', function (Campaign $row) {
-            return $row->scheduled_at instanceof \Carbon\Carbon
-                ? $row->scheduled_at->format('d/m/Y H:i')
-                : e($row->scheduled_at ?? '—');
+        $this->datatables->editColumn('is_active', function (Campaign $row) {
+            // Sequence campaigns: pause is controlled via sequence.is_active — static badge.
+            if ($row->schedule_type === 'sequence') {
+                return '<span class="badge badge-light-info">Via séquence</span>';
+            }
+
+            return view('backend.components.datatable.status', [
+                'model'      => $row,
+                'name'       => 'is_active',
+                'typetoggle' => 'status',
+            ])->render();
+        });
+
+        $this->datatables->editColumn('segment_id', function (Campaign $row) {
+            return e($row->segment?->name ?? '—');
+        });
+
+        $this->datatables->editColumn('template_id', function (Campaign $row) {
+            return e($row->template?->name ?? '—');
+        });
+
+        $this->datatables->editColumn('sender_identity_id', function (Campaign $row) {
+            return e($row->senderIdentity?->name ?? '—');
+        });
+
+        $this->datatables->editColumn('next_run_at', function (Campaign $row) {
+            if ($row->next_run_at instanceof \Carbon\Carbon) {
+                return $row->next_run_at->format('d/m/Y H:i');
+            }
+            if ($row->scheduled_at instanceof \Carbon\Carbon) {
+                return $row->scheduled_at->format('d/m/Y H:i');
+            }
+            return '—';
+        });
+
+        $this->datatables->editColumn('runs_count', function (Campaign $row) {
+            return (int) ($row->runs_count ?? 0);
+        });
+
+        $this->datatables->editColumn('stats_sent_total', function (Campaign $row) {
+            return (int) ($row->stats_sent_total ?? 0);
         });
     }
 

@@ -83,11 +83,9 @@ return [
     // Campagnes — statut
     //---------------------------------------------------------------------------
     'campaign_statuses' => [
-        'draft'     => ['label' => 'Brouillon',  'color' => 'secondary'],
-        'scheduled' => ['label' => 'Planifiée',  'color' => 'info'],
-        'active'    => ['label' => 'Active',     'color' => 'success'],
-        'paused'    => ['label' => 'En pause',   'color' => 'warning'],
-        'done'      => ['label' => 'Terminée',   'color' => 'dark'],
+        'draft'  => ['label' => 'Brouillon', 'color' => 'secondary'],
+        'active' => ['label' => 'Active',    'color' => 'success'],
+        'done'   => ['label' => 'Terminée',  'color' => 'dark'],
     ],
 
     //---------------------------------------------------------------------------

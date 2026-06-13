@@ -32,6 +32,11 @@
                         <span class="text-muted fs-7 fw-semibold">{{ $status['label'] }}</span>
                     </div>
                 @endforeach
+                {{-- Static swatch for projected recurring occurrences (virtual — not a persisted run status) --}}
+                <div class="d-flex align-items-center gap-1">
+                    <span class="w-10px h-10px rounded-1 bg-info d-inline-block"></span>
+                    <span class="text-muted fs-7 fw-semibold">Planifiée (récurrence)</span>
+                </div>
             </div>
         </div>
     </div>

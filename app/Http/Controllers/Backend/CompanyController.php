@@ -3,13 +3,22 @@
 namespace App\Http\Controllers\Backend;
 
 use App\DataTables\Backend\CompaniesDataTable;
+use App\Exceptions\EnrichmentInFlightException;
+use App\Exceptions\QuotaExhaustedException;
+use App\Exceptions\QuotaLockUnavailableException;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
 use App\Models\CampaignRecipient;
 use App\Models\Company;
 use App\Models\Demande;
+use App\Models\DiscoveryRun;
+use App\Services\Discovery\ContactUpsertService;
+use App\Services\Discovery\HunterEnrichmentService;
+use App\Services\Quota\DiscoveryQuotaService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class CompanyController extends BackendController
 {
@@ -31,6 +40,7 @@ class CompanyController extends BackendController
         $this->middleware('permission:create companies')->only(['create', 'store']);
         $this->middleware('permission:edit companies')->only(['edit', 'update', 'executeSwitch']);
         $this->middleware('permission:delete companies')->only(['delete']);
+        $this->middleware('permission:enrich companies')->only(['enrich']);
 
         $this->listTitle = 'Entreprises';
         $this->title     = 'name';
@@ -235,5 +245,188 @@ class CompanyController extends BackendController
             'sizeBuckets'            => config('global.data.company_size_buckets', []),
             'countries'              => config('global.data.company_countries', []),
         ];
+    }
+
+    /**
+     * Manually enrich a company with Hunter contact data.
+     *
+     * Requires `enrich companies` permission (enforced via middleware).
+     * Debits 1 credit before calling Hunter (debit-before-call semantics).
+     * No path may leave the DiscoveryRun row in status='running'.
+     *
+     * @param  int                   $id
+     * @param  DiscoveryQuotaService $quotaService
+     * @param  HunterEnrichmentService $hunterService
+     * @param  ContactUpsertService  $contactUpsert
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function enrich(
+        $id,
+        DiscoveryQuotaService $quotaService,
+        HunterEnrichmentService $hunterService,
+        ContactUpsertService $contactUpsert
+    ) {
+        /** @var Company $company */
+        $company = Company::findOrFail((int) $id);
+
+        // Guard: domain is required for Hunter enrichment.
+        if (empty($company->domain)) {
+            return response()->json([
+                'message' => 'error',
+                'text'    => "Cette entreprise n'a pas de domaine — enrichissement impossible.",
+            ], 422);
+        }
+
+        // Reserve the run (quota guard + in-flight guard inside the lock).
+        try {
+            $run = $quotaService->reserveManualEnrichment($company);
+        } catch (QuotaExhaustedException $e) {
+            return response()->json([
+                'message' => 'error',
+                'text'    => 'Solde du jour épuisé — recharge demain à minuit.',
+            ], 422);
+        } catch (EnrichmentInFlightException $e) {
+            return response()->json([
+                'message' => 'error',
+                'text'    => 'Enrichissement déjà en cours pour cette entreprise.',
+            ], 409);
+        } catch (QuotaLockUnavailableException $e) {
+            return response()->json([
+                'message' => 'error',
+                'text'    => 'Système occupé — réessayez dans quelques secondes.',
+            ], 409);
+        }
+
+        // Everything after reservation must finalize the run (no 'running' orphans).
+        try {
+            $enrichment = $hunterService->domainSearch($company->domain);
+
+            if ($enrichment !== null) {
+                // Update company: enrichment_data + sector/country.
+                // NEVER touch: relationship, source, criteria_id, ai_score, ai_explanation.
+                $updateAttrs = [
+                    'enrichment_data' => $enrichment['raw'] ?? null,
+                ];
+
+                if (! empty($enrichment['industry'])) {
+                    $updateAttrs['sector'] = $enrichment['industry'];
+                }
+
+                if (! empty($enrichment['country'])) {
+                    $raw = $enrichment['country'];
+                    // Apply same ISO-2 mapping idiom as DiscoveryPipelineService.
+                    $updateAttrs['country'] = $this->mapIso2($raw);
+                }
+
+                $company->fill($updateAttrs);
+                $company->save();
+
+                $count = $contactUpsert->upsertFromHunter($company, $company->domain, $enrichment['emails'] ?? []);
+
+                // Finalize run as completed.
+                DiscoveryRun::where('id', $run->id)->update([
+                    'status'         => 'completed',
+                    'contacts_count' => $count,
+                    'companies_count'=> 0,
+                    'finished_at'    => now(),
+                ]);
+
+                return response()->json([
+                    'message'        => 'success',
+                    'text'           => "{$count} contact(s) récupéré(s) — 1 crédit consommé.",
+                    'contacts_count' => $count,
+                ], 200);
+            }
+
+            // Hunter returned null — no data for this domain.
+            DiscoveryRun::where('id', $run->id)->update([
+                'status'         => 'completed',
+                'contacts_count' => 0,
+                'companies_count'=> 0,
+                'finished_at'    => now(),
+            ]);
+
+            return response()->json([
+                'message' => 'success',
+                'text'    => 'Aucun contact trouvé pour ce domaine — 1 crédit consommé.',
+            ], 200);
+
+        } catch (\Throwable $e) {
+            Log::error('[CompanyController::enrich] Enrichment failed', [
+                'company_id' => $company->id,
+                'domain'     => $company->domain,
+                'error'      => $e->getMessage(),
+            ]);
+
+            DiscoveryRun::where('id', $run->id)->update([
+                'status'      => 'failed',
+                'error'       => Str::limit($e->getMessage(), 1000),
+                'finished_at' => now(),
+            ]);
+
+            return response()->json([
+                'message' => 'error',
+                'text'    => "Erreur lors de l'enrichissement — réessayez.",
+            ], 500);
+        }
+    }
+
+    /**
+     * Map a country name or code to an ISO-3166-1 alpha-2 code.
+     * Bare 2-char inputs that are already a code pass through uppercased.
+     * Mirrors DiscoveryPipelineService::mapIso2() — inlined to avoid coupling.
+     */
+    private function mapIso2(?string $country): ?string
+    {
+        if ($country === null || $country === '') {
+            return null;
+        }
+
+        if (strlen($country) === 2) {
+            return strtoupper($country);
+        }
+
+        $map = [
+            'france'          => 'FR',
+            'maroc'           => 'MA',
+            'morocco'         => 'MA',
+            'espagne'         => 'ES',
+            'spain'           => 'ES',
+            'belgique'        => 'BE',
+            'belgium'         => 'BE',
+            'allemagne'       => 'DE',
+            'germany'         => 'DE',
+            'italie'          => 'IT',
+            'italy'           => 'IT',
+            'portugal'        => 'PT',
+            'pays-bas'        => 'NL',
+            'netherlands'     => 'NL',
+            'suisse'          => 'CH',
+            'switzerland'     => 'CH',
+            'sénégal'         => 'SN',
+            'senegal'         => 'SN',
+            "côte d'ivoire"   => 'CI',
+            'ivory coast'     => 'CI',
+            'tunisie'         => 'TN',
+            'tunisia'         => 'TN',
+            'algérie'         => 'DZ',
+            'algeria'         => 'DZ',
+            'chine'           => 'CN',
+            'china'           => 'CN',
+            'états-unis'      => 'US',
+            'united states'   => 'US',
+            'usa'             => 'US',
+            'royaume-uni'     => 'GB',
+            'united kingdom'  => 'GB',
+            'uk'              => 'GB',
+            'turquie'         => 'TR',
+            'turkey'          => 'TR',
+            'pologne'         => 'PL',
+            'poland'          => 'PL',
+            'roumanie'        => 'RO',
+            'romania'         => 'RO',
+        ];
+
+        return $map[strtolower(trim($country))] ?? null;
     }
 }
