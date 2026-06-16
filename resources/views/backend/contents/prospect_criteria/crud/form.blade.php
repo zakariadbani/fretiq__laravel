@@ -118,10 +118,10 @@
                                            value="{{ old('daily_limit', $model->daily_limit ?? 20) }}"
                                            min="1"
                                            max="500" />
-                                    <span class="input-group-text fw-semibold text-gray-500">contacts / jour</span>
+                                    <span class="input-group-text fw-semibold text-gray-500">entreprises / jour</span>
                                 </div>
                                 <div class="form-text text-muted mt-1">
-                                    Nombre maximum de contacts découverts par jour pour ce critère.
+                                    Nombre maximum d'entreprises découvertes par jour pour ce critère. Chaque entreprise déclenche un enrichissement (consommation de crédits) — cette limite plafonne le coût quotidien et la cadence d'envoi.
                                 </div>
                             </div>
 

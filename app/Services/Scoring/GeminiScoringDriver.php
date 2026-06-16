@@ -31,7 +31,7 @@ class GeminiScoringDriver implements ScoringDriverInterface
             return null;
         }
 
-        $model  = config('services.gemini.model', 'gemini-2.0-flash');
+        $model  = config('services.gemini.model', 'gemini-2.5-flash');
         $prompt = $this->buildPrompt($candidate, $criteria);
 
         try {

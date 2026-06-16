@@ -36,8 +36,8 @@
                 $label   = $credits === null ? 'Illimité' : $credits;
                 $since   = $activeAssignment->created_at ? $activeAssignment->created_at->format('d/m/Y') : '—';
                 $by      = optional($activeAssignment->assignedBy)->name ?? 'Système';
-                // Cost guardrail: daily_credits × 30 = max Hunter calls/mois
-                $maxHunterMonth = $credits !== null ? ($credits * 30) : null;
+                // Cost guardrail: daily_credits × 30 = max enrichment calls/mois
+                $maxCallsMonth = $credits !== null ? ($credits * 30) : null;
             @endphp
 
             <div class="d-flex align-items-center mb-4">
@@ -47,19 +47,19 @@
                     </span>
                 </div>
                 <div>
-                    <span class="fw-bold fs-4 text-gray-800 me-2">{{ e($pkg->name) }}</span>
+                    <span class="fw-bold fs-4 text-gray-800 me-2">{{ $pkg->name }}</span>
                     @if($credits === null)
                         <span class="badge badge-light-success">Illimité</span>
                     @else
                         <span class="badge badge-light-primary">{{ $credits }} crédits/jour</span>
                     @endif
                     <div class="text-muted fs-7 mt-1">
-                        Assigné le {{ $since }} par <strong>{{ e($by) }}</strong>
+                        Assigné le {{ $since }} par <strong>{{ $by }}</strong>
                     </div>
-                    @if($maxHunterMonth !== null)
+                    @if($maxCallsMonth !== null)
                         <div class="text-muted fs-7 mt-1">
                             <i class="bi bi-info-circle me-1"></i>
-                            Coût indicatif&nbsp;: {{ $credits }} × 30 = <strong>{{ $maxHunterMonth }}</strong> appels Hunter max / mois
+                            Coût indicatif&nbsp;: {{ $credits }} × 30 = <strong>{{ $maxCallsMonth }}</strong> crédits de découverte max / mois
                         </div>
                     @endif
                 </div>
@@ -80,7 +80,7 @@
                     <option value="{{ $pkg->id }}"
                         {{ ($activeAssignment && $activeAssignment->package_id === $pkg->id) ? 'selected' : '' }}
                         data-credits="{{ $pkg->daily_credits ?? 'null' }}">
-                        {{ e($pkg->name) }}
+                        {{ $pkg->name }}
                         {{ $pkg->daily_credits === null ? '(Illimité)' : '(' . $pkg->daily_credits . ' crédits/j)' }}
                     </option>
                 @endforeach
@@ -249,10 +249,10 @@
                     }
                     var credits = opt.getAttribute('data-credits');
                     if (credits === 'null' || credits === null) {
-                        guardrail.textContent = 'Pack illimité — aucune limite Hunter.';
+                        guardrail.textContent = 'Pack illimité — aucune limite de découverte.';
                     } else {
                         var max = parseInt(credits, 10) * 30;
-                        guardrail.textContent = credits + ' × 30 = ' + max + ' appels Hunter max / mois';
+                        guardrail.textContent = credits + ' × 30 = ' + max + ' crédits de découverte max / mois';
                     }
                 }
                 sel.addEventListener('change', updateGuardrail);

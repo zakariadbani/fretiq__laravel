@@ -62,7 +62,7 @@
                         </h3>
                     </div>
                     <div class="card-body border-top">
-                        <p class="text-gray-700 mb-0" style="white-space: pre-wrap;">{{ e($model->notes) }}</p>
+                        <p class="text-gray-700 mb-0" style="white-space: pre-wrap;">{{ $model->notes }}</p>
                     </div>
                 </div>
             </div>

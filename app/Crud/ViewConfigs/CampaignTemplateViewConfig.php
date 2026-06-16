@@ -72,8 +72,9 @@ class CampaignTemplateViewConfig
         // ── Tabs ──────────────────────────────────────────────────────────────
         // Two tabs: Aperçu (view) + Général (edit). No out-of-form panes.
         $tabs = [
-            ['key' => 'apercu',  'label' => 'Aperçu',  'icon' => 'bi-grid',     'mode' => 'view'],
-            ['key' => 'general', 'label' => 'Général', 'icon' => 'bi-envelope', 'mode' => 'edit'],
+            ['key' => 'apercu',      'label' => 'Aperçu',      'icon' => 'bi-grid',      'mode' => 'view'],
+            ['key' => 'general',     'label' => 'Général',     'icon' => 'bi-envelope',  'mode' => 'edit'],
+            ['key' => 'traductions', 'label' => 'Traductions', 'icon' => 'bi-translate', 'mode' => 'edit', 'out_of_form' => true],
         ];
 
         // ── Detail rows ───────────────────────────────────────────────────────

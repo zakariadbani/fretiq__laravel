@@ -59,3 +59,6 @@ icon-audit/
 TODOS.md
 graphify-out/
 .claude/settings.local.json
+.cleanup-snapshots/
+CLEANUP.md
+phpstan-output.txt

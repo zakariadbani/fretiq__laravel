@@ -107,7 +107,7 @@
 
                 Swal.fire({
                     title: 'Récupérer les contacts ?',
-                    text: "Cette action interrogera Hunter et consommera 1 crédit de découverte.",
+                    text: "Cette action consommera 1 crédit de découverte.",
                     icon: 'question',
                     showCancelButton: true,
                     confirmButtonText: 'Récupérer',

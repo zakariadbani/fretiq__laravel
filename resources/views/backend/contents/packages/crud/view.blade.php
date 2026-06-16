@@ -1,7 +1,7 @@
 <x-default-layout>
 
 @section('title')
-    Pack — {{ e($model->name) }}
+    Pack — {{ $model->name }}
 @endsection
 
 @section('breadcrumbs')
@@ -18,7 +18,7 @@
         <li class="breadcrumb-item">
             <span class="bullet bg-gray-500 w-5px h-2px"></span>
         </li>
-        <li class="breadcrumb-item text-muted">{{ e($model->name) }}</li>
+        <li class="breadcrumb-item text-muted">{{ $model->name }}</li>
     </ul>
 @endsection
 
@@ -57,9 +57,9 @@
                     </button>
                     <span class="text-muted fs-7">
                         @if($model->daily_credits === null)
-                            Pack illimité — aucune limite Hunter.
+                            Pack illimité — aucune limite de découverte.
                         @else
-                            {{ $model->daily_credits }} × 30 = {{ $model->daily_credits * 30 }} appels Hunter max / mois
+                            {{ $model->daily_credits }} × 30 = {{ $model->daily_credits * 30 }} crédits de découverte max / mois
                         @endif
                     </span>
                 </form>

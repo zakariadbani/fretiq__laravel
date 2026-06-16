@@ -191,7 +191,7 @@
                                 {{ $row->contact?->email ? e($row->contact->email) : '—' }}
                             </span>
                             @if($row->contact?->company)
-                            <div class="text-muted fs-7">{{ e($row->contact->company->name) }}</div>
+                            <div class="text-muted fs-7">{{ $row->contact->company->name }}</div>
                             @endif
                         </td>
                         @if(!$isRunScope)

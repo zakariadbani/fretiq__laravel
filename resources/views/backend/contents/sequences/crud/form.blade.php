@@ -318,7 +318,7 @@
                                     <option value="">Sélectionner un modèle...</option>
                                     @foreach($templates as $tpl)
                                         <option value="{{ $tpl->id }}" {{ old('template_id') == $tpl->id ? 'selected' : '' }}>
-                                            {{ e($tpl->name) }}
+                                            {{ $tpl->name }}
                                         </option>
                                     @endforeach
                                 </select>

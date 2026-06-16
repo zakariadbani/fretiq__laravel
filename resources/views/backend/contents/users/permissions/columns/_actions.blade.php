@@ -8,13 +8,13 @@
             data-bs-toggle="modal"
             data-bs-target="#kt_modal_update_permission"
             data-permission-id="{{ $permission->id }}"
-            data-permission-name="{{ e($permission->name) }}"
+            data-permission-name="{{ $permission->name }}"
             title="Modifier">
         <i class="bi bi-pencil fs-4"></i>
     </button>
     <button type="button"
             class="btn btn-icon btn-bg-light btn-active-color-danger btn-sm"
-            onclick="deletePermission({{ $permission->id }}, '{{ e($permission->name) }}')"
+            onclick="deletePermission({{ $permission->id }}, '{{ $permission->name }}')"
             title="Supprimer">
         <i class="bi bi-trash fs-4"></i>
     </button>

@@ -1,7 +1,7 @@
 <x-default-layout>
 
 @section('title')
-    Entreprise — {{ e($model->name) }}
+    Entreprise — {{ $model->name }}
 @endsection
 
 @section('breadcrumbs')
@@ -18,7 +18,7 @@
         <li class="breadcrumb-item">
             <span class="bullet bg-gray-500 w-5px h-2px"></span>
         </li>
-        <li class="breadcrumb-item text-muted">{{ e($model->name) }}</li>
+        <li class="breadcrumb-item text-muted">{{ $model->name }}</li>
     </ul>
 @endsection
 
@@ -76,7 +76,7 @@
     <script src="{{ asset('assets/js/custom/backend/crud-charts.js') }}"></script>
     <script>
         /**
-         * enrichCompany — manual Hunter enrichment for a single company.
+         * enrichCompany — manual enrichment for a single company.
          *
          * Mirrors launchDiscovery() structure from prospect_criteria view.
          * Swal confirm → fetch POST → toastr → reload after 800 ms on success.
@@ -87,7 +87,7 @@
         window.enrichCompany = function (id, csrfToken) {
             Swal.fire({
                 title: 'Récupérer les contacts ?',
-                text: "Cette action interrogera Hunter et consommera 1 crédit de découverte.",
+                text: "Cette action consommera 1 crédit de découverte.",
                 icon: 'question',
                 showCancelButton: true,
                 confirmButtonText: 'Récupérer',

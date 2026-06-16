@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Mail\Concerns\RendersTrackedHtml;
 use App\Models\Campaign;
 use App\Models\CampaignTemplate;
 use App\Models\Contact;
@@ -22,6 +23,8 @@ use Illuminate\Mail\Mailables\Headers;
  */
 class CampaignMailable extends Mailable
 {
+    use RendersTrackedHtml;
+
     public function __construct(
         private readonly Campaign         $campaign,
         private readonly CampaignTemplate $template,
@@ -29,6 +32,8 @@ class CampaignMailable extends Mailable
         private readonly string           $subjectLine,
         private readonly string           $trackingToken,
         private readonly string           $unsubscribeUrl,
+        private readonly string           $resolvedHtml = '',
+        private readonly string           $language = 'fr',
     ) {}
 
     /**
@@ -72,40 +77,6 @@ class CampaignMailable extends Mailable
         );
     }
 
-    // ── Public helpers ─────────────────────────────────────────────────────────
-
-    /**
-     * Replace merge tags in any text string for a given contact.
-     *
-     * Supported tokens (identical set for both subject and body):
-     *   {{contact.name}}, {{contact.email}}, {{company.name}}, {{unsubscribe_url}}
-     *
-     * Values are HTML-escaped so the result is safe to embed directly in HTML.
-     * For the subject line (plain text) the e() escaping is a no-op for normal
-     * names and is the safest default — callers that need raw text can strip_tags
-     * afterwards if required.
-     */
-    public static function renderMergeTags(
-        string  $text,
-        Contact $contact,
-        string  $unsubscribeUrl,
-    ): string {
-        $company = $contact->company;
-
-        $replacements = [
-            '{{contact.name}}'    => e($contact->name ?? ''),
-            '{{contact.email}}'   => e($contact->email ?? ''),
-            '{{company.name}}'    => e($company?->name ?? ''),
-            '{{unsubscribe_url}}' => $unsubscribeUrl,
-        ];
-
-        return str_replace(
-            array_keys($replacements),
-            array_values($replacements),
-            $text,
-        );
-    }
-
     // ── Private helpers ────────────────────────────────────────────────────────
 
     /**
@@ -114,23 +85,9 @@ class CampaignMailable extends Mailable
      */
     private function renderHtml(): string
     {
-        $html = self::renderMergeTags(
-            $this->template->html_content ?? '',
-            $this->contact,
-            $this->unsubscribeUrl,
-        );
+        $source = $this->resolvedHtml !== '' ? $this->resolvedHtml : ($this->template->html_content ?? '');
+        $html   = self::renderMergeTags($source, $this->contact, $this->unsubscribeUrl);
 
-        // Tracking pixel — 1×1 transparent GIF loaded via APP_URL/track/open/{token}
-        $pixelUrl = rtrim(config('app.url'), '/') . '/track/open/' . $this->trackingToken;
-        $pixel    = '<img src="' . e($pixelUrl) . '" width="1" height="1" alt="" '
-                  . 'style="display:none;width:1px;height:1px;" />';
-
-        // Unsubscribe footer (plain link — keeps it minimal and deliverable)
-        $unsubscribeBlock = '<div style="margin-top:24px;font-size:11px;color:#888;font-family:sans-serif;">'
-            . 'Vous recevez cet email car vous faites partie de notre liste de contacts professionnels. '
-            . '<a href="' . $this->unsubscribeUrl . '" style="color:#888;">Se désabonner</a>'
-            . '</div>';
-
-        return $html . "\n" . $pixel . "\n" . $unsubscribeBlock;
+        return $this->appendTrackingPixelAndFooter($html, $this->trackingToken, $this->unsubscribeUrl, $this->language);
     }
 }

@@ -10,6 +10,7 @@ Route::controller(CampaignController::class)->prefix('admin')->name('admin.')->g
 
     // Action routes — before {id} to avoid ambiguity
     Route::get('/campaigns/segment-count/{id}', 'segmentCount')->name('campaigns.segmentCount');
+    Route::post('/campaigns/audience-language-split', 'audienceLanguageSplit')->name('campaigns.audienceLanguageSplit');
     Route::post('/campaigns/{id}/schedule', 'schedule')->name('campaigns.schedule');
     Route::post('/campaigns/{id}/send', 'sendNow')->name('campaigns.sendNow');
     Route::post('/campaigns/{id}/recipients/{recipientId}/replied', 'markReplied')->name('campaigns.markReplied');

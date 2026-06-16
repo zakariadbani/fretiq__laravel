@@ -248,7 +248,7 @@
                                                 <div>
                                                     <a href="{{ route('admin.campaigns.view', $campaign['id']) }}"
                                                        class="text-gray-900 fw-bold text-hover-primary fs-6">
-                                                        {{ e($campaign['name']) }}
+                                                        {{ $campaign['name'] }}
                                                     </a>
                                                 </div>
                                             </div>

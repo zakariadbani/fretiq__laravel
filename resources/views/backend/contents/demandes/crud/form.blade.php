@@ -111,8 +111,8 @@
                                     @foreach($contacts as $contact)
                                         <option value="{{ $contact->id }}"
                                             {{ old('contact_id', $model->contact_id ?? '') == $contact->id ? 'selected' : '' }}>
-                                            {{ e($contact->name) }}
-                                            @if($contact->email) &lt;{{ e($contact->email) }}&gt; @endif
+                                            {{ $contact->name }}
+                                            @if($contact->email) &lt;{{ $contact->email }}&gt; @endif
                                         </option>
                                     @endforeach
                                 </select>

@@ -1,7 +1,7 @@
 <x-default-layout>
 
 @section('title')
-    Séquence — {{ e($model->name) }}
+    Séquence — {{ $model->name }}
 @endsection
 
 @section('breadcrumbs')
@@ -18,7 +18,7 @@
         <li class="breadcrumb-item">
             <span class="bullet bg-gray-500 w-5px h-2px"></span>
         </li>
-        <li class="breadcrumb-item text-muted">{{ e($model->name) }}</li>
+        <li class="breadcrumb-item text-muted">{{ $model->name }}</li>
     </ul>
 @endsection
 
@@ -173,7 +173,7 @@
                                     <option value="">Sélectionner un modèle...</option>
                                     @foreach($templates as $tpl)
                                         <option value="{{ $tpl->id }}" {{ old('template_id') == $tpl->id ? 'selected' : '' }}>
-                                            {{ e($tpl->name) }}
+                                            {{ $tpl->name }}
                                         </option>
                                     @endforeach
                                 </select>

@@ -33,6 +33,6 @@
     @endphp
     <span class="badge {{ $badgeClass }} fs-7 fw-semibold">
         <i class="bi bi-coin me-1"></i>
-        Crédits du jour : {{ $quotaRemaining }} / {{ $daily }} &middot; Pack {{ e($packName) }}
+        Crédits du jour : {{ $quotaRemaining }} / {{ $daily }} &middot; Pack {{ $packName }}
     </span>
 @endif

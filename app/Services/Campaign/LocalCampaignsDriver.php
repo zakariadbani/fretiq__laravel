@@ -42,9 +42,15 @@ class LocalCampaignsDriver implements CampaignsClient
         $contact  = $recipient->contact ?? $recipient->load('contact')->contact;
         $template = $campaign->template  ?? $campaign->load('template')->template;
 
+        // Resolve the language-appropriate body + subject for this contact's country.
+        // resolveFor() is N+1-safe when template.translations is already eager-loaded
+        // (CampaignService::sendRun loads it); on the driver path without that preload
+        // it does one extra query per recipient, which is acceptable.
+        $resolved = $template->resolveFor($contact->company?->country);
+
         // The subject comes from the campaign (may override the template default).
         // Merge tags are substituted per-recipient so each contact sees their own name.
-        $rawSubject = $campaign->subject ?: $template->subject;
+        $rawSubject = $campaign->subject ?: $resolved['subject'];
         $subject    = CampaignMailable::renderMergeTags($rawSubject, $contact, $unsubscribeUrl);
 
         $mailable = new CampaignMailable(
@@ -54,6 +60,8 @@ class LocalCampaignsDriver implements CampaignsClient
             subjectLine:    $subject,
             trackingToken:  $trackingToken,
             unsubscribeUrl: $unsubscribeUrl,
+            resolvedHtml:   $resolved['html_content'],
+            language:       $resolved['language'],
         );
 
         Mail::to($contact->email)->send($mailable);

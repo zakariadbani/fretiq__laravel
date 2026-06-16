@@ -119,14 +119,14 @@
                                     <span class="text-muted fw-semibold fs-7">{{ $job->id }}</span>
                                 </td>
                                 <td>
-                                    <span class="badge badge-light-primary">{{ e($job->queue) }}</span>
+                                    <span class="badge badge-light-primary">{{ $job->queue }}</span>
                                 </td>
                                 <td>
-                                    <span class="text-gray-700 fs-7">{{ e($job->connection) }}</span>
+                                    <span class="text-gray-700 fs-7">{{ $job->connection }}</span>
                                 </td>
                                 <td>
-                                    <span class="text-danger fw-semibold fs-7" title="{{ e($job->exception) }}">
-                                        {{ e(\Illuminate\Support\Str::limit($job->exception, 120)) }}
+                                    <span class="text-danger fw-semibold fs-7" title="{{ $job->exception }}">
+                                        {{ \Illuminate\Support\Str::limit($job->exception, 120) }}
                                     </span>
                                 </td>
                                 <td>
@@ -186,7 +186,7 @@
                                             @if ($run->campaign)
                                                 <a href="{{ route('admin.campaigns.view', $run->campaign_id) }}"
                                                    class="text-gray-900 fw-bold text-hover-primary fs-6">
-                                                    {{ e($run->campaign->name) }}
+                                                    {{ $run->campaign->name }}
                                                 </a>
                                             @else
                                                 <span class="text-muted fw-semibold fs-6">Campagne supprimée</span>
@@ -203,7 +203,7 @@
                                     </span>
                                 </td>
                                 <td class="text-center">
-                                    <span class="badge badge-light-danger">{{ e($run->status) }}</span>
+                                    <span class="badge badge-light-danger">{{ $run->status }}</span>
                                 </td>
                                 <td class="text-center">
                                     <span class="fw-bold text-gray-900">{{ number_format($run->stats_sent ?? 0) }}</span>

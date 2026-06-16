@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Mail\Concerns\RendersTrackedHtml;
 use App\Models\Contact;
 use App\Models\SenderIdentity;
 use App\Models\SequenceStep;
@@ -28,6 +29,8 @@ use Illuminate\Mail\Mailables\Headers;
  */
 class SequenceStepMailable extends Mailable
 {
+    use RendersTrackedHtml;
+
     public function __construct(
         private readonly SequenceStep    $step,
         private readonly Contact         $contact,
@@ -35,6 +38,8 @@ class SequenceStepMailable extends Mailable
         private readonly string          $trackingToken,
         private readonly string          $unsubscribeUrl,
         private readonly ?SenderIdentity $senderIdentity = null,
+        private readonly string          $resolvedHtml = '',
+        private readonly string          $language = 'fr',
     ) {}
 
     /**
@@ -93,34 +98,10 @@ class SequenceStepMailable extends Mailable
      */
     private function renderHtml(): string
     {
-        $contact = $this->contact;
-        $company = $contact->company;
         $template = $this->step->template;
+        $source   = $this->resolvedHtml !== '' ? $this->resolvedHtml : ($template->html_content ?? '');
+        $html     = self::renderMergeTags($source, $this->contact, $this->unsubscribeUrl);
 
-        $replacements = [
-            '{{contact.name}}'    => e($contact->name ?? ''),
-            '{{contact.email}}'   => e($contact->email ?? ''),
-            '{{company.name}}'    => e($company?->name ?? ''),
-            '{{unsubscribe_url}}' => $this->unsubscribeUrl,
-        ];
-
-        $html = str_replace(
-            array_keys($replacements),
-            array_values($replacements),
-            $template->html_content ?? '',
-        );
-
-        // Tracking pixel — 1×1 transparent GIF loaded via APP_URL/track/open/{token}
-        $pixelUrl = rtrim(config('app.url'), '/') . '/track/open/' . $this->trackingToken;
-        $pixel    = '<img src="' . e($pixelUrl) . '" width="1" height="1" alt="" '
-                  . 'style="display:none;width:1px;height:1px;" />';
-
-        // Unsubscribe footer (matches CampaignMailable wording)
-        $unsubscribeBlock = '<div style="margin-top:24px;font-size:11px;color:#888;font-family:sans-serif;">'
-            . 'Vous recevez cet email car vous faites partie de notre liste de contacts professionnels. '
-            . '<a href="' . $this->unsubscribeUrl . '" style="color:#888;">Se désabonner</a>'
-            . '</div>';
-
-        return $html . "\n" . $pixel . "\n" . $unsubscribeBlock;
+        return $this->appendTrackingPixelAndFooter($html, $this->trackingToken, $this->unsubscribeUrl, $this->language);
     }
 }

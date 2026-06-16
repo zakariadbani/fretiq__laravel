@@ -17,6 +17,7 @@ use App\Models\SenderIdentity;
 use App\Services\Campaign\CampaignService;
 use App\Services\Campaign\SegmentService;
 use App\Services\Demande\DemandeCaptureService;
+use App\Services\Translation\LanguageResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -461,6 +462,93 @@ class CampaignController extends BackendController
         }
 
         return response()->json(['count' => $count]);
+    }
+
+    /**
+     * Return the audience language split for a segment + optional template.
+     *
+     * POST /campaigns/audience-language-split
+     * Body: segment_id (required), template_id (optional)
+     *
+     * Returns JSON:
+     *   fr               int  — contacts resolved to French
+     *   en               int  — contacts resolved to English
+     *   unknown          int  — contacts with no country (mapped to FR at send time)
+     *   total            int
+     *   has_en           bool — template has an EN translation
+     *   en_stale         bool — EN translation exists but is out of date
+     *   warning          bool — en > 0 AND (no EN translation OR EN is stale)
+     *   template_edit_url string|null — deep-link to Traductions tab
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function audienceLanguageSplit(Request $request)
+    {
+        abort_unless($request->user()->can('view campaigns'), 403);
+
+        $validated = $request->validate([
+            'segment_id'  => ['required', 'integer', 'exists:segments,id'],
+            'template_id' => ['nullable', 'integer', 'exists:campaign_templates,id'],
+        ]);
+
+        $segment = Segment::findOrFail((int) $validated['segment_id']);
+
+        // ── Bucket contacts by language ───────────────────────────────────────
+        $fr      = 0;
+        $en      = 0;
+        $unknown = 0;
+
+        try {
+            $contacts  = app(SegmentService::class)->resolve($segment);
+            $baseLang  = config('translation.base_language', 'fr');
+            $resolver  = app(LanguageResolver::class);
+
+            foreach ($contacts as $contact) {
+                $country = $contact->company?->country;
+
+                if (blank($country)) {
+                    $unknown++;
+                } elseif ($resolver->forCountry($country) === $baseLang) {
+                    $fr++;
+                } else {
+                    $en++;
+                }
+            }
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error'   => true,
+                'message' => 'Impossible de résoudre le segment.',
+            ], 200); // soft error — form stays usable
+        }
+
+        // ── Template EN status ────────────────────────────────────────────────
+        $hasEn      = false;
+        $enStale    = false;
+        $editUrl    = null;
+        $templateId = isset($validated['template_id']) ? (int) $validated['template_id'] : null;
+
+        if ($templateId) {
+            $tpl = CampaignTemplate::with('translations')->find($templateId);
+            if ($tpl) {
+                $tr      = $tpl->translationFor('en');
+                $hasEn   = $tr !== null;
+                $enStale = $hasEn && count($tpl->staleFieldsFor($tr)) > 0;
+                $editUrl = route('admin.campaign_templates.edit', $tpl->id) . '#template_traductions';
+            }
+        }
+
+        $warning = $en > 0 && (! $hasEn || $enStale);
+
+        return response()->json([
+            'fr'                => $fr,
+            'en'                => $en,
+            'unknown'           => $unknown,
+            'total'             => $fr + $en + $unknown,
+            'has_en'            => $hasEn,
+            'en_stale'          => $enStale,
+            'warning'           => $warning,
+            'template_edit_url' => $editUrl,
+        ]);
     }
 
     /**

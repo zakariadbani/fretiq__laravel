@@ -1,7 +1,7 @@
 <x-default-layout>
 
 @section('title')
-    Segment — {{ e($model->name) }}
+    Segment — {{ $model->name }}
 @endsection
 
 @section('breadcrumbs')
@@ -18,7 +18,7 @@
         <li class="breadcrumb-item">
             <span class="bullet bg-gray-500 w-5px h-2px"></span>
         </li>
-        <li class="breadcrumb-item text-muted">{{ e($model->name) }}</li>
+        <li class="breadcrumb-item text-muted">{{ $model->name }}</li>
     </ul>
 @endsection
 
@@ -93,7 +93,7 @@
                                     <span class="text-muted">Tous</span>
                                 @else
                                     @foreach($sectors as $s)
-                                        <span class="badge badge-light me-1 mb-1">{{ e($s) }}</span>
+                                        <span class="badge badge-light me-1 mb-1">{{ $s }}</span>
                                     @endforeach
                                 @endif
                             </div>
@@ -125,7 +125,7 @@
                                         $statusLabel = $statusCfg['label'] ?? $filterStatus;
                                         $statusColor = $statusCfg['color'] ?? 'secondary';
                                     @endphp
-                                    <span class="badge badge-light-{{ e($statusColor) }}">{{ e($statusLabel) }}</span>
+                                    <span class="badge badge-light-{{ $statusColor }}">{{ $statusLabel }}</span>
                                 @endif
                             </div>
                         </div>

@@ -91,18 +91,27 @@ class ProspectCriteriaController extends BackendController
             return redirect(route('admin.prospect_criteria.index'));
         }
 
+        // Paginate discovered companies first so we can reuse ->total() in the
+        // ViewConfig stat card — avoids a second COUNT query.
+        $resultCompanies = $model->companies()
+            ->with('contacts')
+            ->latest('id')
+            ->paginate(25, ['*'], 'results_page');
+
         $view = $this->getView('backend.contents.prospect_criteria.crud.view');
         $view->with('title', __('overview'))
              ->with('model', $model);
 
-        $viewConfig = $this->buildViewConfig($model);
-        if ($viewConfig !== null) {
-            $view->with('viewConfig', $viewConfig);
-        }
+        $viewConfig = \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::make(
+            $model,
+            ['discovered_total' => $resultCompanies->total()]
+        );
+        $view->with('viewConfig', $viewConfig);
 
         [$quotaRemaining, $quotaPackage] = $this->resolveQuotaVars($quotaService);
         $view->with('quotaRemaining', $quotaRemaining)
-             ->with('quotaPackage', $quotaPackage);
+             ->with('quotaPackage', $quotaPackage)
+             ->with('resultCompanies', $resultCompanies);
 
         return $view;
     }

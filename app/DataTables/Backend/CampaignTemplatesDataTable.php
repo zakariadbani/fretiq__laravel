@@ -5,6 +5,7 @@ namespace App\DataTables\Backend;
 use App\DataTables\BackendDataTable;
 use App\Models\CampaignTemplate;
 use Illuminate\Http\Request;
+use App\Models\CampaignTemplateTranslation;
 
 class CampaignTemplatesDataTable extends BackendDataTable
 {
@@ -30,6 +31,12 @@ class CampaignTemplatesDataTable extends BackendDataTable
             'orderable'  => true,
             'searchable' => false,
         ],
+        'traductions' => [
+            'title'      => 'EN',
+            'orderable'  => false,
+            'searchable' => false,
+            'raw'        => true,
+        ],
     ];
 
     public function __construct(CampaignTemplate $model, Request $request)
@@ -39,10 +46,11 @@ class CampaignTemplatesDataTable extends BackendDataTable
 
     /**
      * Get query source for DataTable.
+     * Eager-load translations to avoid N+1 in the coverage column.
      */
     public function query()
     {
-        return $this->currentModel->newQuery();
+        return $this->currentModel->newQuery()->with('translations');
     }
 
     protected function createEditColumns(): void
@@ -55,6 +63,22 @@ class CampaignTemplatesDataTable extends BackendDataTable
             return '<span class="text-truncate d-inline-block" style="max-width:200px;" title="' . e($row->preview_text) . '">'
                 . e(\Str::limit($row->preview_text, 60))
                 . '</span>';
+        });
+
+        // EN coverage chip — translations relation is already eager-loaded in query()
+        $this->datatables->addColumn('traductions', function (CampaignTemplate $tpl) {
+            $tr = $tpl->translationFor('en');
+
+            if ($tr === null) {
+                return '<span class="badge badge-light-secondary">EN —</span>';
+            }
+
+            $stale = $tpl->staleFieldsFor($tr);
+            if (count($stale) > 0) {
+                return '<span class="badge badge-light-warning">EN obsolète</span>';
+            }
+
+            return '<span class="badge badge-light-success">EN à jour</span>';
         });
     }
 

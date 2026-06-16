@@ -1,7 +1,7 @@
 <x-default-layout>
 
 @section('title')
-    Suppression — {{ e($model->email) }}
+    Suppression — {{ $model->email }}
 @endsection
 
 @section('breadcrumbs')
@@ -18,7 +18,7 @@
         <li class="breadcrumb-item">
             <span class="bullet bg-gray-500 w-5px h-2px"></span>
         </li>
-        <li class="breadcrumb-item text-muted">{{ e($model->email) }}</li>
+        <li class="breadcrumb-item text-muted">{{ $model->email }}</li>
     </ul>
 @endsection
 
@@ -53,7 +53,7 @@
                 <div class="row mb-7">
                     <label class="col-lg-4 fw-bold text-muted">Email</label>
                     <div class="col-lg-8">
-                        <span class="fw-bolder fs-6 text-gray-900">{{ e($model->email) }}</span>
+                        <span class="fw-bolder fs-6 text-gray-900">{{ $model->email }}</span>
                     </div>
                 </div>
 
@@ -90,7 +90,7 @@
                     <div class="col-lg-8">
                         @if($model->contact)
                             <a href="{{ route('admin.contacts.view', $model->contact->id) }}" class="fw-semibold text-primary">
-                                {{ e($model->contact->email) }}
+                                {{ $model->contact->email }}
                             </a>
                         @else
                             <span class="text-muted">—</span>

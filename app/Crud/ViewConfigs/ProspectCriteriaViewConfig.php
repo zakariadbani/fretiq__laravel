@@ -83,10 +83,17 @@ class ProspectCriteriaViewConfig
             ? $model->discoveryRuns()->count()
             : null;
 
+        // Hoist discoveredCount here so both the Résultats tab badge and the
+        // stat card below share the same value (no duplicate COUNT query).
+        $discoveredCount = ($hasId && isset($stats['discovered_total']))
+            ? $stats['discovered_total']
+            : ($hasId ? $model->companies()->count() : null);
+
         $tabs = [
-            ['key' => 'apercu',     'label' => 'Aperçu',     'icon' => 'bi-grid',         'mode' => 'view'],
-            ['key' => 'historique', 'label' => 'Historique', 'icon' => 'bi-clock-history', 'mode' => 'view', 'count' => $runsCount],
-            ['key' => 'general',    'label' => 'Général',    'icon' => 'bi-sliders',       'mode' => 'edit'],
+            ['key' => 'apercu',     'label' => 'Aperçu',     'icon' => 'bi-grid',           'mode' => 'view'],
+            ['key' => 'historique', 'label' => 'Historique', 'icon' => 'bi-clock-history',  'mode' => 'view', 'count' => $runsCount],
+            ['key' => 'resultats',  'label' => 'Résultats',  'icon' => 'bi-building-check',  'mode' => 'view', 'count' => $discoveredCount],
+            ['key' => 'general',    'label' => 'Général',    'icon' => 'bi-sliders',         'mode' => 'edit'],
         ];
 
         // ── Detail rows ───────────────────────────────────────────────────────
@@ -115,10 +122,7 @@ class ProspectCriteriaViewConfig
         }
 
         // ── Stat cards ────────────────────────────────────────────────────────
-        // CTA N: all-time attributed total (companies with this criteria_id).
-        $discoveredCount = ($hasId && isset($stats['discovered_total']))
-            ? $stats['discovered_total']
-            : ($hasId ? $model->companies()->count() : null);
+        // $discoveredCount is hoisted above the $tabs array (shared with tab badge).
 
         // Discovery run stat — guard with Schema::hasTable so the page renders
         // safely before the discovery_runs migration has been executed.

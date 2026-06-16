@@ -10,10 +10,10 @@ use App\Models\EmailTrackingEvent;
 use App\Models\SequenceEnrollment;
 use App\Models\Suppression;
 use App\Services\Campaign\ZohoCampaignsDriver;
+use App\Support\TrackingToken;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
-use Illuminate\Support\Str;
 
 /**
  * CampaignService — orchestrates scheduling and sending of campaigns.
@@ -238,7 +238,7 @@ class CampaignService
         }
 
         // Reload the run with its relations now that we hold sending status.
-        $run->refresh()->load(['campaign.segment', 'campaign.template', 'campaign.senderIdentity']);
+        $run->refresh()->load(['campaign.segment', 'campaign.template.translations', 'campaign.senderIdentity']);
 
         // ── Send-window guard ─────────────────────────────────────────────────
         // If the campaign has a send_window configured and the current moment (in the
@@ -447,14 +447,10 @@ class CampaignService
      * Generate a 64-char lowercase hex tracking token.
      *
      * The token is derived from a SHA-256 of the run id, contact id, and a random
-     * 16-byte nonce so it is effectively unique even on retry.
+     * 32-char nonce so it is effectively unique even on retry.
      */
     private function generateTrackingToken(CampaignRun $run, \App\Models\Contact $contact): string
     {
-        $nonce = Str::random(32);
-        $raw   = hash('sha256', $run->id . '|' . $contact->id . '|' . $nonce);
-
-        // SHA-256 is already 64 hex chars — matches the token column size(64) rule.
-        return $raw;
+        return TrackingToken::generate($run->id, $contact->id);
     }
 }

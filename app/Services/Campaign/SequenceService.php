@@ -11,6 +11,7 @@ use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStepSend;
 use App\Models\Suppression;
+use App\Support\TrackingToken;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -162,7 +163,7 @@ class SequenceService
 
         // ── 2. Find the step ──────────────────────────────────────────────────
         /** @var \App\Models\SequenceStep|null $step */
-        $step = $sequence->steps()->where('step_no', $stepNo)->with('template')->first();
+        $step = $sequence->steps()->where('step_no', $stepNo)->with('template.translations')->first();
 
         if ($step === null) {
             // No more steps → enrollment complete.
@@ -239,8 +240,12 @@ class SequenceService
         $unsubscribeUrl = URL::signedRoute('unsubscribe', ['contact' => $contact->id]);
 
         // ── 8. Build subject line (step subject overrides template subject) ────
+        // Also resolve the language-appropriate body for this contact's country.
+        // template.translations is already eager-loaded above (with 'template.translations')
+        // so resolveFor() filters in PHP — no additional DB query per recipient.
         $template    = $step->template;
-        $subjectLine = $step->subject ?: ($template->subject ?? '');
+        $resolved    = $template->resolveFor($contact->company?->country);
+        $subjectLine = $step->subject ?: $resolved['subject'];
 
         // ── 9. Send via real Mailable — OUTSIDE any DB transaction ───────────
         // Resolve sender identity: prefer the originating campaign's sender identity;
@@ -250,12 +255,14 @@ class SequenceService
 
         try {
             $mailable = new SequenceStepMailable(
-                step: $step,
-                contact: $contact,
-                subjectLine: $subjectLine,
-                trackingToken: $token,
+                step:           $step,
+                contact:        $contact,
+                subjectLine:    $subjectLine,
+                trackingToken:  $token,
                 unsubscribeUrl: $unsubscribeUrl,
                 senderIdentity: $senderIdentity,
+                resolvedHtml:   $resolved['html_content'],
+                language:       $resolved['language'],
             );
 
             Mail::to($contact->email)->send($mailable);
@@ -373,11 +380,10 @@ class SequenceService
     /**
      * Generate a 64-char lowercase hex tracking token for a sequence step send.
      *
-     * Derived from a SHA-256 of enrollment_id, step_no, and a random nonce.
+     * Derived from a SHA-256 of enrollment_id, step_no, and a random 32-char nonce.
      */
     private function generateTrackingToken(SequenceEnrollment $e, int $stepNo): string
     {
-        $nonce = Str::random(32);
-        return hash('sha256', $e->id . '|' . $stepNo . '|' . $nonce);
+        return TrackingToken::generate($e->id, $stepNo);
     }
 }

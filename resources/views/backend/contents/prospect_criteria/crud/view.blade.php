@@ -1,7 +1,7 @@
 <x-default-layout>
 
 @section('title')
-    Critère — {{ e($model->name) }}
+    Critère — {{ $model->name }}
 @endsection
 
 @section('breadcrumbs')
@@ -18,7 +18,7 @@
         <li class="breadcrumb-item">
             <span class="bullet bg-gray-500 w-5px h-2px"></span>
         </li>
-        <li class="breadcrumb-item text-muted">{{ e($model->name) }}</li>
+        <li class="breadcrumb-item text-muted">{{ $model->name }}</li>
     </ul>
 @endsection
 
@@ -58,8 +58,17 @@
     </div>
     {{-- end Historique --}}
 
+    {{-- ── Tab 3: Résultats (inline discovered companies) ────────────────── --}}
+    <div class="tab-pane fade" id="criteria_resultats" role="tabpanel">
+        @include('backend.contents.prospect_criteria.partials._results-tab', [
+            'model'           => $model,
+            'resultCompanies' => $resultCompanies,
+        ])
+    </div>
+    {{-- end Résultats --}}
+
     {{--
-        Tab 3 (Général) is NOT a native pane here —
+        Tab 4 (Général) is NOT a native pane here —
         it deep-links to the edit page via the tab nav. No pane div needed.
     --}}
 

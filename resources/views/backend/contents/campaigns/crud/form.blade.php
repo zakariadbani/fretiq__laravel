@@ -123,7 +123,7 @@
                                     @foreach($senderIdentities as $identity)
                                         <option value="{{ $identity->id }}"
                                             {{ old('sender_identity_id', $model->sender_identity_id ?? '') == $identity->id ? 'selected' : '' }}>
-                                            {{ e($identity->name) }} &lt;{{ e($identity->email) }}&gt;
+                                            {{ $identity->name }} &lt;{{ $identity->email }}&gt;
                                             @if($identity->is_default) (défaut) @endif
                                         </option>
                                     @endforeach
@@ -162,7 +162,7 @@
                                     @foreach($segments as $segment)
                                         <option value="{{ $segment->id }}"
                                             {{ old('segment_id', $model->segment_id ?? '') == $segment->id ? 'selected' : '' }}>
-                                            {{ e($segment->name) }}
+                                            {{ $segment->name }}
                                         </option>
                                     @endforeach
                                 </select>
@@ -175,6 +175,14 @@
                                         @endif
                                     </span>
                                 </div>
+                                {{-- Audience language split (populated by JS when segment + template selected) --}}
+                                <div id="audience-lang-split" class="mt-3 d-none">
+                                    <div class="d-flex gap-2 flex-wrap mb-2" id="audience-lang-chips"></div>
+                                    <div id="audience-lang-warning" class="alert alert-warning d-flex align-items-center py-3 d-none">
+                                        <i class="bi bi-exclamation-triangle-fill fs-4 me-3 text-warning"></i>
+                                        <div></div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -186,9 +194,9 @@
                                     <option value="">Sélectionner un modèle...</option>
                                     @foreach($templates as $template)
                                         <option value="{{ $template->id }}"
-                                                data-subject="{{ e($template->subject) }}"
+                                                data-subject="{{ $template->subject }}"
                                             {{ old('template_id', $model->template_id ?? '') == $template->id ? 'selected' : '' }}>
-                                            {{ e($template->name) }}
+                                            {{ $template->name }}
                                         </option>
                                     @endforeach
                                 </select>
@@ -359,7 +367,7 @@
                                             <option value="{{ $seq->id }}"
                                                     data-steps="{{ json_encode($seq->steps->map(fn($s) => ['step_no' => $s->step_no, 'delay_days' => $s->delay_days, 'subject' => $s->subject, 'template_name' => $s->template?->name ?? '—'])) }}"
                                                 {{ $currentSequenceId == $seq->id ? 'selected' : '' }}>
-                                                {{ e($seq->name) }}
+                                                {{ $seq->name }}
                                             </option>
                                         @endforeach
                                     </select>
@@ -599,6 +607,107 @@
                         sequenceSelect.dispatchEvent(new Event('change', { bubbles: true }));
                     }
                 }
+            }
+
+            // ── Audience language split ───────────────────────────────────────
+            const langSplitUrl     = '{{ route("admin.campaigns.audienceLanguageSplit") }}';
+            const csrfToken        = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? '';
+            const audienceSplitEl  = document.getElementById('audience-lang-split');
+            const audienceChipsEl  = document.getElementById('audience-lang-chips');
+            const audienceWarnEl   = document.getElementById('audience-lang-warning');
+
+            let langSplitSeq = 0;    // stale-response guard
+            let langSplitXhr = null; // pending XHR abort guard
+
+            function refreshAudienceLangSplit() {
+                if (!audienceSplitEl || !audienceChipsEl || !audienceWarnEl) return;
+
+                const segId  = segmentSelect ? segmentSelect.value : '';
+                const tplId  = templateSelect ? templateSelect.value : '';
+
+                if (!segId) {
+                    audienceSplitEl.classList.add('d-none');
+                    audienceChipsEl.innerHTML = '';
+                    audienceWarnEl.classList.add('d-none');
+                    return;
+                }
+
+                // Abort any in-flight request
+                if (langSplitXhr) {
+                    langSplitXhr.abort();
+                    langSplitXhr = null;
+                }
+
+                const seq = ++langSplitSeq;
+
+                const body = new URLSearchParams();
+                body.append('segment_id', segId);
+                if (tplId) body.append('template_id', tplId);
+
+                const xhr = new XMLHttpRequest();
+                langSplitXhr = xhr;
+                xhr.open('POST', langSplitUrl, true);
+                xhr.setRequestHeader('X-CSRF-TOKEN', csrfToken);
+                xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+                xhr.setRequestHeader('Accept', 'application/json');
+                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+
+                xhr.onload = function () {
+                    if (seq !== langSplitSeq) return; // stale
+                    langSplitXhr = null;
+
+                    if (xhr.status !== 200) return;
+
+                    let resp;
+                    try { resp = JSON.parse(xhr.responseText); } catch (e) { return; }
+
+                    if (resp.error) return;
+
+                    // Render chips
+                    let chipsHtml = '<span class="badge badge-light-primary">' + resp.fr + ' 🇫🇷 FR</span>';
+                    if (resp.en > 0) {
+                        chipsHtml += ' <span class="badge badge-light-info">' + resp.en + ' 🇬🇧 EN</span>';
+                    }
+                    if (resp.unknown > 0) {
+                        chipsHtml += ' <span class="badge badge-light-secondary">' + resp.unknown + ' inconnu → FR</span>';
+                    }
+                    audienceChipsEl.innerHTML = chipsHtml;
+                    audienceSplitEl.classList.remove('d-none');
+
+                    // Render warning
+                    if (resp.warning) {
+                        const detail = resp.has_en ? 'obsolète' : 'absente';
+                        let msg = "L’audience contient " + resp.en + " destinataire(s) anglophone(s) mais la traduction EN du modèle est " + detail + ".";
+                        if (resp.template_edit_url) {
+                            msg += ' <a href="' + resp.template_edit_url + '" class="fw-bold ms-1">Mettre à jour la traduction</a>';
+                        }
+                        const warnBody = audienceWarnEl.querySelector('div');
+                        if (warnBody) warnBody.innerHTML = msg;
+                        audienceWarnEl.classList.remove('d-none');
+                    } else {
+                        audienceWarnEl.classList.add('d-none');
+                    }
+                };
+
+                xhr.onerror = function () {
+                    if (seq !== langSplitSeq) return;
+                    langSplitXhr = null;
+                };
+
+                xhr.send(body.toString());
+            }
+
+            // Bind to segment + template change
+            if (segmentSelect) {
+                segmentSelect.addEventListener('change', refreshAudienceLangSplit);
+            }
+            if (templateSelect) {
+                templateSelect.addEventListener('change', refreshAudienceLangSplit);
+            }
+
+            // Trigger on load if both already selected (edit mode)
+            if (segmentSelect && segmentSelect.value && templateSelect && templateSelect.value) {
+                refreshAudienceLangSplit();
             }
 
             // ── W2 Sequence steps preview ─────────────────────────────────────

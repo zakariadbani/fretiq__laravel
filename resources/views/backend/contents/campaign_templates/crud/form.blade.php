@@ -85,7 +85,8 @@
     @endif
 
     {{-- ── Tab content ────────────────────────────────────────────────── --}}
-    <div class="tab-content" id="template_tab_content">
+    <div class="tab-content" id="template_tab_content"
+         data-out-of-form-panes='["template_traductions"]'>
 
         {{-- ── Général (default active) ──────────────────────────────── --}}
         <div class="tab-pane fade show active" id="template_general" role="tabpanel">
@@ -211,11 +212,22 @@
 
 </form>
 
+{{-- ── Out-of-form panes (edit mode only) ───────────────────────────────── --}}
+{{-- crud-tabs.js moves these into #template_tab_content after DOMContentLoaded --}}
+@if(isset($model) && $model->id)
+
+    <div class="tab-pane fade" id="template_traductions" role="tabpanel" data-crud-pane>
+        @include('backend.contents.campaign_templates.partials._traductions-tab', ['model' => $model])
+    </div>
+
+@endif
+
 @push('scripts')
     <script src="{{ asset('assets/plugins/custom/tinymce/tinymce.js') }}?v={{ filemtime(public_path('assets/plugins/custom/tinymce/tinymce.js')) }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/tinymce-html-field.js') }}?v={{ filemtime(public_path('assets/js/custom/backend/tinymce-html-field.js')) }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/campaign-template-translations.js') }}?v={{ file_exists(public_path('assets/js/custom/backend/campaign-template-translations.js')) ? filemtime(public_path('assets/js/custom/backend/campaign-template-translations.js')) : '1' }}"></script>
 @endpush
 
 </x-default-layout>

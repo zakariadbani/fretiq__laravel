@@ -51,16 +51,16 @@
                                 <td>
                                     <a href="{{ route('admin.contacts.view', $contact->id) }}"
                                        class="text-gray-900 fw-bold text-hover-primary fs-6">
-                                        {{ e($contact->name) }}
+                                        {{ $contact->name }}
                                     </a>
                                     @if($contact->position)
-                                        <span class="text-muted fw-semibold d-block fs-7">{{ e($contact->position) }}</span>
+                                        <span class="text-muted fw-semibold d-block fs-7">{{ $contact->position }}</span>
                                     @endif
                                 </td>
                                 <td>
                                     <a href="mailto:{{ $contact->email }}"
                                        class="text-gray-700 text-hover-primary fs-7">
-                                        {{ e($contact->email) }}
+                                        {{ $contact->email }}
                                     </a>
                                 </td>
                                 <td>
@@ -87,10 +87,10 @@
                                                     data-bs-toggle="modal"
                                                     data-bs-target="#company_contact_modal"
                                                     data-contact-id="{{ $contact->id }}"
-                                                    data-contact-name="{{ e($contact->name) }}"
-                                                    data-contact-email="{{ e($contact->email) }}"
-                                                    data-contact-position="{{ e($contact->position) }}"
-                                                    data-contact-phone="{{ e($contact->phone) }}"
+                                                    data-contact-name="{{ $contact->name }}"
+                                                    data-contact-email="{{ $contact->email }}"
+                                                    data-contact-position="{{ $contact->position }}"
+                                                    data-contact-phone="{{ $contact->phone }}"
                                                     data-contact-status="{{ $contact->status }}"
                                                     data-contact-source="{{ $contact->source }}"
                                                     data-contact-legal-basis="{{ $contact->legal_basis }}"
@@ -105,7 +105,7 @@
                                                     class="btn btn-icon btn-bg-light btn-active-color-danger btn-sm btn-delete-contact"
                                                     title="Supprimer"
                                                     data-contact-id="{{ $contact->id }}"
-                                                    data-contact-name="{{ e($contact->name) }}"
+                                                    data-contact-name="{{ $contact->name }}"
                                                     data-delete-url="{{ route('admin.contacts.delete', $contact->id) }}">
                                                 <i class="bi bi-trash fs-4"></i>
                                             </button>

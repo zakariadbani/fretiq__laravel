@@ -1,7 +1,7 @@
 <x-default-layout>
 
 @section('title')
-    Identité — {{ e($model->name) }}
+    Identité — {{ $model->name }}
 @endsection
 
 @section('breadcrumbs')
@@ -18,7 +18,7 @@
         <li class="breadcrumb-item">
             <span class="bullet bg-gray-500 w-5px h-2px"></span>
         </li>
-        <li class="breadcrumb-item text-muted">{{ e($model->name) }}</li>
+        <li class="breadcrumb-item text-muted">{{ $model->name }}</li>
     </ul>
 @endsection
 
@@ -67,7 +67,7 @@
                 </div>
                 <div>
                     <div class="fs-7 text-muted fw-semibold mb-2">Code HTML</div>
-                    <pre class="bg-white border rounded p-4 mb-0 fs-8 text-gray-700" style="white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto;">{{ e($model->signature_html) }}</pre>
+                    <pre class="bg-white border rounded p-4 mb-0 fs-8 text-gray-700" style="white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto;">{{ $model->signature_html }}</pre>
                 </div>
             </div>
         </div>

@@ -48,7 +48,7 @@
     <div class="alert alert-success d-flex align-items-center mb-6 p-5">
         <i class="bi bi-shield-check fs-2hx text-success me-4"></i>
         <div class="d-flex flex-column">
-            <span class="fw-semibold fs-6">{{ e(session('success')) }}</span>
+            <span class="fw-semibold fs-6">{{ session('success') }}</span>
         </div>
     </div>
 @endif
@@ -57,7 +57,7 @@
     <div class="alert alert-danger d-flex align-items-center mb-6 p-5">
         <i class="bi bi-info-circle fs-2hx text-danger me-4"></i>
         <div class="d-flex flex-column">
-            <span class="fw-semibold fs-6">{{ e(session('error')) }}</span>
+            <span class="fw-semibold fs-6">{{ session('error') }}</span>
         </div>
     </div>
 @endif
@@ -92,7 +92,7 @@
                 @php
                     $crmBadge = $crmDriver === 'zoho' ? 'success' : 'secondary';
                 @endphp
-                <span class="badge badge-light-{{ $crmBadge }} fs-7 fw-bold">{{ e($crmDriver) }}</span>
+                <span class="badge badge-light-{{ $crmBadge }} fs-7 fw-bold">{{ $crmDriver }}</span>
             </div>
         </div>
     </div>
@@ -111,7 +111,7 @@
                 @php
                     $campBadge = $campaignsDriver === 'zoho' ? 'success' : 'secondary';
                 @endphp
-                <span class="badge badge-light-{{ $campBadge }} fs-7 fw-bold">{{ e($campaignsDriver) }}</span>
+                <span class="badge badge-light-{{ $campBadge }} fs-7 fw-bold">{{ $campaignsDriver }}</span>
             </div>
         </div>
     </div>
@@ -155,7 +155,7 @@
                         <div class="d-flex justify-content-between">
                             <span class="text-muted fs-7">Statut</span>
                             <span class="badge badge-light-{{ $accountStat['color'] }}">
-                                {{ e($accountStat['label']) }}
+                                {{ $accountStat['label'] }}
                             </span>
                         </div>
                     </div>
@@ -196,7 +196,7 @@
                         <div class="d-flex justify-content-between">
                             <span class="text-muted fs-7">Statut</span>
                             <span class="badge badge-light-{{ $contactStat['color'] }}">
-                                {{ e($contactStat['label']) }}
+                                {{ $contactStat['label'] }}
                             </span>
                         </div>
                     </div>
@@ -244,7 +244,7 @@
                     <div class="d-flex justify-content-between">
                         <span class="text-muted fs-7">Statut</span>
                         <span class="badge badge-light-{{ $tokenBadge['color'] }}">
-                            {{ e($tokenBadge['label']) }}
+                            {{ $tokenBadge['label'] }}
                         </span>
                     </div>
                 </div>
@@ -319,7 +319,7 @@
             <tbody class="text-gray-600 fw-semibold">
                 @forelse ($readinessItems as $key => $item)
                     <tr>
-                        <td class="fw-bold text-gray-800">{{ e($item['label']) }}</td>
+                        <td class="fw-bold text-gray-800">{{ $item['label'] }}</td>
                         <td>
                             @if ($item['status'])
                                 <span class="badge badge-light-success">
@@ -333,7 +333,7 @@
                                 </span>
                             @endif
                         </td>
-                        <td class="text-muted fs-7">{{ e($item['note']) }}</td>
+                        <td class="text-muted fs-7">{{ $item['note'] }}</td>
                     </tr>
                 @empty
                     <tr>
@@ -375,7 +375,7 @@
                     <tr>
                         <td>
                             <span class="badge badge-light-{{ $modColor }}">
-                                {{ e($modLabel) }}
+                                {{ $modLabel }}
                             </span>
                         </td>
                         <td>{{ $log->synced_at ? $log->synced_at->format('d/m/Y H:i') : '—' }}</td>
@@ -384,7 +384,7 @@
                         </td>
                         <td>
                             <span class="badge badge-light-{{ $logStat['color'] }}">
-                                {{ e($logStat['label']) }}
+                                {{ $logStat['label'] }}
                             </span>
                         </td>
                     </tr>
