@@ -34,6 +34,7 @@ class PackageController extends BackendController
         $this->middleware('permission:manage packages')->only(['create', 'store']);
         $this->middleware('permission:manage packages')->only(['edit', 'update', 'executeSwitch']);
         $this->middleware('permission:manage packages')->only(['delete']);
+        $this->middleware('permission:manage packages')->only(['assign']);
 
         $this->listTitle = 'Packs';
         $this->title     = 'name';

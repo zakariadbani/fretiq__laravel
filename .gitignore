@@ -62,3 +62,8 @@ graphify-out/
 .cleanup-snapshots/
 CLEANUP.md
 phpstan-output.txt
+# Playwright e2e
+tests/e2e/.auth/admin.json
+tests/e2e/.auth/*.json
+playwright-report/
+test-results/
