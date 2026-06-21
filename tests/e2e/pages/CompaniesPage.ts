@@ -36,28 +36,30 @@ export class CompaniesPage extends DataTablePage {
   readonly qualificationStatusSelect: Locator;
   readonly estimatedSizeSelect: Locator;
 
-  // DataTable action — enrich button (data-kt-action="enrich_row" in _row-actions partial)
-  readonly enrichButtonSelector = '[data-kt-action="enrich_row"]';
+  // DataTable action — enrich button (rendered as .enrich-btn in _row-actions partial)
+  readonly enrichButtonSelector = '.enrich-btn';
 
   constructor(page: Page) {
     super(page, {
-      tableId: 'company',             // strtolower(class_basename(Company)) = 'company'
+      tableId: 'company-table',       // index blade: tableId='company' → '#company-table'
+      searchSelector: '#mySearchInput', // index blade: id="mySearchInput"
       addButtonText: 'Ajouter',       // French label on the add button in Metronic header toolbar
     });
 
-    // Form fields — resolved against the currently loaded form page.
-    this.nameInput                  = page.locator('input[name="name"]');
-    this.domainInput                = page.locator('input[name="domain"]');
-    this.sectorInput                = page.locator('input[name="sector"]');
-    this.phoneInput                 = page.locator('input[name="phone"]');
-    this.aiScoreInput               = page.locator('input[name="ai_score"]');
+    // Form fields — scoped to #form_crud to avoid collisions with the stock
+    // Metronic demo modal (#kt_modal_create_app_form) which also has input[name="name"].
+    this.nameInput                  = page.locator('#form_crud input[name="name"]');
+    this.domainInput                = page.locator('#form_crud input[name="domain"]');
+    this.sectorInput                = page.locator('#form_crud input[name="sector"]');
+    this.phoneInput                 = page.locator('#form_crud input[name="phone"]');
+    this.aiScoreInput               = page.locator('#form_crud input[name="ai_score"]');
 
     // Select2 selects — locate their wrapper div for selectSelect2() helper.
-    this.countrySelect              = page.locator('select[name="country"]').locator('..');
-    this.relationshipSelect         = page.locator('select[name="relationship"]').locator('..');
-    this.sourceSelect               = page.locator('select[name="source"]').locator('..');
-    this.qualificationStatusSelect  = page.locator('select[name="qualification_status"]').locator('..');
-    this.estimatedSizeSelect        = page.locator('select[name="estimated_size"]').locator('..');
+    this.countrySelect              = page.locator('#form_crud select[name="country"]').locator('..');
+    this.relationshipSelect         = page.locator('#form_crud select[name="relationship"]').locator('..');
+    this.sourceSelect               = page.locator('#form_crud select[name="source"]').locator('..');
+    this.qualificationStatusSelect  = page.locator('#form_crud select[name="qualification_status"]').locator('..');
+    this.estimatedSizeSelect        = page.locator('#form_crud select[name="estimated_size"]').locator('..');
   }
 
   /** Navigate to the companies index page. */
@@ -96,7 +98,7 @@ export class CompaniesPage extends DataTablePage {
     if (data.sector) {
       await this.sectorInput.fill(data.sector);
     }
-    await this.page.locator('button[type="submit"]:visible, input[type="submit"]:visible').first().click();
+    await this.page.locator('#form_crud button[name="save"]').click();
   }
 
   /**
@@ -119,11 +121,46 @@ export class CompaniesPage extends DataTablePage {
   }
 
   /**
-   * Assert that the enrich button is visible on at least one row.
-   * Used to confirm that the `enrich companies` permission renders the button.
+   * Assert that the enrich button (.enrich-btn) is visible on at least one row.
+   * Rendered only when the company has a domain AND user can `enrich companies`.
    */
   async expectEnrichButtonVisible() {
     const enrichBtn = this.table.locator(this.enrichButtonSelector).first();
     await expect(enrichBtn).toBeVisible({ timeout: 10000 });
+  }
+
+  /**
+   * Assert exactly `count` DataTable rows contain `name` in their text.
+   * Used by the create test to verify EXACTLY ONE row was inserted (not two).
+   */
+  async expectRowCountByName(name: string, count: number) {
+    await expect(this.table.locator(`tbody tr:has-text("${name}")`)).toHaveCount(count);
+  }
+
+  /**
+   * Delete the first DataTable row matching `name` through the UI:
+   * click delete action → SweetAlert2 confirm → success dialog confirm.
+   * Assumes the DataTable is already filtered/searched so the target row is first.
+   */
+  async deleteRowByName(
+    name: string,
+    helpers: {
+      search: (q: string) => Promise<void>;
+      waitForDataTable: (page: import('@playwright/test').Page, id: string) => Promise<void>;
+      confirmDelete: (page: import('@playwright/test').Page) => Promise<void>;
+    }
+  ) {
+    await helpers.search(name);
+    await helpers.waitForDataTable(this.page, this.tableId);
+
+    await this.clickRowAction(0, 'delete');
+    await helpers.confirmDelete(this.page);
+
+    // Second SweetAlert: success dialog after DELETE completes.
+    await expect(this.page.locator('.swal2-popup')).toContainText('supprimée', { timeout: 10000 });
+    await this.page.locator('.swal2-confirm').click();
+
+    await this.page.waitForLoadState('networkidle');
+    await helpers.waitForDataTable(this.page, this.tableId);
   }
 }

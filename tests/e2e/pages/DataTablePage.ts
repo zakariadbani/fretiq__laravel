@@ -88,9 +88,9 @@ export class DataTablePage {
 
   async clickRowAction(rowIndex: number, action: 'view' | 'edit' | 'delete') {
     const actionMap = {
-      view: '[data-kt-action="view_row"], a[data-kt-action]',
-      edit: '[data-kt-action="update_row"]',
-      delete: '[data-kt-action="delete_row"]',
+      view: 'a[title="Voir"]',
+      edit: 'a[href$="/edit"]',
+      delete: '.delete-btn',
     };
     const row = this.table.locator('tbody tr').nth(rowIndex);
     await row.locator(actionMap[action]).click();

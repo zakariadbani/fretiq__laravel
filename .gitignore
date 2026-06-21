@@ -67,3 +67,6 @@ tests/e2e/.auth/admin.json
 tests/e2e/.auth/*.json
 playwright-report/
 test-results/
+
+# AI/GSD planning scratch
+.planning/

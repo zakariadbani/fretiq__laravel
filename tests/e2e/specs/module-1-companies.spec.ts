@@ -33,7 +33,7 @@ test.describe('Companies module', () => {
     await companies.goto();
 
     await expectPath(page, '/admin/companies');
-    await waitForDataTable(page, 'company');
+    await waitForDataTable(page, 'company-table');
     await companies.expectTableVisible();
   });
 
@@ -41,28 +41,40 @@ test.describe('Companies module', () => {
 
   test('create: fill form, submit, success toast, row appears in table', async ({ page }) => {
     const companies = new CompaniesPage(page);
+    // No domain — domain has a unique constraint that would mask a double-insert by
+    // rejecting the second row. Omitting it means a double-submit produces TWO rows,
+    // which the exact-count assertion below will catch.
     const name = uniqueName('E2E Transports');
 
     await companies.gotoCreate();
 
-    await companies.fillAndSubmit({
-      name,
-      domain: `${name.toLowerCase().replace(/\s+/g, '-')}.test`,
-      sector: 'Transport',
-    });
+    await companies.fillAndSubmit({ name });
 
-    // Crudable store() returns JSON { redirect } — the form handler JS follows it.
-    // After redirect we land back on the index or edit page; await the success toast.
-    await expectAndDismissSuccess(page);
+    // crud-form-handler.js on 2xx follows response.data.redirect (window.location.replace).
+    // There is no toast/swal on store — wait for the form to navigate away from /create.
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
 
     // Navigate to index to confirm the row is present in the DataTable.
     await companies.goto();
-    await waitForDataTable(page, 'company');
+    await waitForDataTable(page, 'company-table');
 
-    // Search for the created name; the row must appear.
+    // Search for the created name; EXACTLY ONE row must be present — not two.
+    // Without the double-submit fix this assertion fails (2 rows returned).
     await companies.search(name);
-    await waitForDataTable(page, 'company');
-    await companies.expectMinRows(1);
+    await waitForDataTable(page, 'company-table');
+    await companies.expectRowCountByName(name, 1);
+
+    // Clean up: delete the created row so the dev DB stays clean between runs.
+    await companies.deleteRowByName(name, {
+      search: (q) => companies.search(q),
+      waitForDataTable,
+      confirmDelete,
+    });
+
+    // Verify deletion: no rows matching the name remain.
+    await companies.search(name);
+    await waitForDataTable(page, 'company-table');
+    await companies.expectRowCountByName(name, 0);
   });
 
   // ── 3. Edit flow ───────────────────────────────────────────────────────────
@@ -74,23 +86,24 @@ test.describe('Companies module', () => {
     // Create a company to edit.
     await companies.gotoCreate();
     await companies.fillAndSubmit({ name, sector: 'Avant' });
-    await expectAndDismissSuccess(page);
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
 
     // Navigate back to index and search for the row.
     await companies.goto();
-    await waitForDataTable(page, 'company');
+    await waitForDataTable(page, 'company-table');
     await companies.search(name);
-    await waitForDataTable(page, 'company');
+    await waitForDataTable(page, 'company-table');
 
     // Click edit on the first matching row.
     await companies.clickRowAction(0, 'edit');
 
-    // On the edit form: update the sector field and save.
-    await expect(page.locator('input[name="sector"]')).toBeVisible({ timeout: 10000 });
-    await page.locator('input[name="sector"]').fill('Après');
-    await page.locator('button[type="submit"]:visible, input[type="submit"]:visible').first().click();
+    // On the edit form: update the sector field and save (scoped to #form_crud).
+    await expect(page.locator('#form_crud input[name="sector"]')).toBeVisible({ timeout: 10000 });
+    await page.locator('#form_crud input[name="sector"]').fill('Après');
+    await page.locator('#form_crud button[name="save"]').click();
 
-    await expectAndDismissSuccess(page);
+    // crud-form-handler.js follows redirect on 2xx — wait for navigation away from /edit.
+    await page.waitForURL((u) => !u.pathname.endsWith('/edit'), { timeout: 15000 });
   });
 
   // ── 4. View (detail) page ──────────────────────────────────────────────────
@@ -102,13 +115,13 @@ test.describe('Companies module', () => {
     // Create a company.
     await companies.gotoCreate();
     await companies.fillAndSubmit({ name });
-    await expectAndDismissSuccess(page);
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
 
     // Navigate to index, search, open view.
     await companies.goto();
-    await waitForDataTable(page, 'company');
+    await waitForDataTable(page, 'company-table');
     await companies.search(name);
-    await waitForDataTable(page, 'company');
+    await waitForDataTable(page, 'company-table');
 
     await companies.clickRowAction(0, 'view');
 
@@ -125,13 +138,13 @@ test.describe('Companies module', () => {
     // Create a company.
     await companies.gotoCreate();
     await companies.fillAndSubmit({ name });
-    await expectAndDismissSuccess(page);
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
 
     // Navigate to index and search for the row.
     await companies.goto();
-    await waitForDataTable(page, 'company');
+    await waitForDataTable(page, 'company-table');
     await companies.search(name);
-    await waitForDataTable(page, 'company');
+    await waitForDataTable(page, 'company-table');
 
     // Click the active switch on the first row.
     // The Metronic DataTable switch column renders <input type="checkbox">.
@@ -154,29 +167,34 @@ test.describe('Companies module', () => {
     // Create a company to delete.
     await companies.gotoCreate();
     await companies.fillAndSubmit({ name });
-    await expectAndDismissSuccess(page);
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
 
     // Navigate to index and find the row.
     await companies.goto();
-    await waitForDataTable(page, 'company');
+    await waitForDataTable(page, 'company-table');
     await companies.search(name);
-    await waitForDataTable(page, 'company');
+    await waitForDataTable(page, 'company-table');
 
     // Click delete action; SweetAlert2 confirm dialog appears.
     await companies.clickRowAction(0, 'delete');
     await confirmDelete(page);
 
+    // Delete fires an AJAX DELETE, then a SECOND SweetAlert success dialog
+    // ("Entreprise supprimée avec succès") whose confirmation triggers the table reload.
+    // Wait for THAT dialog by its distinct text (not the "supprimer ?" confirm), then confirm.
+    await expect(page.locator('.swal2-popup')).toContainText('supprimée', { timeout: 10000 });
+    await page.locator('.swal2-confirm').click();
+
     // Wait for AJAX + table refresh.
     await page.waitForLoadState('networkidle');
-    await waitForDataTable(page, 'company');
+    await waitForDataTable(page, 'company-table');
 
     // After deletion the search returns no matching rows.
     await companies.search(name);
-    await waitForDataTable(page, 'company');
-    // The row is gone — either the empty-state shows or rowCount is 0.
-    const rows = companies.table.locator('tbody tr:not(:has(.dt-empty))');
-    const count = await rows.count();
-    expect(count).toBe(0);
+    await waitForDataTable(page, 'company-table');
+    // The deleted company's row must be gone. Assert by name absence (robust against
+    // the DataTables empty-state row, whose class varies by version).
+    await expect(companies.table.locator(`tbody tr:has-text("${name}")`)).toHaveCount(0);
   });
 
   // ── 7. Enrich action button visible ───────────────────────────────────────
@@ -187,15 +205,15 @@ test.describe('Companies module', () => {
     // Ensure at least one company exists so the table has a row.
     await companies.gotoCreate();
     const name = uniqueName('E2E Enrich Co');
-    await companies.fillAndSubmit({ name, domain: 'enrichtest.example.com' });
-    await expectAndDismissSuccess(page);
+    await companies.fillAndSubmit({ name, domain: `${name.toLowerCase().replace(/\s+/g, '-')}.test` });
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
 
     await companies.goto();
-    await waitForDataTable(page, 'company');
+    await waitForDataTable(page, 'company-table');
     await companies.search(name);
-    await waitForDataTable(page, 'company');
+    await waitForDataTable(page, 'company-table');
 
-    // The enrich button (data-kt-action="enrich_row") must be present for admin.
+    // The enrich button (.enrich-btn) must be present for admin.
     await companies.expectEnrichButtonVisible();
   });
 

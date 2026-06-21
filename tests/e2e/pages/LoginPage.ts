@@ -52,12 +52,15 @@ export class LoginPage {
   }
 
   async expectRedirectToDashboard() {
-    // Superadmin redirects to /admin/dashboard after login
+    const base = process.env.BASE_URL ?? 'http://fretiq.test';
+    // Laravel's default post-login redirect lands on /dashboard (Breeze HOME),
+    // not /admin/*. Accept either, so login is confirmed succeeded.
     await this.page.waitForURL(
-      (url) =>
-        url.pathname === '/admin/dashboard' ||
-        url.pathname.startsWith('/admin/'),
+      (url) => url.pathname === '/dashboard' || url.pathname.startsWith('/admin/'),
       { timeout: 15000 },
     );
+    // Verify backend access: the admin panel must load for a superadmin.
+    await this.page.goto(new URL('/admin/dashboard', base).toString());
+    await this.page.waitForURL((url) => url.pathname === '/admin/dashboard', { timeout: 15000 });
   }
 }
