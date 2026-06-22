@@ -104,6 +104,30 @@ class Campaign extends Model
         return $this->hasMany(SequenceEnrollment::class);
     }
 
+    // ── Lifecycle hooks ────────────────────────────────────────────────────────
+
+    /**
+     * Coerce empty/null enum columns to their DB defaults before any insert or
+     * update so we never send an explicit NULL into a NOT NULL column.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (self $model): void {
+            if ($model->driver === null || $model->driver === '') {
+                $model->driver = 'local';
+            }
+            if ($model->schedule_type === null || $model->schedule_type === '') {
+                $model->schedule_type = 'one_shot';
+            }
+            if ($model->status === null || $model->status === '') {
+                $model->status = 'draft';
+            }
+            if ($model->timezone === null || $model->timezone === '') {
+                $model->timezone = 'Europe/Paris';
+            }
+        });
+    }
+
     // ── Validation ─────────────────────────────────────────────────────────────
 
     /**

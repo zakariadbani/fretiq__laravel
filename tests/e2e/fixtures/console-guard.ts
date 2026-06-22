@@ -11,6 +11,13 @@ export const CONSOLE_ALLOWLIST: string[] = [
   'assets/media/stock/',
   'assets/media/patterns/',
   'Failed to load resource',
+  // Leftover Metronic v8 starterkit demo-modal scripts (public/assets/js/custom/utilities/modals/
+  // create-*.js and apps/subscriptions/add/customer-select.js) auto-init against the stock demo
+  // modal the layout still ships and throw because the KTStepper/KTSearch instances lack `.on`.
+  // fretiq uses /create pages + #form_crud, NOT these demo modals — this is demo cruft pending
+  // removal, NOT a fretiq feature bug. Do not broaden these entries.
+  'stepperObj.on is not a function',
+  'searchObject.on is not a function',
 ];
 
 function isAllowlisted(text: string): boolean {

@@ -14,6 +14,13 @@ use Illuminate\Http\Request;
  */
 class PackagesDataTable extends BackendDataTable
 {
+    /**
+     * Packages use the single keyword permission 'manage packages' (superadmin-only)
+     * for every action - menu, controller middleware, and these row actions. The standard
+     * "{action} packages" permissions do not exist. See PermissionsSeeder.
+     */
+    protected $actionPermission = 'manage packages';
+
     protected $columns = [
         'name' => [
             'title'      => 'Nom',

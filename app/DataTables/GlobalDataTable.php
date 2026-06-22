@@ -25,6 +25,13 @@ class GlobalDataTable extends DataTable
     public $currentPrefixName = 'admin';
 
     /**
+     * Optional single permission ability that gates ALL row actions (view/edit/delete).
+     * When null, actions fall back to the per-action "{action} {modelName}" convention.
+     * Set in a subclass for modules using a keyword permission (e.g. 'manage packages').
+     */
+    protected $actionPermission = null;
+
+    /**
      * Initialize DataTable with model and request
      *
      * @param Model $model
@@ -89,7 +96,8 @@ class GlobalDataTable extends DataTable
                 }
                 return view('backend.components.datatable.actions', [
                     'model' => $model,
-                    'modelName' => \Str::plural($model->getName())
+                    'modelName' => \Str::plural($model->getName()),
+                    'actionPermission' => $this->actionPermission,
                 ])->render();
             });
 

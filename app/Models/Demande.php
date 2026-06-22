@@ -76,6 +76,21 @@ class Demande extends Model
         return $this->belongsTo(Sequence::class);
     }
 
+    // ── Lifecycle hooks ────────────────────────────────────────────────────────
+
+    /**
+     * Coerce empty/null enum columns to their DB defaults before any insert or
+     * update so we never send an explicit NULL into a NOT NULL column.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (self $model): void {
+            if ($model->status === null || $model->status === '') {
+                $model->status = 'pending';
+            }
+        });
+    }
+
     // ── Validation ─────────────────────────────────────────────────────────────
 
     /**

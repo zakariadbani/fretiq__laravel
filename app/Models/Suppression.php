@@ -39,6 +39,24 @@ class Suppression extends Model
         return $this->belongsTo(Contact::class);
     }
 
+    // ── Lifecycle hooks ────────────────────────────────────────────────────────
+
+    /**
+     * Coerce empty/null enum columns to their DB defaults before any insert or
+     * update so we never send an explicit NULL into a NOT NULL column.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (self $model): void {
+            if ($model->reason === null || $model->reason === '') {
+                $model->reason = 'manual';
+            }
+            if ($model->source === null || $model->source === '') {
+                $model->source = 'manual';
+            }
+        });
+    }
+
     // ── Validation ─────────────────────────────────────────────────────────────
 
     /**

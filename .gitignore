@@ -70,3 +70,8 @@ test-results/
 
 # AI/GSD planning scratch
 .planning/
+
+/.qa/
+
+# Codex staging scratch
+.codex-staging/

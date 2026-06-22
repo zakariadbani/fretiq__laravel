@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+// IMPORTANT: import test/expect from the console-guard fixture (auto-fails on console.error/pageerror). Do NOT revert to '@playwright/test' — that silently disables the guard.
+import { test, expect } from '../fixtures/console-guard';
 import { CompaniesPage } from '../pages/CompaniesPage';
 import {
   waitForDataTable,
@@ -26,6 +27,32 @@ import {
 
 test.describe('Companies module', () => {
 
+  // Track every company a test creates; the afterEach below removes it even if
+  // the test fails before its inline cleanup runs (prevents orphan rows on dev DB).
+  const createdCompanies: string[] = [];
+
+  test.afterEach(async ({ page }) => {
+    if (createdCompanies.length === 0) return;
+    const companies = new CompaniesPage(page);
+    for (const name of createdCompanies.splice(0)) {
+      try {
+        await companies.goto();
+        await waitForDataTable(page, 'company-table');
+        await companies.search(name);
+        await waitForDataTable(page, 'company-table');
+        const remaining = await companies.table.locator(`tbody tr:has-text("${name}")`).count();
+        if (remaining === 0) continue; // self-cleaned by the test, or never persisted
+        await companies.deleteRowByName(name, {
+          search: (q) => companies.search(q),
+          waitForDataTable,
+          confirmDelete,
+        });
+      } catch {
+        // best-effort teardown — never fail the suite on cleanup
+      }
+    }
+  });
+
   // ── 1. List page — DataTable renders ──────────────────────────────────────
 
   test('list page loads and DataTable renders', async ({ page }) => {
@@ -45,6 +72,7 @@ test.describe('Companies module', () => {
     // rejecting the second row. Omitting it means a double-submit produces TWO rows,
     // which the exact-count assertion below will catch.
     const name = uniqueName('E2E Transports');
+    createdCompanies.push(name);
 
     await companies.gotoCreate();
 
@@ -82,6 +110,7 @@ test.describe('Companies module', () => {
   test('edit: open row edit, change sector, save, success toast', async ({ page }) => {
     const companies = new CompaniesPage(page);
     const name = uniqueName('E2E Edit Co');
+    createdCompanies.push(name);
 
     // Create a company to edit.
     await companies.gotoCreate();
@@ -111,6 +140,7 @@ test.describe('Companies module', () => {
   test('view: click view action, detail page shows company name', async ({ page }) => {
     const companies = new CompaniesPage(page);
     const name = uniqueName('E2E View Co');
+    createdCompanies.push(name);
 
     // Create a company.
     await companies.gotoCreate();
@@ -134,6 +164,7 @@ test.describe('Companies module', () => {
   test('executeSwitch: toggle is_active, badge/switch updates', async ({ page }) => {
     const companies = new CompaniesPage(page);
     const name = uniqueName('E2E Toggle Co');
+    createdCompanies.push(name);
 
     // Create a company.
     await companies.gotoCreate();
@@ -163,6 +194,7 @@ test.describe('Companies module', () => {
   test('delete: confirm dialog, row removed from table', async ({ page }) => {
     const companies = new CompaniesPage(page);
     const name = uniqueName('E2E Delete Co');
+    createdCompanies.push(name);
 
     // Create a company to delete.
     await companies.gotoCreate();
@@ -205,6 +237,7 @@ test.describe('Companies module', () => {
     // Ensure at least one company exists so the table has a row.
     await companies.gotoCreate();
     const name = uniqueName('E2E Enrich Co');
+    createdCompanies.push(name);
     await companies.fillAndSubmit({ name, domain: `${name.toLowerCase().replace(/\s+/g, '-')}.test` });
     await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
 

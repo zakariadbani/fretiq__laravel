@@ -1,6 +1,12 @@
 {{-- Action buttons for DataTable rows --}}
+@php
+    $actionPermission = $actionPermission ?? null;
+    $editPerm   = $actionPermission ?? ('edit '   . $modelName);
+    $viewPerm   = $actionPermission ?? ('view '   . $modelName);
+    $deletePerm = $actionPermission ?? ('delete ' . $modelName);
+@endphp
 <div class="d-flex justify-content-end flex-shrink-0">
-    @can('edit ' . $modelName)
+    @can($editPerm)
     {{-- Edit Button --}}
     <a href="{{ route('admin.' . $modelName . '.edit', $model->id) }}"
        class="btn btn-icon btn-bg-light btn-active-color-primary btn-sm me-1"
@@ -10,7 +16,7 @@
     </a>
     @endcan
 
-    @can('view ' . $modelName)
+    @can($viewPerm)
     {{-- View Button --}}
     <a href="{{ route('admin.' . $modelName . '.view', $model->id) }}"
        class="btn btn-icon btn-bg-light btn-active-color-primary btn-sm me-1"
@@ -20,7 +26,7 @@
     </a>
     @endcan
 
-    @can('delete ' . $modelName)
+    @can($deletePerm)
     {{-- Delete Button --}}
     <a href="javascript:void(0);"
        class="btn btn-icon btn-bg-light btn-active-color-danger btn-sm delete-btn"

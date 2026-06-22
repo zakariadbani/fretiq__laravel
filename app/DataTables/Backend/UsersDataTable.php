@@ -71,6 +71,20 @@ class UsersDataTable extends BackendDataTable
      */
     protected function createEditColumns(): void
     {
+        // ── Virtual column 'user' mappings ───────────────────────────────────
+        // 'user' is a computed cell (name + email) — not a real DB column.
+        // Without these mappings, yajra would emit `WHERE users.user LIKE ?`
+        // or `ORDER BY users.user`, both of which 500 with SQLSTATE[42S22].
+        $this->datatables->filterColumn('user', function ($query, $keyword) {
+            $kw = '%' . mb_strtolower($keyword) . '%';
+            $query->where(function ($q) use ($kw) {
+                $q->whereRaw('LOWER(name) LIKE ?', [$kw])
+                  ->orWhereRaw('LOWER(email) LIKE ?', [$kw]);
+            });
+        });
+
+        $this->datatables->orderColumn('user', 'name $1');
+
         // ── User cell: avatar initial + name + email ─────────────────────────
         $this->datatables->editColumn('user', function (User $row) {
             $initial  = e(mb_strtoupper(mb_substr($row->name ?? '', 0, 1)));

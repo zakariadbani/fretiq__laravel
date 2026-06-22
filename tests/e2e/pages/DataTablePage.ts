@@ -29,7 +29,7 @@ export class DataTablePage {
     // DataTables wraps the table in a div with id="${tableId}_wrapper"
     this.tableWrapper = page.locator(`#${options.tableId}_wrapper`);
     this.searchInput = page.locator(
-      options.searchSelector || `[data-kt-${options.tableId}-filter="search"]`
+      options.searchSelector || '#mySearchInput'
     );
     this.addButton = page.locator(`button:has-text("${options.addButtonText || 'Add'}")`);
     // DataTables v2 French locale empty-state messages (both variants):
@@ -50,14 +50,20 @@ export class DataTablePage {
   }
 
   async expectRowCount(count: number) {
-    // Exclude DataTables v2 empty-state rows (class="dt-empty")
-    const rows = this.table.locator('tbody tr:not(:has(.dt-empty))');
+    // Exclude DataTables empty-state rows identified by French locale text.
+    // This build does NOT use the dt-empty class — match by text content instead.
+    const rows = this.table.locator(
+      'tbody tr:not(:has-text("Aucune donnée disponible")):not(:has-text("Aucune entrée correspondante trouvée"))'
+    );
     await expect(rows).toHaveCount(count);
   }
 
   async expectMinRows(min: number) {
-    // Exclude DataTables v2 empty-state rows (class="dt-empty")
-    const rows = this.table.locator('tbody tr:not(:has(.dt-empty))');
+    // Exclude DataTables empty-state rows identified by French locale text.
+    // This build does NOT use the dt-empty class — match by text content instead.
+    const rows = this.table.locator(
+      'tbody tr:not(:has-text("Aucune donnée disponible")):not(:has-text("Aucune entrée correspondante trouvée"))'
+    );
     expect(await rows.count()).toBeGreaterThanOrEqual(min);
   }
 

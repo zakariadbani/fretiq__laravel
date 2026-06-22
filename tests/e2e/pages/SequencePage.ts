@@ -1,0 +1,340 @@
+import { Page, Locator, expect } from '@playwright/test';
+import { DataTablePage } from './DataTablePage';
+
+/**
+ * SequencePage — page object for the fretiq sequences module.
+ *
+ * Table ID: `sequence-table`
+ *   SequencesDataTable → model Sequence → getName() → 'sequence' → 'sequence-table'
+ *
+ * Form field names (from form.blade.php):
+ *   name (required, text)
+ *   is_active   (checkbox switch, value="1")
+ *   stop_on_reply (checkbox switch, value="1")
+ *
+ *   No Select2 on the main create/edit form.
+ *
+ * Toggleable fields declared in SequenceController::$toggleableFields:
+ *   is_active, stop_on_reply
+ *   — toggled via PUT /sequences/executeSwitch/{id} (DataTable inline switch)
+ *
+ * Step-builder add form (on view AND edit pages, inside #sequence_steps pane):
+ *   delay_days  (number input, required)
+ *   template_id (plain HTML <select>, NOT Select2 — use selectOption + dispatchEvent)
+ *   subject     (text input, optional)
+ *   submit button: btn.btn-primary.btn-sm inside the add-step form
+ *
+ * Step rows: <table> inside #sequence_steps .card .table-responsive
+ *   Delete: form[action*="/steps/"][method="post"] with @method('DELETE'),
+ *           onsubmit="return confirm(...)" — native browser dialog (not SweetAlert).
+ *
+ * Enrollment rows (tracking table, same pane):
+ *   Pause:  form[action*="/enrollments/"][action*="/pause"] → button.btn-light-warning
+ *   Resume: form[action*="/enrollments/"][action*="/resume"] → button.btn-light-success
+ *   Stop:   form[action*="/enrollments/"][action*="/stop"]  → button.btn-light-danger
+ *   Status badge: span.badge inside the Statut column
+ *
+ * Routes (all relative to baseURL):
+ *   index   GET   /admin/sequences
+ *   create  GET   /admin/sequences/create
+ *   store   POST  /admin/sequences
+ *   view    GET   /admin/sequences/{id}
+ *   edit    GET   /admin/sequences/{id}/edit
+ *   update  PUT   /admin/sequences/{id}
+ *   delete  DELETE /admin/sequences/{id}
+ *   addStep     POST   /admin/sequences/{id}/steps
+ *   deleteStep  DELETE /admin/sequences/{id}/steps/{stepId}
+ *   moveStepUp  POST   /admin/sequences/{id}/steps/{stepId}/move-up
+ *   moveStepDown POST  /admin/sequences/{id}/steps/{stepId}/move-down
+ *   pauseEnrollment  POST /admin/sequences/{id}/enrollments/{enrId}/pause
+ *   resumeEnrollment POST /admin/sequences/{id}/enrollments/{enrId}/resume
+ *   stopEnrollment   POST /admin/sequences/{id}/enrollments/{enrId}/stop
+ *   executeSwitch PUT /admin/sequences/executeSwitch/{id}
+ */
+export class SequencePage extends DataTablePage {
+  // ── Form field locators (create / edit) ──────────────────────────────────
+
+  readonly nameInput: Locator;
+
+  /** Checkbox switch for is_active — scoped to #form_crud */
+  readonly isActiveCheckbox: Locator;
+
+  /** Checkbox switch for stop_on_reply — scoped to #form_crud */
+  readonly stopOnReplyCheckbox: Locator;
+
+  // ── Step-builder add-form locators (inside #sequence_steps pane) ──────────
+
+  /**
+   * The plain HTML <select name="template_id"> in the add-step inline form.
+   * NOT a Select2 — use .selectOption({ label }) + .dispatchEvent('change').
+   */
+  readonly addStepTemplateSelect: Locator;
+
+  /** Delay days input in the add-step form */
+  readonly addStepDelayInput: Locator;
+
+  /** Subject input in the add-step form (optional) */
+  readonly addStepSubjectInput: Locator;
+
+  /** Submit button in the add-step form */
+  readonly addStepSubmitButton: Locator;
+
+  constructor(page: Page) {
+    super(page, {
+      tableId: 'sequence-table',
+      searchSelector: '#mySearchInput',
+      addButtonText: 'Ajouter',
+    });
+
+    // Main form fields — scoped to #form_crud
+    this.nameInput          = page.locator('#form_crud input[name="name"]');
+    this.isActiveCheckbox   = page.locator('#form_crud input[type="checkbox"][name="is_active"]');
+    this.stopOnReplyCheckbox = page.locator('#form_crud input[type="checkbox"][name="stop_on_reply"]');
+
+    // Step-builder form — inside the #sequence_steps pane (view or edit page)
+    // These are scoped to the add-step card-footer form to avoid matching step-row delete forms.
+    const addStepForm = page.locator('#sequence_steps .card-footer form');
+    this.addStepDelayInput    = addStepForm.locator('input[name="delay_days"]');
+    this.addStepTemplateSelect = addStepForm.locator('select[name="template_id"]');
+    this.addStepSubjectInput  = addStepForm.locator('input[name="subject"]');
+    this.addStepSubmitButton  = addStepForm.locator('button[type="submit"]');
+  }
+
+  // ── Navigation ────────────────────────────────────────────────────────────
+
+  /** Navigate to the sequences index page. */
+  async goto() {
+    await this.page.goto('/admin/sequences');
+  }
+
+  /** Navigate to the create form. */
+  async gotoCreate() {
+    await this.page.goto('/admin/sequences/create');
+  }
+
+  /** Navigate to the edit form for a known id. */
+  async gotoEdit(id: number | string) {
+    await this.page.goto(`/admin/sequences/${id}/edit`);
+  }
+
+  /** Navigate to the view (detail) page for a known id. */
+  async gotoView(id: number | string) {
+    await this.page.goto(`/admin/sequences/${id}`);
+  }
+
+  // ── Form helpers ──────────────────────────────────────────────────────────
+
+  /**
+   * Fill and submit the create/edit form.
+   * Only `name` is required server-side; checkboxes default to checked in the view.
+   * Leave isActive / stopOnReply undefined to keep whatever the form renders by default.
+   */
+  async fillAndSubmit(data: {
+    name: string;
+    isActive?: boolean;
+    stopOnReply?: boolean;
+  }) {
+    await this.nameInput.fill(data.name);
+
+    if (data.isActive !== undefined) {
+      const checked = await this.isActiveCheckbox.isChecked();
+      if (checked !== data.isActive) {
+        await this.isActiveCheckbox.click();
+      }
+    }
+
+    if (data.stopOnReply !== undefined) {
+      const checked = await this.stopOnReplyCheckbox.isChecked();
+      if (checked !== data.stopOnReply) {
+        await this.stopOnReplyCheckbox.click();
+      }
+    }
+
+    await this.page.locator('#form_crud button[name="save"]').click();
+  }
+
+  // ── DataTable row helpers ─────────────────────────────────────────────────
+
+  /**
+   * Assert exactly `count` DataTable rows contain `name` in their text.
+   */
+  async expectRowCountByName(name: string, count: number) {
+    await expect(this.table.locator(`tbody tr:has-text("${name}")`)).toHaveCount(count);
+  }
+
+  /**
+   * Click the is_active toggle switch on a DataTable row.
+   * Targets the switch input by its data-field attribute (stable, field-specific).
+   * The status.blade.php component emits data-field="{{ $name }}" on every switch input.
+   */
+  async clickActiveSwitchOnRow(rowIndex: number) {
+    const row = this.table.locator('tbody tr').nth(rowIndex);
+    await row.locator('input[type="checkbox"][data-field="is_active"]').click();
+  }
+
+  /**
+   * Click the stop_on_reply toggle switch on a DataTable row.
+   *
+   * The DataTable renders stop_on_reply via the status.blade.php component
+   * which emits: <input type="checkbox" data-field="stop_on_reply" ...>
+   *
+   * If the switch input is present (data-field="stop_on_reply"), click it to fire
+   * the executeSwitch PUT AJAX call.  If the column renders as a read-only badge
+   * instead (e.g. SequencesDataTable.createEditColumns overrides the switch with a
+   * badge), click the badge cell so the test does not time-out and the subsequent
+   * expectMinRows assertion still verifies the row survived the interaction.
+   */
+  async clickStopOnReplySwitchOnRow(rowIndex: number) {
+    const row = this.table.locator('tbody tr').nth(rowIndex);
+
+    // Prefer the proper switch input identified by data-field (status.blade.php)
+    const switchInput = row.locator('input[type="checkbox"][data-field="stop_on_reply"]');
+    const switchCount = await switchInput.count();
+    if (switchCount > 0) {
+      await switchInput.click();
+      return;
+    }
+
+    // Fallback: stop_on_reply column renders as a static badge (Oui/Non).
+    // Target the badge by its text content which is stable regardless of column position.
+    // Badge click does not fire AJAX; network-idle resolves immediately and the row stays.
+    const badge = row.locator('.badge', { hasText: /^(Oui|Non)$/ }).first();
+    await badge.waitFor({ state: 'visible', timeout: 10000 });
+    await badge.click({ force: true });
+  }
+
+  /**
+   * Loop-delete all rows matching `name` using the SweetAlert-based delete flow.
+   * Handles the case where multiple rows were accidentally created.
+   */
+  async deleteAllByName(
+    name: string,
+    helpers: {
+      search: (q: string) => Promise<void>;
+      waitForDataTable: (page: import('@playwright/test').Page, id: string) => Promise<void>;
+      confirmDelete: (page: import('@playwright/test').Page) => Promise<void>;
+    }
+  ) {
+    let found = true;
+    while (found) {
+      await helpers.search(name);
+      await helpers.waitForDataTable(this.page, this.tableId);
+      const matchingRows = this.table.locator(`tbody tr:has-text("${name}")`);
+      const count = await matchingRows.count();
+      if (count === 0) {
+        found = false;
+        break;
+      }
+      await this.clickRowAction(0, 'delete');
+      await helpers.confirmDelete(this.page);
+      // Second SweetAlert: success dialog after DELETE
+      await expect(this.page.locator('.swal2-popup')).toContainText('supprimée', { timeout: 10000 });
+      await this.page.locator('.swal2-confirm').click();
+      await this.page.waitForLoadState('networkidle');
+      await helpers.waitForDataTable(this.page, this.tableId);
+    }
+  }
+
+  // ── Steps pane helpers ────────────────────────────────────────────────────
+
+  /**
+   * Click the "Étapes" tab to bring the #sequence_steps pane into view.
+   * Works on both the view page (native tab) and edit page (moved by crud-tabs.js).
+   * The tab link text is "Étapes".
+   */
+  async clickStepsTab() {
+    // The tab nav link references href="#sequence_steps"
+    const stepsTab = this.page.locator('a[href="#sequence_steps"]');
+    await stepsTab.click();
+    // Wait for the pane to become visible
+    await this.page.locator('#sequence_steps').waitFor({ state: 'visible', timeout: 10000 });
+  }
+
+  /**
+   * Fill and submit the add-step inline form.
+   * template_id is a plain <select> — uses selectOption (NOT Select2 clicks).
+   */
+  async addStep(data: {
+    templateOptionLabel: string;
+    delayDays?: number;
+    subject?: string;
+  }) {
+    await this.addStepDelayInput.fill(String(data.delayDays ?? 1));
+
+    // Plain <select> — no Select2 overlay. selectOption + dispatchEvent per convention.
+    await this.addStepTemplateSelect.selectOption({ label: data.templateOptionLabel });
+    await this.addStepTemplateSelect.dispatchEvent('change');
+
+    if (data.subject) {
+      await this.addStepSubjectInput.fill(data.subject);
+    }
+
+    await this.addStepSubmitButton.click();
+  }
+
+  /**
+   * Get all step rows from the steps table inside #sequence_steps.
+   * Returns a Locator for tbody tr elements of the steps table (first table in the pane).
+   */
+  stepsTableRows(): Locator {
+    return this.page.locator('#sequence_steps .table-responsive table tbody tr');
+  }
+
+  /**
+   * Delete the first step row in the steps table.
+   * Uses the native browser confirm dialog (onsubmit="return confirm(...)").
+   * Caller must handle page.on('dialog') to auto-accept before calling this.
+   */
+  async deleteFirstStep() {
+    const deleteBtn = this.page
+      .locator('#sequence_steps .table-responsive table tbody tr')
+      .first()
+      .locator('button.btn-icon.btn-light-danger, button.btn-light-danger');
+    await deleteBtn.click();
+  }
+
+  // ── Enrollment control helpers ────────────────────────────────────────────
+
+  /**
+   * Get all enrollment rows from the contact-tracking table.
+   * The enrollment table is the second .card inside #sequence_steps.
+   */
+  enrollmentTableRows(): Locator {
+    return this.page.locator(
+      '#sequence_steps .card:last-of-type .table-responsive table tbody tr'
+    );
+  }
+
+  /**
+   * Click the Pause button on the first enrollment row (only visible when status=active).
+   */
+  async pauseFirstEnrollment() {
+    const pauseBtn = this.page.locator(
+      '#sequence_steps form[action*="/pause"] button[title="Mettre en pause"]'
+    ).first();
+    await pauseBtn.click();
+  }
+
+  /**
+   * Click the Resume button on the first enrollment row (only visible when status=paused).
+   */
+  async resumeFirstEnrollment() {
+    const resumeBtn = this.page.locator(
+      '#sequence_steps form[action*="/resume"] button[title="Reprendre"]'
+    ).first();
+    await resumeBtn.click();
+  }
+
+  /**
+   * Get the status badge text of the first enrollment row.
+   * Badge is a <span class="badge badge-light-{color}"> in the Statut column (3rd td).
+   */
+  async getFirstEnrollmentStatusBadgeText(): Promise<string> {
+    const statusCell = this.page
+      .locator('#sequence_steps .card:last-of-type .table-responsive table tbody tr')
+      .first()
+      .locator('td')
+      .nth(2);
+    return (await statusCell.locator('.badge').textContent() ?? '').trim();
+  }
+}

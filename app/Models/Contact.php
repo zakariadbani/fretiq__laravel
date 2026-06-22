@@ -69,6 +69,33 @@ class Contact extends Model
         return $this->belongsTo(User::class, 'assigned_to');
     }
 
+    // ── Lifecycle hooks ────────────────────────────────────────────────────────
+
+    /**
+     * Apply column defaults for nullable enum fields when the submitted value is
+     * empty or null, so we never insert an explicit NULL into a NOT NULL column
+     * that carries a sensible DB default.
+     *
+     * DB defaults: status='new', source='manual', legal_basis='unknown', email_kind='role'.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (Contact $contact) {
+            $defaults = [
+                'status'      => 'new',
+                'source'      => 'manual',
+                'legal_basis' => 'unknown',
+                'email_kind'  => 'role',
+            ];
+            foreach ($defaults as $col => $default) {
+                $val = $contact->getAttribute($col);
+                if ($val === null || $val === '') {
+                    $contact->setAttribute($col, $default);
+                }
+            }
+        });
+    }
+
     // ── Validation ─────────────────────────────────────────────────────────────
 
     /**
