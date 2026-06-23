@@ -18,6 +18,8 @@
     $contactStatuses = config('global.data.contact_statuses', []);
 @endphp
 
+<div data-contacts-count="{{ $counts['contacts_count'] ?? 0 }}">
+
 {{-- ── "X exclus" chip (D4) ──────────────────────────────────────────── --}}
 @if($pinnedOut > 0)
     <div class="px-7 pt-5 pb-2">
@@ -336,3 +338,5 @@
     </div>
 
 @endif
+
+</div>{{-- /data-contacts-count --}}

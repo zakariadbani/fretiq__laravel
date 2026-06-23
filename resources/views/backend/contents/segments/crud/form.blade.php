@@ -175,54 +175,58 @@
                 </div>
                 <div class="card-body border-top p-9">
 
-                    {{-- Secteurs d'activité --}}
-                    <div class="fv-row mb-7">
-                        <label class="fw-semibold fs-6 mb-2">Secteurs d'activité</label>
-                        <select name="filter[sector][]"
-                                class="form-select form-select-solid"
-                                multiple
-                                data-control="select2"
-                                data-placeholder="Tous les secteurs"
-                                data-allow-clear="true">
-                            @foreach($sectorOptions as $sector)
-                                <option value="{{ $sector }}"
-                                    {{ in_array($sector, $storedSectors) ? 'selected' : '' }}>
-                                    {{ $sector }}
-                                </option>
-                            @endforeach
-                        </select>
-                    </div>
+                    <div class="row g-5">
 
-                    {{-- Pays --}}
-                    <div class="fv-row mb-7">
-                        <label class="fw-semibold fs-6 mb-2">Pays</label>
-                        <select name="filter[country][]"
-                                class="form-select form-select-solid"
-                                multiple
-                                data-control="select2"
-                                data-placeholder="Tous les pays"
-                                data-allow-clear="true">
-                            @foreach($countryOptions as $iso => $label)
-                                <option value="{{ $iso }}"
-                                    {{ in_array($iso, $storedCountries) ? 'selected' : '' }}>
-                                    {{ $label }}
-                                </option>
-                            @endforeach
-                        </select>
-                    </div>
+                        {{-- Secteurs d'activité --}}
+                        <div class="col-md-4 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">Secteurs d'activité</label>
+                            <select name="filter[sector][]"
+                                    class="form-select form-select-solid"
+                                    multiple
+                                    data-control="select2"
+                                    data-placeholder="Tous les secteurs"
+                                    data-allow-clear="true">
+                                @foreach($sectorOptions as $sector)
+                                    <option value="{{ $sector }}"
+                                        {{ in_array($sector, $storedSectors) ? 'selected' : '' }}>
+                                        {{ $sector }}
+                                    </option>
+                                @endforeach
+                            </select>
+                        </div>
 
-                    {{-- Statut du contact --}}
-                    <div class="fv-row mb-0">
-                        <label class="fw-semibold fs-6 mb-2">Statut du contact</label>
-                        <select name="filter[status]" class="form-select form-select-solid">
-                            <option value="">Tous les statuts</option>
-                            @foreach($contactStatuses as $key => $data)
-                                <option value="{{ $key }}"
-                                    {{ old('filter.status', $model->filter['status'] ?? '') === $key ? 'selected' : '' }}>
-                                    {{ $data['label'] }}
-                                </option>
-                            @endforeach
-                        </select>
+                        {{-- Pays --}}
+                        <div class="col-md-4 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">Pays</label>
+                            <select name="filter[country][]"
+                                    class="form-select form-select-solid"
+                                    multiple
+                                    data-control="select2"
+                                    data-placeholder="Tous les pays"
+                                    data-allow-clear="true">
+                                @foreach($countryOptions as $iso => $label)
+                                    <option value="{{ $iso }}"
+                                        {{ in_array($iso, $storedCountries) ? 'selected' : '' }}>
+                                        {{ $label }}
+                                    </option>
+                                @endforeach
+                            </select>
+                        </div>
+
+                        {{-- Statut du contact --}}
+                        <div class="col-md-4 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">Statut du contact</label>
+                            <select name="filter[status]" class="form-select form-select-solid">
+                                <option value="">Tous les statuts</option>
+                                @foreach($contactStatuses as $key => $data)
+                                    <option value="{{ $key }}"
+                                        {{ old('filter.status', $model->filter['status'] ?? '') === $key ? 'selected' : '' }}>
+                                        {{ $data['label'] }}
+                                    </option>
+                                @endforeach
+                            </select>
+                        </div>
+
                     </div>
 
                 </div>

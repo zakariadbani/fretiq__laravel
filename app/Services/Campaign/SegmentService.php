@@ -60,6 +60,25 @@ class SegmentService
     }
 
     /**
+     * Resolve the audience for a given scope + filter + pin sets, without a saved Segment.
+     * Used by the live-preview contacts path (contacts() with a non-empty request scope).
+     * Applies the full compliance pipeline (identical to resolveCollection).
+     *
+     * @param  string    $scope       One of: 'client', 'prospect', 'mixed'
+     * @param  array     $filter      Normalized filter array (keys: sector, country, status)
+     * @param  int[]     $includeIds  Contact IDs to force-include (pinned-in from saved segment)
+     * @param  int[]     $excludeIds  Contact IDs to force-exclude (pinned-out from saved segment)
+     * @return Collection<int, Contact>
+     */
+    public function resolveAudience(string $scope, array $filter, array $includeIds = [], array $excludeIds = []): Collection
+    {
+        $postDedup = $this->buildStage5HydratedCollection($scope, $filter, $includeIds);
+        return $postDedup
+            ->reject(fn (Contact $c) => in_array($c->id, $excludeIds, true))
+            ->values();
+    }
+
+    /**
      * Return the count of eligible contacts for a segment.
      * Delegates to resolveWithStats for a truthful, pipeline-consistent count.
      */
@@ -179,27 +198,19 @@ class SegmentService
 
     /**
      * The single hydrated source of truth for segment audience resolution.
-     * Builds the post-dedup, post-exclude collection that resolve() returns.
+     * Delegates to resolveAudience() — single code path, behavior preserved.
      *
      * @param  Segment  $segment
      * @return Collection<int, Contact>
      */
     private function resolveCollection(Segment $segment): Collection
     {
-        $includeIds = $segment->includedContactIds();
-        $excludeIds = $segment->excludedContactIds();
-
-        $postDedup = $this->buildStage5HydratedCollection(
+        return $this->resolveAudience(
             $segment->scope,
             $segment->filter ?? [],
-            $includeIds,
+            $segment->includedContactIds(),
+            $segment->excludedContactIds(),
         );
-
-        // Stage 7: subtract excludes unconditionally after dedup.
-        // Exclude wins — an excluded contact cannot hold a dedup slot.
-        return $postDedup
-            ->reject(fn (Contact $c) => in_array($c->id, $excludeIds, true))
-            ->values();
     }
 
     /**

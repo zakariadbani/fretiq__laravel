@@ -143,7 +143,14 @@ class SegmentController extends BackendController
      * Réponse 422 : erreurs de validation Laravel standard (JSON).
      * Réponse 500 : { error: 'preview_failed' }
      */
-    public function preview(Request $request)
+    /**
+     * Centralise la validation de scope + filter.* et la normalisation du filtre.
+     * Partagée entre preview() et contacts() pour éviter la dérive de règles.
+     *
+     * @param  Request  $request
+     * @return array{scope: string, filter: array}
+     */
+    private function validatedScopeFilter(Request $request): array
     {
         $countryCodes    = array_keys(config('global.data.company_countries', []));
         $contactStatuses = array_keys(config('global.data.contact_statuses', []));
@@ -159,8 +166,15 @@ class SegmentController extends BackendController
             'filter.status'    => 'nullable|string|in:' . implode(',', $contactStatuses),
         ]);
 
-        $scope  = $validated['scope'];
-        $filter = $this->normalizeFilter($validated['filter'] ?? []);
+        return [
+            'scope'  => $validated['scope'],
+            'filter' => $this->normalizeFilter($validated['filter'] ?? []),
+        ];
+    }
+
+    public function preview(Request $request)
+    {
+        ['scope' => $scope, 'filter' => $filter] = $this->validatedScopeFilter($request);
 
         try {
             $stats = app(SegmentService::class)->resolveWithStats($scope, $filter, withSample: false);
@@ -458,11 +472,28 @@ class SegmentController extends BackendController
         $segment = Segment::findOrFail($id);
         $service = app(SegmentService::class);
 
+        // Pins always come from the saved segment — independent of live filter.
         $includeIds = $segment->includedContactIds();
         $excludeIds = $segment->excludedContactIds();
 
-        // Resolve the final audience (post-dedup, post-exclude).
-        $resolved = $service->resolve($segment);
+        // Use request() helper to guarantee we get the current request, not the one
+        // injected at construction time (which may be stale in test scenarios — see pinContact).
+        $currentRequest = request();
+
+        // If the request carries a non-empty scope, resolve the LIVE audience;
+        // else fall back to the saved audience exactly as before.
+        if (filled($currentRequest->input('scope'))) {
+            ['scope' => $scope, 'filter' => $filter] = $this->validatedScopeFilter($currentRequest);
+            $resolved = $service->resolveAudience($scope, $filter, $includeIds, $excludeIds);
+            $counts   = [
+                'contacts_count' => $resolved->count(),
+                'pinned_in'      => count($includeIds),
+                'pinned_out'     => count($excludeIds),
+            ];
+        } else {
+            $resolved = $service->resolve($segment);
+            $counts   = $this->segmentStats($segment);
+        }
 
         // Build provenance map: contact id → 'pinned' | 'filter'
         $provenance = $resolved->mapWithKeys(fn ($c) => [
@@ -471,7 +502,7 @@ class SegmentController extends BackendController
 
         // PHP-paginate the resolved collection.
         $perPage     = 25;
-        $currentPage = max(1, (int) $this->currentRequest->input('page', 1));
+        $currentPage = max(1, (int) $currentRequest->input('page', 1));
         $total       = $resolved->count();
         $items       = $resolved->slice(($currentPage - 1) * $perPage, $perPage)->values();
 
@@ -484,10 +515,8 @@ class SegmentController extends BackendController
         );
 
         // Excluded contacts (separate query, not in paginator total).
+        // Always the saved excluded contacts — pins are filter-independent.
         $excludedContacts = $segment->excludedContacts()->with('company:id,name')->get();
-
-        // Stats for the header.
-        $counts = $this->segmentStats($segment);
 
         return view('backend.contents.segments.partials._contacts-rows', [
             'segment'          => $segment,

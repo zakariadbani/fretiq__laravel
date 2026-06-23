@@ -66,6 +66,11 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('sequence_enrollments', function (Blueprint $table) {
+            // The composite unique (sequence_id, contact_id) is the SOLE index backing the
+            // sequence_id FK — InnoDB dropped the redundant auto FK-index when up() created
+            // the composite. Give the FK a standalone index to fall back on, else dropping
+            // the composite raises MySQL errno 1553.
+            $table->index('sequence_id');
             $table->dropUnique('se_sequence_contact_unique');
         });
 
