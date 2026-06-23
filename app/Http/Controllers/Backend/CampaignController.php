@@ -580,6 +580,21 @@ class CampaignController extends BackendController
                     'msg'     => 'Une campagne séquence se met en pause via sa séquence.',
                 ], 403);
             }
+
+            // Guard: a recurring campaign whose recurrence has ended (next_run_at IS NULL)
+            // cannot be re-activated via toggle — the scheduler would never fire.
+            // The user must re-schedule to define a new next_run_at.
+            if (
+                $campaign !== null
+                && $campaign->schedule_type === 'recurring'
+                && (int) ($request['state'] ?? 0) === 1
+                && $campaign->next_run_at === null
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'msg'     => 'Cette campagne récurrente est terminée. Planifiez-la pour définir une nouvelle occurrence.',
+                ], 422);
+            }
         }
 
         // Delegate to Datatableable trait logic (trait methods cannot use parent::).
@@ -603,7 +618,7 @@ class CampaignController extends BackendController
      * Schedule a campaign run.
      *
      * - sequence type  : rejected — must launch via sendNow().
-     * - recurring type : activates the recurrence (sets status=active); does NOT
+     * - recurring type : activates the recurrence (sets is_active=true); does NOT
      *                    enqueue an immediate blast. next_run_at must already be set.
      * - one_shot type  : delegates to CampaignService::scheduleOneShot().
      *
@@ -634,7 +649,7 @@ class CampaignController extends BackendController
                 ], 422);
             }
 
-            $campaign->update(['status' => 'active']);
+            $campaign->update(['is_active' => true]);
 
             $next = $campaign->next_run_at->copy()->setTimezone($campaign->timezone ?? 'UTC')->format('d/m/Y H:i');
 

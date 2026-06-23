@@ -3,6 +3,9 @@
 namespace Tests\Feature\Backend;
 
 use App\Console\Commands\DiscoveryTerminalizeStale;
+use App\Exceptions\QuotaExhaustedException;
+use App\Jobs\RunDiscoveryPipelineJob;
+use App\Models\Company;
 use App\Models\DiscoveryRun;
 use App\Models\Package;
 use App\Models\PackageAssignment;
@@ -110,6 +113,27 @@ class DiscoveryQuotaTest extends TestCase
     }
 
     /**
+     * Create a Package with both company and contact meters and assign it as active.
+     */
+    private function assignPackageWith(int $companyCredits, ?int $contactCredits): Package
+    {
+        $package = Package::create([
+            'name'                  => "Pack {$companyCredits}+{$contactCredits}",
+            'daily_credits'         => $companyCredits,
+            'daily_contact_credits' => $contactCredits,
+            'is_active'             => true,
+            'sort_order'            => 0,
+        ]);
+
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
+
+        return $package;
+    }
+
+    /**
      * Insert a terminal (completed) run consuming $consumed credits on $date.
      */
     private function insertConsumedRun(
@@ -127,6 +151,82 @@ class DiscoveryQuotaTest extends TestCase
             'consumed'              => $consumed,
             'quota_date'            => $date,
             'package_assignment_id' => $assignment?->id,
+        ]);
+    }
+
+    /**
+     * Create a Package with both company and contact meters (daily + monthly)
+     * and assign it as active.
+     *
+     * Pass null for any cap to indicate unlimited for that meter.
+     */
+    private function assignPackageWithMonthly(
+        ?int $dailyCredits,
+        ?int $monthlyCredits,
+        ?int $dailyContactCredits = null,
+        ?int $monthlyContactCredits = null,
+        ?string $anchorDate = null
+    ): Package {
+        $attrs = [
+            'name'                    => 'Pack ' . uniqid(),
+            'daily_credits'           => $dailyCredits,
+            'monthly_credits'         => $monthlyCredits,
+            'daily_contact_credits'   => $dailyContactCredits,
+            'monthly_contact_credits' => $monthlyContactCredits,
+            'is_active'               => true,
+            'sort_order'              => 0,
+        ];
+
+        if ($anchorDate !== null) {
+            $attrs['quota_anchor_date'] = $anchorDate;
+        }
+
+        $package = Package::create($attrs);
+
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
+
+        return $package;
+    }
+
+    /**
+     * Insert a completed run that consumed $consumed credits on a specific date,
+     * also setting contact_consumed = $contactConsumed.
+     */
+    private function insertConsumedRunWithContact(
+        ProspectCriteria $criteria,
+        int $consumed,
+        int $contactConsumed,
+        string $date,
+        string $status = 'completed'
+    ): DiscoveryRun {
+        $assignment = PackageAssignment::orderByDesc('id')->first();
+
+        return DiscoveryRun::create([
+            'prospect_criteria_id'     => $criteria->id,
+            'status'                   => $status,
+            'credits_reserved'         => $consumed,
+            'consumed'                 => $consumed,
+            'contact_credits_reserved' => $contactConsumed,
+            'contact_consumed'         => $contactConsumed,
+            'quota_date'               => $date,
+            'package_assignment_id'    => $assignment?->id,
+        ]);
+    }
+
+    /**
+     * Create a minimal Company row for manual enrichment tests.
+     */
+    private function makeCompany(ProspectCriteria $criteria): Company
+    {
+        return Company::create([
+            'criteria_id' => $criteria->id,
+            'domain'      => 'testco-' . uniqid() . '.fr',
+            'name'        => 'TestCo ' . uniqid(),
+            'relationship' => 'prospect',
+            'source'       => 'discovered',
         ]);
     }
 
@@ -624,6 +724,463 @@ class DiscoveryQuotaTest extends TestCase
             $runsBefore,
             $runsAfter,
             'prospect:discover must NOT create a new run row when solde is exhausted'
+        );
+    }
+
+    // ── Scenario 12: Contact exhaustion does not block discovery ──────────────────
+
+    /**
+     * Contact meter at 0 (daily_contact_credits=0) — discovery run still succeeds.
+     * contact_credits_reserved=0 on the run row; after job: status=completed,
+     * contact_consumed=0, companies_count > 0.
+     */
+    public function test_contact_exhaustion_does_not_block_discovery(): void
+    {
+        // Company meter: 10 credits (ok). Contact meter: 0 credits (exhausted from creation).
+        $this->assignPackageWith(10, 0);
+        $criteria = $this->makeCriteria(['daily_limit' => 6]);
+
+        // POST discover → must return 200 (contact exhaustion must NOT block discovery).
+        // With QUEUE_CONNECTION=sync the job runs immediately, so the run may already
+        // be completed/failed by the time we query it. That is fine — we query by
+        // criteria_id (no status filter) and assert the reserved values.
+        $response = $this->actingAs($this->superadmin)
+            ->postJson("/admin/prospect_criteria/{$criteria->id}/discover");
+
+        $response->assertStatus(200);
+
+        // Find the run created for this criteria (may already be completed via sync queue).
+        $run = DiscoveryRun::where('prospect_criteria_id', $criteria->id)
+            ->latest('id')
+            ->first();
+
+        $this->assertNotNull($run, 'A run must be created when contact meter is 0');
+        // min(batch=6, contactRemaining=0) = 0
+        $this->assertSame(0, (int) $run->contact_credits_reserved,
+            'contact_credits_reserved must be 0 when contact meter is exhausted');
+
+        // The run must reach a terminal state (ran synchronously via sync queue driver).
+        $this->assertContains($run->status, ['completed', 'failed'],
+            'Run must reach a terminal state after sync queue execution');
+        $this->assertSame(0, (int) $run->contact_consumed,
+            'contact_consumed must be 0 when contact budget was 0 (Hunter never called)');
+        $this->assertGreaterThan(0, (int) $run->companies_count,
+            'companies_count must be > 0 — discovery still ran despite contact exhaustion');
+    }
+
+    // ── Scenario 13: Contact partial cap limits Hunter calls ──────────────────────
+
+    /**
+     * With contact_credits=3 and batch=6, contact_credits_reserved = min(6,3) = 3.
+     * After job: contact_consumed <= 3, companies_count == 6 (all companies saved).
+     */
+    public function test_contact_partial_cap_limits_hunter_calls(): void
+    {
+        $this->assignPackageWith(10, 3);
+        $criteria = $this->makeCriteria(['daily_limit' => 6]);
+
+        // POST without Queue::fake() — sync queue driver runs the job immediately.
+        $response = $this->actingAs($this->superadmin)
+            ->postJson("/admin/prospect_criteria/{$criteria->id}/discover");
+
+        $response->assertStatus(200);
+
+        // With sync driver the run is completed by the time we query.
+        $run = DiscoveryRun::where('prospect_criteria_id', $criteria->id)
+            ->latest('id')
+            ->first();
+
+        $this->assertNotNull($run, 'A run must be created');
+        // min(6, 3) = 3
+        $this->assertSame(3, (int) $run->contact_credits_reserved,
+            'contact_credits_reserved must be 3 (min of batch=6 and contactRemaining=3)');
+
+        $this->assertLessThanOrEqual(3, (int) $run->contact_consumed,
+            'contact_consumed must not exceed reservation of 3');
+        // All 6 fixture companies are saved even though only 3 were enriched with Hunter.
+        $this->assertGreaterThan(3, (int) $run->companies_count,
+            'companies_count must exceed contact cap (extras saved without enrichment)');
+    }
+
+    // ── Scenario 14: Company unlimited + contact limited ─────────────────────────
+
+    /**
+     * With company unlimited (daily_credits=null) and contact limited (2),
+     * the run row has credits_reserved = batch (uncapped) and contact_credits_reserved = 2.
+     */
+    public function test_company_unlimited_contact_limited(): void
+    {
+        Queue::fake();
+
+        // daily_credits=null (company unlimited), daily_contact_credits=2 (contact limited).
+        $package = Package::create([
+            'name'                  => 'Pack Unlimited Company',
+            'daily_credits'         => null,
+            'daily_contact_credits' => 2,
+            'is_active'             => true,
+            'sort_order'            => 0,
+        ]);
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->postJson("/admin/prospect_criteria/{$criteria->id}/discover");
+
+        $response->assertStatus(200);
+
+        // Queue::fake() prevents the job from running — only check the run row created by the POST.
+        $run = DiscoveryRun::where('prospect_criteria_id', $criteria->id)
+            ->where('status', 'pending')
+            ->latest('id')
+            ->first();
+
+        $this->assertNotNull($run, 'A pending run must be created');
+        // Company unlimited → credits_reserved = daily_limit = 6 (no cap)
+        $this->assertSame(6, (int) $run->credits_reserved,
+            'credits_reserved must be 6 (company unlimited, daily_limit=6)');
+        // Contact limited → min(6, 2) = 2
+        $this->assertSame(2, (int) $run->contact_credits_reserved,
+            'contact_credits_reserved must be 2 (min of batch=6 and contactRemaining=2)');
+    }
+
+    // ── Scenario 15: Contact crash/retry budget ───────────────────────────────────
+
+    /**
+     * A partially-consumed run (credits_reserved=10, consumed=4, contact_credits_reserved=5,
+     * contact_consumed=2) retried via dispatchSync → contact_consumed stays <= 5,
+     * consumed stays <= 10, and run reaches a terminal state.
+     */
+    public function test_contact_crash_retry_budget(): void
+    {
+        $this->assignPackageWith(10, 5);
+        $criteria = $this->makeCriteria(['daily_limit' => 10]);
+
+        // Insert the run directly (simulate a partial crash-resume, skipping reserveRun).
+        $run = DiscoveryRun::create([
+            'prospect_criteria_id'     => $criteria->id,
+            'status'                   => 'running',
+            'credits_reserved'         => 10,
+            'consumed'                 => 4,
+            'contact_credits_reserved' => 5,
+            'contact_consumed'         => 2,
+            'quota_date'               => Carbon::today()->toDateString(),
+            'package_assignment_id'    => PackageAssignment::orderByDesc('id')->value('id'),
+            'started_at'               => now()->subSeconds(10),
+        ]);
+
+        RunDiscoveryPipelineJob::dispatchSync($criteria->id, $run->id);
+
+        $run->refresh();
+
+        $this->assertContains($run->status, ['completed', 'failed'],
+            'Run must reach a terminal state after dispatchSync');
+        $this->assertLessThanOrEqual((int) $run->credits_reserved, (int) $run->consumed,
+            'consumed must never exceed credits_reserved');
+        $this->assertLessThanOrEqual((int) $run->contact_credits_reserved, (int) $run->contact_consumed,
+            'contact_consumed must never exceed contact_credits_reserved');
+    }
+
+    // ── Scenario 16: currentPeriod contiguity — 31st anchor (findings #1/#5/#8) ───
+
+    /**
+     * Pure-function test: walk probe dates from anchor forward ~14 months and assert:
+     *  1. Every probe date is inside its own window (start <= probe < end — half-open).
+     *  2. Consecutive windows are CONTIGUOUS: prev_end === next_start (no gap, no overlap).
+     *
+     * The 31st-anchor case is the critical regression: addMonthsNoOverflow clamps
+     * Feb to 28/29, so naive re-anchoring drifts and leaves days in no window.
+     * With both bounds derived from the ORIGINAL anchor via addMonthsNoOverflow($i)
+     * and addMonthsNoOverflow($i+1), every boundary is shared exactly once.
+     */
+    public function test_current_period_contiguity_31st_anchor(): void
+    {
+        // Anchor = 2026-01-31 (end-of-month; triggers the NoOverflow clamp in Feb/Mar).
+        $this->assignPackageWithMonthly(10, 30, null, null, '2026-01-31');
+
+        /** @var DiscoveryQuotaService $svc */
+        $svc = app(DiscoveryQuotaService::class);
+
+        $anchor   = Carbon::parse('2026-01-31');
+        $probeEnd = Carbon::parse('2027-03-31');
+        $probe    = $anchor->copy();
+
+        // Track the last window so we can assert contiguity at each boundary.
+        $lastWindowStart = null;
+        $lastWindowEnd   = null;
+
+        while ($probe->lte($probeEnd)) {
+            [$start, $end] = $svc->currentPeriod($probe->copy());
+
+            // Invariant 1: probe is inside its window (half-open: start <= probe < end).
+            $this->assertTrue(
+                $start->lte($probe) && $probe->lt($end),
+                sprintf(
+                    'Probe %s must be inside window [%s, %s)',
+                    $probe->toDateString(),
+                    $start->toDateString(),
+                    $end->toDateString()
+                )
+            );
+
+            // Invariant 2: on a window boundary (start advanced from prior probe),
+            // the new start must equal the prior end — no gap, no overlap.
+            if ($lastWindowEnd !== null && $start->ne($lastWindowStart)) {
+                $this->assertTrue(
+                    $start->eq($lastWindowEnd),
+                    sprintf(
+                        'Contiguity violation at probe %s: prev window ended %s but new window starts %s',
+                        $probe->toDateString(),
+                        $lastWindowEnd->toDateString(),
+                        $start->toDateString()
+                    )
+                );
+            }
+
+            $lastWindowStart = $start->copy();
+            $lastWindowEnd   = $end->copy();
+
+            $probe->addDay();
+        }
+    }
+
+    // ── Scenario 17: First run of month not starved (finding #3) ─────────────────
+
+    /**
+     * A fresh run whose credits_reserved == monthly_credits should NOT starve itself
+     * via its own in-flight reservation. usedInPeriod(excludeRunId=$run->id) must
+     * return 0 while usedInPeriod(null) returns the reserved amount.
+     */
+    public function test_first_run_of_month_not_starved_by_own_reservation(): void
+    {
+        // daily_credits=5, monthly_credits=5 — monthly is the binding cap.
+        $this->assignPackageWithMonthly(5, 5, null, null, Carbon::today()->toDateString());
+
+        /** @var DiscoveryQuotaService $svc */
+        $svc = app(DiscoveryQuotaService::class);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 10]);
+
+        // Reserve a run — should succeed (5 credits available).
+        $run = $svc->reserveRun($criteria);
+
+        $this->assertSame(5, (int) $run->credits_reserved,
+            'First run of month must reserve all 5 remaining credits (min(daily=5, monthly=5))');
+
+        // Derive the current period for today.
+        [$pStart, $pEnd] = $svc->currentPeriod(Carbon::today());
+
+        // WITH own reservation excluded: used = 0 (the run doesn't count itself).
+        $usedExcluded = $svc->usedInPeriod($pStart, $pEnd, $run->id);
+        $this->assertSame(0, $usedExcluded,
+            'usedInPeriod with excludeRunId must be 0 — run must not count its own in-flight reservation');
+
+        // WITHOUT exclusion: used = 5 (the pending reservation is counted).
+        $usedIncluded = $svc->usedInPeriod($pStart, $pEnd, null);
+        $this->assertSame(5, $usedIncluded,
+            'usedInPeriod without exclusion must be 5 (the pending reservation counts)');
+    }
+
+    // ── Scenario 18: Both meters from one reservation (finding #8) ───────────────
+
+    /**
+     * One reserveRun with N=credits_reserved: usedOn(today) === N AND
+     * usedInPeriod(currentPeriod) === N — same credits counted by both meters.
+     * No double-counting (daily and monthly are overlapping windows, not additive).
+     */
+    public function test_both_meters_from_single_reservation(): void
+    {
+        // Package: daily=8, monthly=20 — daily is binding (min(8, 20) = 8).
+        $this->assignPackageWithMonthly(8, 20, null, null, Carbon::today()->toDateString());
+
+        /** @var DiscoveryQuotaService $svc */
+        $svc = app(DiscoveryQuotaService::class);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 10]);
+        $run      = $svc->reserveRun($criteria);
+
+        $n = (int) $run->credits_reserved;
+        $this->assertSame(8, $n, 'credits_reserved must be 8 (daily cap is binding)');
+
+        $today = Carbon::today();
+
+        // Daily meter: usedOn(today) === N.
+        $this->assertSame($n, $svc->usedOn($today),
+            'usedOn(today) must equal credits_reserved — same N credits counted by daily meter');
+
+        // Monthly meter: usedInPeriod(currentPeriod) === N.
+        [$pStart, $pEnd] = $svc->currentPeriod($today);
+        $this->assertSame($n, $svc->usedInPeriod($pStart, $pEnd),
+            'usedInPeriod must equal credits_reserved — same N credits counted by monthly meter (not double-counted)');
+    }
+
+    // ── Scenario 19: Binding cap — daily-unlimited, monthly-limited (finding #10) ─
+
+    /**
+     * Package: daily_credits=null (unlimited), monthly_credits=3.
+     * With some prior usage in the period, effectiveBatchFor() must return the
+     * monthly-remaining (≤3), NOT the full wanted batch.
+     * And reserveRun must cap credits_reserved to the monthly remaining.
+     */
+    public function test_binding_cap_monthly_limited_daily_unlimited(): void
+    {
+        $this->assignPackageWithMonthly(null, 3, null, null, Carbon::today()->toDateString());
+
+        /** @var DiscoveryQuotaService $svc */
+        $svc = app(DiscoveryQuotaService::class);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 10]);
+
+        // Prior usage in period: consume 1 credit.
+        $this->insertConsumedRun($criteria, 1, Carbon::today()->toDateString());
+
+        // effectiveBatchFor must return 2 (monthly_remaining = 3 - 1 = 2), not 10.
+        $effective = $svc->effectiveBatchFor($criteria);
+        $this->assertSame(2, $effective,
+            'effectiveBatchFor must return 2 (monthly remaining = 3-1=2) when daily is unlimited but monthly is limited');
+        $this->assertLessThanOrEqual(3, $effective,
+            'effectiveBatchFor must never exceed the monthly cap');
+
+        // reserveRun must also cap to 2.
+        $run = $svc->reserveRun($criteria);
+        $this->assertSame(2, (int) $run->credits_reserved,
+            'reserveRun must cap credits_reserved to 2 (monthly remaining) when daily is unlimited');
+    }
+
+    // ── Scenario 20: Company throws / contact clamps on MONTH exhaustion (finding #4)
+
+    /**
+     * a) monthly_credits exhausted → reserveRun throws QuotaExhaustedException.
+     * b) monthly_contact_credits exhausted but company has room → reserveRun does NOT throw;
+     *    run is created with contact_credits_reserved clamped to 0, credits_reserved is normal.
+     */
+    public function test_company_monthly_exhaustion_throws_contact_exhaustion_clamps(): void
+    {
+        /** @var DiscoveryQuotaService $svc */
+        $svc = app(DiscoveryQuotaService::class);
+
+        // ── Part a: company monthly exhausted → throw ──────────────────────────
+        $this->assignPackageWithMonthly(10, 3, 5, 10, Carbon::today()->toDateString());
+        $criteriaA = $this->makeCriteria(['daily_limit' => 5]);
+
+        // Consume all 3 monthly_credits.
+        $this->insertConsumedRun($criteriaA, 3, Carbon::today()->toDateString());
+
+        $this->expectException(QuotaExhaustedException::class);
+        $svc->reserveRun($criteriaA);
+    }
+
+    /**
+     * Contact monthly exhausted but company has room → run created, contact_credits_reserved clamped.
+     */
+    public function test_contact_monthly_exhaustion_clamps_not_throws(): void
+    {
+        /** @var DiscoveryQuotaService $svc */
+        $svc = app(DiscoveryQuotaService::class);
+
+        // monthly_credits=10 (company has room), monthly_contact_credits=2 (contact exhausted).
+        $this->assignPackageWithMonthly(10, 10, 5, 2, Carbon::today()->toDateString());
+        $criteriaB = $this->makeCriteria(['daily_limit' => 5]);
+
+        // Consume all 2 monthly_contact_credits (no company usage yet).
+        $this->insertConsumedRunWithContact($criteriaB, 0, 2, Carbon::today()->toDateString());
+        // Company meter: 0 used. Contact monthly meter: 2/2 used.
+
+        // reserveRun should NOT throw — contact exhaustion is a clamp, not a throw.
+        $run = $svc->reserveRun($criteriaB);
+
+        $this->assertNotNull($run, 'reserveRun must succeed when only the contact monthly meter is exhausted');
+        $this->assertGreaterThan(0, (int) $run->credits_reserved,
+            'credits_reserved must be > 0 (company meter has room)');
+        $this->assertSame(0, (int) $run->contact_credits_reserved,
+            'contact_credits_reserved must be clamped to 0 when monthly contact cap is exhausted');
+    }
+
+    // ── Scenario 21: Manual enrich blocked by monthly contact cap (finding #6) ──
+
+    /**
+     * Daily contact has room but monthly_contact_credits exhausted for the period
+     * → reserveManualEnrichment throws QuotaExhaustedException.
+     */
+    public function test_manual_enrich_blocked_by_monthly_contact_exhaustion(): void
+    {
+        /** @var DiscoveryQuotaService $svc */
+        $svc = app(DiscoveryQuotaService::class);
+
+        // daily_contact_credits=5 (daily has room), monthly_contact_credits=2 (monthly exhausted).
+        $this->assignPackageWithMonthly(10, 10, 5, 2, Carbon::today()->toDateString());
+
+        $criteria = $this->makeCriteria(['daily_limit' => 5]);
+
+        // Consume all 2 monthly_contact_credits via a completed discovery run today.
+        $this->insertConsumedRunWithContact($criteria, 0, 2, Carbon::today()->toDateString());
+
+        // Daily contact meter still has room (0 used today for contact... wait,
+        // insertConsumedRunWithContact puts contact_consumed=2 on today's run).
+        // So daily contact used = 2 (today). daily_contact_credits=5 → daily remaining = 3.
+        // Monthly contact used = 2, monthly cap = 2 → monthly remaining = 0.
+
+        $company = $this->makeCompany($criteria);
+
+        $this->expectException(QuotaExhaustedException::class);
+        $svc->reserveManualEnrichment($company);
+    }
+
+    // ── Scenario 22: currentPeriod returns window containing $on when $on < anchor ─
+
+    /**
+     * Regression: when $on is strictly before the anchor, the pre-anchor window
+     * must contain $on, NOT start on the anchor.
+     *
+     * Proved broken: anchor=2026-06-23, on=2026-06-22 → old code returned
+     * [2026-06-23, 2026-07-23), which excludes 2026-06-22.
+     *
+     * Fix: drop the max(0, …) clamp and the $i>0 gate so the backward walk
+     * can reach a negative $i and find [anchor-1month, anchor) — which equals
+     * [2026-05-23, 2026-06-23) in this example.
+     *
+     * Assertions:
+     *   1. $start <= $on < $end  (window contains $on)
+     *   2. $end === $anchor      (the preceding window ends exactly at the anchor)
+     */
+    public function test_current_period_contains_on_when_on_is_before_anchor(): void
+    {
+        $anchorDate = '2026-06-23';
+        $onDate     = '2026-06-22';   // one day before the anchor
+
+        $this->assignPackageWithMonthly(10, 30, null, null, $anchorDate);
+
+        /** @var DiscoveryQuotaService $svc */
+        $svc = app(DiscoveryQuotaService::class);
+
+        $on     = Carbon::parse($onDate);
+        $anchor = Carbon::parse($anchorDate)->startOfDay();
+
+        [$start, $end] = $svc->currentPeriod($on);
+
+        // Invariant 1: window contains $on (half-open: start <= on < end).
+        $this->assertTrue(
+            $start->lte($on) && $on->lt($end),
+            sprintf(
+                'Window [%s, %s) must contain on=%s (regression: pre-anchor window was skipped)',
+                $start->toDateString(),
+                $end->toDateString(),
+                $on->toDateString()
+            )
+        );
+
+        // Invariant 2: the window immediately precedes the anchor.
+        // The window before the anchor is [anchor - 1 month, anchor), so $end === $anchor.
+        $this->assertTrue(
+            $end->eq($anchor),
+            sprintf(
+                'Window end must be the anchor %s, got %s (pre-anchor window must end at anchor)',
+                $anchor->toDateString(),
+                $end->toDateString()
+            )
         );
     }
 }

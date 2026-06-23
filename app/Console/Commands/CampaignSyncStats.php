@@ -74,25 +74,25 @@ class CampaignSyncStats extends Command
         }
 
         // ── Sequence-campaign lifecycle sweep ─────────────────────────────────
-        // Atomic conditional UPDATE: sequence-type campaigns that are 'active',
-        // have at least one enrollment, and have NO remaining active OR paused
-        // enrollments → transition to 'done'.
+        // Atomic conditional UPDATE: sequence-type campaigns that are live
+        // (is_active=1), have at least one enrollment, and have NO remaining
+        // active OR paused enrollments → set is_active=0 (campaign is drained).
         //
-        // Paused enrollments are resumable (user can un-pause), so they block
-        // closure just like active ones. Only terminal statuses (completed/stopped)
-        // are safe to ignore here.
+        // Paused enrollments (SequenceEnrollment.status='paused') are resumable,
+        // so they block closure just like active ones. Only terminal statuses
+        // (completed/stopped) are safe to ignore here.
         //
         // Single SQL statement — no read-then-write — so a concurrent launchSequence
-        // (which inserts active enrollments before setting status='active') cannot
-        // race this into a wrong 'done'.
+        // (which inserts active enrollments before setting is_active=1) cannot
+        // race this into a wrong closure.
         //
         // Eventual-consistent: ≤15 min lag before a fully-drained sequence
-        // campaign reaches 'done'. Re-launch from 'done' re-activates (§3.4).
+        // campaign reaches is_active=0. Re-launch sets is_active=1.
         $closed = DB::update("
             UPDATE campaigns
-            SET status = 'done'
+            SET is_active = 0
             WHERE schedule_type = 'sequence'
-              AND status = 'active'
+              AND is_active = 1
               AND EXISTS (
                   SELECT 1 FROM sequence_enrollments se
                   WHERE se.campaign_id = campaigns.id

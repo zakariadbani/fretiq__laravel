@@ -70,25 +70,33 @@ class PackageController extends BackendController
         // Consumption ledger: last 14 days of discovery_runs grouped by quota_date
         $since = Carbon::today()->subDays(13);
         $ledger = DiscoveryRun::where('quota_date', '>=', $since->toDateString())
-            ->selectRaw('quota_date, COUNT(*) as runs_count, SUM(credits_reserved) as total_reserved, SUM(consumed) as total_consumed')
+            ->selectRaw('quota_date, COUNT(*) as runs_count, SUM(credits_reserved) as total_reserved, SUM(consumed) as total_consumed, SUM(contact_consumed) as total_contact_consumed')
             ->groupBy('quota_date')
             ->orderByDesc('quota_date')
             ->get();
 
         // Today's remaining (null = unlimited)
-        $remainingToday = $quotaService->remainingTodayForDisplay();
-        $isUnlimited    = $quotaService->isUnlimited();
+        $remainingToday               = $quotaService->remainingTodayForDisplay();
+        $isUnlimited                  = $quotaService->isUnlimited();
+        $contactRemainingToday        = $quotaService->contactRemainingTodayForDisplay();
+
+        // Monthly remaining (null = no monthly cap)
+        $monthlyRemainingToday        = $quotaService->monthlyRemainingForDisplay();
+        $monthlyContactRemainingToday = $quotaService->monthlyContactRemainingForDisplay();
 
         return $this->currentDataTable->render(
             'backend.contents.packages.crud.index',
             [
-                'listTitle'        => $this->listTitle,
-                'dataTableConfig'  => $this->currentDataTable->getIndexConfig(),
-                'activeAssignment' => $activeAssignment,
-                'activePackages'   => $activePackages,
-                'ledger'           => $ledger,
-                'remainingToday'   => $remainingToday,
-                'isUnlimited'      => $isUnlimited,
+                'listTitle'                    => $this->listTitle,
+                'dataTableConfig'              => $this->currentDataTable->getIndexConfig(),
+                'activeAssignment'             => $activeAssignment,
+                'activePackages'               => $activePackages,
+                'ledger'                       => $ledger,
+                'remainingToday'               => $remainingToday,
+                'isUnlimited'                  => $isUnlimited,
+                'contactRemainingToday'        => $contactRemainingToday,
+                'monthlyRemainingToday'        => $monthlyRemainingToday,
+                'monthlyContactRemainingToday' => $monthlyContactRemainingToday,
             ]
         );
     }

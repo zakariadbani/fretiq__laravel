@@ -91,9 +91,9 @@
                                        required />
                             </div>
 
-                            {{-- Crédits / jour (nullable) --}}
+                            {{-- Crédits entreprises / jour (nullable) --}}
                             <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Crédits / jour</label>
+                                <label class="fw-semibold fs-6 mb-2">Crédits entreprises / jour (découverte)</label>
                                 <input type="number"
                                        name="daily_credits"
                                        class="form-control form-control-solid"
@@ -103,6 +103,64 @@
                                 <div class="form-text text-muted">
                                     <i class="bi bi-info-circle me-1"></i>
                                     Vide = illimité (aucune limite de découverte journalière).
+                                </div>
+                            </div>
+
+                            {{-- Crédits entreprises / mois (nullable) --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Crédits entreprises / mois (découverte)</label>
+                                <input type="number"
+                                       name="monthly_credits"
+                                       class="form-control form-control-solid"
+                                       placeholder="Ex : 300"
+                                       min="0"
+                                       value="{{ old('monthly_credits', isset($model) ? $model->monthly_credits : '') }}" />
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-info-circle me-1"></i>
+                                    Vide = illimité (aucune limite de découverte mensuelle).
+                                </div>
+                            </div>
+
+                            {{-- Crédits contacts / jour (nullable) --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Crédits contacts / jour (enrichissement)</label>
+                                <input type="number"
+                                       name="daily_contact_credits"
+                                       class="form-control form-control-solid"
+                                       placeholder="Ex : 50"
+                                       min="0"
+                                       value="{{ old('daily_contact_credits', isset($model) ? $model->daily_contact_credits : '') }}" />
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-info-circle me-1"></i>
+                                    Vide = illimité (aucune limite d'enrichissement journalière).
+                                </div>
+                            </div>
+
+                            {{-- Crédits contacts / mois (nullable) --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Crédits contacts / mois (enrichissement)</label>
+                                <input type="number"
+                                       name="monthly_contact_credits"
+                                       class="form-control form-control-solid"
+                                       placeholder="Ex : 300"
+                                       min="0"
+                                       value="{{ old('monthly_contact_credits', isset($model) ? $model->monthly_contact_credits : '') }}" />
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-info-circle me-1"></i>
+                                    Vide = illimité (aucune limite d'enrichissement mensuelle).
+                                </div>
+                            </div>
+
+                            {{-- Date d'ancrage du compteur mensuel (nullable) --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Date d'ancrage du compteur mensuel</label>
+                                <input type="date"
+                                       name="quota_anchor_date"
+                                       class="form-control form-control-solid"
+                                       value="{{ old('quota_anchor_date', $model?->quota_anchor_date?->format('Y-m-d')) }}" />
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-info-circle me-1"></i>
+                                    Le compteur mensuel se remet à zéro chaque mois à partir de cette date. Vide = 1er du mois.
                                 </div>
                             </div>
 

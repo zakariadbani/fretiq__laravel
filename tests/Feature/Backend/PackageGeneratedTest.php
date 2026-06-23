@@ -169,6 +169,24 @@ class PackageGeneratedTest extends TestCase
         $this->assertArrayHasKey('daily_credits', $response->json('errors'));
     }
 
+    /**
+     * Store must return 406 when `daily_contact_credits` violates the min:0 rule.
+     *
+     * Package::rules(): daily_contact_credits => 'nullable|integer|min:0'
+     */
+    public function test_store_validation_fails_on_negative_daily_contact_credits(): void
+    {
+        $response = $this->actingAs($this->superadmin)
+            ->postJson('/admin/packages', [
+                'name'                  => 'Pack Invalide',
+                'daily_contact_credits' => -3,
+            ]);
+
+        $response->assertStatus(406);
+        $response->assertJsonStructure(['message', 'errors' => ['daily_contact_credits']]);
+        $this->assertArrayHasKey('daily_contact_credits', $response->json('errors'));
+    }
+
     // ── Update happy-path ─────────────────────────────────────────────────────
 
     /**

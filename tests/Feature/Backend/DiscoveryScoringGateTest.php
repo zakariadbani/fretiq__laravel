@@ -366,6 +366,52 @@ class DiscoveryScoringGateTest extends TestCase
     }
 
     /**
+     * Second separate run against the same fixture reports zero new companies.
+     *
+     * Run 1 inserts all 6 fixture domains (new_companies_count === 6).
+     * Run 2 processes the same 6 domains again via upsert (update path) →
+     * new_companies_count === 0, companies_count still === 6 (all re-processed),
+     * and the total distinct company rows in the DB remains 6.
+     */
+    public function test_second_separate_run_reports_zero_new_companies(): void
+    {
+        config(['services.serpapi.driver' => 'local']);
+
+        Setting::set('decouverte.auto_scoring', true);
+        Setting::set('decouverte.auto_enrich', true);
+        Setting::set('decouverte.min_score_enrich', 0);  // all pass gate
+
+        $criteria = $this->makeCriteria(['daily_limit' => 10]);
+
+        /** @var DiscoveryPipelineService $pipeline */
+        $pipeline = app(DiscoveryPipelineService::class);
+
+        // Run 1 — all 6 fixture domains are new inserts
+        $run1 = $this->makeRunningRun($criteria, 10);
+        $pipeline->run($criteria, 10, $run1);
+        $run1->refresh();
+
+        $this->assertSame(6, (int) $run1->companies_count,
+            'Run 1 must process all 6 fixture candidates');
+        $this->assertSame(6, (int) $run1->new_companies_count,
+            'Run 1 must report 6 new inserts');
+
+        // Run 2 — same domains, all update path → zero new inserts
+        $run2 = $this->makeRunningRun($criteria, 10);
+        $pipeline->run($criteria, 10, $run2);
+        $run2->refresh();
+
+        $this->assertSame(6, (int) $run2->companies_count,
+            'Run 2 must re-process all 6 fixture candidates (companies_count = 6)');
+        $this->assertSame(0, (int) $run2->new_companies_count,
+            'Run 2 must report 0 new inserts (all domains already exist)');
+
+        // Distinct company rows must remain 6 — no phantom inflation
+        $this->assertSame(6, (int) Company::where('criteria_id', $criteria->id)->count(),
+            'Only 6 distinct companies must exist after two runs of the same fixture');
+    }
+
+    /**
      * Defaults regression: with default settings (true/true/50) all fixture candidates
      * score ≥ 50 (confirmed by LeadScoringServiceTest fixture invariant) → behavior
      * identical to legacy (all enriched).

@@ -100,19 +100,27 @@ class DiscoveryPipelineService
      * writes counts.
      *
      * @param  ProspectCriteria  $criteria
-     * @param  int|null          $cap      External cap (credits_reserved − consumed) from RunDiscoveryPipelineJob.
-     *                                     null = no external cap; use criteria daily_limit only.
-     * @param  DiscoveryRun|null $run      Live run row; consumed is the resume cursor.
-     * @return array{companies: int, contacts: int, skipped: int, low_score: int}
+     * @param  int|null          $cap        External company cap (credits_reserved − consumed) from RunDiscoveryPipelineJob.
+     *                                       null = no external cap; use criteria daily_limit only.
+     * @param  DiscoveryRun|null $run        Live run row; consumed is the resume cursor.
+     * @param  int|null          $contactCap External contact-enrichment cap. null = unlimited (skip Hunter gate).
+     *                                       When set, Hunter is only called while $contactSpent < $contactCap.
+     *                                       Invariant: for discovery rows contact_consumed <= consumed; manual rows differ.
+     * @return array{companies: int, contacts: int, skipped: int, low_score: int, contacts_consumed: int}
      */
-    public function run(ProspectCriteria $criteria, ?int $cap = null, ?DiscoveryRun $run = null): array
+    public function run(ProspectCriteria $criteria, ?int $cap = null, ?DiscoveryRun $run = null, ?int $contactCap = null): array
     {
         // When an external cap is provided, honour both the criteria daily_limit and the cap.
         $budget = $cap !== null
             ? min($criteria->daily_limit ?: 20, $cap)
             : ($criteria->daily_limit ?: 20);
 
-        $stats = ['companies' => 0, 'contacts' => 0, 'skipped' => 0, 'low_score' => 0];
+        // Contact budget: how many Hunter calls are allowed in this attempt.
+        // PHP_INT_MAX means unlimited (no contactCap set).
+        $contactBudget = $contactCap ?? PHP_INT_MAX;
+        $contactSpent  = 0;
+
+        $stats = ['companies' => 0, 'contacts' => 0, 'skipped' => 0, 'low_score' => 0, 'new' => 0, 'contacts_consumed' => 0];
 
         // Read scoring/enrichment settings once per run (avoids repeated DB/cache reads).
         $autoScoring = (bool) Setting::get('decouverte.auto_scoring', true);
@@ -142,7 +150,8 @@ class DiscoveryPipelineService
             }
 
             // CAS expected position: consumed must equal this value for our UPDATE to land.
-            $expected = $offset + $completedThisAttempt;
+            $expected    = $offset + $completedThisAttempt;
+            $hunterCalled = false; // declared before try so catch can read it
 
             try {
                 // ── Step 1: Scoring gate ─────────────────────────────────────
@@ -155,17 +164,28 @@ class DiscoveryPipelineService
                 }
 
                 // ── Step 2: Enrichment decision ──────────────────────────────
-                // Enrich when: auto_enrich is on, AND either scoring is off OR score passes the gate.
-                $shouldEnrich = $autoEnrich && (! $autoScoring || $score >= $minScore);
+                // Enrich when: auto_enrich is on, AND either scoring is off OR score passes the gate,
+                // AND the per-attempt contact budget has not been exhausted.
+                // Once contactBudget is spent, companies continue being discovered but Hunter is skipped.
+                $shouldEnrich = $autoEnrich && (! $autoScoring || $score >= $minScore) && ($contactSpent < $contactBudget);
 
                 // ── Step 3: Hunter enrichment (if gate passed) ───────────────
-                $enrichment = $shouldEnrich ? $this->hunter->domainSearch($domain) : null;
+                // $hunterCalled tracks whether Hunter was actually invoked for this candidate.
+                // We debit the contact budget immediately after the call so the gate reflects
+                // calls already made even if a subsequent upsert throws.
+                $hunterCalled = $shouldEnrich;
+                $enrichment   = $shouldEnrich ? $this->hunter->domainSearch($domain) : null;
+                if ($hunterCalled) {
+                    $contactSpent++;
+                }
 
                 // ── Step 4: Upsert Company + Contacts ────────────────────────
                 $company = $this->upsertCompany(
                     $criteria, $domain, $candidate, $enrichment,
                     $score, $explanation, $autoScoring
                 );
+
+                $isNew = $company->wasRecentlyCreated;
 
                 $contactCount = ($enrichment !== null)
                     ? $this->contactUpsert->upsertFromHunter($company, $domain, $enrichment['emails'] ?? [])
@@ -182,10 +202,12 @@ class DiscoveryPipelineService
                         ->where('status', 'running')
                         ->where('consumed', $expected)
                         ->update([
-                            'consumed'       => DB::raw('consumed + 1'),
-                            'companies_count' => DB::raw('companies_count + 1'),
-                            'contacts_count'  => DB::raw('contacts_count + ' . (int) $contactCount),
-                            'low_score_count' => DB::raw('low_score_count + ' . ($isLowScore ? 1 : 0)),
+                            'consumed'            => DB::raw('consumed + 1'),
+                            'companies_count'     => DB::raw('companies_count + 1'),
+                            'new_companies_count' => DB::raw('COALESCE(new_companies_count, 0) + ' . ($isNew ? 1 : 0)),
+                            'contacts_count'      => DB::raw('contacts_count + ' . (int) $contactCount),
+                            'low_score_count'     => DB::raw('low_score_count + ' . ($isLowScore ? 1 : 0)),
+                            'contact_consumed'    => DB::raw('contact_consumed + ' . ($hunterCalled ? 1 : 0)),
                         ]);
 
                     if ($advanced === 0) {
@@ -201,9 +223,15 @@ class DiscoveryPipelineService
 
                 // Local stats for return value and logging.
                 $stats['companies']++;
+                if ($isNew) {
+                    $stats['new']++;
+                }
                 $stats['contacts'] += $contactCount;
                 if ($isLowScore) {
                     $stats['low_score']++;
+                }
+                if ($hunterCalled) {
+                    $stats['contacts_consumed']++;
                 }
             } catch (\Throwable $e) {
                 Log::warning('[DiscoveryPipelineService] Domain processing failed — skipping', [
@@ -220,8 +248,9 @@ class DiscoveryPipelineService
                         ->where('status', 'running')
                         ->where('consumed', $expected)
                         ->update([
-                            'consumed'      => DB::raw('consumed + 1'),
-                            'skipped_count' => DB::raw('skipped_count + 1'),
+                            'consumed'         => DB::raw('consumed + 1'),
+                            'skipped_count'    => DB::raw('skipped_count + 1'),
+                            'contact_consumed' => DB::raw('contact_consumed + ' . ($hunterCalled ? 1 : 0)),
                         ]);
 
                     if ($advanced === 0) {

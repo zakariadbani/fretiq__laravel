@@ -35,7 +35,8 @@
                         <tr class="fw-bold text-muted bg-light">
                             <th class="ps-7">Démarrée le</th>
                             <th>Statut</th>
-                            <th>Entreprises</th>
+                            <th>Traitées</th>
+                            <th>Nouvelles</th>
                             <th>Contacts</th>
                             <th>Ignorés</th>
                             <th>Sous seuil</th>
@@ -72,6 +73,7 @@
                                 @endif
                             </td>
                             <td>{{ number_format($run->companies_count) }}</td>
+                            <td>{{ is_null($run->new_companies_count) ? '—' : number_format($run->new_companies_count) }}</td>
                             <td>{{ number_format($run->contacts_count) }}</td>
                             <td><span class="text-muted">{{ number_format($run->skipped_count) }}</span></td>
                             <td><span class="text-muted">{{ number_format($run->low_score_count ?? 0) }}</span></td>

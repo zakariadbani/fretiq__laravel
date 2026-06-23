@@ -38,7 +38,7 @@ class CompanyController extends BackendController
 
         $this->middleware('permission:view companies')->only(['index', 'view']);
         $this->middleware('permission:create companies')->only(['create', 'store']);
-        $this->middleware('permission:edit companies')->only(['edit', 'update', 'executeSwitch']);
+        $this->middleware('permission:edit companies')->only(['edit', 'update', 'executeSwitch', 'explainScore']);
         $this->middleware('permission:delete companies')->only(['delete']);
         $this->middleware('permission:enrich companies')->only(['enrich']);
 
@@ -333,7 +333,7 @@ class CompanyController extends BackendController
 
                 return response()->json([
                     'message'        => 'success',
-                    'text'           => "{$count} contact(s) récupéré(s) — 1 crédit consommé.",
+                    'text'           => "{$count} contact(s) récupéré(s) — 1 crédit contact consommé.",
                     'contacts_count' => $count,
                 ], 200);
             }
@@ -369,6 +369,27 @@ class CompanyController extends BackendController
                 'text'    => "Erreur lors de l'enrichissement — réessayez.",
             ], 500);
         }
+    }
+
+    /**
+     * Generate an AI narrative explaining the company's current ai_score.
+     *
+     * Requires `edit companies` permission (enforced via middleware).
+     * Writes ai_explanation ONLY — never touches ai_score.
+     */
+    public function explainScore($id, \App\Services\Scoring\ScoreExplanationService $svc): \Illuminate\Http\JsonResponse
+    {
+        $company = Company::findOrFail((int) $id);
+
+        if ($company->ai_score === null) {
+            return response()->json(['message' => 'error', 'text' => 'Aucun score IA à expliquer.'], 422);
+        }
+
+        $text = $svc->explain($company);
+
+        Company::whereKey($company->id)->update(['ai_explanation' => $text]);
+
+        return response()->json(['message' => 'success', 'text' => 'Récapitulatif IA généré.', 'explanation' => $text], 200);
     }
 
     /**

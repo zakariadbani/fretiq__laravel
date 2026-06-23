@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Traits\Validator;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Segment extends Model
 {
@@ -74,6 +75,57 @@ class Segment extends Model
         ];
     }
 
+    // ── Relations ──────────────────────────────────────────────────────────────
+
+    /**
+     * All pinned contacts (include + exclude modes combined).
+     *
+     * Contact uses SoftDeletes — BelongsToMany automatically applies the related
+     * model's global scope, so soft-deleted contacts are excluded from all results.
+     */
+    public function pinnedContacts(): BelongsToMany
+    {
+        return $this->belongsToMany(Contact::class, 'contact_segment')
+            ->withPivot('mode')
+            ->withTimestamps();
+    }
+
+    /**
+     * Contacts pinned in include mode (force-added to the resolved audience).
+     */
+    public function includedContacts(): BelongsToMany
+    {
+        return $this->pinnedContacts()->wherePivot('mode', 'include');
+    }
+
+    /**
+     * Contacts pinned in exclude mode (unconditionally removed after dedup).
+     */
+    public function excludedContacts(): BelongsToMany
+    {
+        return $this->pinnedContacts()->wherePivot('mode', 'exclude');
+    }
+
+    /**
+     * IDs of contacts pinned in include mode.
+     *
+     * @return array<int>
+     */
+    public function includedContactIds(): array
+    {
+        return $this->includedContacts()->pluck('contacts.id')->toArray();
+    }
+
+    /**
+     * IDs of contacts pinned in exclude mode.
+     *
+     * @return array<int>
+     */
+    public function excludedContactIds(): array
+    {
+        return $this->excludedContacts()->pluck('contacts.id')->toArray();
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     /**
@@ -82,6 +134,9 @@ class Segment extends Model
      * Delegates to SegmentService::resolveWithStats() so the count reflects
      * ALL compliance stages (scope + filter + suppression + cold gate +
      * email-kind + dedup) — identical to the count that resolve() would produce.
+     *
+     * B2: threads pinned include/exclude id-sets into resolveWithStats so the
+     * displayed count reflects manual pins, not filter-only.
      *
      * Previously this method applied scope only (join on companies), which caused
      * the displayed count to diverge from actual send recipients. That divergence
@@ -93,7 +148,7 @@ class Segment extends Model
     {
         try {
             return app(\App\Services\Campaign\SegmentService::class)
-                ->resolveWithStats($this->scope, $this->filter ?? [])['final'];
+                ->resolveWithStats($this->scope, $this->filter ?? [], false, $this->includedContactIds(), $this->excludedContactIds())['final'];
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('segments.contactsCount failed', ['segment_id' => $this->id, 'message' => $e->getMessage()]);
             return 0;

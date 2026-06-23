@@ -23,9 +23,9 @@ class SegmentController extends BackendController
         // Assigned at runtime to avoid a trait+class property default conflict.
         $this->viewConfigClass = SegmentViewConfig::class;
 
-        $this->middleware('permission:view segments')->only(['index', 'view', 'preview']);
+        $this->middleware('permission:view segments')->only(['index', 'view', 'preview', 'contacts', 'contactsSearch']);
         $this->middleware('permission:create segments')->only(['create', 'store']);
-        $this->middleware('permission:edit segments')->only(['edit', 'update', 'executeSwitch']);
+        $this->middleware('permission:edit segments')->only(['edit', 'update', 'executeSwitch', 'pinContact', 'unpinContact']);
         $this->middleware('permission:delete segments')->only(['delete']);
 
         $this->listTitle = 'Segments';
@@ -163,7 +163,7 @@ class SegmentController extends BackendController
         $filter = $this->normalizeFilter($validated['filter'] ?? []);
 
         try {
-            $stats = app(SegmentService::class)->resolveWithStats($scope, $filter, withSample: true);
+            $stats = app(SegmentService::class)->resolveWithStats($scope, $filter, withSample: false);
         } catch (\Throwable $e) {
             Log::warning('segments.preview failed', [
                 'message' => $e->getMessage(),
@@ -294,16 +294,208 @@ class SegmentController extends BackendController
      * Calcule les statistiques du funnel pour un segment sauvegardé.
      * Utilisé par view() et edit() pour alimenter le ViewConfig et le formulaire.
      *
-     * Retourne : contacts_count (int) + funnel (array complet de resolveWithStats).
+     * B2: threads the segment's pin id-sets into resolveWithStats so the hero tile,
+     * stat-card, and datatable column show the pin-adjusted count, not filter-only.
+     *
+     * Retourne : contacts_count (int) + funnel (array complet de resolveWithStats)
+     *          + pinned_in (int) + pinned_out (int).
      */
     private function segmentStats(Segment $segment): array
     {
-        $stats = app(SegmentService::class)->resolveWithStats($segment->scope, $segment->filter ?? []);
+        $includeIds = $segment->includedContactIds();
+        $excludeIds = $segment->excludedContactIds();
+
+        $stats = app(SegmentService::class)->resolveWithStats(
+            $segment->scope,
+            $segment->filter ?? [],
+            false,  // withSample: false — sample table removed (M2)
+            $includeIds,
+            $excludeIds,
+        );
 
         return [
             'contacts_count' => $stats['final'],
             'funnel'         => $stats,
+            'pinned_in'      => count($includeIds),
+            'pinned_out'     => count($excludeIds),
         ];
+    }
+
+    /**
+     * Pin (or flip mode of) a contact on this segment.
+     *
+     * POST /admin/segments/{id}/contacts
+     * Body: contact_id (exists:contacts,id), mode (in:include,exclude)
+     * Returns: JSON { success: true, counts: { contacts_count, pinned_in, pinned_out } }
+     *
+     * @param  int  $id  Segment ID
+     */
+    public function pinContact(int $id)
+    {
+        $segment = Segment::findOrFail($id);
+
+        // Use request() helper to guarantee we get the current request, not the one
+        // injected at construction time (which may be stale when multiple requests are
+        // dispatched in the same test process against the same kernel singleton).
+        $currentRequest = request();
+        $validated = $currentRequest->validate([
+            'contact_id' => 'required|integer|exists:contacts,id',
+            'mode'       => 'required|in:include,exclude',
+        ]);
+
+        $contactId = (int) $validated['contact_id'];
+        $mode      = $validated['mode'];
+
+        // Upsert the pin row: insert if new, update mode if the pair already exists.
+        // Using DB::table upsert (MySQL INSERT ... ON DUPLICATE KEY UPDATE) for
+        // guaranteed atomicity regardless of the pivot's current mode value.
+        // The unique key is (segment_id, contact_id) — see migration.
+        \Illuminate\Support\Facades\DB::table('contact_segment')->upsert(
+            [
+                [
+                    'segment_id' => $segment->id,
+                    'contact_id' => $contactId,
+                    'mode'       => $mode,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ],
+            ],
+            uniqueBy: ['segment_id', 'contact_id'],
+            update: ['mode', 'updated_at'],
+        );
+
+        // Flush cached id-sets so segmentStats reflects the new pin.
+        $segment->refresh();
+
+        return response()->json([
+            'success' => true,
+            'counts'  => $this->segmentStats($segment),
+        ]);
+    }
+
+    /**
+     * Remove a contact pin from this segment (revert to filter default).
+     *
+     * DELETE /admin/segments/{id}/contacts/{contact}
+     * Returns: JSON { success: true, counts: { contacts_count, pinned_in, pinned_out } }
+     *
+     * @param  int  $id       Segment ID
+     * @param  int  $contact  Contact ID
+     */
+    public function unpinContact(int $id, int $contact)
+    {
+        $segment = Segment::findOrFail($id);
+
+        $segment->pinnedContacts()->detach($contact);
+
+        $segment->refresh();
+
+        return response()->json([
+            'success' => true,
+            'counts'  => $this->segmentStats($segment),
+        ]);
+    }
+
+    /**
+     * Search contacts for the picker — returns contacts not already pinned.
+     *
+     * GET /admin/segments/{id}/contacts/search?q=
+     * Returns: JSON { results: [{ id, name, email, company }] }
+     *
+     * Soft-deleted contacts are excluded (Contact uses SoftDeletes global scope).
+     * Throttle: 60 req/min (applied at route level).
+     *
+     * @param  int  $id  Segment ID
+     */
+    public function contactsSearch(int $id)
+    {
+        $segment   = Segment::findOrFail($id);
+        $pinnedIds = $segment->pinnedContacts()->pluck('contacts.id')->toArray();
+
+        $q = trim((string) $this->currentRequest->input('q', ''));
+
+        $query = \App\Models\Contact::with('company:id,name')
+            ->whereNotIn('id', $pinnedIds)
+            ->whereNotNull('email')
+            ->whereRaw("TRIM(email) != ''");
+
+        if ($q !== '') {
+            $query->where(function (\Illuminate\Database\Eloquent\Builder $builder) use ($q) {
+                $like = '%' . addcslashes($q, '%_\\') . '%';
+                $builder->where('name', 'LIKE', $like)
+                        ->orWhere('email', 'LIKE', $like);
+            });
+        }
+
+        $contacts = $query->orderBy('name')->limit(20)->get();
+
+        $results = $contacts->map(fn (\App\Models\Contact $c) => [
+            'id'      => $c->id,
+            'name'    => $c->name,
+            'email'   => $c->email,
+            'company' => $c->company?->name ?? '',
+        ])->values()->all();
+
+        return response()->json(['results' => $results]);
+    }
+
+    /**
+     * Return the paginated resolved audience for a segment's Contacts pane.
+     *
+     * GET /admin/segments/{id}/contacts
+     * Query params: page (int, default 1)
+     *
+     * Resolves the full audience via SegmentService, PHP-paginates the post-dedup
+     * collection, computes per-row provenance (pinned | filter), and renders the
+     * _contacts-rows partial fragment (AJAX re-render pattern).
+     *
+     * Excluded contacts are fetched separately (not in paginator total).
+     *
+     * @param  int  $id  Segment ID
+     */
+    public function contacts(int $id)
+    {
+        $segment = Segment::findOrFail($id);
+        $service = app(SegmentService::class);
+
+        $includeIds = $segment->includedContactIds();
+        $excludeIds = $segment->excludedContactIds();
+
+        // Resolve the final audience (post-dedup, post-exclude).
+        $resolved = $service->resolve($segment);
+
+        // Build provenance map: contact id → 'pinned' | 'filter'
+        $provenance = $resolved->mapWithKeys(fn ($c) => [
+            $c->id => in_array($c->id, $includeIds, true) ? 'pinned' : 'filter',
+        ])->all();
+
+        // PHP-paginate the resolved collection.
+        $perPage     = 25;
+        $currentPage = max(1, (int) $this->currentRequest->input('page', 1));
+        $total       = $resolved->count();
+        $items       = $resolved->slice(($currentPage - 1) * $perPage, $perPage)->values();
+
+        $paginator = new \Illuminate\Pagination\LengthAwarePaginator(
+            $items,
+            $total,
+            $perPage,
+            $currentPage,
+            ['path' => route('admin.segments.contacts', $id)]
+        );
+
+        // Excluded contacts (separate query, not in paginator total).
+        $excludedContacts = $segment->excludedContacts()->with('company:id,name')->get();
+
+        // Stats for the header.
+        $counts = $this->segmentStats($segment);
+
+        return view('backend.contents.segments.partials._contacts-rows', [
+            'segment'          => $segment,
+            'paginator'        => $paginator,
+            'excludedContacts' => $excludedContacts,
+            'counts'           => $counts,
+            'provenance'       => $provenance,
+        ]);
     }
 
     /**

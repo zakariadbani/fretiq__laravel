@@ -81,14 +81,12 @@ class PlannerFeedTest extends TestCase
      * @param  Carbon       $nextRunAt   UTC
      * @param  string|null  $until       ISO-8601 date string for the until boundary, or null
      * @param  string       $frequency   'daily' | 'weekly' | 'monthly'
-     * @param  string       $status      'active' | 'draft' | …
      * @param  bool         $isActive    false = paused; default true
      */
     private function makeRecurring(
         Carbon $nextRunAt,
         ?string $until    = null,
         string $frequency = 'daily',
-        string $status    = 'active',
         bool $isActive    = true,
     ): Campaign {
         $segment  = Segment::create(['name' => 'Rec Seg ' . uniqid(), 'scope' => 'client']);
@@ -116,7 +114,6 @@ class PlannerFeedTest extends TestCase
             'recurrence'         => $recurrence,
             'next_run_at'        => $nextRunAt,
             'timezone'           => 'UTC',
-            'status'             => $status,
             'is_active'          => $isActive,
         ]);
     }
@@ -405,14 +402,15 @@ class PlannerFeedTest extends TestCase
 
     /**
      * A draft recurring campaign must NOT appear in the projection.
-     * Only 'scheduled' and 'active' statuses are projected.
+     * Only is_active=true campaigns are projected.
      */
     public function test_projection_draft_campaign_excluded(): void
     {
         Carbon::setTestNow('2026-07-01 00:00:00');
 
         $nextRunAt = Carbon::parse('2026-07-02 12:00:00', 'UTC');
-        $campaign  = $this->makeRecurring($nextRunAt, '2026-07-10', 'daily', 'draft');
+        // is_active=false (paused) — must not be projected.
+        $campaign  = $this->makeRecurring($nextRunAt, '2026-07-10', 'daily', false);
 
         $events = app(PlannerService::class)->runsFeed(
             '2026-07-01T00:00:00+00:00',
@@ -424,7 +422,7 @@ class PlannerFeedTest extends TestCase
         );
 
         $this->assertCount(0, $projected,
-            'Draft campaign must produce zero projected events');
+            'Paused campaign (is_active=false) must produce zero projected events');
 
         Carbon::setTestNow();
     }
@@ -434,15 +432,13 @@ class PlannerFeedTest extends TestCase
     /**
      * POST /admin/campaigns/{id}/schedule on a recurring campaign (with next_run_at set):
      * - must NOT create any CampaignRun rows,
-     * - must set campaign status = 'active' (scheduled was merged into active),
+     * - must set campaign is_active = true,
      * - must return JSON with 'message', 'text', 'redirect' keys.
      */
     public function test_schedule_recurring_activates_without_creating_run(): void
     {
         $nextRunAt = now()->addDay()->utc();
-        $campaign  = $this->makeRecurring($nextRunAt, '2027-01-01', 'daily');
-        // Start from draft to verify status changes.
-        $campaign->update(['status' => 'draft']);
+        $campaign  = $this->makeRecurring($nextRunAt, '2027-01-01', 'daily', false);
 
         $this->actingAs($this->superadmin)
             ->postJson("/admin/campaigns/{$campaign->id}/schedule", [
@@ -455,10 +451,10 @@ class PlannerFeedTest extends TestCase
         // Zero CampaignRun rows for this campaign.
         $this->assertDatabaseMissing('campaign_runs', ['campaign_id' => $campaign->id]);
 
-        // Status updated to 'active' (the merged lifecycle: draft → active → done).
+        // is_active updated to true (sole live gate).
         $this->assertDatabaseHas('campaigns', [
-            'id'     => $campaign->id,
-            'status' => 'active',
+            'id'        => $campaign->id,
+            'is_active' => 1,
         ]);
     }
 

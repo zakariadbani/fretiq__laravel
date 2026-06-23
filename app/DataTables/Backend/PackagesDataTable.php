@@ -9,7 +9,7 @@ use Illuminate\Http\Request;
 /**
  * DataTable for the Packages CRUD module.
  *
- * Columns: name, daily_credits, price_monthly, is_active (toggle), sort_order, created_at.
+ * Columns: name, daily_credits, monthly_credits, daily_contact_credits, price_monthly, is_active (toggle), sort_order, created_at.
  * Row actions: view / edit / delete — all gated @can('manage packages').
  */
 class PackagesDataTable extends BackendDataTable
@@ -30,6 +30,18 @@ class PackagesDataTable extends BackendDataTable
         ],
         'daily_credits' => [
             'title'      => 'Crédits / jour',
+            'orderable'  => true,
+            'searchable' => false,
+            'raw'        => true,
+        ],
+        'monthly_credits' => [
+            'title'      => 'Crédits / mois',
+            'orderable'  => true,
+            'searchable' => false,
+            'raw'        => true,
+        ],
+        'daily_contact_credits' => [
+            'title'      => 'Crédits contacts / j',
             'orderable'  => true,
             'searchable' => false,
             'raw'        => true,
@@ -114,6 +126,22 @@ class PackagesDataTable extends BackendDataTable
                 return '<span class="badge badge-light-success">Illimité</span>';
             }
             return '<span class="fw-semibold">' . (int) $row->daily_credits . '</span>';
+        });
+
+        // ── monthly_credits: "Illimité" badge when null, else integer ─────────
+        $this->datatables->editColumn('monthly_credits', function (Package $row) {
+            if ($row->monthly_credits === null) {
+                return '<span class="badge badge-light-success">Illimité</span>';
+            }
+            return '<span class="fw-semibold">' . (int) $row->monthly_credits . '</span>';
+        });
+
+        // ── daily_contact_credits: "Illimité" badge when null, else integer ───
+        $this->datatables->editColumn('daily_contact_credits', function (Package $row) {
+            if ($row->daily_contact_credits === null) {
+                return '<span class="badge badge-light-success">Illimité</span>';
+            }
+            return '<span class="fw-semibold">' . (int) $row->daily_contact_credits . '</span>';
         });
 
         // ── price_monthly: "—" when null, else formatted € ────────────────────

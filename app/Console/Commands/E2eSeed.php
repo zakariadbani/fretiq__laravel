@@ -98,7 +98,6 @@ class E2eSeed extends Command
                 'template_id'        => $template->id,
                 'sender_identity_id' => $sender->id,
                 'schedule_type'      => 'one_shot',
-                'status'             => 'draft',
                 'driver'             => 'local',
             ]
         );
@@ -143,10 +142,11 @@ class E2eSeed extends Command
         $package = Package::firstOrCreate(
             ['name' => 'E2E_FIXTURE Package'],
             [
-                'daily_credits' => 1,
-                'price_monthly' => 0.00,
-                'is_active'     => false,
-                'sort_order'    => 0,
+                'daily_credits'         => 1,
+                'daily_contact_credits' => 1,
+                'price_monthly'         => 0.00,
+                'is_active'             => false,
+                'sort_order'            => 0,
             ]
         );
         $this->info("  Package          id={$package->id}  name={$package->name}");

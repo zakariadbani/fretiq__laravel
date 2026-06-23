@@ -95,10 +95,6 @@ class CompanyViewConfig
                 ['label' => 'Score IA',        'value' => $model->ai_score,             'type' => 'score'],
                 ['label' => 'Créé le',         'value' => $model->created_at,            'type' => 'date'],
             ];
-            // Conditional: Explication IA — only when present
-            if ($model->ai_explanation) {
-                $detailRows[] = ['label' => 'Explication IA', 'value' => $model->ai_explanation, 'type' => 'text'];
-            }
         }
 
         // ── Stat cards ────────────────────────────────────────────────────────
@@ -190,11 +186,10 @@ class CompanyViewConfig
      * The series/categories/labels/colors/options/type values are passed as data-crud-chart
      * JSON and rendered by crud-charts.js.
      *
-     * Chart layout (4 charts):
-     *   1. Donut      — Contacts par statut       (col-md-6)
-     *   2. RadialBar  — Score IA                  (col-md-6, only when ai_score !== null)
-     *   3. Bar        — Engagement e-mail funnel  (col-12, horizontal distributed)
-     *   4. Area       — Contacts sur 12 mois      (col-12)
+     * Chart layout (3 charts):
+     *   1. Donut  — Contacts par statut       (col-md-6)
+     *   2. Bar    — Engagement e-mail funnel  (col-12, horizontal distributed)
+     *   3. Area   — Contacts sur 12 mois      (col-12)
      */
     private static function buildCharts(array $stats): array
     {
@@ -218,28 +213,6 @@ class CompanyViewConfig
             'empty'      => 'Aucun contact',
             'emptyIcon'  => 'bi-people',
         ];
-
-        // ── 2. RadialBar — Score IA (only when ai_score is set) ───────────────
-        $score = $stats['ai_score'] ?? null;
-        if ($score !== null) {
-            $scoreHex = $score >= 70 ? '#50CD89' : ($score >= 40 ? '#FFC700' : '#F1416C');
-            $charts[] = [
-                'id'         => 'company_ai_gauge',
-                'title'      => 'Score IA',
-                'type'       => 'radialBar',
-                'series'     => [(int) $score],
-                'categories' => [],
-                'labels'     => ['Score IA'],
-                'colors'     => [$scoreHex],
-                'options'    => [],
-                'height'     => 300,
-                'color'      => 'primary',
-                'showTotal'  => false,
-                'hollowSize' => '60%',
-                'empty'      => 'Score IA non défini',
-                'emptyIcon'  => 'bi-graph-up',
-            ];
-        }
 
         // ── 3. Bar (horizontal distributed) — Engagement e-mail funnel ────────
         $funnel = $stats['funnel'] ?? ['series' => [], 'labels' => []];

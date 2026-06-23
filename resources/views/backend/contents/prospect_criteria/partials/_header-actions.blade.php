@@ -22,8 +22,11 @@
 
     {{-- Quota solde badge --}}
     @include('backend.contents.prospect_criteria.partials._quota-badge', [
-        'quotaRemaining' => $quotaRemaining ?? null,
-        'quotaPackage'   => $quotaPackage   ?? null,
+        'quotaRemaining'          => $quotaRemaining          ?? null,
+        'quotaPackage'            => $quotaPackage            ?? null,
+        'contactRemaining'        => $contactRemaining        ?? null,
+        'monthlyRemaining'        => $monthlyRemaining        ?? null,
+        'monthlyContactRemaining' => $monthlyContactRemaining ?? null,
     ])
 
     @can('run discovery')
@@ -34,9 +37,10 @@
             $discoveryInFlight = \Illuminate\Support\Facades\Schema::hasTable('discovery_runs')
                 && in_array(optional($model->latestDiscoveryRun)->status, ['pending', 'running'], true);
 
-            // Quota guard: $quotaRemaining is injected by the controller (null = unlimited).
-            // === 0 means solde épuisé; non-zero and null (unlimited) both allow launch.
-            $quotaExhausted = isset($quotaRemaining) && $quotaRemaining === 0;
+            // Quota guard: $quotaRemaining / $monthlyRemaining injected by the controller (null = unlimited).
+            // === 0 means solde épuisé; disable when EITHER the daily OR monthly company meter is at 0.
+            $quotaExhausted = (isset($quotaRemaining) && $quotaRemaining === 0)
+                || (isset($monthlyRemaining) && $monthlyRemaining === 0);
 
             $btnDisabled = $discoveryInFlight || $quotaExhausted;
             $btnTooltip  = $quotaExhausted
@@ -52,5 +56,11 @@
             <i class="bi bi-play-fill me-1"></i>
             Lancer la découverte
         </button>
+        @if(isset($contactRemaining) && $contactRemaining === 0)
+            <span class="text-muted fs-8 ms-2">
+                <i class="bi bi-person-x me-1"></i>
+                Enrichissement épuisé — découverte sans contacts
+            </span>
+        @endif
     @endcan
 @endif

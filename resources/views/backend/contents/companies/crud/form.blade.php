@@ -267,6 +267,9 @@
                 </div>
                 <div class="card-body border-top p-9">
 
+                    {{-- Score recap button (showCard=false — we are inside the existing Enrichissement card) --}}
+                    @include('backend.contents.companies.partials._score-recap', ['model' => $model, 'showCard' => false])
+
                     {{-- Explication IA --}}
                     <div class="fv-row mb-7">
                         <label class="fw-semibold fs-6 mb-2">Explication IA</label>

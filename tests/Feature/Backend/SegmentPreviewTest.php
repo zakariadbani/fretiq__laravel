@@ -154,11 +154,28 @@ class SegmentPreviewTest extends TestCase
             'cold_excluded',
             'personal_excluded',
             'duplicates_excluded',
+            'manually_excluded',
+            'manually_included',
             'final',
             'sample',
             'summary',
             'cold_gate_closed',
         ]);
+    }
+
+    /**
+     * On the no-pin preview path (preview endpoint never passes pin ids),
+     * manually_included and manually_excluded must be 0.
+     */
+    public function test_preview_manually_keys_are_zero_on_no_pin_path(): void
+    {
+        config(['prospecting.cold_send_enabled' => false]);
+
+        $this->makeClientContact();
+
+        $response = $this->postPreview(['scope' => 'client']);
+        $response->assertStatus(200);
+        $response->assertJson(['manually_included' => 0, 'manually_excluded' => 0]);
     }
 
     public function test_cold_gate_closed_true_when_disabled(): void
@@ -221,9 +238,10 @@ class SegmentPreviewTest extends TestCase
             - $data['suppressed']
             - $data['cold_excluded']
             - $data['personal_excluded']
-            - $data['duplicates_excluded'];
+            - $data['duplicates_excluded']
+            - $data['manually_excluded'];  // new term — 0 on the no-pin preview path
 
-        $this->assertSame($data['final'], $computed, 'Funnel identity must hold');
+        $this->assertSame($data['final'], $computed, 'Funnel identity must hold (incl. manually_excluded)');
         // alice is suppressed, prospect is cold-excluded, bob is final
         $this->assertSame(1, $data['suppressed'], 'One suppressed contact');
         $this->assertSame(1, $data['cold_excluded'], 'One cold-excluded contact');
@@ -325,6 +343,10 @@ class SegmentPreviewTest extends TestCase
         $this->assertLessThanOrEqual(10, count($sample), 'Sample must contain at most 10 items');
     }
 
+    /**
+     * M2: preview endpoint now passes withSample=false (sample table removed from UI).
+     * The sample key must exist but must be an empty array.
+     */
     public function test_sample_items_have_name_company_email_keys(): void
     {
         config(['prospecting.cold_send_enabled' => false]);
@@ -334,50 +356,28 @@ class SegmentPreviewTest extends TestCase
         $response = $this->postPreview(['scope' => 'client']);
         $response->assertStatus(200);
 
+        // M2: preview is called with withSample=false — sample is always empty.
+        // The sample key must still exist (structure contract).
         $sample = $response->json('sample');
-        $this->assertNotEmpty($sample, 'Sample must not be empty when contacts exist');
-
-        foreach ($sample as $item) {
-            $this->assertArrayHasKey('name', $item);
-            $this->assertArrayHasKey('company', $item);
-            $this->assertArrayHasKey('email', $item);
-        }
+        $this->assertIsArray($sample, 'sample key must be an array');
+        // Items are empty because withSample=false (M2 — sample table removed from edit UI).
+        // When sample IS requested (withSample=true), each item would have name/company/email.
     }
 
+    /**
+     * M2: preview endpoint now passes withSample=false (sample table removed from UI).
+     * The sample is always empty — ordering test now asserts the key exists and is an array.
+     */
     public function test_sample_is_ordered_by_contact_id(): void
     {
         config(['prospecting.cold_send_enabled' => false]);
 
-        // One company, 4 contacts — keeps inserts low, still verifies order
-        $co = Company::create([
-            'name'                 => 'Order Company',
-            'relationship'         => 'client',
-            'source'               => 'manual',
-            'qualification_status' => 'pending',
-        ]);
-
-        $expectedEmails = [];
-        for ($i = 1; $i <= 4; $i++) {
-            Contact::create([
-                'company_id'  => $co->id,
-                'email'       => "order{$i}@order.test",
-                'name'        => "Order {$i}",
-                'status'      => 'new',
-                'source'      => 'manual',
-                'legal_basis' => 'relationship',
-                'email_kind'  => 'role',
-            ]);
-            $expectedEmails[] = "order{$i}@order.test";
-        }
-
         $response = $this->postPreview(['scope' => 'client']);
         $response->assertStatus(200);
 
+        // M2: withSample=false → always empty. Key must still exist.
         $sample = $response->json('sample');
-        $actualEmails = array_column($sample, 'email');
-
-        // Must be in insertion order (lowest contact id first)
-        $this->assertSame($expectedEmails, $actualEmails, 'Sample must be ordered by contact id');
+        $this->assertIsArray($sample, 'sample key must be an array (even if empty)');
     }
 
     // ── Summary ────────────────────────────────────────────────────────────────

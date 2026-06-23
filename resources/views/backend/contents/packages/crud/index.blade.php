@@ -31,13 +31,15 @@
 
         @if($activeAssignment && $activeAssignment->package)
             @php
-                $pkg     = $activeAssignment->package;
-                $credits = $pkg->daily_credits === null ? null : $pkg->daily_credits;
-                $label   = $credits === null ? 'Illimité' : $credits;
-                $since   = $activeAssignment->created_at ? $activeAssignment->created_at->format('d/m/Y') : '—';
-                $by      = optional($activeAssignment->assignedBy)->name ?? 'Système';
-                // Cost guardrail: daily_credits × 30 = max enrichment calls/mois
-                $maxCallsMonth = $credits !== null ? ($credits * 30) : null;
+                $pkg            = $activeAssignment->package;
+                $credits        = $pkg->daily_credits;
+                $contactCredits = $pkg->daily_contact_credits;
+                $mCredits       = $pkg->monthly_credits;
+                $mContactCredits= $pkg->monthly_contact_credits;
+                $since          = $activeAssignment->created_at ? $activeAssignment->created_at->format('d/m/Y') : '—';
+                $by             = optional($activeAssignment->assignedBy)->name ?? 'Système';
+                // Indicative guardrail: daily × 30 (shown only when no real monthly cap)
+                $maxCallsMonth  = ($credits !== null && $mCredits === null) ? ($credits * 30) : null;
             @endphp
 
             <div class="d-flex align-items-center mb-4">
@@ -48,18 +50,46 @@
                 </div>
                 <div>
                     <span class="fw-bold fs-4 text-gray-800 me-2">{{ $pkg->name }}</span>
-                    @if($credits === null)
-                        <span class="badge badge-light-success">Illimité</span>
-                    @else
-                        <span class="badge badge-light-primary">{{ $credits }} crédits/jour</span>
-                    @endif
+                    <div class="d-flex flex-wrap gap-2 mt-1">
+
+                        {{-- Company caps --}}
+                        <span class="badge @if($credits === null) badge-light-success @else badge-light-primary @endif">
+                            <i class="bi bi-building me-1"></i>
+                            Découvertes : {{ $credits === null ? 'Illimité' : $credits . ' /j' }}
+                        </span>
+                        @if($mCredits !== null)
+                            <span class="badge badge-light-primary">
+                                <i class="bi bi-calendar3 me-1"></i>
+                                {{ $mCredits }} / mois
+                                @if(($monthlyRemainingToday ?? null) !== null)
+                                    &nbsp;&middot;&nbsp;<strong>{{ $monthlyRemainingToday }}</strong> restants ce mois
+                                @endif
+                            </span>
+                        @endif
+
+                        {{-- Contact caps --}}
+                        <span class="badge @if($contactCredits === null) badge-light-success @else badge-light-info @endif">
+                            <i class="bi bi-person-lines-fill me-1"></i>
+                            Contacts : {{ $contactCredits === null ? 'Illimité' : $contactCredits . ' /j' }}
+                        </span>
+                        @if($mContactCredits !== null)
+                            <span class="badge badge-light-info">
+                                <i class="bi bi-calendar3 me-1"></i>
+                                {{ $mContactCredits }} / mois
+                                @if(($monthlyContactRemainingToday ?? null) !== null)
+                                    &nbsp;&middot;&nbsp;<strong>{{ $monthlyContactRemainingToday }}</strong> restants ce mois
+                                @endif
+                            </span>
+                        @endif
+
+                    </div>
                     <div class="text-muted fs-7 mt-1">
                         Assigné le {{ $since }} par <strong>{{ $by }}</strong>
                     </div>
                     @if($maxCallsMonth !== null)
                         <div class="text-muted fs-7 mt-1">
                             <i class="bi bi-info-circle me-1"></i>
-                            Coût indicatif&nbsp;: {{ $credits }} × 30 = <strong>{{ $maxCallsMonth }}</strong> crédits de découverte max / mois
+                            Indicatif&nbsp;: {{ $credits }} × 30 = <strong>{{ $maxCallsMonth }}</strong> crédits de découverte max / mois (aucune limite mensuelle configurée)
                         </div>
                     @endif
                 </div>
@@ -81,7 +111,7 @@
                         {{ ($activeAssignment && $activeAssignment->package_id === $pkg->id) ? 'selected' : '' }}
                         data-credits="{{ $pkg->daily_credits ?? 'null' }}">
                         {{ $pkg->name }}
-                        {{ $pkg->daily_credits === null ? '(Illimité)' : '(' . $pkg->daily_credits . ' crédits/j)' }}
+                        {{ $pkg->daily_credits === null ? '(Ent: ∞' : '(Ent: ' . $pkg->daily_credits }}{{ $pkg->daily_contact_credits === null ? ' / Cont: ∞)' : ' / Cont: ' . $pkg->daily_contact_credits . ')' }}
                     </option>
                 @endforeach
             </select>
@@ -108,11 +138,19 @@
         </div>
         <div class="card-toolbar">
             <span class="text-muted fs-7">
-                Aujourd'hui :
+                Aujourd'hui —
+                Entreprises :
                 @if($isUnlimited)
                     <span class="badge badge-light-success">Illimité</span>
                 @else
-                    <strong>{{ $remainingToday }}</strong> crédits restants
+                    <strong>{{ $remainingToday }}</strong> restants
+                @endif
+                &nbsp;·&nbsp;
+                Contacts :
+                @if(($contactRemainingToday ?? null) === null)
+                    <span class="badge badge-light-success">Illimité</span>
+                @else
+                    <strong>{{ $contactRemainingToday }}</strong> restants
                 @endif
             </span>
         </div>
@@ -131,7 +169,8 @@
                             <th>Date</th>
                             <th>Runs</th>
                             <th>Réservés</th>
-                            <th>Consommés</th>
+                            <th>Entreprises</th>
+                            <th>Contacts</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -145,6 +184,13 @@
                                 <td>
                                     @if((int) $row->total_consumed > 0)
                                         <span class="text-success fw-semibold">{{ (int) $row->total_consumed }}</span>
+                                    @else
+                                        <span class="text-muted">0</span>
+                                    @endif
+                                </td>
+                                <td>
+                                    @if((int) ($row->total_contact_consumed ?? 0) > 0)
+                                        <span class="text-info fw-semibold">{{ (int) $row->total_contact_consumed }}</span>
                                     @else
                                         <span class="text-muted">0</span>
                                     @endif

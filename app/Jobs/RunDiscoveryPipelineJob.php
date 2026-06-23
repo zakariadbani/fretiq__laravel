@@ -130,7 +130,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
         if ($run !== null) {
             $budget = max(0, $run->credits_reserved - $run->consumed);
 
-            // If limited and the full reservation has been consumed, nothing left.
+            // If the full reservation has already been consumed (retry case), nothing left.
             if ($budget === 0) {
                 Log::info('[RunDiscoveryPipelineJob] Budget épuisé (retry) — aborting.', [
                     'criteria_id'      => $this->criteriaId,
@@ -146,38 +146,94 @@ class RunDiscoveryPipelineJob implements ShouldQueue
                 return;
             }
 
-            // Re-check remaining against THIS run's quota_date, excluding our own reservation,
-            // to prevent over-spending when other concurrent runs have used the balance.
+            // Re-check remaining against THIS run's quota_date AND monthly period,
+            // excluding our own reservation (run->id) from the used tally.
+            //
+            // The exclusion is critical for the monthly cap: without it, a run's own
+            // in-flight reservation fills the entire monthly budget and reduces its
+            // own effective batch to 0 on the first run of any month where the
+            // monthly cap is the binding constraint (finding #3).
             if ($run->quota_date !== null) {
                 /** @var DiscoveryQuotaService $quotaService */
                 $quotaService = app(DiscoveryQuotaService::class);
 
+                // Pin the monthly period off the run's quota_date (not today), so that
+                // retries queued on a prior day map to the window that was active when
+                // the run was first dispatched. Reuse for both company + contact monthly.
+                [$pStart, $pEnd] = $quotaService->currentPeriod(Carbon::parse($run->quota_date));
+
+                // ── Daily company cap ──────────────────────────────────────────
                 if (! $quotaService->isUnlimited()) {
-                    $remaining = $quotaService->usedOn(
+                    $usedByOthers = $quotaService->usedOn(
                         Carbon::parse($run->quota_date),
-                        $run->id  // exclude this run's reservation from the sum
+                        $run->id  // exclude this run's own reservation from the sum
                     );
+                    $dailyCap  = (int) $quotaService->activePackage()?->daily_credits;
+                    $available = max(0, $dailyCap - $usedByOthers);
+                    $budget    = min($budget, $available);
+                }
 
-                    // remaining here is actually "used by others"; available = daily - used-by-others
-                    $daily     = (int) $quotaService->activePackage()?->daily_credits;
-                    $available = max(0, $daily - $remaining);
+                // ── Monthly company cap ────────────────────────────────────────
+                // Applied even when daily is unlimited (run must abort if monthly is zero).
+                // Restructured so the single abort check below covers both caps.
+                if (! $quotaService->monthlyIsUnlimited()) {
+                    $monthlyUsedByOthers = $quotaService->usedInPeriod($pStart, $pEnd, $run->id);
+                    $monthlyCap          = (int) $quotaService->activePackage()?->monthly_credits;
+                    $budget              = min($budget, max(0, $monthlyCap - $monthlyUsedByOthers));
+                }
 
-                    // Cap budget further to what is available on the quota_date
-                    $budget = min($budget, $available);
+                // Single abort: fires whether daily, monthly, or both drove budget to 0.
+                if ($budget === 0) {
+                    Log::info('[RunDiscoveryPipelineJob] Solde épuisé (daily ou mensuel) — aborting.', [
+                        'criteria_id' => $this->criteriaId,
+                        'run_id'      => $this->runId,
+                        'quota_date'  => $run->quota_date->toDateString(),
+                    ]);
+                    $run->update([
+                        'status'      => 'failed',
+                        'error'       => 'Budget épuisé (retry)',
+                        'finished_at' => now(),
+                    ]);
+                    return;
+                }
+            }
+        }
 
-                    if ($budget === 0) {
-                        Log::info('[RunDiscoveryPipelineJob] Solde épuisé sur quota_date — aborting.', [
-                            'criteria_id' => $this->criteriaId,
-                            'run_id'      => $this->runId,
-                            'quota_date'  => $run->quota_date->toDateString(),
-                        ]);
-                        $run->update([
-                            'status'      => 'failed',
-                            'error'       => 'Budget épuisé (retry)',
-                            'finished_at' => now(),
-                        ]);
-                        return;
-                    }
+        // ── Contact quota budget check ─────────────────────────────────────────
+        // $contactBudget = null means unlimited (no enrichment cap).
+        // Exhausted contact budget does NOT abort the run — discovery still runs,
+        // Hunter is simply skipped for all candidates.
+        $contactBudget = null;
+
+        if ($run !== null) {
+            $contactBudget = max(0, (int) $run->contact_credits_reserved - (int) $run->contact_consumed);
+
+            if ($run->quota_date !== null) {
+                /** @var DiscoveryQuotaService $quotaService */
+                $quotaService = app(DiscoveryQuotaService::class);
+
+                // Pin the monthly period once — reused for both daily-contact and
+                // monthly-contact checks (same $pStart/$pEnd as the company block above
+                // is NOT accessible here, so we re-derive it; the cost is minimal).
+                [$pStart, $pEnd] = $quotaService->currentPeriod(Carbon::parse($run->quota_date));
+
+                // ── Daily contact cap ──────────────────────────────────────────
+                // GUARD FIRST — contactUsedOn is fine here (it's the raw sum, not remainingOn);
+                // but we still guard contactIsUnlimited() for symmetry and null-safety.
+                if (! $quotaService->contactIsUnlimited()) {
+                    $contactUsed = $quotaService->contactUsedOn(Carbon::parse($run->quota_date), $run->id);
+                    $dailyCap    = (int) $quotaService->activePackage()?->daily_contact_credits;
+                    $available   = max(0, $dailyCap - $contactUsed);
+                    $contactBudget = min($contactBudget, $available);
+                }
+
+                // ── Monthly contact cap ────────────────────────────────────────
+                // Clamp only — contact exhaustion NEVER aborts the run (mirrors
+                // the reservation path's contact asymmetry).
+                if (! $quotaService->monthlyContactIsUnlimited()) {
+                    $monthlyContactUsed = $quotaService->contactUsedInPeriod($pStart, $pEnd, $run->id);
+                    $monthlyCap         = (int) $quotaService->activePackage()?->monthly_contact_credits;
+                    $contactBudget      = min($contactBudget, max(0, $monthlyCap - $monthlyContactUsed));
                 }
             }
         }
@@ -192,7 +248,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
         $pipeline = app(DiscoveryPipelineService::class);
 
         try {
-            $stats = $pipeline->run($criteria, $budget, $run); // returns ['companies'=>int,'contacts'=>int,'skipped'=>int,'low_score'=>int]
+            $stats = $pipeline->run($criteria, $budget, $run, $contactBudget); // returns ['companies'=>int,'contacts'=>int,'skipped'=>int,'low_score'=>int,'contacts_consumed'=>int]
 
             // Counts (companies_count, contacts_count, skipped_count, low_score_count)
             // are now persisted incrementally by the pipeline's CAS UPDATE after each

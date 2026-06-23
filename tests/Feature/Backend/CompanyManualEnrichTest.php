@@ -135,6 +135,43 @@ class CompanyManualEnrichTest extends TestCase
         ]);
     }
 
+    private function assignLimitedContactPackage(int $contactCredits, ?int $companyCredits = null): Package
+    {
+        $package = Package::create([
+            'name'                  => "Pack C{$contactCredits}/j",
+            'daily_credits'         => $companyCredits,
+            'daily_contact_credits' => $contactCredits,
+            'is_active'             => true,
+            'sort_order'            => 0,
+        ]);
+
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
+
+        return $package;
+    }
+
+    /**
+     * Burn N contact credits today by inserting a completed manual run.
+     */
+    private function burnContactCredits(int $n): void
+    {
+        $assignment = PackageAssignment::orderByDesc('id')->first();
+
+        DiscoveryRun::create([
+            'type'                     => 'manual',
+            'status'                   => 'completed',
+            'credits_reserved'         => 0,
+            'consumed'                 => 0,
+            'contact_credits_reserved' => $n,
+            'contact_consumed'         => $n,
+            'quota_date'               => Carbon::today()->toDateString(),
+            'package_assignment_id'    => $assignment?->id,
+        ]);
+    }
+
     // ── Tests ─────────────────────────────────────────────────────────────────
 
     /**
@@ -187,21 +224,16 @@ class CompanyManualEnrichTest extends TestCase
     }
 
     /**
-     * Limited package, today's quota fully burned → 422, no new run row.
+     * Limited contact package, today's contact quota fully burned → 422, no new run row.
+     * Manual enrichment checks the CONTACT meter (not company meter).
      */
     public function test_422_when_limited_quota_exhausted(): void
     {
-        $this->assignLimitedPackage(3);
-        $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Enrich Test ' . uniqid(),
-            'sectors'     => ['transport'],
-            'countries'   => ['France'],
-            'daily_limit' => 3,
-            'is_active'   => true,
-        ]);
+        // Company meter unlimited (daily_credits=null), contact meter capped at 3.
+        $this->assignLimitedContactPackage(3, null);
 
-        // Burn all 3 credits today.
-        $this->burnCredits(3, $criteria);
+        // Burn all 3 contact credits today via a completed manual run.
+        $this->burnContactCredits(3);
 
         $company = $this->makeCompany();
 
@@ -219,7 +251,7 @@ class CompanyManualEnrichTest extends TestCase
         $this->assertSame(
             $runsBefore,
             DiscoveryRun::count(),
-            'No new run row must be created when quota is exhausted'
+            'No new run row must be created when contact quota is exhausted'
         );
     }
 
@@ -227,17 +259,18 @@ class CompanyManualEnrichTest extends TestCase
      * Successful enrichment with local Hunter fixture:
      * - 200 response
      * - contacts created for the domain
-     * - DiscoveryRun row: type='manual', consumed=1, credits_reserved=1, company_id set, status='completed'
-     * - usedOn(today) increased by exactly 1
+     * - DiscoveryRun row: type='manual', consumed=0, credits_reserved=0,
+     *   contact_consumed=1, contact_credits_reserved=1, company_id set, status='completed'
+     * - contactUsedOn(today) increased by exactly 1
      */
     public function test_success_creates_contacts_and_run_row(): void
     {
-        $this->assignLimitedPackage(10);
+        $this->assignLimitedContactPackage(10, null);
 
         /** @var DiscoveryQuotaService $quotaService */
         $quotaService = app(DiscoveryQuotaService::class);
 
-        $usedBefore = $quotaService->usedOn(Carbon::today());
+        $usedBefore = $quotaService->contactUsedOn(Carbon::today());
 
         $company = $this->makeCompany(['domain' => 'bolloretransport.com']);
 
@@ -256,17 +289,19 @@ class CompanyManualEnrichTest extends TestCase
         $this->assertNotNull($run, 'A DiscoveryRun row must be created');
         $this->assertSame('manual', $run->type, 'Run type must be manual');
         $this->assertSame($company->id, $run->company_id, 'Run must reference the company');
-        $this->assertSame(1, $run->consumed, 'consumed must be 1');
-        $this->assertSame(1, $run->credits_reserved, 'credits_reserved must be 1');
+        $this->assertSame(0, (int) $run->consumed, 'consumed must be 0 (no company meter debit)');
+        $this->assertSame(0, (int) $run->credits_reserved, 'credits_reserved must be 0 (no company meter debit)');
+        $this->assertSame(1, (int) $run->contact_consumed, 'contact_consumed must be 1');
+        $this->assertSame(1, (int) $run->contact_credits_reserved, 'contact_credits_reserved must be 1');
         $this->assertSame('completed', $run->status, 'Run must be completed');
         $this->assertNotNull($run->finished_at, 'finished_at must be set');
 
-        // usedOn(today) must have increased by exactly 1.
-        $usedAfter = $quotaService->usedOn(Carbon::today());
+        // contactUsedOn(today) must have increased by exactly 1.
+        $usedAfter = $quotaService->contactUsedOn(Carbon::today());
         $this->assertSame(
             $usedBefore + 1,
             $usedAfter,
-            'usedOn(today) must increase by exactly 1 after manual enrichment'
+            'contactUsedOn(today) must increase by exactly 1 after manual enrichment'
         );
     }
 
@@ -437,5 +472,45 @@ class CompanyManualEnrichTest extends TestCase
         if ($run) {
             $run->delete();
         }
+    }
+
+    /**
+     * Company meter exhausted but contact meter unlimited → manual enrich succeeds.
+     * reserveManualEnrichment() checks the CONTACT meter only — company exhaustion is irrelevant.
+     */
+    public function test_manual_enrich_allowed_when_company_exhausted_but_contact_unlimited(): void
+    {
+        // Company meter limited (2 credits), contact meter unlimited (null).
+        $package = Package::create([
+            'name'                  => 'Pack Company Limited',
+            'daily_credits'         => 2,
+            'daily_contact_credits' => null,
+            'is_active'             => true,
+            'sort_order'            => 0,
+        ]);
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
+
+        // Create a criteria and burn 2 company credits today.
+        $criteria = ProspectCriteria::create([
+            'name'        => 'Critère Company Exhausted ' . uniqid(),
+            'sectors'     => ['transport'],
+            'countries'   => ['France'],
+            'daily_limit' => 2,
+            'is_active'   => true,
+        ]);
+        $this->burnCredits(2, $criteria);
+
+        // Make a company with a domain (enrich requires a domain).
+        $company = $this->makeCompany(['domain' => 'geodis.com']);
+
+        // POST enrich → must return 200 (company exhaustion must NOT block manual enrich).
+        $response = $this->actingAs($this->superadmin)
+            ->postJson("/admin/companies/{$company->id}/enrich");
+
+        $response->assertStatus(200);
+        $response->assertJson(['message' => 'success']);
     }
 }

@@ -112,7 +112,6 @@ class CampaignGeneratedTest extends TestCase
             'schedule_type'      => 'one_shot',
             'scheduled_at'       => now()->addHour(),
             'timezone'           => 'Europe/Paris',
-            'status'             => 'draft',
             'is_active'          => true,
         ], $overrides));
     }
@@ -140,7 +139,6 @@ class CampaignGeneratedTest extends TestCase
             'sequence_id'        => $sequence->id,
             'sender_identity_id' => $sender->id,
             'schedule_type'      => 'sequence',
-            'status'             => 'draft',
             'is_active'          => true,
         ]);
     }
@@ -172,7 +170,6 @@ class CampaignGeneratedTest extends TestCase
             'recurrence'         => ['frequency' => 'weekly', 'interval' => 1],
             'next_run_at'        => now()->addWeek(),
             'timezone'           => 'Europe/Paris',
-            'status'             => 'draft',
             'is_active'          => true,
         ]);
     }
@@ -628,7 +625,7 @@ class CampaignGeneratedTest extends TestCase
         // prevents the controller returning an unexpected response.
         $this->makeClientContact();
 
-        $campaign = $this->makeCampaign(['status' => 'draft']);
+        $campaign = $this->makeCampaign();
 
         $response = $this->actingAs($this->superadmin)
             ->post('/admin/campaigns/' . $campaign->id . '/send');
@@ -680,20 +677,18 @@ class CampaignGeneratedTest extends TestCase
     // ── schedule ───────────────────────────────────────────────────────────────
 
     /**
-     * POST /admin/campaigns/{id}/schedule on a recurring campaign sets status='active'
+     * POST /admin/campaigns/{id}/schedule on a recurring campaign sets is_active=true
      * and returns JSON 200 {message:'success'}.
      *
      * Recurring branch in the controller:
      *   if ($campaign->next_run_at === null) → 422
-     *   else $campaign->update(['status' => 'active']); return JSON 200
+     *   else $campaign->update(['is_active' => true]); return JSON 200
      */
     public function test_schedule_recurring_campaign_sets_status_active(): void
     {
         $campaign = $this->makeRecurringCampaign();
 
-        // Precondition: campaign starts as draft.
-        $this->assertSame('draft', $campaign->status);
-
+        // Precondition: campaign starts inactive (is_active=true default, but we verify the DB flip).
         $response = $this->actingAs($this->superadmin)
             ->post('/admin/campaigns/' . $campaign->id . '/schedule');
 
@@ -701,8 +696,8 @@ class CampaignGeneratedTest extends TestCase
         $response->assertJson(['message' => 'success']);
 
         $this->assertDatabaseHas('campaigns', [
-            'id'     => $campaign->id,
-            'status' => 'active',
+            'id'        => $campaign->id,
+            'is_active' => 1,
         ]);
     }
 

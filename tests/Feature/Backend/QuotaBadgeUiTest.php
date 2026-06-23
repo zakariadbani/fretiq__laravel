@@ -13,6 +13,14 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
+// NOTE (finding #7): The quota badge renders "Découvertes :" (not "Entreprises :").
+// Pre-existing tests test_index_shows_credits_badge_when_limited_package_assigned,
+// test_view_page_shows_credits_badge, and test_index_shows_one_unlimited_one_limited_badge
+// all assert 'Entreprises :' which does NOT match the blade output.
+// This is documented here for reference; those pre-existing test assertions reflect
+// the old label and will fail until updated. The new test cases below use the
+// correct "Découvertes :" label from the current blade.
+
 /**
  * QuotaBadgeUiTest — HTTP render tests for the client-facing quota badge.
  *
@@ -86,18 +94,28 @@ class QuotaBadgeUiTest extends TestCase
     // ── Test 1: limited package with credits remaining ────────────────────────
 
     /**
-     * With a limited package assigned (10 credits/day) and none consumed,
-     * the index page renders 200 and shows the "Crédits du jour" badge.
+     * With both meters limited, the index page renders "Découvertes :" and "Contacts :" badges.
      */
     public function test_index_shows_credits_badge_when_limited_package_assigned(): void
     {
-        $this->assignPackage(10);
+        $package = Package::create([
+            'name'                  => 'Test Pack Both Limited',
+            'daily_credits'         => 10,
+            'daily_contact_credits' => 5,
+            'is_active'             => true,
+            'sort_order'            => 0,
+        ]);
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
 
         $response = $this->actingAs($this->superadmin)
             ->get('/admin/prospect_criteria');
 
         $response->assertStatus(200);
-        $response->assertSee('Crédits du jour', false);
+        $response->assertSee('Découvertes :', false);
+        $response->assertSee('Contacts :', false);
     }
 
     // ── Test 2: solde exhausted — button disabled ─────────────────────────────
@@ -201,11 +219,21 @@ class QuotaBadgeUiTest extends TestCase
 
     /**
      * The view page for a criteria also renders 200 with the quota badge
-     * when a limited package is assigned.
+     * when a limited package is assigned (both meters limited).
      */
     public function test_view_page_shows_credits_badge(): void
     {
-        $this->assignPackage(50);
+        $package = Package::create([
+            'name'                  => 'Test Pack View Both',
+            'daily_credits'         => 50,
+            'daily_contact_credits' => 20,
+            'is_active'             => true,
+            'sort_order'            => 0,
+        ]);
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
 
         $criteria = ProspectCriteria::create([
             'name'        => 'Critère View Badge',
@@ -217,6 +245,225 @@ class QuotaBadgeUiTest extends TestCase
             ->get('/admin/prospect_criteria/' . $criteria->id);
 
         $response->assertStatus(200);
-        $response->assertSee('Crédits du jour', false);
+        $response->assertSee('Découvertes :', false);
+        $response->assertSee('Contacts :', false);
+    }
+
+    /**
+     * Company limited + contact unlimited → "Découvertes :" badge AND "∞ Illimité" for contacts.
+     */
+    public function test_index_shows_one_unlimited_one_limited_badge(): void
+    {
+        $package = Package::create([
+            'name'                  => 'Test Pack Company Limited Only',
+            'daily_credits'         => 10,
+            'daily_contact_credits' => null,
+            'is_active'             => true,
+            'sort_order'            => 0,
+        ]);
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria');
+
+        $response->assertStatus(200);
+        // Company meter is limited → shows "Découvertes :" span
+        $response->assertSee('Découvertes :', false);
+        // Contact meter is unlimited → shows "∞ Illimité" in the contacts span
+        $response->assertSee('∞ Illimité', false);
+    }
+
+    // ── Test 5 (finding #7): Relabel + monthly figure + zero-cap no crash ────────
+
+    /**
+     * Finding #7a: The badge renders "Découvertes :" (not "Entreprises :") for the
+     * company meter label. Assert the index page shows the current blade label.
+     */
+    public function test_badge_shows_decouvertes_label_not_entreprises(): void
+    {
+        $package = Package::create([
+            'name'                  => 'Test Pack Découvertes Label',
+            'daily_credits'         => 10,
+            'daily_contact_credits' => 5,
+            'is_active'             => true,
+            'sort_order'            => 0,
+        ]);
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria');
+
+        $response->assertStatus(200);
+        // Blade renders "Découvertes :" for the company meter — finding #7 relabel assertion.
+        $response->assertSee('Découvertes :', false);
+        // Contact meter still shows "Contacts :".
+        $response->assertSee('Contacts :', false);
+    }
+
+    /**
+     * Finding #7b: With a monthly cap set, the monthly figure "ce mois" appears in the badge.
+     * Tests that the monthly suffix path in the blade renders correctly.
+     */
+    public function test_badge_shows_monthly_figure_when_monthly_cap_set(): void
+    {
+        $package = Package::create([
+            'name'                    => 'Test Pack Monthly Figure',
+            'daily_credits'           => 10,
+            'monthly_credits'         => 50,
+            'daily_contact_credits'   => 5,
+            'monthly_contact_credits' => 20,
+            'quota_anchor_date'       => Carbon::today()->toDateString(),
+            'is_active'               => true,
+            'sort_order'              => 0,
+        ]);
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria');
+
+        $response->assertStatus(200);
+        // The monthly suffix "ce mois" must appear when monthly_credits is set.
+        $response->assertSee('ce mois', false);
+    }
+
+    /**
+     * Finding #7c: A package with monthly_credits=0 renders the badge without
+     * error (no division-by-zero) and the page returns 200.
+     * The badge's severity helper must guard $cap > 0 before dividing.
+     */
+    public function test_badge_zero_monthly_cap_no_division_by_zero(): void
+    {
+        // monthly_credits=0 and monthly_contact_credits=0 — triggers the severity edge case.
+        $package = Package::create([
+            'name'                    => 'Test Pack Zero Monthly',
+            'daily_credits'           => 5,
+            'monthly_credits'         => 0,
+            'daily_contact_credits'   => 3,
+            'monthly_contact_credits' => 0,
+            'quota_anchor_date'       => Carbon::today()->toDateString(),
+            'is_active'               => true,
+            'sort_order'              => 0,
+        ]);
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
+
+        // The index page must render 200 — no DivisionByZeroError from the badge severity helper.
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria');
+
+        $response->assertStatus(200);
+        // Badge renders in danger state (0/0 cap) — page must still return valid HTML.
+        // "ce mois" confirms the monthly suffix rendered (even at 0/0).
+        $response->assertSee('ce mois', false);
+    }
+
+    // ── Test 6 (UX consistency): monthly exhausted, daily remaining ─────────────
+
+    /**
+     * Assign a package whose MONTHLY company cap is exhausted today while the DAILY
+     * cap still has room, create a criteria, and consume the full monthly cap with a
+     * single completed run. Daily: 100 cap − 10 used = 90 (room). Monthly: 10 cap −
+     * 10 used = 0 (exhausted). Returns the criteria.
+     */
+    private function assignMonthlyExhaustedPackage(): ProspectCriteria
+    {
+        $package = Package::create([
+            'name'              => 'Test Pack Monthly Exhausted',
+            'daily_credits'     => 100,
+            'monthly_credits'   => 10,
+            'quota_anchor_date' => Carbon::today()->toDateString(),
+            'is_active'         => true,
+            'sort_order'        => 0,
+        ]);
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
+
+        $criteria = ProspectCriteria::create([
+            'name'        => 'Critère Mensuel Épuisé',
+            'daily_limit' => 10,
+            'is_active'   => true,
+        ]);
+
+        $assignment = PackageAssignment::orderByDesc('id')->first();
+        // Single completed run consumes the full monthly cap (10) today:
+        // daily 100→90 (room), monthly 10→0 (exhausted).
+        DiscoveryRun::create([
+            'prospect_criteria_id'  => $criteria->id,
+            'status'                => 'completed',
+            'credits_reserved'      => 10,
+            'consumed'              => 10,
+            'quota_date'            => Carbon::today()->toDateString(),
+            'package_assignment_id' => $assignment?->id,
+        ]);
+
+        return $criteria;
+    }
+
+    /**
+     * When the MONTHLY company cap is exhausted but the DAILY cap still has room,
+     * the DataTable action column must STILL render a disabled discover button.
+     * Guards the UX-consistency fix: button-disable considers daily OR monthly.
+     */
+    public function test_datatable_discover_button_disabled_when_monthly_exhausted_daily_remains(): void
+    {
+        $this->assignMonthlyExhaustedPackage();
+
+        $response = $this->actingAs($this->superadmin)
+            ->get(
+                '/admin/prospect_criteria'
+                . '?draw=1&start=0&length=25'
+                . '&columns[0][data]=id&columns[0][name]=id'
+                . '&order[0][column]=0&order[0][dir]=asc',
+                ['X-Requested-With' => 'XMLHttpRequest', 'Accept' => 'application/json']
+            );
+
+        $response->assertStatus(200);
+        $json = $response->json();
+
+        $found = false;
+        foreach ($json['data'] ?? [] as $row) {
+            if (str_contains($row['name'] ?? '', 'Critère Mensuel Épuisé')) {
+                $found = true;
+                $this->assertStringContainsString(
+                    'disabled',
+                    $row['action'] ?? '',
+                    'Discover button must be disabled when the monthly cap is exhausted (daily still has room)'
+                );
+                break;
+            }
+        }
+
+        $this->assertTrue($found, 'The monthly-exhausted criteria row should appear in DataTable results');
+    }
+
+    /**
+     * The view page (_header-actions partial) must also treat monthly exhaustion as
+     * exhausted: the "Solde épuisé" tooltip only renders when $quotaExhausted is true
+     * (the quota badge never emits that exact string), so its presence proves the
+     * launch button is disabled on monthly-only exhaustion.
+     */
+    public function test_view_page_discover_button_disabled_when_monthly_exhausted_daily_remains(): void
+    {
+        $criteria = $this->assignMonthlyExhaustedPackage();
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/' . $criteria->id);
+
+        $response->assertStatus(200);
+        // 'Solde épuisé' appears only in the disabled-button tooltip, not the badge.
+        $response->assertSee('Solde épuisé', false);
     }
 }

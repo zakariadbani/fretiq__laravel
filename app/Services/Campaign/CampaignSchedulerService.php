@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Log;
  * CampaignSchedulerService — materialises recurring CampaignRun rows.
  *
  * Design (queue-idempotency.md §4, campaign-automation.md §3):
- *   - Reads campaigns where schedule_type='recurring', status='active', is_active=true,
+ *   - Reads campaigns where schedule_type='recurring', is_active=true,
  *     next_run_at IS NOT NULL and <= now().
  *   - For each, inserts a CampaignRun with a deterministic occurrence_key (the unique
  *     DB constraint is the durable backstop — duplicate calls are no-ops).
@@ -36,7 +36,6 @@ class CampaignSchedulerService
         $count = 0;
 
         $campaigns = Campaign::where('schedule_type', 'recurring')
-            ->where('status', 'active')
             ->where('is_active', true)
             ->whereNotNull('next_run_at')
             ->where('next_run_at', '<=', now())
@@ -71,9 +70,9 @@ class CampaignSchedulerService
             );
 
             if ($nextRun === null) {
-                // Recurrence ended (past 'until') — mark the campaign done.
+                // Recurrence ended (past 'until') — pause the campaign.
                 $campaign->update([
-                    'status'      => 'done',
+                    'is_active'   => false,
                     'next_run_at' => null,
                 ]);
 

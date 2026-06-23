@@ -18,9 +18,9 @@ class DashboardController extends Controller
         $companiesCount = Company::count();
         $contactsCount  = Contact::count();
 
-        // "Active" = status active and not paused (is_active=true)
-        $activeCampaigns  = Campaign::where('status', 'active')->where('is_active', true)->count();
-        $pendingCampaigns = Campaign::where('status', 'draft')->count();
+        // "Active" = is_active=true (sole live gate)
+        $activeCampaigns  = Campaign::where('is_active', true)->count();
+        $pendingCampaigns = Campaign::where('is_active', false)->count();
 
         // Total emails sent (recipients whose status = 'sent' or have a sent_at)
         $totalSent = CampaignRecipient::whereNotNull('sent_at')->count();

@@ -128,7 +128,6 @@ class CampaignPauseTest extends TestCase
             'recurrence'         => ['frequency' => 'daily', 'interval' => 1],
             'next_run_at'        => now()->subMinute(),
             'timezone'           => 'Europe/Paris',
-            'status'             => 'active',
             'is_active'          => $isActive,
         ]);
     }
@@ -152,7 +151,6 @@ class CampaignPauseTest extends TestCase
             'sequence_id'        => $sequence->id,
             'schedule_type'      => 'sequence',
             'timezone'           => 'Europe/Paris',
-            'status'             => 'active',
             'is_active'          => true,
         ]);
     }
@@ -168,7 +166,6 @@ class CampaignPauseTest extends TestCase
         Bus::fake();
 
         $campaign = $this->makeOneShotCampaign(isActive: false);
-        $campaign->update(['status' => 'active']);
 
         // Create a due run manually (status=scheduled, run_at in the past).
         $run = CampaignRun::create([
@@ -199,7 +196,6 @@ class CampaignPauseTest extends TestCase
     public function test_send_run_defers_when_campaign_is_paused(): void
     {
         $campaign = $this->makeOneShotCampaign(isActive: false);
-        $campaign->update(['status' => 'active']);
 
         // The run starts 'scheduled'; claim step will set it to 'sending' before the guard.
         $run = CampaignRun::create([
@@ -222,7 +218,7 @@ class CampaignPauseTest extends TestCase
     }
 
     /**
-     * 3. One-shot sendRun completes → campaign status auto-flipped to 'done'.
+     * 3. One-shot sendRun completes → campaign is_active auto-set to false.
      */
     public function test_one_shot_send_run_completes_to_done(): void
     {
@@ -232,9 +228,9 @@ class CampaignPauseTest extends TestCase
         $service = app(CampaignService::class);
         $run     = $service->scheduleOneShot($campaign);
 
-        // After scheduleOneShot, campaign status must be 'active'.
+        // After scheduleOneShot, campaign must be active (is_active=true).
         $campaign->refresh();
-        $this->assertSame('active', $campaign->status);
+        $this->assertTrue((bool) $campaign->is_active);
 
         $service->sendRun($run);
 
@@ -242,35 +238,34 @@ class CampaignPauseTest extends TestCase
         $run->refresh();
         $this->assertSame('sent', $run->status);
 
-        // Campaign must be auto-flipped to 'done'.
+        // Campaign must be auto-set to is_active=false.
         $campaign->refresh();
-        $this->assertSame('done', $campaign->status,
-            'One-shot campaign must be auto-flipped to "done" after sendRun');
+        $this->assertFalse((bool) $campaign->is_active,
+            'One-shot campaign must be auto-set to is_active=false after sendRun');
     }
 
     /**
-     * 4. Re-send from done: scheduleOneShot re-arms campaign to 'active', then
-     *    sendRun flips it back to 'done'. Lifecycle: done → active → done.
+     * 4. Re-send from paused: scheduleOneShot re-arms campaign to is_active=true,
+     *    then sendRun sets is_active=false again. Lifecycle: paused → active → paused.
      */
     public function test_rearm_from_done_and_send_again(): void
     {
         $this->makeClientContact();
-        $campaign = $this->makeOneShotCampaign(isActive: true);
-        $campaign->update(['status' => 'done']);
+        $campaign = $this->makeOneShotCampaign(isActive: false);
 
         $service = app(CampaignService::class);
 
-        // Re-arm: scheduleOneShot sets status='active'.
+        // Re-arm: scheduleOneShot sets is_active=true.
         $run = $service->scheduleOneShot($campaign);
         $campaign->refresh();
-        $this->assertSame('active', $campaign->status,
-            'scheduleOneShot must re-arm a done campaign to "active"');
+        $this->assertTrue((bool) $campaign->is_active,
+            'scheduleOneShot must activate a paused campaign (is_active=true)');
 
-        // Send again → 'done'.
+        // Send again → is_active=false.
         $service->sendRun($run);
         $campaign->refresh();
-        $this->assertSame('done', $campaign->status,
-            'Campaign must be "done" again after re-arm and sendRun');
+        $this->assertFalse((bool) $campaign->is_active,
+            'Campaign must be is_active=false again after re-arm and sendRun');
     }
 
     /**
@@ -350,7 +345,6 @@ class CampaignPauseTest extends TestCase
             'recurrence'         => ['frequency' => 'daily', 'interval' => 1],
             'next_run_at'        => $nextRunAt,
             'timezone'           => 'UTC',
-            'status'             => 'active',
             'is_active'          => false,
         ]);
 
@@ -385,7 +379,7 @@ class CampaignPauseTest extends TestCase
             'email' => 'kpi@tcl.test',
         ]);
 
-        // Active + is_active=true → must be counted.
+        // is_active=true → must be counted.
         Campaign::create([
             'name'               => 'Running',
             'segment_id'         => $segment->id,
@@ -394,11 +388,10 @@ class CampaignPauseTest extends TestCase
             'schedule_type'      => 'one_shot',
             'scheduled_at'       => now(),
             'timezone'           => 'Europe/Paris',
-            'status'             => 'active',
             'is_active'          => true,
         ]);
 
-        // Active + is_active=false (paused) → must NOT be counted.
+        // is_active=false (paused) → must NOT be counted.
         Campaign::create([
             'name'               => 'Pausée',
             'segment_id'         => $segment->id,
@@ -407,7 +400,6 @@ class CampaignPauseTest extends TestCase
             'schedule_type'      => 'one_shot',
             'scheduled_at'       => now(),
             'timezone'           => 'Europe/Paris',
-            'status'             => 'active',
             'is_active'          => false,
         ]);
 
@@ -416,5 +408,86 @@ class CampaignPauseTest extends TestCase
 
         $this->assertSame(1, (int) $kpis['active_campaigns'],
             'active_campaigns KPI must count only is_active=true campaigns');
+    }
+
+    private function makeEndedRecurringCampaign(): Campaign
+    {
+        $segment  = Segment::create(['name' => 'Seg Ended ' . uniqid(), 'scope' => 'client']);
+        $template = CampaignTemplate::create([
+            'name'         => 'Tpl Ended ' . uniqid(),
+            'subject'      => 'Objet terminé',
+            'html_content' => '<p>Bonjour</p>',
+        ]);
+        $sender = SenderIdentity::create([
+            'name'  => 'TCL Ended',
+            'email' => 'ended_' . uniqid() . '@tcl.test',
+        ]);
+
+        return Campaign::create([
+            'name'               => 'Récurrente terminée ' . uniqid(),
+            'segment_id'         => $segment->id,
+            'template_id'        => $template->id,
+            'sender_identity_id' => $sender->id,
+            'schedule_type'      => 'recurring',
+            'recurrence'         => ['frequency' => 'daily', 'interval' => 1],
+            'next_run_at'        => null,
+            'timezone'           => 'Europe/Paris',
+            'is_active'          => false,
+        ]);
+    }
+
+    /**
+     * 8a. executeSwitch: re-activating an ended recurring campaign (next_run_at IS NULL)
+     *     → 422 JSON refusal; is_active stays 0.
+     */
+    public function test_execute_switch_rejects_reactivate_of_ended_recurring_campaign(): void
+    {
+        $campaign = $this->makeEndedRecurringCampaign();
+
+        $response = $this->actingAs($this->superadmin)
+            ->putJson("/admin/campaigns/executeSwitch/{$campaign->id}", [
+                'field' => 'is_active',
+                'state' => '1',
+            ]);
+
+        $response->assertStatus(422)
+            ->assertJsonFragment(['success' => false]);
+
+        $this->assertStringContainsString(
+            'terminée',
+            $response->json('msg') ?? '',
+            'The 422 message must mention terminée',
+        );
+
+        // is_active must remain 0.
+        $this->assertDatabaseHas('campaigns', [
+            'id'        => $campaign->id,
+            'is_active' => 0,
+        ]);
+    }
+
+    /**
+     * 8b. executeSwitch: a recurring campaign WITH a future next_run_at toggles
+     *     to is_active=1 successfully → 200.
+     */
+    public function test_execute_switch_allows_reactivate_of_active_recurring_campaign(): void
+    {
+        $campaign = $this->makeRecurringCampaign(isActive: false);
+        // Ensure next_run_at is in the future (makeRecurringCampaign sets it to now()->subMinute()).
+        $campaign->update(['next_run_at' => now()->addHour()]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->putJson("/admin/campaigns/executeSwitch/{$campaign->id}", [
+                'field' => 'is_active',
+                'state' => '1',
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJson(['success' => true]);
+
+        $this->assertDatabaseHas('campaigns', [
+            'id'        => $campaign->id,
+            'is_active' => 1,
+        ]);
     }
 }

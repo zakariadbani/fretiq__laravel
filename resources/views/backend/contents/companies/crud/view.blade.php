@@ -41,6 +41,7 @@
 
     {{-- ── Tab 1: Aperçu (default active on view) ────────────────────────── --}}
     <div class="tab-pane fade show active" id="company_apercu" role="tabpanel">
+        @include('backend.contents.companies.partials._score-recap', ['model' => $model])
         @include('backend.partials.crud._apercu', [
             'model'  => $model,
             'config' => \App\Crud\ViewConfigs\CompanyViewConfig::make($model, $stats ?? null),
@@ -74,76 +75,6 @@
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-charts.js') }}"></script>
-    <script>
-        /**
-         * enrichCompany — manual enrichment for a single company.
-         *
-         * Mirrors launchDiscovery() structure from prospect_criteria view.
-         * Swal confirm → fetch POST → toastr → reload after 800 ms on success.
-         *
-         * @param {number} id         Company ID
-         * @param {string} csrfToken  Laravel CSRF token
-         */
-        window.enrichCompany = function (id, csrfToken) {
-            Swal.fire({
-                title: 'Récupérer les contacts ?',
-                text: "Cette action consommera 1 crédit de découverte.",
-                icon: 'question',
-                showCancelButton: true,
-                confirmButtonText: 'Récupérer',
-                cancelButtonText: 'Annuler',
-                confirmButtonColor: '#009ef7',
-            }).then(function (result) {
-                if (!result.isConfirmed) return;
-
-                // Disable trigger button during flight.
-                var btn = document.querySelector('[onclick*="enrichCompany"]');
-                if (btn) btn.disabled = true;
-
-                fetch('/admin/companies/' + id + '/enrich', {
-                    method: 'POST',
-                    headers: {
-                        'X-CSRF-TOKEN': csrfToken,
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({}),
-                })
-                .then(function (response) {
-                    var httpStatus = response.status;
-                    return response.text().then(function (text) {
-                        var data = {};
-                        try {
-                            data = JSON.parse(text);
-                        } catch (e) {
-                            // Non-JSON response (e.g. 419 session expired)
-                            if (btn) btn.disabled = false;
-                            toastr.error("Une erreur est survenue — réessayez.", 'Erreur');
-                            return;
-                        }
-
-                        if (httpStatus === 200) {
-                            toastr.success(data.text || 'Enrichissement réussi.', 'Succès');
-                            setTimeout(function () { window.location.reload(); }, 800);
-                        } else if (httpStatus === 409) {
-                            toastr.error(data.text || 'Enrichissement déjà en cours.', 'En cours');
-                            if (btn) btn.disabled = false;
-                        } else if (httpStatus === 422) {
-                            toastr.error(data.text || 'Enrichissement impossible.', 'Erreur');
-                            if (btn) btn.disabled = false;
-                        } else {
-                            toastr.error(data.text || 'Une erreur est survenue.', 'Erreur');
-                            if (btn) btn.disabled = false;
-                        }
-                    });
-                })
-                .catch(function () {
-                    if (btn) btn.disabled = false;
-                    toastr.error("Une erreur est survenue — réessayez.", 'Erreur');
-                });
-            });
-        };
-    </script>
 @endpush
 
 </x-default-layout>

@@ -22,12 +22,6 @@ class CampaignsDataTable extends BackendDataTable
             'searchable' => false,
             'raw'        => true,
         ],
-        'status' => [
-            'title'      => 'Statut',
-            'orderable'  => true,
-            'searchable' => false,
-            'raw'        => true,
-        ],
         'is_active' => [
             'title'      => 'Actif',
             'orderable'  => true,
@@ -78,12 +72,6 @@ class CampaignsDataTable extends BackendDataTable
     ];
 
     protected $table_filters = [
-        'status' => [
-            'type'      => 'select_enum',
-            'filterKey' => 'status',
-            'configKey' => 'campaign_statuses',
-            'title'     => 'Statut',
-        ],
         'schedule_type' => [
             'type'      => 'select_enum',
             'filterKey' => 'schedule_type',
@@ -114,7 +102,6 @@ class CampaignsDataTable extends BackendDataTable
     protected function createEditColumns(): void
     {
         $scheduleTypes     = config('global.data.schedule_types', []);
-        $campaignStatuses  = config('global.data.campaign_statuses', []);
 
         $this->datatables->editColumn('schedule_type', function (Campaign $row) use ($scheduleTypes) {
             if (empty($row->schedule_type)) {
@@ -125,24 +112,6 @@ class CampaignsDataTable extends BackendDataTable
             $color = $cfg['color'] ?? 'secondary';
 
             return '<span class="badge badge-light-' . e($color) . '">' . e($label) . '</span>';
-        });
-
-        $this->datatables->editColumn('status', function (Campaign $row) use ($campaignStatuses) {
-            if (empty($row->status)) {
-                return '<span class="badge badge-light-secondary">Brouillon</span>';
-            }
-            $cfg   = $campaignStatuses[$row->status] ?? [];
-            $label = $cfg['label'] ?? $row->status;
-            $color = $cfg['color'] ?? 'secondary';
-
-            $html = '<span class="badge badge-light-' . e($color) . '">' . e($label) . '</span>';
-
-            // Append « En pause » warning badge when the campaign is paused via is_active.
-            if ($row->is_active === false) {
-                $html .= ' <span class="badge badge-light-warning">En pause</span>';
-            }
-
-            return $html;
         });
 
         $this->datatables->editColumn('is_active', function (Campaign $row) {

@@ -65,7 +65,7 @@ class CampaignService
             ],
         );
 
-        $campaign->update(['status' => 'active']);
+        $campaign->update(['is_active' => true]);
 
         return $run;
     }
@@ -143,9 +143,9 @@ class CampaignService
             }
         }
 
-        // ── Activate the campaign (also valid on re-launch from 'done') ───────
+        // ── Activate the campaign (also valid on re-launch from paused state) ──
         if ($enrolled > 0) {
-            $campaign->update(['status' => 'active']);
+            $campaign->update(['is_active' => true]);
         }
 
         Log::info('[CampaignService] launchSequence completed.', [
@@ -424,17 +424,17 @@ class CampaignService
 
         // ── One-shot auto-done (branch-agnostic) ──────────────────────────────
         // Once a one-shot campaign's run reaches terminal status 'sent', flip the
-        // campaign to 'done'. This is unconditional: done = dispatched, even when
-        // all recipients failed (stats_sent=0). The report page shows the truth.
+        // campaign to is_active=false. This is unconditional: done = dispatched,
+        // even when all recipients failed (stats_sent=0). The report page shows the truth.
         //
-        // Re-sending a 'done' one-shot via « Envoyer maintenant » re-arms it as
-        // 'active' via scheduleOneShot() (which sets status='active') before the
-        // next sendRun call, so the lifecycle done→active→done works correctly.
+        // Re-sending a one-shot via « Envoyer maintenant » re-arms it as
+        // is_active=true via scheduleOneShot() before the next sendRun call,
+        // so the lifecycle paused→active→paused works correctly.
         $run->refresh();
         if ($run->status === 'sent' && $run->campaign->schedule_type === 'one_shot') {
-            $run->campaign->update(['status' => 'done']);
+            $run->campaign->update(['is_active' => false]);
 
-            Log::info('[CampaignService] One-shot campaign auto-flipped to done.', [
+            Log::info('[CampaignService] One-shot campaign auto-set to inactive.', [
                 'run_id'      => $run->id,
                 'campaign_id' => $run->campaign_id,
             ]);

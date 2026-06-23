@@ -51,7 +51,7 @@
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ $activeCampaigns }}</div>
                 <div class="fw-semibold text-gray-600">Campagnes actives</div>
                 @if($pendingCampaigns > 0)
-                    <div class="mt-2"><span class="badge badge-light-primary fs-8">{{ $pendingCampaigns }} en brouillon</span></div>
+                    <div class="mt-2"><span class="badge badge-light-warning fs-8">{{ $pendingCampaigns }} en pause</span></div>
                 @endif
             </div>
         </a>

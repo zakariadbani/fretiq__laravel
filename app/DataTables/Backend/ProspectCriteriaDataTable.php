@@ -74,8 +74,9 @@ class ProspectCriteriaDataTable extends BackendDataTable
     ];
 
     /**
-     * Computed once per DataTable render: whether today's quota is exhausted.
-     * null = unlimited or tables not yet migrated; false = credits remain; true = 0.
+     * Computed once per DataTable render: whether the daily OR monthly company
+     * quota is exhausted. null = unlimited or tables not yet migrated;
+     * false = credits remain on both meters; true = at least one meter is at 0.
      *
      * @var bool|null
      */
@@ -89,9 +90,12 @@ class ProspectCriteriaDataTable extends BackendDataTable
         // Wrapped in QueryException catch so the DataTable still renders
         // when the quota tables do not yet exist (pre-migration dev DB).
         try {
-            $remaining = $quotaService->remainingTodayForDisplay();
-            // null = unlimited (never exhausted); 0 = exhausted
-            $this->quotaExhausted = ($remaining !== null && $remaining === 0);
+            $remaining        = $quotaService->remainingTodayForDisplay();
+            $monthlyRemaining = $quotaService->monthlyRemainingForDisplay();
+            // null = unlimited (never exhausted); 0 = exhausted.
+            // Disable when EITHER the daily OR the monthly company meter is at 0.
+            // (null === 0 is false, so unlimited meters never trip this.)
+            $this->quotaExhausted = ($remaining === 0) || ($monthlyRemaining === 0);
         } catch (\Illuminate\Database\QueryException $e) {
             $this->quotaExhausted = null; // unknown — allow the button
         }
@@ -170,7 +174,8 @@ class ProspectCriteriaDataTable extends BackendDataTable
             $html = '<div class="d-flex justify-content-end flex-shrink-0">';
 
             // Discover button (run discovery permission)
-            // Disabled when quota is exhausted (0 remaining today); enabled when unlimited or has credits.
+            // Disabled when the daily OR monthly company quota is exhausted (0 remaining);
+            // enabled when both meters are unlimited or have credits.
             if ($user?->can('run discovery')) {
                 $quotaExhausted = $this->quotaExhausted === true;
                 $disabledAttr   = $quotaExhausted ? ' disabled' : '';

@@ -392,6 +392,70 @@ class SegmentFilterPipelineTest extends TestCase
         $this->assertSame(1, $stats['final']);
     }
 
+    // ── Pin funnel keys on no-pin path ────────────────────────────────────────
+
+    /**
+     * When no pins are set, manually_included and manually_excluded must be
+     * present in resolveWithStats() output and equal to 0.
+     */
+    public function test_no_pin_path_manually_keys_present_and_zero(): void
+    {
+        config(['prospecting.cold_send_enabled' => false]);
+
+        $this->makeContact($this->companyA, 'nopin@acme.test');
+
+        $stats = $this->service->resolveWithStats('client', []);
+
+        $this->assertArrayHasKey('manually_included', $stats,
+            'manually_included key must exist in resolveWithStats() output');
+        $this->assertArrayHasKey('manually_excluded', $stats,
+            'manually_excluded key must exist in resolveWithStats() output');
+        $this->assertSame(0, $stats['manually_included'],
+            'manually_included must be 0 on the no-pin path');
+        $this->assertSame(0, $stats['manually_excluded'],
+            'manually_excluded must be 0 on the no-pin path');
+    }
+
+    /**
+     * Funnel identity extended with manually_excluded term:
+     *   matched − suppressed − cold_excluded − personal_excluded − duplicates_excluded − manually_excluded === final
+     *
+     * Verifies the identity when manually_excluded > 0.
+     */
+    public function test_funnel_identity_with_manually_excluded_term(): void
+    {
+        config(['prospecting.cold_send_enabled' => false]);
+
+        $keep    = $this->makeContact($this->companyA, 'keep@acme.test');
+        $exclude = $this->makeContact($this->companyA, 'excl@acme.test');
+
+        $segment = Segment::create(['name' => 'Identity Test', 'scope' => 'client']);
+        $segment->pinnedContacts()->syncWithoutDetaching([
+            $exclude->id => ['mode' => 'exclude'],
+        ]);
+
+        $stats = $this->service->resolveWithStats(
+            $segment->scope,
+            $segment->filter ?? [],
+            false,
+            $segment->includedContactIds(),
+            $segment->excludedContactIds(),
+        );
+
+        $this->assertSame(1, $stats['manually_excluded'],
+            'manually_excluded must count the pinned-exclude');
+
+        $computed = $stats['matched']
+            - $stats['suppressed']
+            - $stats['cold_excluded']
+            - $stats['personal_excluded']
+            - $stats['duplicates_excluded']
+            - $stats['manually_excluded'];
+
+        $this->assertSame($stats['final'], $computed,
+            'Extended funnel identity must hold: matched − ... − manually_excluded === final');
+    }
+
     // ── resolve() vs resolveWithStats() consistency ────────────────────────────
 
     public function test_resolve_count_equals_resolvewithstats_final(): void

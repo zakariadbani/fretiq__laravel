@@ -49,7 +49,6 @@ class RecurringCampaignTest extends TestCase
     }
 
     private function makeRecurringCampaign(
-        string $status = 'active',
         ?Carbon $nextRunAt = null,
         bool $isActive = true,
     ): Campaign {
@@ -66,7 +65,6 @@ class RecurringCampaignTest extends TestCase
             'recurrence'         => ['frequency' => 'daily'],
             'next_run_at'        => $nextRunAt ?? now()->subMinute(),
             'timezone'           => 'Europe/Paris',
-            'status'             => $status,
             'is_active'          => $isActive,
         ]);
     }
@@ -79,7 +77,7 @@ class RecurringCampaignTest extends TestCase
      */
     public function test_generate_due_runs_creates_run_and_advances_next_run_at(): void
     {
-        $campaign = $this->makeRecurringCampaign('active', now()->subMinute());
+        $campaign = $this->makeRecurringCampaign(now()->subMinute());
 
         $service = app(CampaignSchedulerService::class);
         $count   = $service->generateDueRuns();
@@ -106,7 +104,7 @@ class RecurringCampaignTest extends TestCase
      */
     public function test_generate_is_idempotent(): void
     {
-        $campaign = $this->makeRecurringCampaign('active', now()->subMinute());
+        $campaign = $this->makeRecurringCampaign(now()->subMinute());
 
         $service = app(CampaignSchedulerService::class);
         $service->generateDueRuns();
@@ -134,7 +132,6 @@ class RecurringCampaignTest extends TestCase
     public function test_paused_campaign_skipped(): void
     {
         $campaign = $this->makeRecurringCampaign(
-            status: 'active',
             nextRunAt: now()->subMinute(),
             isActive: false,
         );

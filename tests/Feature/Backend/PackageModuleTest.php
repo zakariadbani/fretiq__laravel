@@ -129,4 +129,46 @@ class PackageModuleTest extends TestCase
 
         $response->assertStatus(403);
     }
+
+    /**
+     * POST /admin/packages with daily_contact_credits persists the field.
+     */
+    public function test_package_store_accepts_daily_contact_credits(): void
+    {
+        $response = $this->actingAs($this->superadmin)
+            ->post('/admin/packages', [
+                'name'                  => 'Pack Contact',
+                'daily_credits'         => 50,
+                'daily_contact_credits' => 20,
+                'is_active'             => true,
+                'sort_order'            => 1,
+            ]);
+
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('packages', [
+            'name'                  => 'Pack Contact',
+            'daily_contact_credits' => 20,
+        ]);
+    }
+
+    /**
+     * POST /admin/packages with no daily_contact_credits stores NULL (unlimited contact meter).
+     */
+    public function test_package_store_accepts_null_contact_credits_as_unlimited(): void
+    {
+        $response = $this->actingAs($this->superadmin)
+            ->post('/admin/packages', [
+                'name'          => 'Pack Unlimited Contact',
+                'daily_credits' => 50,
+                'is_active'     => true,
+                'sort_order'    => 1,
+            ]);
+
+        $response->assertStatus(200);
+
+        $package = \App\Models\Package::where('name', 'Pack Unlimited Contact')->first();
+        $this->assertNotNull($package, 'Package row must be created');
+        $this->assertNull($package->daily_contact_credits,
+            'daily_contact_credits must be NULL when not provided (unlimited)');
+    }
 }

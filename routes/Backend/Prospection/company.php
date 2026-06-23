@@ -13,4 +13,5 @@ Route::controller(CompanyController::class)->prefix('admin')->name('admin.')->gr
     Route::delete('/companies/{id}', 'delete')->name('companies.delete');
     Route::put('/companies/executeSwitch/{id}', 'executeSwitch')->name('companies.executeSwitch');
     Route::post('/companies/{id}/enrich', 'enrich')->name('companies.enrich');
+    Route::post('/companies/{id}/explain-score', 'explainScore')->name('companies.explainScore');
 });

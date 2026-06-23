@@ -14,8 +14,17 @@
             <i class="bi bi-people text-info fs-3 me-2"></i>
             Contacts ({{ $model->contacts->count() }})
         </h3>
-        @can('create contacts')
-            <div class="card-toolbar">
+        <div class="card-toolbar">
+            @can('enrich companies')
+                <button type="button"
+                        class="btn btn-sm btn-light-success me-2"
+                        onclick="enrichCompany({{ (int) $model->id }}, '{{ csrf_token() }}')"
+                        @if(empty($model->domain)) disabled data-bs-toggle="tooltip" title="Renseignez un domaine pour récupérer les contacts" @endif>
+                    <i class="bi bi-person-plus fs-4 me-1"></i>
+                    Récupérer les contacts
+                </button>
+            @endcan
+            @can('create contacts')
                 <button type="button"
                         class="btn btn-sm btn-light-primary"
                         data-bs-toggle="modal"
@@ -24,8 +33,8 @@
                     <i class="bi bi-plus fs-4 me-1"></i>
                     Ajouter
                 </button>
-            </div>
-        @endcan
+            @endcan
+        </div>
     </div>
     <div class="card-body border-top" id="contacts_table_wrapper">
         @if($model->contacts->isEmpty())
@@ -120,3 +129,73 @@
         @endif
     </div>
 </div>
+
+@push('scripts')
+    <script>
+        /**
+         * enrichCompany — manual enrichment for a single company.
+         * Defined here so the Contacts-tab button works on BOTH the view and edit pages
+         * (the partial is shared; the edit page has no other copy of this handler).
+         * Swal confirm → fetch POST /enrich → toastr → reload after 800 ms on success.
+         */
+        window.enrichCompany = function (id, csrfToken) {
+            Swal.fire({
+                title: 'Récupérer les contacts ?',
+                text: "Cette action consommera 1 crédit de découverte.",
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonText: 'Récupérer',
+                cancelButtonText: 'Annuler',
+                confirmButtonColor: '#009ef7',
+            }).then(function (result) {
+                if (!result.isConfirmed) return;
+
+                // Disable trigger button during flight.
+                var btn = document.querySelector('[onclick*="enrichCompany"]');
+                if (btn) btn.disabled = true;
+
+                fetch('/admin/companies/' + id + '/enrich', {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRF-TOKEN': csrfToken,
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({}),
+                })
+                .then(function (response) {
+                    var httpStatus = response.status;
+                    return response.text().then(function (text) {
+                        var data = {};
+                        try {
+                            data = JSON.parse(text);
+                        } catch (e) {
+                            // Non-JSON response (e.g. 419 session expired)
+                            if (btn) btn.disabled = false;
+                            toastr.error("Une erreur est survenue — réessayez.", 'Erreur');
+                            return;
+                        }
+
+                        if (httpStatus === 200) {
+                            toastr.success(data.text || 'Enrichissement réussi.', 'Succès');
+                            setTimeout(function () { window.location.reload(); }, 800);
+                        } else if (httpStatus === 409) {
+                            toastr.error(data.text || 'Enrichissement déjà en cours.', 'En cours');
+                            if (btn) btn.disabled = false;
+                        } else if (httpStatus === 422) {
+                            toastr.error(data.text || 'Enrichissement impossible.', 'Erreur');
+                            if (btn) btn.disabled = false;
+                        } else {
+                            toastr.error(data.text || 'Une erreur est survenue.', 'Erreur');
+                            if (btn) btn.disabled = false;
+                        }
+                    });
+                })
+                .catch(function () {
+                    if (btn) btn.disabled = false;
+                    toastr.error("Une erreur est survenue — réessayez.", 'Erreur');
+                });
+            });
+        };
+    </script>
+@endpush

@@ -50,18 +50,28 @@ class PackageViewConfig
         // ── Detail rows ───────────────────────────────────────────────────────
         $detailRows = [];
         if ($hasId) {
-            $creditsLabel = $model->daily_credits === null ? 'Illimité' : (string) $model->daily_credits;
-            $priceLine    = $model->price_monthly !== null
+            $creditsLabel               = $model->daily_credits === null ? 'Illimité' : (string) $model->daily_credits;
+            $contactCreditsLabel        = $model->daily_contact_credits === null ? 'Illimité' : (string) $model->daily_contact_credits;
+            $monthlyCreditsLabel        = $model->monthly_credits === null ? 'Illimité' : (string) $model->monthly_credits;
+            $monthlyContactCreditsLabel = $model->monthly_contact_credits === null ? 'Illimité' : (string) $model->monthly_contact_credits;
+            $anchorDateLabel            = $model->quota_anchor_date !== null
+                ? $model->quota_anchor_date->format('d/m/Y')
+                : '—';
+            $priceLine                  = $model->price_monthly !== null
                 ? number_format((float) $model->price_monthly, 2, ',', ' ') . ' € / mois'
                 : null;
 
             $detailRows = [
-                ['label' => 'Actif',             'value' => $model->is_active,   'type' => 'boolean'],
-                ['label' => 'Nom',               'value' => $model->name,         'type' => 'text'],
-                ['label' => 'Crédits / jour',    'value' => $creditsLabel,        'type' => 'text'],
-                ['label' => 'Prix / mois',       'value' => $priceLine,           'type' => 'text'],
-                ['label' => 'Ordre d\'affichage','value' => $model->sort_order,   'type' => 'text'],
-                ['label' => 'Créé le',           'value' => $model->created_at,   'type' => 'date'],
+                ['label' => 'Actif',                      'value' => $model->is_active,             'type' => 'boolean'],
+                ['label' => 'Nom',                        'value' => $model->name,                  'type' => 'text'],
+                ['label' => 'Crédits entreprises / jour', 'value' => $creditsLabel,                 'type' => 'text'],
+                ['label' => 'Crédits entreprises / mois', 'value' => $monthlyCreditsLabel,          'type' => 'text'],
+                ['label' => 'Crédits contacts / jour',    'value' => $contactCreditsLabel,          'type' => 'text'],
+                ['label' => 'Crédits contacts / mois',    'value' => $monthlyContactCreditsLabel,   'type' => 'text'],
+                ['label' => 'Ancrage mensuel',            'value' => $anchorDateLabel,              'type' => 'text'],
+                ['label' => 'Prix / mois',                'value' => $priceLine,                    'type' => 'text'],
+                ['label' => 'Ordre d\'affichage',         'value' => $model->sort_order,            'type' => 'text'],
+                ['label' => 'Créé le',                    'value' => $model->created_at,            'type' => 'date'],
             ];
         }
 

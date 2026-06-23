@@ -21,6 +21,11 @@ class DatabaseSeeder extends Seeder
             \Database\Seeders\Acl\PermissionsSeeder::class,
             \Database\Seeders\UsersSeeder::class,
             \Database\Seeders\SettingsSeeder::class,
+            \Database\Seeders\DefaultProspectionSeeder::class,
         ]);
+
+        if (app()->environment(['local', 'testing'])) {
+            $this->call([\Database\Seeders\DemoCompaniesSeeder::class]);
+        }
     }
 }

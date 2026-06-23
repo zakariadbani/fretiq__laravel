@@ -77,7 +77,6 @@ class CampaignsDataTableRenderTest extends TestCase
             'recurrence'         => ['frequency' => 'weekly', 'interval' => 1],
             'next_run_at'        => now()->addWeek(),
             'timezone'           => 'Europe/Paris',
-            'status'             => 'active',
             'is_active'          => true,
         ]);
 
@@ -103,7 +102,6 @@ class CampaignsDataTableRenderTest extends TestCase
             'sender_identity_id' => $sender->id,
             'sequence_id'        => $seq->id,
             'schedule_type'      => 'sequence',
-            'status'             => 'active',
             'is_active'          => true,
         ]);
     }

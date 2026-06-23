@@ -147,10 +147,9 @@ class PlannerService
             }
 
             // Query recurring definitions that could have future occurrences.
-            // Only active + is_active=true: paused campaigns (is_active=false) are frozen
+            // Only is_active=true: paused campaigns (is_active=false) are frozen
             // and must not appear in the projection.
             $recurringCampaigns = Campaign::where('schedule_type', 'recurring')
-                ->where('status', 'active')
                 ->where('is_active', true)
                 ->whereNotNull('next_run_at')
                 ->get();

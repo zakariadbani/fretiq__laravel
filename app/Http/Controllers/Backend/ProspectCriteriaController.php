@@ -57,19 +57,22 @@ class ProspectCriteriaController extends BackendController
 
     /**
      * Override index() to inject the dynamic filter config for JavaScript
-     * and the daily quota badge vars.
+     * and the daily + monthly quota badge vars.
      */
     public function index(DiscoveryQuotaService $quotaService)
     {
-        [$quotaRemaining, $quotaPackage] = $this->resolveQuotaVars($quotaService);
+        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining] = $this->resolveQuotaVars($quotaService);
 
         return $this->currentDataTable->render(
             'backend.contents.prospect_criteria.crud.index',
             [
-                'listTitle'       => $this->listTitle,
-                'dataTableConfig' => $this->currentDataTable->getIndexConfig(),
-                'quotaRemaining'  => $quotaRemaining,
-                'quotaPackage'    => $quotaPackage,
+                'listTitle'               => $this->listTitle,
+                'dataTableConfig'         => $this->currentDataTable->getIndexConfig(),
+                'quotaRemaining'          => $quotaRemaining,
+                'quotaPackage'            => $quotaPackage,
+                'contactRemaining'        => $contactRemaining,
+                'monthlyRemaining'        => $monthlyRemaining,
+                'monthlyContactRemaining' => $monthlyContactRemaining,
             ]
         );
     }
@@ -108,21 +111,24 @@ class ProspectCriteriaController extends BackendController
         );
         $view->with('viewConfig', $viewConfig);
 
-        [$quotaRemaining, $quotaPackage] = $this->resolveQuotaVars($quotaService);
+        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining] = $this->resolveQuotaVars($quotaService);
         $view->with('quotaRemaining', $quotaRemaining)
              ->with('quotaPackage', $quotaPackage)
+             ->with('contactRemaining', $contactRemaining)
+             ->with('monthlyRemaining', $monthlyRemaining)
+             ->with('monthlyContactRemaining', $monthlyContactRemaining)
              ->with('resultCompanies', $resultCompanies);
 
         return $view;
     }
 
     /**
-     * Safely read today's quota remaining and active package.
+     * Safely read today's + monthly quota remaining, active package, and contact remaining.
      *
      * Wraps in a try/catch for QueryException so pages render correctly even when
      * the quota tables do not yet exist on the dev DB (pre-migration).
      *
-     * @return array{0: ?int, 1: ?\App\Models\Package}
+     * @return array{0: ?int, 1: ?\App\Models\Package, 2: ?int, 3: ?int, 4: ?int}
      */
     private function resolveQuotaVars(DiscoveryQuotaService $quotaService): array
     {
@@ -130,10 +136,13 @@ class ProspectCriteriaController extends BackendController
             return [
                 $quotaService->remainingTodayForDisplay(),
                 $quotaService->activePackage(),
+                $quotaService->contactRemainingTodayForDisplay(),
+                $quotaService->monthlyRemainingForDisplay(),
+                $quotaService->monthlyContactRemainingForDisplay(),
             ];
         } catch (\Illuminate\Database\QueryException $e) {
             // Quota tables not yet migrated — treat as unlimited.
-            return [null, null];
+            return [null, null, null, null, null];
         }
     }
 
@@ -327,6 +336,11 @@ class ProspectCriteriaController extends BackendController
         $successText = $isPartial
             ? "Découverte lancée — {$run->credits_reserved} entreprises possibles aujourd'hui"
             : 'Découverte lancée en arrière-plan';
+
+        // Append contact enrichment limit note when contact quota is capped.
+        if (! $quotaService->contactIsUnlimited() && $run->contact_credits_reserved < $run->credits_reserved) {
+            $successText .= " (enrichissement limité à {$run->contact_credits_reserved})";
+        }
 
         return response()->json([
             'message'    => 'success',

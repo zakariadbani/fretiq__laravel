@@ -99,7 +99,6 @@ class ObservabilityGeneratedTest extends TestCase
             'template_id'        => $template->id,
             'sender_identity_id' => $sender->id,
             'schedule_type'      => 'once',
-            'status'             => 'draft',
             'is_active'          => false,
             'driver'             => 'local',
         ]);

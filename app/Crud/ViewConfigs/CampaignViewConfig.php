@@ -29,27 +29,15 @@ class CampaignViewConfig
     {
         $hasId = $model && $model->id;
 
-        // ── Status badge ──────────────────────────────────────────────────────
-        $statusCfg   = $hasId ? config('global.data.campaign_statuses.' . $model->status, []) : [];
-        $statusLabel = $statusCfg['label'] ?? 'Brouillon';
-        $statusColor = $statusCfg['color'] ?? 'secondary';
-
         // ── Schedule type badge ───────────────────────────────────────────────
         $typeCfg   = $hasId ? config('global.data.schedule_types.' . $model->schedule_type, []) : [];
         $typeLabel = $typeCfg['label'] ?? null;
         $typeColor = $typeCfg['color'] ?? 'secondary';
 
-        // ── Hero badges (status + optional pause + schedule type) ────────────
+        // ── Hero badges (schedule type) ──────────────────────────────────────
         $badges = [];
-        if ($hasId) {
-            $badges[] = ['label' => $statusLabel, 'color' => $statusColor];
-            // Show « En pause » warning badge when the campaign is active but paused.
-            if ($model->is_active === false) {
-                $badges[] = ['label' => 'En pause', 'color' => 'warning'];
-            }
-            if ($typeLabel) {
-                $badges[] = ['label' => $typeLabel, 'color' => $typeColor];
-            }
+        if ($hasId && $typeLabel) {
+            $badges[] = ['label' => $typeLabel, 'color' => $typeColor];
         }
 
         // ── Subtitle pills ────────────────────────────────────────────────────
@@ -71,13 +59,6 @@ class CampaignViewConfig
         // ── Hero tiles ────────────────────────────────────────────────────────
         $tiles = [];
         if ($hasId) {
-            // Statut
-            $tiles[] = [
-                'icon'    => 'bi-patch-check',
-                'color'   => $statusColor,
-                'value'   => $statusLabel,
-                'caption' => 'Statut',
-            ];
             // Type
             $tiles[] = [
                 'icon'    => 'bi-calendar2',
@@ -135,7 +116,6 @@ class CampaignViewConfig
         if ($hasId) {
             $detailRows = [
                 ['label' => 'Nom',         'value' => $model->name,            'type' => 'text'],
-                ['label' => 'Statut',      'value' => $model->status,          'type' => 'enum', 'configKey' => 'campaign_statuses'],
                 ['label' => 'Type',        'value' => $model->schedule_type,   'type' => 'enum', 'configKey' => 'schedule_types'],
                 ['label' => 'Segment',     'value' => $model->segment?->name,  'type' => 'text'],
                 ['label' => 'Modèle',      'value' => $model->template?->name, 'type' => 'text'],

@@ -238,4 +238,135 @@ class CampaignSendTest extends TestCase
             return $mail->hasTo($contact->email);
         });
     }
+
+    // ── Hybrid smart-list: pin exclude/include in send path ────────────────────
+
+    /**
+     * A segment with a manually-excluded contact must NOT create a CampaignRecipient
+     * for that contact after a sendRun, even if the contact matches the filter.
+     */
+    public function test_excluded_pin_produces_no_recipient(): void
+    {
+        $keep    = $this->makeClientContact('keep@acme.test');
+        $exclude = $this->makeClientContact('excluded@acme.test');
+
+        $segment = Segment::create(['name' => 'Exclude Pin', 'scope' => 'client']);
+
+        // Pin 'excluded' as an exclude
+        $segment->pinnedContacts()->syncWithoutDetaching([
+            $exclude->id => ['mode' => 'exclude'],
+        ]);
+
+        $template = $this->makeTemplate();
+        $sender   = $this->makeSender();
+        $campaign = $this->makeCampaign($segment, $template, $sender);
+
+        $service = app(CampaignService::class);
+        $run     = $service->scheduleOneShot($campaign);
+        $service->sendRun($run);
+
+        // 'keep' must have a recipient
+        $this->assertDatabaseHas('campaign_recipients', [
+            'campaign_run_id' => $run->id,
+            'contact_id'      => $keep->id,
+        ]);
+
+        // 'excluded' must NOT have a recipient
+        $this->assertDatabaseMissing('campaign_recipients', [
+            'campaign_run_id' => $run->id,
+            'contact_id'      => $exclude->id,
+        ]);
+
+        // Mail must NOT have been sent to the excluded address
+        Mail::assertNotSent(CampaignMailable::class, function (CampaignMailable $mail) use ($exclude) {
+            return $mail->hasTo($exclude->email);
+        });
+    }
+
+    /**
+     * A compliant pinned-include contact that does NOT match the filter scope
+     * must get a CampaignRecipient after sendRun (include bypasses scope+filter).
+     *
+     * Fixture: segment filters to sector=Transport.
+     * One client contact IS in Transport (matches filter).
+     * One client contact is in Finance (does NOT match filter) — pinned-in as include.
+     * The Finance contact must become a recipient despite not matching the filter.
+     */
+    public function test_compliant_nonfilter_include_produces_recipient(): void
+    {
+        // Contact at Transport company — matches sector filter
+        $transportCo = Company::create([
+            'name'                 => 'Transport SA',
+            'relationship'         => 'client',
+            'source'               => 'manual',
+            'qualification_status' => 'pending',
+            'sector'               => 'Transport',
+            'country'              => 'FR',
+        ]);
+        $filterMatch = Contact::create([
+            'company_id'  => $transportCo->id,
+            'email'       => 'filtermatch@transport.test',
+            'name'        => 'Filter Match',
+            'status'      => 'new',
+            'source'      => 'manual',
+            'legal_basis' => 'relationship',
+            'email_kind'  => 'role',
+        ]);
+
+        // Contact at Finance company — does NOT match sector=Transport filter
+        $financeCo = Company::create([
+            'name'                 => 'Finance Corp',
+            'relationship'         => 'client',
+            'source'               => 'manual',
+            'qualification_status' => 'pending',
+            'sector'               => 'Finance',
+            'country'              => 'FR',
+        ]);
+        $pinInclude = Contact::create([
+            'company_id'  => $financeCo->id,
+            'email'       => 'pininclude@finance.test',
+            'name'        => 'Pin Include',
+            'status'      => 'new',
+            'source'      => 'manual',
+            'legal_basis' => 'relationship',
+            'email_kind'  => 'role',
+        ]);
+
+        // Segment filters to 'Transport' sector — pinInclude's sector=Finance won't match filter
+        $segment = Segment::create([
+            'name'   => 'Include Pin Send',
+            'scope'  => 'client',
+            'filter' => ['sector' => ['Transport']],
+        ]);
+
+        // Pin Finance contact as include — bypasses filter, still faces compliance
+        $segment->pinnedContacts()->syncWithoutDetaching([
+            $pinInclude->id => ['mode' => 'include'],
+        ]);
+
+        $template = $this->makeTemplate();
+        $sender   = $this->makeSender();
+        $campaign = $this->makeCampaign($segment, $template, $sender);
+
+        $service = app(CampaignService::class);
+        $run     = $service->scheduleOneShot($campaign);
+        $service->sendRun($run);
+
+        // filterMatch must have a recipient (matches filter)
+        $this->assertDatabaseHas('campaign_recipients', [
+            'campaign_run_id' => $run->id,
+            'contact_id'      => $filterMatch->id,
+        ]);
+
+        // pinInclude must ALSO have a recipient — it was force-included despite no filter match
+        $this->assertDatabaseHas('campaign_recipients', [
+            'campaign_run_id' => $run->id,
+            'contact_id'      => $pinInclude->id,
+        ]);
+
+        // Verify mail was sent to the included address
+        Mail::assertSent(CampaignMailable::class, function (CampaignMailable $mail) use ($pinInclude) {
+            return $mail->hasTo($pinInclude->email);
+        });
+    }
 }

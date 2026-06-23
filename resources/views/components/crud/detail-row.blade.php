@@ -9,7 +9,7 @@
         <x-crud.detail-row label="Créé le" :value="$model->created_at" type="date" />
         <x-crud.detail-row label="Email" :value="$model->email" type="email" />
         <x-crud.detail-row label="Tags" :value="$model->tags" type="tags" color="primary" />
-        <x-crud.detail-row label="Statut" :value="$model->status" type="badge" color="success" />
+        <x-crud.detail-row label="Statut actif" :value="$model->is_active" type="boolean" />
         <x-crud.detail-row label="Site" :value="$model->domain" type="link" :href="'https://'.$model->domain" />
         <x-crud.detail-row label="Note" type="raw">{{ $model->note }}</x-crud.detail-row>
 

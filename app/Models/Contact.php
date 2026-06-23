@@ -3,13 +3,14 @@
 namespace App\Models;
 
 use App\Models\Traits\Validator;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Contact extends Model
 {
-    use Validator, SoftDeletes;
+    use HasFactory, Validator, SoftDeletes;
 
     /**
      * The table associated with the model.

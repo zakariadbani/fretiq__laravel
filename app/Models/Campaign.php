@@ -36,7 +36,6 @@ class Campaign extends Model
         'next_run_at',
         'timezone',
         'send_window',
-        'status',
         'is_active',
         'driver',
     ];
@@ -119,9 +118,6 @@ class Campaign extends Model
             if ($model->schedule_type === null || $model->schedule_type === '') {
                 $model->schedule_type = 'one_shot';
             }
-            if ($model->status === null || $model->status === '') {
-                $model->status = 'draft';
-            }
             if ($model->timezone === null || $model->timezone === '') {
                 $model->timezone = 'Europe/Paris';
             }
@@ -152,22 +148,9 @@ class Campaign extends Model
             'next_run_at'        => 'nullable|date',
             'timezone'           => 'nullable|string|max:64',
             'send_window'        => 'nullable|array',
-            'status'             => 'nullable|in:' . implode(',', array_keys(config('global.data.campaign_statuses', []))),
             'is_active'          => 'nullable|boolean',
             'driver'             => 'nullable|in:local,zoho',
         ];
     }
 
-    // ── Accessors / Helpers ────────────────────────────────────────────────────
-
-    /**
-     * Returns the Metronic badge CSS class for the current status value.
-     * Example: 'badge-light-secondary' for 'draft'.
-     */
-    public function statusBadgeClass(): string
-    {
-        $color = config('global.data.campaign_statuses.' . $this->status . '.color', 'secondary');
-
-        return 'badge-light-' . $color;
-    }
 }

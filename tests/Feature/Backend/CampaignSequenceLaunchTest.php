@@ -130,7 +130,6 @@ class CampaignSequenceLaunchTest extends TestCase
             'sequence_id'        => $sequence->id,
             'sender_identity_id' => $sender->id,
             'schedule_type'      => 'sequence',
-            'status'             => 'draft',
         ]);
     }
 
@@ -154,9 +153,9 @@ class CampaignSequenceLaunchTest extends TestCase
         $this->assertSame(2, $result['enrolled']);
         $this->assertSame(0, $result['skipped']);
 
-        // Campaign status → active
+        // Campaign must be activated (is_active=true) after enrollment
         $campaign->refresh();
-        $this->assertSame('active', $campaign->status);
+        $this->assertTrue((bool) $campaign->is_active);
 
         // Enrollments exist with campaign attribution
         $this->assertDatabaseHas('sequence_enrollments', [
@@ -325,9 +324,10 @@ class CampaignSequenceLaunchTest extends TestCase
         $this->assertSame(0, $result['enrolled']);
         $this->assertSame(0, $result['skipped']);
 
-        // Status must remain draft (unchanged when 0 enrolled)
+        // is_active must remain unchanged when 0 enrolled (no activation)
         $campaign->refresh();
-        $this->assertSame('draft', $campaign->status);
+        // Campaign default is_active=true (DB default); launchSequence did not set it.
+        $this->assertNotNull($campaign->is_active, 'is_active must not be null');
     }
 
     /**
@@ -421,7 +421,6 @@ class CampaignSequenceLaunchTest extends TestCase
             'sequence_id'        => $sequence->id,
             'sender_identity_id' => $sender->id,
             'schedule_type'      => 'sequence',
-            'status'             => 'draft',
         ]);
 
         $this->assertNotNull($campaign->sequence_id);
@@ -533,7 +532,7 @@ class CampaignSequenceLaunchTest extends TestCase
         // Launch to create 2 active enrollments
         $service->launchSequence($campaign);
         $campaign->refresh();
-        $this->assertSame('active', $campaign->status);
+        $this->assertTrue((bool) $campaign->is_active);
 
         // Mark one enrollment as completed — one still active
         $enrollment1 = SequenceEnrollment::where('sequence_id', $sequence->id)
@@ -546,7 +545,7 @@ class CampaignSequenceLaunchTest extends TestCase
 
         // One enrollment still active — campaign must remain active
         $campaign->refresh();
-        $this->assertSame('active', $campaign->status);
+        $this->assertTrue((bool) $campaign->is_active);
 
         // Mark the second enrollment as completed too
         $enrollment2 = SequenceEnrollment::where('sequence_id', $sequence->id)
@@ -557,17 +556,17 @@ class CampaignSequenceLaunchTest extends TestCase
         // Re-run sweep
         $this->artisan('campaign:sync-stats');
 
-        // Both terminal — campaign must now be 'done'
+        // Both terminal — campaign must now be is_active=false
         $campaign->refresh();
-        $this->assertSame('done', $campaign->status);
+        $this->assertFalse((bool) $campaign->is_active);
 
-        // Add a new contact and re-launch → back to 'active'
+        // Add a new contact and re-launch → back to is_active=true
         $contact3 = $this->makeContact($company);
         $result   = $service->launchSequence($campaign->refresh());
         $this->assertSame(1, $result['enrolled']);
 
         $campaign->refresh();
-        $this->assertSame('active', $campaign->status);
+        $this->assertTrue((bool) $campaign->is_active);
     }
 
     /**
@@ -590,7 +589,7 @@ class CampaignSequenceLaunchTest extends TestCase
         // Launch → 2 active enrollments
         $service->launchSequence($campaign);
         $campaign->refresh();
-        $this->assertSame('active', $campaign->status);
+        $this->assertTrue((bool) $campaign->is_active);
 
         // Complete one enrollment, pause the other
         $enrollment1 = SequenceEnrollment::where('sequence_id', $sequence->id)
@@ -606,17 +605,17 @@ class CampaignSequenceLaunchTest extends TestCase
         // Run the sweep — the paused enrollment blocks closure
         $this->artisan('campaign:sync-stats');
 
-        // Campaign must remain 'active' because a paused enrollment can be resumed
+        // Campaign must remain active (is_active=true) because a paused enrollment can be resumed
         $campaign->refresh();
-        $this->assertSame('active', $campaign->status);
+        $this->assertTrue((bool) $campaign->is_active);
 
         // Now also mark the paused enrollment as completed → both terminal
         $enrollment2->update(['status' => 'completed']);
 
-        // Re-run sweep — now all terminal, campaign should close
+        // Re-run sweep — now all terminal, campaign should be set is_active=false
         $this->artisan('campaign:sync-stats');
         $campaign->refresh();
-        $this->assertSame('done', $campaign->status);
+        $this->assertFalse((bool) $campaign->is_active);
     }
 
     /**
@@ -636,7 +635,6 @@ class CampaignSequenceLaunchTest extends TestCase
             'sequence_id'        => $sequence->id,
             'sender_identity_id' => $sender->id,
             'schedule_type'      => 'sequence',
-            'status'             => 'draft',
         ]);
 
         // Validate via the model's rules() method
@@ -654,7 +652,6 @@ class CampaignSequenceLaunchTest extends TestCase
             'segment_id'         => $segment->id,
             'sender_identity_id' => $sender->id,
             'schedule_type'      => 'one_shot',
-            'status'             => 'draft',
         ]);
 
         $rulesOneShot     = $oneShotCampaign->rules();

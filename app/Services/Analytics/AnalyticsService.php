@@ -26,7 +26,7 @@ class AnalyticsService
      * Metrics:
      *   companies          — total Company rows
      *   contacts           — total Contact rows (excluding soft-deleted)
-     *   active_campaigns   — campaigns with status in [scheduled, active]
+     *   active_campaigns   — campaigns with is_active=true
      *   emails_sent_30d    — sum of stats_sent on runs within the last 30 days
      *   open_rate          — (sum opens / sum sent) × 100 over the last 30 days
      *   click_rate         — (sum clicks / sum sent) × 100 over the last 30 days
@@ -66,7 +66,7 @@ class AnalyticsService
         return [
             'companies'        => Company::count(),
             'contacts'         => Contact::count(),
-            'active_campaigns' => Campaign::where('status', 'active')->where('is_active', true)->count(),
+            'active_campaigns' => Campaign::where('is_active', true)->count(),
             'emails_sent_30d'  => $emailsSent30d,
             'open_rate'        => $openRate,
             'click_rate'       => $clickRate,
