@@ -18,7 +18,8 @@ use Illuminate\Database\Seeder;
  *
  * All inserts use firstOrCreate with a stable logical key → idempotent across
  * migrate:fresh --seed runs. Nothing here can be dispatched by the scheduler:
- *   - SenderIdentity: is_active=false (placeholder, never sends)
+ *   - SenderIdentity: is_default=true, is_active=true (selectable FROM identity;
+ *     does not itself send — Campaign stays is_active=false + next_run_at=null)
  *   - Campaign: is_active=false, next_run_at=null
  *     (scheduler requires status='active' + is_active=true + next_run_at IS NOT NULL)
  */
@@ -26,15 +27,15 @@ class DefaultProspectionSeeder extends Seeder
 {
     public function run(): void
     {
-        // ── 1. Placeholder SenderIdentity ─────────────────────────────────────────
+        // ── 1. Default SenderIdentity ─────────────────────────────────────────────
         $sender = SenderIdentity::firstOrCreate(
-            ['email' => 'configurer@example.com'],
+            ['email' => 'mnejjar@tcl.ma'],
             [
-                'name'           => 'Expéditeur par défaut (à configurer)',
+                'name'           => 'M. Nejjar — TCL France',
                 'reply_to'       => null,
                 'signature_html' => '<p>TCL France</p>',
-                'is_default'     => false,
-                'is_active'      => false,
+                'is_default'     => true,
+                'is_active'      => true,
             ],
         );
 

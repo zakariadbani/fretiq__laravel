@@ -22,9 +22,11 @@ class DatabaseSeeder extends Seeder
             \Database\Seeders\UsersSeeder::class,
             \Database\Seeders\SettingsSeeder::class,
             \Database\Seeders\DefaultProspectionSeeder::class,
+            \Database\Seeders\SequenceSeeder::class,
+            \Database\Seeders\ProspectCriteriaSeeder::class,
         ]);
 
-        if (app()->environment(['local', 'testing'])) {
+        if (app()->environment(['testing'])) {
             $this->call([\Database\Seeders\DemoCompaniesSeeder::class]);
         }
     }

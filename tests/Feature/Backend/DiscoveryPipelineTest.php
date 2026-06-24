@@ -96,8 +96,9 @@ class DiscoveryPipelineTest extends TestCase
 
     /**
      * Discovered contacts must have legal_basis='legitimate_interest'.
-     * The fixtures include both 'generic' (→ email_kind='role') and 'personal'
-     * (→ email_kind='personal') Hunter types — both must appear in the output.
+     * Classification is now domain-based: all fixture emails are at corporate
+     * domains (bolloretransport.com, geodis.com, clasquin.com, example-freight.com)
+     * — none are free-webmail — so every contact must have email_kind='role'.
      * Each contact must have source_url and source_captured_at set.
      */
     public function test_pipeline_creates_legitimate_interest_contacts_with_email_kind(): void
@@ -118,12 +119,14 @@ class DiscoveryPipelineTest extends TestCase
             'Pipeline must create at least one contact with legal_basis=legitimate_interest'
         );
 
-        // Both email_kind values must appear (fixtures mix generic+personal)
+        // All fixture emails are at corporate domains → domain-based classifier
+        // assigns email_kind='role' to every one of them. No free-webmail domains
+        // appear in hunter.json, so personal count must be 0.
         $roleCount     = $discoveredContacts->where('email_kind', 'role')->count();
         $personalCount = $discoveredContacts->where('email_kind', 'personal')->count();
 
-        $this->assertGreaterThan(0, $roleCount, 'At least one contact must have email_kind=role (from Hunter type=generic)');
-        $this->assertGreaterThan(0, $personalCount, 'At least one contact must have email_kind=personal (from Hunter type=personal)');
+        $this->assertGreaterThan(0, $roleCount, 'All fixture contacts are on corporate domains → must have email_kind=role');
+        $this->assertSame(0, $personalCount, 'No fixture email is at a free-webmail domain → email_kind=personal must be 0');
 
         // Every discovered contact must carry provenance metadata
         foreach ($discoveredContacts as $contact) {

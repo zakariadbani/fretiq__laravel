@@ -10,9 +10,9 @@ use App\Models\Contact;
  *
  * Extracted from DiscoveryPipelineService (pure refactor — no logic change).
  *
- * email_kind mapping:
- *   Hunter type = 'generic'  →  email_kind = 'role'
- *   Hunter type = 'personal' →  email_kind = 'personal'
+ * email_kind mapping (domain-based — Hunter's 'type' flag is ignored):
+ *   Free-webmail domain (gmail.com, orange.fr, …) → email_kind = 'personal'
+ *   Corporate domain (named or role address)       → email_kind = 'role'
  *
  * legal_basis is set to 'legitimate_interest' on every discovered contact per
  * the compliance spec (CNIL B2B cold-discovery basis).
@@ -47,7 +47,7 @@ class ContactUpsertService
                 $name = strstr($emailAddress, '@', true) ?: $emailAddress;
             }
 
-            $emailKind = ($emailData['type'] ?? '') === 'generic' ? 'role' : 'personal';
+            $emailKind = \App\Support\EmailKind::classify($emailAddress);
 
             $verificationResult = data_get($emailData, 'verification.result');
 

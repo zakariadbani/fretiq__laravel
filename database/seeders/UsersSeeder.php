@@ -25,7 +25,7 @@ class UsersSeeder extends Seeder
             ['email' => 'admin@fretiq.test'],
             [
                 'name'              => 'Admin',
-                'password'          => Hash::make('password'),
+                'password'          => Hash::make('admin@fretiq@2026'),
                 'is_active'         => true,
                 'email_verified_at' => now(),
             ]
@@ -37,7 +37,7 @@ class UsersSeeder extends Seeder
             ['email' => 'commercial@fretiq.test'],
             [
                 'name'              => 'Commercial',
-                'password'          => Hash::make('password'),
+                'password'          => Hash::make('commercial@fretiq@'),
                 'is_active'         => true,
                 'email_verified_at' => now(),
             ]

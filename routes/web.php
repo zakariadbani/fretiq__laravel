@@ -18,12 +18,17 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
+// Public landing page. Logged-in users skip straight to the app.
+Route::get('/', function () {
+    if (auth()->check()) {
+        return redirect()->route('dashboard');
+    }
+    return response()->file(resource_path('landing/index.html'));
+})->name('home');
+
 Route::middleware(['auth', 'verified'])->group(function () {
 
-    Route::get('/', [DashboardController::class, 'index']);
-
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
-
 
 });
 

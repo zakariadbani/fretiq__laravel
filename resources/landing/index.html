@@ -1,0 +1,1126 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:;">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Crect%20width='64'%20height='64'%20rx='14'%20fill='%23009ef7'/%3E%3Crect%20x='26'%20y='15'%20width='9'%20height='35'%20rx='2.5'%20fill='%23fff'/%3E%3Crect%20x='26'%20y='15'%20width='22'%20height='9'%20rx='2.5'%20fill='%23fff'/%3E%3Crect%20x='26'%20y='29'%20width='16'%20height='8'%20rx='2.5'%20fill='%23fff'/%3E%3C/svg%3E">
+  <title>fretiq — Reconstituez un prospect fret complet</title>
+  <meta name="description" content="fretiq reconstitue un dossier de prospect fret complet à partir de fragments dispersés — comblé par inférence, validé par un humain avant le premier contact.">
+  <meta name="theme-color" content="#009ef7">
+  <link rel="canonical" href="https://fretiq.digaevo.com/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="fretiq">
+  <meta property="og:title" content="fretiq Hologramme — Reconstituez un prospect complet à partir de lumière dispersée">
+  <meta property="og:description" content="fretiq projette des fragments de marché dispersés en un dossier de prospect fret complet, comblé par inférence, avant le premier contact.">
+  <meta property="og:url" content="https://fretiq.digaevo.com/">
+  <meta property="og:image" content="https://fretiq.digaevo.com/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="fretiq — reconstitution de prospects fret">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="fretiq Hologramme — Reconstituez un prospect complet">
+  <meta name="twitter:description" content="Reconstitution volumétrique de prospects fret — comblée par inférence, validée par un humain.">
+  <meta name="twitter:image" content="https://fretiq.digaevo.com/og-image.png">
+  <script>document.documentElement.classList.add('js');window.__frames=0;</script>
+  <style>
+
+:root {
+  color-scheme: dark;
+  --void: #070b16;
+  --void-2: #060a13;
+  --plate: #c8ccd8;
+  --teal: #4da6ff;
+  --lilac: #9fd4ff;
+  --teal-soft: rgba(77, 166, 255, 0.5);
+  --lilac-soft: rgba(159, 212, 255, 0.5);
+  --ink: #eef0fb;
+  --muted: #969ab4;
+  --muted-2: #6f7393;
+  --hair: rgba(173, 196, 255, 0.16);
+  --hair-bright: rgba(173, 196, 255, 0.34);
+  --duo: linear-gradient(118deg, #4da6ff 0%, #74bdff 32%, #9fd4ff 72%, #c4e6ff 100%);
+  --duo-soft: linear-gradient(118deg, rgba(77,166,255,0.16), rgba(159,212,255,0.14));
+  --inferred: #ffd98a;
+  --focus: #4da6ff;
+  --selection: #9fd4ff;
+  --selection-ink: #070b16;
+  --scroll-thumb: #3f5e85;
+  --scroll-track: #060a13;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  overflow-x: clip;
+}
+html { scroll-behavior: smooth; }
+body {
+  background: var(--void);
+  color: var(--ink);
+  min-height: 100vh;
+  line-height: 1.58;
+  font-family: "Segoe UI", system-ui, ui-sans-serif, "Helvetica Neue", Arial, sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+.mono {
+  font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+}
+a, button { color: inherit; font: inherit; }
+a { text-decoration-thickness: 1px; text-underline-offset: 0.22em; }
+button { border: 0; background: none; cursor: pointer; }
+svg, canvas { display: block; max-width: 100%; }
+canvas { touch-action: none; }
+h1, h2, h3 { margin: 0; }
+
+::selection { background: var(--selection); color: var(--selection-ink); }
+* { scrollbar-color: var(--scroll-thumb) var(--scroll-track); scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 11px; }
+*::-webkit-scrollbar-track { background: var(--scroll-track); }
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(var(--teal), var(--lilac));
+  border: 3px solid var(--scroll-track);
+  border-radius: 999px;
+}
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: 2px; }
+
+.skip-link {
+  position: fixed; left: 1rem; top: 1rem; z-index: 1000;
+  background: var(--teal); color: var(--void);
+  padding: 0.75rem 1.1rem; font-weight: 800; text-decoration: none;
+  transform: translateY(-180%); border-radius: 4px;
+}
+.skip-link:focus { transform: translateY(0); }
+
+.shell { margin-inline: auto; width: min(1200px, calc(100% - 56px)); }
+
+/* ambient void field */
+.void-field {
+  position: fixed; inset: -20%; z-index: -2; pointer-events: none;
+  background:
+    radial-gradient(58% 50% at 50% 18%, rgba(77,166,255,0.10), transparent 70%),
+    radial-gradient(60% 55% at 72% 76%, rgba(159,212,255,0.11), transparent 72%),
+    radial-gradient(50% 40% at 18% 60%, rgba(116,189,255,0.06), transparent 70%);
+  filter: blur(8px);
+}
+.void-grid {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0.5;
+  background-image:
+    linear-gradient(rgba(173,196,255,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(173,196,255,0.04) 1px, transparent 1px);
+  background-size: 64px 64px;
+  -webkit-mask-image: radial-gradient(circle at 50% 36%, #000 0%, transparent 78%);
+  mask-image: radial-gradient(circle at 50% 36%, #000 0%, transparent 78%);
+}
+
+/* reveal */
+.js .reveal {
+  opacity: 0; transform: translateY(30px);
+  transition: opacity 760ms cubic-bezier(.2,.78,.2,1), transform 760ms cubic-bezier(.2,.78,.2,1);
+}
+.js .reveal.is-visible { opacity: 1; transform: none; }
+.reveal[data-delay="1"] { transition-delay: 90ms; }
+.reveal[data-delay="2"] { transition-delay: 180ms; }
+.reveal[data-delay="3"] { transition-delay: 270ms; }
+
+/* ===== header ===== */
+.site-header {
+  position: absolute; inset: 0 0 auto; z-index: 30; padding: 26px 0;
+}
+.nav {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 20px;
+}
+.brand {
+  display: inline-flex; align-items: center; gap: 11px;
+  font-weight: 850; letter-spacing: 0.02em; text-decoration: none; font-size: 0.96rem;
+}
+.brand-mark {
+  width: 26px; height: 26px; flex: none;
+}
+.brand i {
+  font-style: normal; color: var(--muted); font-weight: 500; letter-spacing: 0.18em;
+  font-size: 0.62rem; text-transform: uppercase;
+}
+.nav-mid {
+  justify-self: center; color: var(--muted-2);
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase;
+}
+.nav-cta {
+  justify-self: end; text-decoration: none; font-weight: 700; font-size: 0.84rem;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 16px; border: 1px solid var(--hair-bright); border-radius: 999px;
+  transition: border-color 240ms ease, background 240ms ease;
+}
+.nav-cta:hover { border-color: var(--teal-soft); background: rgba(77,166,255,0.07); }
+
+/* ===== chamber primitive ===== */
+.chamber {
+  position: relative;
+  border: 1px solid var(--hair);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(16,22,38,0.62), rgba(8,12,22,0.42));
+  overflow: hidden;
+}
+.chamber::before {
+  /* base plate ellipse glow */
+  content: ""; position: absolute; left: 50%; bottom: -34px; transform: translateX(-50%);
+  width: 78%; height: 92px; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(77,166,255,0.22), transparent 72%);
+  filter: blur(6px); pointer-events: none;
+}
+.chamber-eyebrow {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-size: 0.6rem; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--teal); margin-bottom: 14px;
+}
+.chamber-eyebrow::before {
+  content: ""; width: 22px; height: 1px; background: linear-gradient(90deg, var(--teal), transparent);
+}
+
+/* ===== hero ===== */
+.hero {
+  position: relative; min-height: 100svh; display: grid; align-items: center;
+  padding: 132px 0 60px; overflow: hidden;
+}
+.hero-grid {
+  display: grid; grid-template-columns: 1.04fr 0.96fr; gap: 56px; align-items: center;
+  position: relative; z-index: 3;
+}
+.hero-kicker {
+  display: inline-flex; align-items: center; gap: 10px;
+  color: var(--teal); font-size: 0.66rem; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase;
+  margin-bottom: 26px;
+}
+.hero-kicker .dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--teal);
+  box-shadow: 0 0 12px var(--teal); animation: pulse 2.6s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: 0.35; transform: scale(0.78); } }
+h1 {
+  font-size: clamp(2.9rem, 6.6vw, 5.3rem);
+  line-height: 0.98; letter-spacing: -0.035em; font-weight: 820;
+  max-width: 14ch;
+}
+h1 .glow {
+  background: var(--duo); -webkit-background-clip: text; background-clip: text; color: transparent;
+  background-size: 220% 220%; animation: drift 11s ease infinite;
+}
+@keyframes drift { 50% { background-position: 100% 60%; } }
+.hero-lede {
+  color: var(--muted); font-size: 1.07rem; max-width: 46ch; margin: 28px 0 0;
+}
+.hero-actions { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 36px; }
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 14px 24px; border-radius: 999px; text-decoration: none; font-weight: 800;
+  color: var(--void); background: var(--duo);
+  box-shadow: 0 12px 40px -16px rgba(77,166,255,0.7);
+  transition: transform 220ms cubic-bezier(.2,.8,.2,1), box-shadow 220ms ease;
+}
+.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 18px 50px -16px rgba(159,212,255,0.75); }
+.btn-ghost {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 14px 22px; border-radius: 999px; text-decoration: none; font-weight: 700;
+  border: 1px solid var(--hair-bright); color: var(--ink);
+  transition: border-color 220ms ease, background 220ms ease;
+}
+.btn-ghost:hover { border-color: var(--lilac-soft); background: rgba(159,212,255,0.08); }
+.hero-trust {
+  margin-top: 38px; display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center;
+  color: var(--muted-2); font-size: 0.72rem; letter-spacing: 0.04em;
+}
+.hero-trust b { color: var(--muted); font-weight: 700; }
+
+/* hero chamber — the grand one */
+.hero-chamber {
+  position: relative; aspect-ratio: 1 / 1.04; min-height: 420px;
+  border: 1px solid var(--hair); border-radius: 20px;
+  background:
+    radial-gradient(120% 80% at 50% 100%, rgba(77,166,255,0.10), transparent 60%),
+    linear-gradient(180deg, rgba(14,20,36,0.5), rgba(7,11,21,0.5));
+  overflow: hidden;
+}
+.hero-chamber canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.chamber-readout {
+  position: absolute; left: 16px; bottom: 14px; right: 16px; z-index: 4;
+  display: flex; justify-content: space-between; gap: 12px; align-items: flex-end;
+  pointer-events: none;
+}
+.readout-pill {
+  font-size: 0.6rem; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700;
+  color: var(--muted); background: rgba(7,11,21,0.7); border: 1px solid var(--hair);
+  padding: 6px 10px; border-radius: 999px; backdrop-filter: blur(4px);
+}
+.readout-pill b { color: var(--teal); }
+.readout-pill.infer b { color: var(--inferred); }
+.chamber-plate-label {
+  position: absolute; top: 16px; left: 18px; z-index: 4;
+  font-size: 0.58rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted-2);
+}
+
+/* ===== reconstruction ticker ===== */
+.ticker {
+  border-block: 1px solid var(--hair); overflow: hidden; padding: 15px 0;
+  background: rgba(7,11,21,0.5);
+}
+.ticker-track {
+  display: flex; gap: 54px; width: max-content;
+  animation: slide 34s linear infinite;
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em;
+  color: var(--muted);
+}
+.ticker-track span { display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
+.ticker-track span::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--teal); }
+.ticker-track .inf::before { background: var(--inferred); }
+.ticker-track .inf em { color: var(--inferred); font-style: normal; }
+@keyframes slide { to { transform: translateX(-50%); } }
+
+/* ===== section scaffold ===== */
+section.band { padding: 120px 0; position: relative; }
+.section-head { max-width: 760px; margin-bottom: 56px; }
+.section-eyebrow {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-size: 0.66rem; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--lilac); margin-bottom: 20px;
+}
+.section-eyebrow::before { content: ""; width: 26px; height: 1px; background: linear-gradient(90deg, var(--lilac), transparent); }
+h2 {
+  font-size: clamp(2.1rem, 4.6vw, 3.5rem); line-height: 1.02; letter-spacing: -0.03em; font-weight: 800;
+}
+.section-head p { color: var(--muted); font-size: 1.05rem; margin: 20px 0 0; }
+
+/* ===== projection exhibits (pipeline) ===== */
+.exhibit-row {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;
+}
+.exhibit {
+  padding: 26px 22px 30px; min-height: 320px; display: flex; flex-direction: column;
+}
+.exhibit-stage {
+  position: relative; height: 116px; margin: 6px 0 22px;
+}
+.exhibit-stage svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.exhibit-step {
+  font-family: ui-monospace, monospace; font-size: 0.62rem; font-weight: 800;
+  letter-spacing: 0.14em; color: var(--teal);
+}
+.exhibit h3 { font-size: 1.18rem; letter-spacing: -0.01em; margin: 4px 0 10px; }
+.exhibit p { color: var(--muted); font-size: 0.9rem; margin: 0; }
+.exhibit .frag {
+  margin-top: auto; padding-top: 16px; font-size: 0.7rem; color: var(--muted-2);
+  font-family: ui-monospace, monospace; letter-spacing: 0.03em;
+  border-top: 1px solid var(--hair);
+}
+
+/* ===== completeness exhibit (proof axis) ===== */
+.dossier-wrap {
+  display: grid; grid-template-columns: 0.92fr 1.08fr; gap: 0;
+  border: 1px solid var(--hair); border-radius: 20px; overflow: hidden;
+  background: linear-gradient(180deg, rgba(14,20,36,0.5), rgba(7,11,21,0.4));
+}
+.dossier-aside {
+  padding: 46px 42px; border-right: 1px solid var(--hair);
+  position: relative;
+  background: radial-gradient(120% 90% at 0% 100%, rgba(159,212,255,0.1), transparent 60%);
+}
+.dossier-aside .big {
+  font-size: clamp(3.6rem, 8vw, 5.6rem); font-weight: 850; letter-spacing: -0.05em; line-height: 0.9;
+  background: var(--duo); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.dossier-aside .sub { color: var(--muted); margin: 18px 0 0; max-width: 30ch; font-size: 0.95rem; }
+.completeness-foot { padding: 36px 0 4px; }
+.completeness-sub { color: var(--muted); margin: 0 0 0; max-width: 52ch; font-size: 0.95rem; }
+.dossier-legend {
+  margin-top: 30px; display: flex; flex-direction: column; gap: 11px;
+  font-size: 0.74rem; color: var(--muted);
+}
+.dossier-legend span { display: inline-flex; align-items: center; gap: 9px; }
+.swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+.swatch.obs { background: var(--teal); box-shadow: 0 0 9px var(--teal-soft); }
+.swatch.inf { background: var(--inferred); box-shadow: 0 0 9px rgba(255,217,138,0.5); }
+.dossier-body { padding: 38px 38px 34px; }
+.dossier-body h3 {
+  font-size: 0.66rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted-2);
+  margin-bottom: 6px; font-weight: 800;
+}
+.dossier-body .contact-name { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 26px; }
+.field-list { display: grid; gap: 0; }
+.field {
+  display: grid; grid-template-columns: 116px 1fr auto; gap: 14px; align-items: baseline;
+  padding: 13px 0; border-top: 1px solid var(--hair);
+}
+.field .k {
+  font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted-2); font-weight: 700;
+}
+.field .v { font-size: 0.95rem; color: var(--ink); font-weight: 500; }
+.field .tag {
+  font-size: 0.56rem; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 800;
+  padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+}
+.tag.observed { color: var(--teal); border: 1px solid var(--teal-soft); }
+.tag.inferred {
+  color: var(--inferred); border: 1px solid rgba(255,217,138,0.5);
+  background: rgba(255,217,138,0.06);
+  animation: shimmer 3.4s ease-in-out infinite;
+}
+.field.is-inferred .v { color: #ffe6b3; }
+@keyframes shimmer {
+  0%, 100% { box-shadow: 0 0 0 rgba(255,217,138,0); }
+  50% { box-shadow: 0 0 14px rgba(255,217,138,0.28); }
+}
+.dossier-foot {
+  margin-top: 22px; font-size: 0.76rem; color: var(--muted-2);
+  display: flex; gap: 8px; align-items: flex-start;
+}
+.dossier-foot svg { flex: none; margin-top: 2px; }
+
+/* ===== capability projectors ===== */
+.proj-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
+}
+.proj {
+  padding: 28px 24px 30px; position: relative; min-height: 250px;
+}
+.proj-cone {
+  width: 46px; height: 46px; margin-bottom: 20px; position: relative;
+}
+.proj h3 { font-size: 1.12rem; letter-spacing: -0.01em; margin-bottom: 10px; }
+.proj p { color: var(--muted); font-size: 0.9rem; margin: 0; }
+.proj .meta {
+  margin-top: 18px; font-size: 0.68rem; font-family: ui-monospace, monospace;
+  color: var(--teal); letter-spacing: 0.05em;
+}
+.proj.span-wide { grid-column: span 1; }
+
+/* ===== funnel exhibit ===== */
+.funnel-wrap { display: grid; grid-template-columns: 0.78fr 1.22fr; gap: 44px; align-items: center; }
+.funnel-stages { display: flex; flex-direction: column; gap: 12px; }
+.funnel-stage {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 16px; align-items: center;
+  padding: 16px 20px; border: 1px solid var(--hair); border-radius: 12px;
+  background: linear-gradient(90deg, var(--duo-soft), transparent);
+  position: relative;
+}
+.funnel-stage .n {
+  font-family: ui-monospace, monospace; font-size: 0.66rem; color: var(--muted-2); font-weight: 800;
+}
+.funnel-stage .label { font-weight: 700; font-size: 0.96rem; }
+.funnel-stage .label small { display: block; color: var(--muted); font-weight: 400; font-size: 0.76rem; margin-top: 2px; }
+.funnel-stage .val {
+  font-size: 1.15rem; font-weight: 800; letter-spacing: -0.02em;
+  background: var(--duo); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.funnel-bar { height: 4px; border-radius: 999px; background: rgba(173,196,255,0.1); overflow: hidden; margin-top: 10px; grid-column: 1 / -1; }
+.funnel-bar i { display: block; height: 100%; background: var(--duo); border-radius: 999px; transform-origin: left; }
+
+/* ===== testimonial chamber ===== */
+.quote-chamber { padding: 58px 56px; text-align: left; }
+blockquote {
+  margin: 0; font-size: clamp(1.5rem, 3.2vw, 2.4rem); line-height: 1.22; letter-spacing: -0.02em; font-weight: 600;
+}
+blockquote .hl {
+  background: var(--duo); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.quote-cite {
+  margin-top: 28px; display: flex; gap: 13px; align-items: center; color: var(--muted); font-size: 0.86rem;
+}
+.quote-cite .avatar {
+  width: 40px; height: 40px; border-radius: 50%; flex: none;
+  background: var(--duo); display: grid; place-items: center; color: var(--void); font-weight: 850; font-size: 0.9rem;
+}
+
+/* ===== closing CTA ===== */
+.close-chamber {
+  padding: 64px 56px; text-align: center; position: relative;
+  background:
+    radial-gradient(80% 120% at 50% 0%, rgba(77,166,255,0.12), transparent 60%),
+    linear-gradient(180deg, rgba(16,22,38,0.6), rgba(7,11,21,0.5));
+}
+.close-chamber h2 { max-width: 18ch; margin-inline: auto; }
+.close-chamber p { color: var(--muted); max-width: 50ch; margin: 18px auto 0; }
+.close-actions { margin-top: 34px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+.close-fine { margin-top: 26px; font-size: 0.74rem; color: var(--muted-2); }
+
+/* ===== footer ===== */
+.site-footer { border-top: 1px solid var(--hair); padding: 56px 0 64px; color: var(--muted); }
+.footer-grid {
+  display: grid; grid-template-columns: 1.6fr repeat(3, 0.8fr); gap: 36px;
+}
+.footer-brand { font-weight: 800; display: inline-flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.footer-brand .brand-mark { width: 24px; height: 24px; }
+.footer-col strong {
+  display: block; color: var(--ink); font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; margin-bottom: 14px;
+}
+.footer-col a { display: block; text-decoration: none; margin-bottom: 9px; font-size: 0.88rem; color: var(--muted); transition: color 200ms ease; }
+.footer-col a:hover { color: var(--teal); }
+.footer-fine {
+  margin-top: 44px; padding-top: 22px; border-top: 1px solid var(--hair);
+  display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  font-size: 0.72rem; color: var(--muted-2);
+}
+
+/* ===== responsive ===== */
+@media (max-width: 980px) {
+  .exhibit-row { grid-template-columns: repeat(2, 1fr); }
+  .proj-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 768px) {
+  .shell { width: min(680px, calc(100% - 36px)); }
+  .nav { grid-template-columns: 1fr auto; }
+  .nav-mid { display: none; }
+  .hero { padding: 116px 0 48px; }
+  .hero-grid { grid-template-columns: 1fr; gap: 40px; }
+  .hero-chamber { order: -1; aspect-ratio: 1 / 0.92; min-height: 360px; }
+  section.band { padding: 84px 0; }
+  .dossier-wrap { grid-template-columns: 1fr; }
+  .dossier-aside { border-right: 0; border-bottom: 1px solid var(--hair); }
+  .funnel-wrap { grid-template-columns: 1fr; gap: 30px; }
+  .quote-chamber, .close-chamber { padding: 42px 30px; }
+  .footer-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 390px) {
+  .shell { width: calc(100% - 26px); }
+  .exhibit-row { grid-template-columns: 1fr; }
+  .proj-grid { grid-template-columns: 1fr; }
+  .field { grid-template-columns: 92px 1fr; }
+  .field .tag { grid-column: 2; justify-self: start; margin-top: 4px; }
+  .footer-grid { grid-template-columns: 1fr; }
+  .hero-actions { flex-direction: column; align-items: stretch; }
+  .btn-primary, .btn-ghost { justify-content: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .js .reveal { opacity: 1 !important; transform: none !important; }
+}
+
+  </style>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"fretiq","url":"https://fretiq.digaevo.com/","description":"SaaS de prospection fret pour TCL France."}</script>
+</head>
+<body>
+  <div class="void-field" aria-hidden="true"></div>
+  <div class="void-grid" aria-hidden="true"></div>
+
+  <a class="skip-link" href="#main">Aller au contenu</a>
+
+  <header class="site-header">
+    <nav class="shell nav" aria-label="Principale">
+      <a class="brand" href="#top">
+        <svg class="brand-mark" viewBox="12 8 34 40" fill="none" aria-hidden="true">
+          <rect x="12" y="8" width="11" height="40" rx="3" fill="#fff"/>
+          <rect x="12" y="8" width="34" height="11" rx="3" fill="#009ef7"/>
+          <rect x="12" y="26" width="25" height="10" rx="3" fill="#009ef7"/>
+        </svg>
+        <span>fretiq <i>hologramme</i></span>
+      </a>
+      <span class="nav-mid">Reconstitution volumétrique de prospects</span>
+      <a class="nav-cta" href="/login">Demander un accès <span aria-hidden="true">→</span></a>
+    </nav>
+  </header>
+
+  <main id="main">
+
+    <!-- ===== HERO CHAMBER ===== -->
+    <section class="hero" id="top">
+      <div class="shell hero-grid">
+        <div class="hero-copy">
+          <span class="hero-kicker"><span class="dot"></span> Moteur hologramme · optique d'enrichissement</span>
+          <h1>Lumière dispersée, <span class="glow">un prospect entier.</span></h1>
+          <p class="hero-lede">
+            La découverte fret ne renvoie que des éclats — un domaine, un intitulé de poste, une ligne dans un appel d'offres, un indice de flotte.
+            fretiq balaie ces fragments dans un cône de projection et reconstitue le <strong>dossier de contact complet</strong>,
+            comblant visiblement les lacunes par inférence avant même que votre premier e-mail ne soit rédigé.
+          </p>
+          <div class="hero-actions">
+            <a class="btn-primary" href="/login">Projeter un prospect d'exemple <span aria-hidden="true">→</span></a>
+            <a class="btn-ghost" href="#completeness">Voir ce qui est comblé</a>
+          </div>
+          <div class="hero-trust">
+            <span><b>IA assistive</b> — chaque inférence est étiquetée</span>
+            <span>·</span>
+            <span><b>L'humain valide</b> chaque envoi</span>
+            <span>·</span>
+            <span class="mono">Prospection à froid respectueuse du RGPD</span>
+          </div>
+        </div>
+
+        <div class="hero-chamber" aria-hidden="true">
+          <span class="chamber-plate-label mono">PROJECTEUR · PIÉDESTAL 00</span>
+          <canvas id="holo"></canvas>
+          <div class="chamber-readout">
+            <span class="readout-pill">fragments balayés <b id="frag-count">0</b></span>
+            <span class="readout-pill infer">champs inférés <b id="inf-count">0</b></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== reconstruction ticker ===== -->
+    <aside class="ticker" aria-label="Fragments en cours de reconstitution">
+      <div class="ticker-track" id="ticker">
+        <span>domaine&nbsp;: maritime-logistics.fr</span>
+        <span>fonction analysée&nbsp;: Responsable Transport</span>
+        <span class="inf"><em>inféré</em>&nbsp;: niveau de décision — acheteur opérationnel</span>
+        <span>historique de ligne&nbsp;: Le Havre → Casablanca</span>
+        <span class="inf"><em>inféré</em>&nbsp;: mode — LCL reefer probable</span>
+        <span>e-mail vérifié · MX confirmé</span>
+        <span>indice de flotte&nbsp;: 4 tracteurs observés</span>
+        <span class="inf"><em>inféré</em>&nbsp;: tranche d'effectif — 11–50</span>
+        <span>correspondance Zoho&nbsp;: compte existant ✓ supprimé</span>
+      </div>
+    </aside>
+
+    <!-- ===== PROJECTION PIPELINE — 4 mini exhibits ===== -->
+    <section class="band" id="pipeline">
+      <div class="shell">
+        <div class="section-head reveal">
+          <span class="section-eyebrow">Le parcours de projection</span>
+          <h2>Quatre piédestaux entre la lumière brute et un prospect exploitable.</h2>
+          <p>Chaque étape projette son propre petit exhibit holographique. La lumière entre comme du bruit&nbsp;; elle ressort en contact fret reconstitué et relié à ses sources.</p>
+        </div>
+        <div class="exhibit-row">
+
+          <article class="chamber exhibit reveal">
+            <div class="exhibit-stage">
+              <svg viewBox="0 0 200 120" fill="none" aria-hidden="true">
+                <ellipse cx="100" cy="104" rx="62" ry="10" stroke="var(--teal-soft)" stroke-width="1"/>
+                <g class="ex-shards" stroke="var(--teal)" stroke-width="1.4" opacity="0.85">
+                  <path d="M52 96 70 60"/><path d="M84 100 92 52"/><path d="M118 98 110 50"/><path d="M148 94 128 62"/>
+                </g>
+                <circle cx="70" cy="60" r="2.4" fill="var(--teal)"/><circle cx="92" cy="52" r="2.4" fill="var(--lilac)"/>
+                <circle cx="110" cy="50" r="2.4" fill="var(--teal)"/><circle cx="128" cy="62" r="2.4" fill="var(--lilac)"/>
+              </svg>
+            </div>
+            <span class="exhibit-step">01 · CAPTURE</span>
+            <h3>Balayer les éclats</h3>
+            <p>La découverte multi-source émet des fragments dispersés sous quotas par source — domaines, fonctions, extraits de pages, identifiants de contact.</p>
+            <div class="frag">in&nbsp;: SERP bruité + enregistrements MX</div>
+          </article>
+
+          <article class="chamber exhibit reveal" data-delay="1">
+            <div class="exhibit-stage">
+              <svg viewBox="0 0 200 120" fill="none" aria-hidden="true">
+                <ellipse cx="100" cy="104" rx="62" ry="10" stroke="var(--teal-soft)" stroke-width="1"/>
+                <path d="M100 22 156 102 44 102Z" stroke="var(--lilac-soft)" stroke-width="1.2" fill="rgba(159,212,255,0.05)"/>
+                <path d="M100 22 100 102M72 62 128 62M58 82 142 82" stroke="var(--teal)" stroke-width="1" opacity="0.6"/>
+                <circle cx="100" cy="22" r="3" fill="var(--lilac)"/>
+              </svg>
+            </div>
+            <span class="exhibit-step">02 · ALIGNER</span>
+            <h3>Dans le cône</h3>
+            <p>Le pipeline de filtrage par segment dédoublonne, supprime les clients et les comptes détenus, et empile les fragments par niveau de confiance en plans ordonnés.</p>
+            <div class="frag">dédoublonnage · suppression · tri par confiance</div>
+          </article>
+
+          <article class="chamber exhibit reveal" data-delay="2">
+            <div class="exhibit-stage">
+              <svg viewBox="0 0 200 120" fill="none" aria-hidden="true">
+                <ellipse cx="100" cy="104" rx="62" ry="10" stroke="var(--teal-soft)" stroke-width="1"/>
+                <g stroke="var(--teal)" stroke-width="1.1" opacity="0.85">
+                  <rect x="62" y="40" width="76" height="20" rx="2"/>
+                  <rect x="56" y="64" width="88" height="20" rx="2"/>
+                </g>
+                <rect x="68" y="18" width="64" height="18" rx="2" stroke="var(--inferred)" stroke-width="1.1" stroke-dasharray="3 3" fill="rgba(255,217,138,0.06)"/>
+              </svg>
+            </div>
+            <span class="exhibit-step">03 · RECONSTITUER</span>
+            <h3>Combler les lacunes</h3>
+            <p>L'IA assistive note l'adéquation, classe le rôle d'achat et infère les plans manquants — mode, tranche de ligne, effectif — chacun scintillant comme <em>inféré</em>.</p>
+            <div class="frag">noter · classer · inférer (étiqueté)</div>
+          </article>
+
+          <article class="chamber exhibit reveal" data-delay="3">
+            <div class="exhibit-stage">
+              <svg viewBox="0 0 200 120" fill="none" aria-hidden="true">
+                <ellipse cx="100" cy="104" rx="62" ry="10" stroke="var(--teal-soft)" stroke-width="1"/>
+                <path d="M100 24 150 100 50 100Z" stroke="var(--lilac)" stroke-width="1.3" fill="rgba(77,166,255,0.04)"/>
+                <path d="M100 24v76M62 76h76M70 58h60" stroke="var(--teal)" stroke-width="0.9" opacity="0.7"/>
+                <circle cx="100" cy="62" r="5" stroke="var(--teal)" stroke-width="1.4"/>
+                <circle cx="100" cy="62" r="1.6" fill="var(--teal)"/>
+              </svg>
+            </div>
+            <span class="exhibit-step">04 · PROJETER</span>
+            <h3>Un dossier entier</h3>
+            <p>La fiche prospect complète et rotative atterrit dans votre segment — prête pour une séquence de relance adaptée au rôle, que vous relisez et validez avant tout envoi.</p>
+            <div class="frag">out&nbsp;: contact fret validable</div>
+          </article>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== PROOF AXIS — enrichment completeness exhibit ===== -->
+    <section class="band" id="completeness" style="padding-top:0;">
+      <div class="shell">
+        <div class="section-head reveal">
+          <span class="section-eyebrow">Axe de preuve · complétude d'enrichissement</span>
+          <h2>Observé ou inféré : chaque champ porte son étiquette.</h2>
+          <p>Les champs observés proviennent directement de la lumière captée&nbsp;; les champs inférés sont comblés par le projecteur et restent étiquetés comme tels, pour qu'un humain puisse les juger avant tout envoi.</p>
+        </div>
+
+        <div class="completeness-foot reveal">
+          <p class="completeness-sub">Les lacunes sont comblées avant la rédaction du premier e-mail — et chaque ajout reste signalé.</p>
+          <div class="dossier-legend">
+            <span><i class="swatch obs"></i> Observé — capté directement depuis une source</span>
+            <span><i class="swatch inf"></i> Inféré — projeté par l'IA, signalé pour relecture</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== CAPABILITY PROJECTORS ===== -->
+    <section class="band" id="capabilities">
+      <div class="shell">
+        <div class="section-head reveal">
+          <span class="section-eyebrow">Le réseau de projecteurs</span>
+          <h2>Chaque capacité fretiq est son propre piédestal.</h2>
+          <p>Le même principe optique opère de bout en bout — capter le signal réel, reconstituer le contexte manquant, garder un humain sur le plan de validation.</p>
+        </div>
+        <div class="proj-grid">
+
+          <article class="chamber proj reveal">
+            <div class="proj-cone"><svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+              <path d="M24 6 40 40 8 40Z" stroke="var(--teal)" stroke-width="1.3" fill="rgba(77,166,255,0.05)"/>
+              <ellipse cx="24" cy="40" rx="16" ry="3.4" stroke="var(--lilac-soft)" stroke-width="1"/>
+              <circle cx="24" cy="22" r="2.6" fill="var(--teal)"/></svg></div>
+            <h3>Socle synchronisé avec Zoho</h3>
+            <p>Un pull léger du CRM Zoho ancre chaque projection dans des comptes et contacts réels, pour que la reconstitution n'invente jamais par-dessus ce que vous possédez déjà.</p>
+            <div class="meta">sync · curseur à points de reprise</div>
+          </article>
+
+          <article class="chamber proj reveal" data-delay="1">
+            <div class="proj-cone"><svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+              <path d="M24 6 40 40 8 40Z" stroke="var(--lilac)" stroke-width="1.3" fill="rgba(159,212,255,0.05)"/>
+              <path d="M24 6v34M14 28h20" stroke="var(--teal)" stroke-width="0.9" opacity="0.7"/>
+              <circle cx="24" cy="18" r="2.6" fill="var(--lilac)"/></svg></div>
+            <h3>Découverte sous quota</h3>
+            <p>La découverte multi-source trouve des entreprises au profil fret et des contacts vérifiés, bridée par des quotas par source pour que l'approvisionnement en lumière reste propre et abordable.</p>
+            <div class="meta">découverte + enrichissement · sensible aux quotas</div>
+          </article>
+
+          <article class="chamber proj reveal" data-delay="2">
+            <div class="proj-cone"><svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+              <path d="M24 6 40 40 8 40Z" stroke="var(--teal)" stroke-width="1.3" fill="rgba(77,166,255,0.05)"/>
+              <rect x="16" y="20" width="16" height="6" rx="1" stroke="var(--inferred)" stroke-width="1" stroke-dasharray="2 2"/>
+              <rect x="18" y="30" width="12" height="5" rx="1" stroke="var(--teal)" stroke-width="1"/></svg></div>
+            <h3>Pipelines par segment</h3>
+            <p>Les pipelines de filtrage découpent l'univers reconstitué par mode, région, rôle et adéquation — chaque audience étant dédoublonnée et passée au crible de la liste de suppression.</p>
+            <div class="meta">filtrer · dédoublonner · supprimer</div>
+          </article>
+
+          <article class="chamber proj reveal">
+            <div class="proj-cone"><svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+              <path d="M24 6 40 40 8 40Z" stroke="var(--lilac)" stroke-width="1.3" fill="rgba(159,212,255,0.05)"/>
+              <path d="M14 40 24 26 34 40" stroke="var(--teal)" stroke-width="1.1"/>
+              <circle cx="24" cy="20" r="2.6" fill="var(--teal)"/></svg></div>
+            <h3>Séquences avec un verrou</h3>
+            <p>Les séquences de relance personnalisent sur le dossier — observé et inféré clairement séparés — puis bride les envois derrière un verrou strict de <span class="mono">permission d'envoi</span>.</p>
+            <div class="meta">relance · bridage · verrou de permission</div>
+          </article>
+
+          <article class="chamber proj reveal" data-delay="1">
+            <div class="proj-cone"><svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+              <path d="M24 6 40 40 8 40Z" stroke="var(--teal)" stroke-width="1.3" fill="rgba(77,166,255,0.05)"/>
+              <circle cx="24" cy="24" r="6" stroke="var(--lilac)" stroke-width="1.1"/>
+              <path d="M24 18v-6M24 36v-6" stroke="var(--teal)" stroke-width="1"/></svg></div>
+            <h3>Optique des ouvertures &amp; clics</h3>
+            <p>Les pixels de suivi et les événements de clic reviennent alimenter la projection, affinant les scores d'adéquation et révélant quels contacts reconstitués se réchauffent réellement.</p>
+            <div class="meta">ouverture · clic · ré-évaluation</div>
+          </article>
+
+          <article class="chamber proj reveal" data-delay="2">
+            <div class="proj-cone"><svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+              <path d="M24 6 40 40 8 40Z" stroke="var(--lilac)" stroke-width="1.3" fill="rgba(159,212,255,0.05)"/>
+              <path d="M16 30c4 4 12 4 16 0" stroke="var(--teal)" stroke-width="1.2" stroke-linecap="round"/>
+              <circle cx="24" cy="20" r="2.6" fill="var(--inferred)"/></svg></div>
+            <h3>Les réponses deviennent des demandes</h3>
+            <p>Une réponse intéressée est classée, capturée comme <strong>demande</strong> de fret (RFQ), et l'automatisation associée se met en pause pour qu'un humain reprenne la conversation.</p>
+            <div class="meta">classer · capturer la demande · mettre en pause</div>
+          </article>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== CLOSING CTA CHAMBER ===== -->
+    <section class="band" id="access" style="padding-top:0;">
+      <div class="shell">
+        <div class="chamber close-chamber reveal">
+          <span class="chamber-eyebrow" style="justify-content:center;">Allumez le projecteur</span>
+          <h2>Apportez un vrai segment. Regardez-le se reconstituer.</h2>
+          <p>Nous lancerons une tranche de découverte sur l'un de vos marchés fret cibles et projetterons les dossiers reconstitués — champs inférés étiquetés — afin que vous jugiez la complétude par vous-même.</p>
+          <div class="close-actions">
+            <a class="btn-primary" href="/login">Projeter un exemple <span aria-hidden="true">→</span></a>
+            <a class="btn-ghost" href="#completeness">Relire le dossier</a>
+          </div>
+          <p class="close-fine mono">La prospection à froid reste verrouillée et respectueuse du RGPD · aucun envoi n'est déclenché sans validation humaine explicite</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell">
+      <div class="footer-grid">
+        <div>
+          <span class="footer-brand">
+            <svg class="brand-mark" viewBox="12 8 34 40" fill="none" aria-hidden="true">
+              <rect x="12" y="8" width="11" height="40" rx="3" fill="#fff"/>
+              <rect x="12" y="8" width="34" height="11" rx="3" fill="#009ef7"/>
+              <rect x="12" y="26" width="25" height="10" rx="3" fill="#009ef7"/>
+            </svg>
+            fretiq
+          </span>
+          <p style="max-width:34ch;color:var(--muted);font-size:0.9rem;margin:0;">
+            Reconstitution volumétrique de prospects pour les équipes commerciales du transit fret. IA assistive&nbsp;; les humains tiennent le plan de validation.
+          </p>
+        </div>
+        <div class="footer-col">
+          <strong>Optique</strong>
+          <a href="#pipeline">Parcours de projection</a>
+          <a href="#completeness">Complétude</a>
+          <a href="#capabilities">Réseau de projecteurs</a>
+        </div>
+        <div class="footer-col">
+          <strong>Moteur</strong>
+          <a href="#capabilities">Sync Zoho</a>
+          <a href="#capabilities">Découverte + quotas</a>
+        </div>
+        <div class="footer-col">
+          <strong>Accès</strong>
+          <a href="/login">Demander un accès</a>
+          <a href="#top">Retour à la chambre</a>
+        </div>
+      </div>
+      <div class="footer-fine">
+        <span>© fretiq · SaaS de prospection pour TCL France</span>
+      </div>
+    </div>
+  </footer>
+
+  <script type="application/json" id="concept-meta">{"name":"Hologramme — Azur","tagline":"Balayez la lumière dispersée en un prospect fret complet, comblé par inférence — avant le premier contact.","palette":["#070b16","#4da6ff","#9fd4ff","#ffd98a"]}</script>
+
+  <script>
+  (function () {
+    "use strict";
+    var rm = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+    /* ---------- reveal (JS-gated, no-JS safe via html.js only hiding) ---------- */
+    function revealAll() {
+      var els = document.querySelectorAll('.reveal');
+      for (var i = 0; i < els.length; i++) els[i].classList.add('is-visible');
+    }
+    if (rm.matches || !('IntersectionObserver' in window)) {
+      revealAll();
+    } else {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) { e.target.classList.add('is-visible'); io.unobserve(e.target); }
+        });
+      }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
+      document.querySelectorAll('.reveal').forEach(function (el) { io.observe(el); });
+      // post-load safety sweep — nothing ever stays stuck at opacity 0
+      window.addEventListener('load', function () {
+        setTimeout(function () {
+          document.querySelectorAll('.reveal:not(.is-visible)').forEach(function (el) {
+            var r = el.getBoundingClientRect();
+            if (r.top < window.innerHeight && r.bottom > 0) el.classList.add('is-visible');
+          });
+        }, 1400);
+      });
+    }
+
+    /* ---------- HOLOGRAM CENTERPIECE ----------
+       Scattered light shards sweep up into a projection cone and assemble a
+       rotating volumetric wireframe dossier. Inferred planes shimmer amber. */
+    var canvas = document.getElementById('holo');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var fragEl = document.getElementById('frag-count');
+    var infEl = document.getElementById('inf-count');
+
+    var W = 0, H = 0, DPR = 1;
+    var CX = 0, CY = 0, baseY = 0, apexY = 0, scale = 1;
+
+    function resize() {
+      var rect = canvas.getBoundingClientRect();
+      DPR = Math.min(window.devicePixelRatio || 1, 2);
+      W = Math.max(1, Math.round(rect.width));
+      H = Math.max(1, Math.round(rect.height));
+      canvas.width = W * DPR;
+      canvas.height = H * DPR;
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      CX = W * 0.5;
+      baseY = H * 0.80;
+      apexY = H * 0.14;
+      CY = (baseY + apexY) * 0.5;
+      scale = Math.min(W, H) / 360;
+    }
+    resize();
+
+    var TEAL = '77,166,255', LILAC = '159,212,255', AMBER = '255,217,138';
+
+    // shards stream upward from the base plate into the cone
+    var SHARD_MAX = W < 480 ? 26 : 40;
+    var shards = [];
+    function spawnShard() {
+      var ang = Math.random() * Math.PI * 2;
+      var rad = (40 + Math.random() * 70) * scale;
+      var inferred = Math.random() < 0.32;
+      return {
+        x: CX + Math.cos(ang) * rad,
+        y: baseY + 20 + Math.random() * 40,
+        // target: drawn up toward apex region
+        tx: CX + (Math.random() - 0.5) * 38 * scale,
+        ty: apexY + 18 + Math.random() * (baseY - apexY - 30),
+        life: 0,
+        dur: 2.4 + Math.random() * 2.6,
+        size: (1.2 + Math.random() * 1.8) * scale,
+        inferred: inferred
+      };
+    }
+    for (var s = 0; s < SHARD_MAX; s++) {
+      var sh = spawnShard();
+      sh.life = Math.random() * sh.dur;
+      shards.push(sh);
+    }
+
+    // dossier planes (stacked horizontal wireframe rectangles inside the cone)
+    var PLANES = [
+      { yo: 0.20, w: 0.46, inferred: false }, // company
+      { yo: 0.33, w: 0.58, inferred: false }, // email
+      { yo: 0.46, w: 0.50, inferred: true  }, // decision band (inferred)
+      { yo: 0.59, w: 0.62, inferred: false }, // lane
+      { yo: 0.72, w: 0.44, inferred: true  }, // mode (inferred)
+      { yo: 0.85, w: 0.54, inferred: true  }  // fit score (inferred)
+    ];
+
+    var fragTotal = 0, infTotal = 0, displayFrag = 0, displayInf = 0;
+    var rot = 0, last = 0, raf = 0, paused = false;
+    var assembleT = 0; // 0..1 plane assembly progress
+
+    function ease(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
+    function clampR(r) { return Math.max(0.001, r); }
+
+    function drawCone() {
+      // projection cone — apex at top, base ellipse at bottom
+      var halfBase = 96 * scale;
+      ctx.lineWidth = 1;
+      // cone side glow
+      var grd = ctx.createLinearGradient(0, apexY, 0, baseY);
+      grd.addColorStop(0, 'rgba(' + LILAC + ',0.0)');
+      grd.addColorStop(0.5, 'rgba(' + TEAL + ',0.10)');
+      grd.addColorStop(1, 'rgba(' + TEAL + ',0.02)');
+      ctx.beginPath();
+      ctx.moveTo(CX, apexY);
+      ctx.lineTo(CX - halfBase, baseY);
+      ctx.lineTo(CX + halfBase, baseY);
+      ctx.closePath();
+      ctx.fillStyle = grd;
+      ctx.fill();
+      // cone edges
+      ctx.beginPath();
+      ctx.moveTo(CX, apexY);
+      ctx.lineTo(CX - halfBase, baseY);
+      ctx.moveTo(CX, apexY);
+      ctx.lineTo(CX + halfBase, baseY);
+      ctx.strokeStyle = 'rgba(' + TEAL + ',0.34)';
+      ctx.stroke();
+      // base plate ellipse (silver)
+      ctx.beginPath();
+      ctx.ellipse(CX, baseY, clampR(halfBase), clampR(20 * scale), 0, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(200,204,216,0.40)';
+      ctx.stroke();
+      // apex node
+      ctx.beginPath();
+      ctx.arc(CX, apexY, clampR(3 * scale), 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(' + LILAC + ',0.9)';
+      ctx.fill();
+    }
+
+    function drawPlanes(t) {
+      // rotating volumetric dossier: each plane is a wireframe rect rendered
+      // with a pseudo-3D yaw (rot) — depth fakes via horizontal squash.
+      for (var i = 0; i < PLANES.length; i++) {
+        var p = PLANES[i];
+        var appear = Math.max(0, Math.min(1, (assembleT - i * 0.12) / 0.5));
+        if (appear <= 0) continue;
+        var py = apexY + (baseY - apexY) * p.yo;
+        // width of cone at this height
+        var coneHalf = (96 * scale) * ((py - apexY) / (baseY - apexY));
+        var pw = coneHalf * p.w * 1.4;
+        // yaw squash: cos of rotation gives apparent width, sin gives a slight skew
+        var yaw = rot + i * 0.18;
+        var sx = Math.abs(Math.cos(yaw)) * 0.82 + 0.18;
+        var skew = Math.sin(yaw) * 6 * scale;
+        var hw = clampR(pw * sx * appear);
+        var hh = clampR(6 * scale * appear);
+        var col = p.inferred ? AMBER : TEAL;
+        var shimmer = p.inferred ? (0.55 + 0.45 * Math.sin(t * 2.4 + i)) : 0.85;
+
+        ctx.save();
+        ctx.translate(CX + skew, py);
+        // plane top + bottom edges (as a thin parallelogram)
+        ctx.beginPath();
+        ctx.moveTo(-hw, -hh);
+        ctx.lineTo(hw, -hh + skew * 0.12);
+        ctx.lineTo(hw, hh + skew * 0.12);
+        ctx.lineTo(-hw, hh);
+        ctx.closePath();
+        ctx.strokeStyle = 'rgba(' + col + ',' + (0.7 * appear * shimmer).toFixed(3) + ')';
+        ctx.lineWidth = p.inferred ? 1.2 : 1;
+        if (p.inferred) ctx.setLineDash([4 * scale, 3 * scale]); else ctx.setLineDash([]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // fill faint
+        ctx.fillStyle = 'rgba(' + col + ',' + (0.06 * appear).toFixed(3) + ')';
+        ctx.fill();
+        // node dots at plane ends
+        ctx.beginPath();
+        ctx.arc(-hw, 0, clampR(1.6 * scale * appear), 0, Math.PI * 2);
+        ctx.arc(hw, 0, clampR(1.6 * scale * appear), 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(' + col + ',' + (0.9 * appear).toFixed(3) + ')';
+        ctx.fill();
+        ctx.restore();
+      }
+      // central spine connecting planes
+      ctx.beginPath();
+      ctx.moveTo(CX, apexY + 6 * scale);
+      ctx.lineTo(CX, baseY - 6 * scale);
+      ctx.strokeStyle = 'rgba(' + TEAL + ',' + (0.18 * assembleT).toFixed(3) + ')';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    function drawShards(dt, t) {
+      var live = 0, infLive = 0;
+      for (var i = 0; i < shards.length; i++) {
+        var sh = shards[i];
+        sh.life += dt;
+        if (sh.life >= sh.dur) {
+          // shard reached apex — counts as swept; respawn
+          fragTotal++;
+          if (sh.inferred) infTotal++;
+          shards[i] = spawnShard();
+          continue;
+        }
+        var k = ease(sh.life / sh.dur);
+        var x = sh.x + (sh.tx - sh.x) * k;
+        var y = sh.y + (sh.ty - sh.y) * k;
+        // converge toward center as it rises
+        x = x + (CX - x) * k * 0.55;
+        var alpha = Math.sin(Math.min(1, sh.life / sh.dur) * Math.PI); // fade in/out
+        var col = sh.inferred ? AMBER : (Math.random() < 0.5 ? TEAL : LILAC);
+        // use stable color per shard
+        col = sh.inferred ? AMBER : (i % 2 ? TEAL : LILAC);
+        ctx.beginPath();
+        ctx.arc(x, y, clampR(sh.size * (0.6 + alpha * 0.8)), 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(' + col + ',' + (alpha * 0.85).toFixed(3) + ')';
+        ctx.fill();
+        // light trail
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + (sh.x - x) * 0.16, y + (sh.y - y) * 0.16);
+        ctx.strokeStyle = 'rgba(' + col + ',' + (alpha * 0.25).toFixed(3) + ')';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        live++;
+        if (sh.inferred) infLive++;
+      }
+    }
+
+    function frame(now) {
+      window.__frames++;
+      if (!last) last = now;
+      var dt = Math.min((now - last) / 1000, 0.05);
+      last = now;
+      rot += dt * 0.5;
+      if (assembleT < 1) assembleT = Math.min(1, assembleT + dt * 0.35);
+
+      ctx.clearRect(0, 0, W, H);
+
+      // soft floor reflection
+      var rg = ctx.createRadialGradient(CX, baseY, 4, CX, baseY, 120 * scale);
+      rg.addColorStop(0, 'rgba(' + TEAL + ',0.12)');
+      rg.addColorStop(1, 'rgba(' + TEAL + ',0)');
+      ctx.fillStyle = rg;
+      ctx.fillRect(0, 0, W, H);
+
+      var t = now / 1000;
+      drawCone();
+      drawShards(dt, t);
+      drawPlanes(t);
+
+      // animate readout counters toward totals
+      displayFrag += (fragTotal - displayFrag) * 0.2;
+      displayInf += (infTotal - displayInf) * 0.2;
+      if (fragEl) fragEl.textContent = Math.round(displayFrag);
+      if (infEl) infEl.textContent = Math.round(displayInf);
+
+      if (!paused) raf = requestAnimationFrame(frame);
+    }
+
+    function drawStaticFrame() {
+      // beautiful settled frame for reduced motion
+      assembleT = 1;
+      ctx.clearRect(0, 0, W, H);
+      var rg = ctx.createRadialGradient(CX, baseY, 4, CX, baseY, 120 * scale);
+      rg.addColorStop(0, 'rgba(' + TEAL + ',0.12)');
+      rg.addColorStop(1, 'rgba(' + TEAL + ',0)');
+      ctx.fillStyle = rg;
+      ctx.fillRect(0, 0, W, H);
+      drawCone();
+      // static shards mid-flight
+      for (var i = 0; i < shards.length; i++) {
+        var sh = shards[i];
+        var k = 0.45 + (i % 5) * 0.1;
+        var x = sh.x + (sh.tx - sh.x) * k; x = x + (CX - x) * k * 0.55;
+        var y = sh.y + (sh.ty - sh.y) * k;
+        var col = sh.inferred ? AMBER : (i % 2 ? TEAL : LILAC);
+        ctx.beginPath();
+        ctx.arc(x, y, clampR(sh.size), 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(' + col + ',0.7)';
+        ctx.fill();
+      }
+      drawPlanes(0);
+      fragTotal = 142; infTotal = 46;
+      if (fragEl) fragEl.textContent = '142';
+      if (infEl) infEl.textContent = '46';
+    }
+
+    var resizeTimer = 0;
+    window.addEventListener('resize', function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        resize();
+        SHARD_MAX = W < 480 ? 26 : 40;
+        if (rm.matches) drawStaticFrame();
+      }, 140);
+    }, { passive: true });
+
+    document.addEventListener('visibilitychange', function () {
+      paused = document.hidden;
+      if (paused) {
+        cancelAnimationFrame(raf);
+      } else if (!rm.matches) {
+        last = 0;
+        raf = requestAnimationFrame(frame);
+      }
+    });
+
+    if (rm.matches) {
+      drawStaticFrame();
+    } else {
+      raf = requestAnimationFrame(frame);
+    }
+  })();
+  </script>
+</body>
+</html>

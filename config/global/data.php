@@ -66,7 +66,7 @@ return [
     // Contacts — type d'e-mail
     //---------------------------------------------------------------------------
     'contact_email_kinds' => [
-        'role'     => ['label' => 'Fonctionnel', 'color' => 'warning'],
+        'role'     => ['label' => 'Professionnel', 'color' => 'warning'],
         'personal' => ['label' => 'Personnel',   'color' => 'info'],
     ],
 

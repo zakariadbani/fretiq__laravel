@@ -1,0 +1,37 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:1200px; height:630px; }
+  body {
+    font-family: "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    background:
+      radial-gradient(900px 500px at 78% 18%, rgba(0,158,247,0.28), transparent 60%),
+      radial-gradient(700px 600px at 12% 92%, rgba(77,166,255,0.16), transparent 60%),
+      linear-gradient(135deg, #07111d 0%, #0b1c2e 55%, #061018 100%);
+    color:#fff; position:relative; overflow:hidden;
+    display:flex; flex-direction:column; justify-content:center;
+    padding:88px 96px;
+  }
+  .mark { display:flex; align-items:center; gap:26px; margin-bottom:38px; }
+  .fmark { width:104px; height:104px; flex:none; }
+  .word { font-size:104px; font-weight:850; letter-spacing:-0.02em; line-height:1; }
+  .tag { font-size:46px; font-weight:600; line-height:1.18; max-width:980px; color:#dfeefb; }
+  .tag b { color:#5cc0ff; font-weight:700; }
+  .foot { position:absolute; left:96px; bottom:64px; font-size:25px; letter-spacing:0.16em;
+          text-transform:uppercase; color:#7fa8c9; font-weight:600; }
+  .edge { position:absolute; right:0; top:0; bottom:0; width:10px;
+          background:linear-gradient(#009ef7,#9fd4ff); }
+</style></head>
+<body>
+  <div class="mark">
+    <svg class="fmark" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <rect width="64" height="64" rx="14" fill="#009ef7"/>
+      <rect x="26" y="15" width="9" height="35" rx="2.5" fill="#fff"/>
+      <rect x="26" y="15" width="22" height="9" rx="2.5" fill="#fff"/>
+      <rect x="26" y="29" width="16" height="8" rx="2.5" fill="#fff"/>
+    </svg>
+    <span class="word">fretiq</span>
+  </div>
+  <div class="tag">Reconstituez un <b>prospect fret complet</b> à partir de fragments dispersés.</div>
+  <div class="foot">SaaS de prospection · TCL France</div>
+  <div class="edge"></div>
+</body></html>
