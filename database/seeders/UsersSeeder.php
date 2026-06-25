@@ -12,7 +12,9 @@ class UsersSeeder extends Seeder
      * Seed the application's admin and commercial users.
      *
      * Uses firstOrCreate by email so the seeder is idempotent and safe to re-run.
-     * Passwords are intentionally simple (hash of 'password') for local / smoke-test use only.
+     * Seeded defaults: admin@fretiq.test / 'admin@fretiq@2026',
+     * commercial@fretiq.test / 'commercial@fretiq@'. Weak by design — rotate the
+     * prod superadmin before real use.
      *
      * Users created:
      *   admin@fretiq.test      → role: superadmin

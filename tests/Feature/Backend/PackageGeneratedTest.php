@@ -187,6 +187,101 @@ class PackageGeneratedTest extends TestCase
         $this->assertArrayHasKey('daily_contact_credits', $response->json('errors'));
     }
 
+    // ── New credit-field store tests ──────────────────────────────────────────
+
+    /**
+     * Store with all four new credit fields set to valid non-null values persists
+     * every column and returns JSON 200 {message:'success'}.
+     *
+     * Package::rules():
+     *   monthly_credits         => 'nullable|integer|min:0'
+     *   daily_contact_credits   => 'nullable|integer|min:0'
+     *   monthly_contact_credits => 'nullable|integer|min:0'
+     *   quota_anchor_date       => 'nullable|date|before_or_equal:today'
+     */
+    public function test_store_creates_package_with_all_credit_fields(): void
+    {
+        $anchorDate = now()->subDay()->toDateString(); // yesterday — satisfies before_or_equal:today
+
+        $response = $this->actingAs($this->superadmin)
+            ->post('/admin/packages', [
+                'name'                    => 'Pack Crédit Complet',
+                'daily_credits'           => 20,
+                'monthly_credits'         => 400,
+                'daily_contact_credits'   => 10,
+                'monthly_contact_credits' => 200,
+                'quota_anchor_date'       => $anchorDate,
+                'price_monthly'           => 99.00,
+                'is_active'               => true,
+                'sort_order'              => 5,
+            ]);
+
+        $response->assertStatus(200);
+        $response->assertJson(['message' => 'success']);
+        $this->assertDatabaseHas('packages', [
+            'name'                    => 'Pack Crédit Complet',
+            'monthly_credits'         => 400,
+            'daily_contact_credits'   => 10,
+            'monthly_contact_credits' => 200,
+            'quota_anchor_date'       => $anchorDate,
+        ]);
+    }
+
+    /**
+     * Store must return 406 when `monthly_credits` violates the min:0 rule.
+     *
+     * Package::rules(): monthly_credits => 'nullable|integer|min:0'
+     */
+    public function test_store_validation_fails_on_negative_monthly_credits(): void
+    {
+        $response = $this->actingAs($this->superadmin)
+            ->postJson('/admin/packages', [
+                'name'            => 'Pack Invalide',
+                'monthly_credits' => -1,
+            ]);
+
+        $response->assertStatus(406);
+        $response->assertJsonStructure(['message', 'errors' => ['monthly_credits']]);
+        $this->assertArrayHasKey('monthly_credits', $response->json('errors'));
+    }
+
+    /**
+     * Store must return 406 when `monthly_contact_credits` violates the min:0 rule.
+     *
+     * Package::rules(): monthly_contact_credits => 'nullable|integer|min:0'
+     */
+    public function test_store_validation_fails_on_negative_monthly_contact_credits(): void
+    {
+        $response = $this->actingAs($this->superadmin)
+            ->postJson('/admin/packages', [
+                'name'                    => 'Pack Invalide',
+                'monthly_contact_credits' => -1,
+            ]);
+
+        $response->assertStatus(406);
+        $response->assertJsonStructure(['message', 'errors' => ['monthly_contact_credits']]);
+        $this->assertArrayHasKey('monthly_contact_credits', $response->json('errors'));
+    }
+
+    /**
+     * Store must return 406 when `quota_anchor_date` is in the future.
+     *
+     * Package::rules(): quota_anchor_date => 'nullable|date|before_or_equal:today'
+     * A date in the future violates the before_or_equal:today constraint.
+     */
+    public function test_store_validation_fails_on_future_quota_anchor_date(): void
+    {
+        $response = $this->actingAs($this->superadmin)
+            ->postJson('/admin/packages', [
+                'name'              => 'Pack Invalide',
+                'quota_anchor_date' => now()->addDay()->toDateString(),
+            ]);
+
+        $response->assertStatus(406);
+        $response->assertJsonStructure(['message', 'errors' => ['quota_anchor_date']]);
+        $this->assertArrayHasKey('quota_anchor_date', $response->json('errors'));
+    }
+
     // ── Update happy-path ─────────────────────────────────────────────────────
 
     /**
@@ -211,6 +306,39 @@ class PackageGeneratedTest extends TestCase
             'id'            => $package->id,
             'name'          => 'Pack Modifié',
             'daily_credits' => 75,
+        ]);
+    }
+
+    /**
+     * PUT /admin/packages/{id} persists a change to `monthly_credits` from null to a
+     * specific integer value.
+     *
+     * Verifies the new column is writeable through the update path (Crudable::update()
+     * + model fillable). Package is seeded with monthly_credits=null; after the PUT
+     * the row must have monthly_credits=500.
+     */
+    public function test_update_persists_monthly_credits(): void
+    {
+        $package = $this->makePackage([
+            'name'            => 'Pack Sans Mensuel',
+            'monthly_credits' => null,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->put('/admin/packages/' . $package->id, [
+                'name'            => $package->name,
+                'daily_credits'   => $package->daily_credits,
+                'monthly_credits' => 500,
+                'price_monthly'   => $package->price_monthly,
+                'is_active'       => true,
+                'sort_order'      => $package->sort_order,
+            ]);
+
+        $response->assertStatus(200);
+        $response->assertJson(['message' => 'success']);
+        $this->assertDatabaseHas('packages', [
+            'id'              => $package->id,
+            'monthly_credits' => 500,
         ]);
     }
 

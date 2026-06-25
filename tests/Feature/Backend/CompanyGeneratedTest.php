@@ -253,6 +253,95 @@ class CompanyGeneratedTest extends TestCase
 
         $response->assertStatus(403);
     }
+
+    // ── explainScore ──────────────────────────────────────────────────────────
+
+    /**
+     * POST /admin/companies/{id}/explain-score returns 200 and writes ai_explanation
+     * when the company has a non-null ai_score.
+     *
+     * ScoreExplanationService is mocked — no outbound Gemini HTTP call occurs.
+     */
+    public function test_explain_score_returns_200_and_writes_explanation_when_score_present(): void
+    {
+        $company = $this->makeCompany(['ai_score' => 75, 'domain' => 'explain-score-test-' . uniqid() . '.com']);
+
+        $knownExplanation = 'Ce prospect présente un fort potentiel dans le contexte fret TCL France.';
+
+        $this->mock(\App\Services\Scoring\ScoreExplanationService::class, function ($mock) use ($company, $knownExplanation) {
+            $mock->shouldReceive('explain')
+                ->once()
+                ->with(\Mockery::on(fn ($arg) => $arg instanceof \App\Models\Company && $arg->id === $company->id))
+                ->andReturn($knownExplanation);
+        });
+
+        $response = $this->actingAs($this->superadmin)
+            ->postJson('/admin/companies/' . $company->id . '/explain-score');
+
+        $response->assertStatus(200);
+        $response->assertJson([
+            'message'     => 'success',
+            'text'        => 'Récapitulatif IA généré.',
+            'explanation' => $knownExplanation,
+        ]);
+
+        $this->assertDatabaseHas('companies', [
+            'id'             => $company->id,
+            'ai_explanation' => $knownExplanation,
+        ]);
+    }
+
+    /**
+     * POST /admin/companies/{id}/explain-score returns 422 when ai_score is null.
+     *
+     * ScoreExplanationService::explain() must NOT be called (no score to explain).
+     * The ai_explanation column stays null.
+     */
+    public function test_explain_score_returns_422_when_no_score(): void
+    {
+        $company = $this->makeCompany(['ai_score' => null]);
+
+        $this->mock(\App\Services\Scoring\ScoreExplanationService::class, function ($mock) {
+            $mock->shouldNotReceive('explain');
+        });
+
+        $response = $this->actingAs($this->superadmin)
+            ->postJson('/admin/companies/' . $company->id . '/explain-score');
+
+        $response->assertStatus(422);
+        $response->assertJson([
+            'message' => 'error',
+            'text'    => 'Aucun score IA à expliquer.',
+        ]);
+
+        // ai_explanation must remain null — no DB write on this path.
+        $this->assertDatabaseHas('companies', [
+            'id'             => $company->id,
+            'ai_explanation' => null,
+        ]);
+    }
+
+    /**
+     * POST /admin/companies/{id}/explain-score returns 403 for a user who
+     * only has backend.access but NOT `edit companies`.
+     *
+     * The middleware blocks before the controller body runs.
+     */
+    public function test_explain_score_403_for_user_without_edit_companies(): void
+    {
+        $company = $this->makeCompany(['ai_score' => 60]);
+
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'is_active'         => true,
+        ]);
+        $user->givePermissionTo('backend.access');
+
+        $response = $this->actingAs($user)
+            ->postJson('/admin/companies/' . $company->id . '/explain-score');
+
+        $response->assertStatus(403);
+    }
 }
 
 // <<<

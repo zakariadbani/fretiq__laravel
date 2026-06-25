@@ -282,6 +282,35 @@ class ContactGeneratedTest extends TestCase
         $this->assertDatabaseHas('contacts', ['id' => $contact->id, 'deleted_at' => null]);
     }
 
+    // ── HTML escaping regression ──────────────────────────────────────────────
+
+    /**
+     * The contact name must appear single-escaped in the view HTML, never double-escaped.
+     *
+     * Blade {{ $x }} escapes exactly once: `Acme & Co <Ltd>` → `Acme &amp; Co &lt;Ltd&gt;`.
+     * A regression re-introducing `{!! e($x) !!}` or `{{ e($x) }}` would produce the
+     * double-escaped form `&amp;amp;` / `&amp;lt;`.
+     *
+     * The name appears in at least two spots (page title section + breadcrumb li) in
+     * view.blade.php — both using plain {{ $model->name }}. The assertDontSee covers all.
+     */
+    public function test_view_renders_contact_name_single_escaped_not_double(): void
+    {
+        $contact = $this->makeContact(['name' => 'Acme & Co <Ltd>']);
+
+        $resp = $this->actingAs($this->superadmin)
+            ->get('/admin/contacts/' . $contact->id);
+
+        $resp->assertStatus(200);
+
+        // Single-escaped form must be present ($escape = false → literal needle against raw HTML).
+        $resp->assertSee('Acme &amp; Co &lt;Ltd&gt;', false);
+
+        // Double-escaped form must NOT be present (regression guard).
+        $resp->assertDontSee('&amp;amp;', false);
+        $resp->assertDontSee('&amp;lt;', false);
+    }
+
     // ── executeSwitch ─────────────────────────────────────────────────────────
 
     /**

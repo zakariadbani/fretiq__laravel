@@ -491,6 +491,227 @@ class ProspectCriteriaGeneratedTest extends TestCase
 
         $response->assertStatus(403);
     }
+
+    // ── New quota surface ─────────────────────────────────────────────────────
+
+    /**
+     * discover() returns 200 with "(enrichissement limité à N)" when the contact-
+     * enrichment quota is capped lower than the company batch.
+     *
+     * The controller appends the note at line:
+     *   if (! $quotaService->contactIsUnlimited() && $run->contact_credits_reserved < $run->credits_reserved)
+     *
+     * We mock reserveRun() to return a real DiscoveryRun row so that
+     * RunDiscoveryPipelineJob::dispatch() has a valid run id. We also mock
+     * contactIsUnlimited() → false so the note branch is taken.
+     * Queue::fake() ensures no actual job dispatch occurs.
+     *
+     * Scenario: daily_limit=20, credits_reserved=20 (full batch), contact_credits_reserved=5
+     * → success text must contain "(enrichissement limité à 5)".
+     */
+    public function test_discover_success_appends_contact_quota_cap_note(): void
+    {
+        Queue::fake();
+
+        $criteria = $this->makeCriteria(['is_active' => true, 'daily_limit' => 20]);
+
+        // Create the DiscoveryRun row inline so the mocked reserveRun() returns a
+        // persisted model with a real id (required by RunDiscoveryPipelineJob::dispatch).
+        $run = DiscoveryRun::create([
+            'prospect_criteria_id'     => $criteria->id,
+            'type'                     => 'discovery',
+            'status'                   => 'pending',
+            'credits_reserved'         => 20,
+            'consumed'                 => 0,
+            'contact_credits_reserved' => 5,
+            'contact_consumed'         => 0,
+            'quota_date'               => now()->toDateString(),
+        ]);
+
+        $this->app->bind(DiscoveryQuotaService::class, function () use ($run) {
+            $mock = $this->createMock(DiscoveryQuotaService::class);
+            // reserveRun() returns the pre-created run (no real quota logic executed).
+            $mock->method('reserveRun')->willReturn($run);
+            // isUnlimited() → false: keeps the partial-batch check alive but
+            // credits_reserved(20) == wantedBatch(20) so isPartial stays false.
+            $mock->method('isUnlimited')->willReturn(false);
+            // contactIsUnlimited() → false: triggers the enrichment-limit note.
+            $mock->method('contactIsUnlimited')->willReturn(false);
+            return $mock;
+        });
+
+        $response = $this->actingAs($this->superadmin)
+            ->post('/admin/prospect_criteria/' . $criteria->id . '/discover');
+
+        $response->assertStatus(200);
+        $response->assertJson(['message' => 'success']);
+
+        $text = $response->json('text');
+        $this->assertStringContainsString('enrichissement limité à 5', $text,
+            'Success text should contain the contact cap note when contact quota is capped.');
+
+        Queue::assertPushed(RunDiscoveryPipelineJob::class);
+    }
+
+    /**
+     * GET /admin/prospect_criteria passes quota view vars to the index blade.
+     *
+     * The controller resolves five vars from resolveQuotaVars():
+     *   quotaRemaining, quotaPackage, contactRemaining, monthlyRemaining, monthlyContactRemaining.
+     *
+     * We mock the quota service to return fixed values and assert each key is
+     * present in the view data.
+     */
+    public function test_index_passes_quota_view_vars(): void
+    {
+        $this->app->bind(DiscoveryQuotaService::class, function () {
+            $mock = $this->createMock(DiscoveryQuotaService::class);
+            $mock->method('remainingTodayForDisplay')->willReturn(42);
+            $mock->method('activePackage')->willReturn(null);
+            $mock->method('contactRemainingTodayForDisplay')->willReturn(10);
+            $mock->method('monthlyRemainingForDisplay')->willReturn(200);
+            $mock->method('monthlyContactRemainingForDisplay')->willReturn(50);
+            return $mock;
+        });
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria');
+
+        $response->assertStatus(200);
+        $response->assertViewHas('quotaRemaining', 42);
+        $response->assertViewHas('quotaPackage', null);
+        $response->assertViewHas('contactRemaining', 10);
+        $response->assertViewHas('monthlyRemaining', 200);
+        $response->assertViewHas('monthlyContactRemaining', 50);
+    }
+
+    /**
+     * GET /admin/prospect_criteria/{id} passes quota view vars to the detail blade.
+     *
+     * The overridden view() method calls resolveQuotaVars() and passes the same
+     * five keys to the view as the index page.
+     */
+    public function test_view_passes_quota_view_vars(): void
+    {
+        $criteria = $this->makeCriteria(['is_active' => true]);
+
+        $this->app->bind(DiscoveryQuotaService::class, function () {
+            $mock = $this->createMock(DiscoveryQuotaService::class);
+            $mock->method('remainingTodayForDisplay')->willReturn(15);
+            $mock->method('activePackage')->willReturn(null);
+            $mock->method('contactRemainingTodayForDisplay')->willReturn(3);
+            $mock->method('monthlyRemainingForDisplay')->willReturn(90);
+            $mock->method('monthlyContactRemainingForDisplay')->willReturn(20);
+            return $mock;
+        });
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/' . $criteria->id);
+
+        $response->assertStatus(200);
+        $response->assertViewHas('quotaRemaining', 15);
+        $response->assertViewHas('quotaPackage', null);
+        $response->assertViewHas('contactRemaining', 3);
+        $response->assertViewHas('monthlyRemaining', 90);
+        $response->assertViewHas('monthlyContactRemaining', 20);
+    }
+
+    /**
+     * DataTable discover button is disabled when the MONTHLY company quota is at 0.
+     *
+     * ProspectCriteriaDataTable::__construct() computes quotaExhausted as:
+     *   ($remaining === 0) || ($monthlyRemaining === 0)
+     * The action column then adds the `disabled` attribute when quotaExhausted === true.
+     *
+     * We bind DiscoveryQuotaService before the request so the container injects
+     * the mock into the DataTable constructor. Then we hit the datatable JSON route
+     * and assert the rendered action HTML carries `disabled`.
+     */
+    public function test_datatable_discover_button_disabled_when_monthly_quota_exhausted(): void
+    {
+        $this->makeCriteria(['is_active' => true]);
+
+        $this->app->bind(DiscoveryQuotaService::class, function () {
+            $mock = $this->createMock(DiscoveryQuotaService::class);
+            // Daily has room, monthly is exhausted.
+            $mock->method('remainingTodayForDisplay')->willReturn(10);
+            $mock->method('monthlyRemainingForDisplay')->willReturn(0);
+            // Remaining display methods needed by index/view if also called.
+            $mock->method('activePackage')->willReturn(null);
+            $mock->method('contactRemainingTodayForDisplay')->willReturn(5);
+            $mock->method('monthlyContactRemainingForDisplay')->willReturn(0);
+            return $mock;
+        });
+
+        $response = $this->actingAs($this->superadmin)
+            ->get(
+                '/admin/prospect_criteria'
+                . '?draw=1&start=0&length=10'
+                . '&columns[0][data]=id&columns[0][name]=id'
+                . '&order[0][column]=0&order[0][dir]=asc',
+                ['X-Requested-With' => 'XMLHttpRequest', 'Accept' => 'application/json']
+            );
+
+        $response->assertStatus(200);
+
+        $rows = $response->json('data');
+        $this->assertNotEmpty($rows, 'DataTable must return at least one row.');
+
+        // The action column HTML is rendered per-row. Assert the discover button
+        // carries the `disabled` attribute in every returned row.
+        foreach ($rows as $row) {
+            $this->assertStringContainsString(
+                'disabled',
+                $row['action'],
+                'Discover button must be disabled when monthly quota is exhausted.'
+            );
+        }
+    }
+
+    /**
+     * DataTable discover button is disabled when the DAILY company quota is at 0
+     * (regression guard — the original daily-only exhaustion path must still disable).
+     *
+     * Mirrors test_datatable_discover_button_disabled_when_monthly_quota_exhausted
+     * but with daily=0 and monthly having credits remaining.
+     */
+    public function test_datatable_discover_button_disabled_when_daily_quota_exhausted(): void
+    {
+        $this->makeCriteria(['is_active' => true]);
+
+        $this->app->bind(DiscoveryQuotaService::class, function () {
+            $mock = $this->createMock(DiscoveryQuotaService::class);
+            // Daily is exhausted, monthly has room.
+            $mock->method('remainingTodayForDisplay')->willReturn(0);
+            $mock->method('monthlyRemainingForDisplay')->willReturn(100);
+            $mock->method('activePackage')->willReturn(null);
+            $mock->method('contactRemainingTodayForDisplay')->willReturn(0);
+            $mock->method('monthlyContactRemainingForDisplay')->willReturn(50);
+            return $mock;
+        });
+
+        $response = $this->actingAs($this->superadmin)
+            ->get(
+                '/admin/prospect_criteria'
+                . '?draw=1&start=0&length=10'
+                . '&columns[0][data]=id&columns[0][name]=id'
+                . '&order[0][column]=0&order[0][dir]=asc',
+                ['X-Requested-With' => 'XMLHttpRequest', 'Accept' => 'application/json']
+            );
+
+        $response->assertStatus(200);
+
+        $rows = $response->json('data');
+        $this->assertNotEmpty($rows, 'DataTable must return at least one row.');
+
+        foreach ($rows as $row) {
+            $this->assertStringContainsString(
+                'disabled',
+                $row['action'],
+                'Discover button must be disabled when daily quota is exhausted.'
+            );
+        }
+    }
 }
 
 // <<<
