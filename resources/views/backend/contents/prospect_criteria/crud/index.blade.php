@@ -37,8 +37,9 @@
 
                 {{-- Daily quota badge (solde) --}}
                 @include('backend.contents.prospect_criteria.partials._quota-badge', [
-                    'quotaRemaining' => $quotaRemaining ?? null,
-                    'quotaPackage'   => $quotaPackage ?? null,
+                    'quotaRemaining'      => $quotaRemaining ?? null,
+                    'quotaPackage'        => $quotaPackage ?? null,
+                    'activeDailyLimitSum' => $activeDailyLimitSum ?? null,
                 ])
 
                 {{-- Filter button --}}

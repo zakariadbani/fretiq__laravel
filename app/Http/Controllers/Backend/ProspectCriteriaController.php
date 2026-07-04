@@ -10,9 +10,11 @@ use App\Exceptions\QuotaLockUnavailableException;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
 use App\Jobs\RunDiscoveryPipelineJob;
+use App\Models\Company;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Services\Discovery\CompanyDiscoveryService;
+use App\Services\Discovery\IntentQueryService;
 use App\Services\Quota\DiscoveryQuotaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -34,7 +36,7 @@ class ProspectCriteriaController extends BackendController
 
         $this->middleware('permission:view prospect_criteria')->only(['index', 'view', 'discoveryStatus']);
         $this->middleware('permission:create prospect_criteria')->only(['create', 'store']);
-        $this->middleware('permission:edit prospect_criteria')->only(['edit', 'update', 'executeSwitch']);
+        $this->middleware('permission:edit prospect_criteria')->only(['edit', 'update', 'executeSwitch', 'generateQueries']);
         $this->middleware('permission:delete prospect_criteria')->only(['delete']);
         $this->middleware('permission:run discovery')->only(['discover']);
         $this->middleware('permission:create prospect_criteria')->only(['duplicate']);
@@ -61,7 +63,7 @@ class ProspectCriteriaController extends BackendController
      */
     public function index(DiscoveryQuotaService $quotaService)
     {
-        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining] = $this->resolveQuotaVars($quotaService);
+        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining, $activeDailyLimitSum] = $this->resolveQuotaVars($quotaService);
 
         return $this->currentDataTable->render(
             'backend.contents.prospect_criteria.crud.index',
@@ -73,12 +75,18 @@ class ProspectCriteriaController extends BackendController
                 'contactRemaining'        => $contactRemaining,
                 'monthlyRemaining'        => $monthlyRemaining,
                 'monthlyContactRemaining' => $monthlyContactRemaining,
+                'activeDailyLimitSum'     => $activeDailyLimitSum,
             ]
         );
     }
 
     /**
      * Override view() to inject quota badge vars alongside the standard view vars.
+     *
+     * Supports an `?audit=1` query param on the Résultats tab: reveals rejected
+     * (AI-excluded competitor) companies via Company::withRejected() so the user
+     * can inspect and un-reject the AI's calls. Default (no param) keeps the
+     * global notRejected scope in effect.
      *
      * @param  int                   $id
      * @param  DiscoveryQuotaService $quotaService
@@ -94,12 +102,18 @@ class ProspectCriteriaController extends BackendController
             return redirect(route('admin.prospect_criteria.index'));
         }
 
+        $auditMode = $this->currentRequest->boolean('audit');
+
         // Paginate discovered companies first so we can reuse ->total() in the
         // ViewConfig stat card — avoids a second COUNT query.
-        $resultCompanies = $model->companies()
+        $companiesQuery = $auditMode ? $model->companies()->withRejected() : $model->companies();
+        $resultCompanies = $companiesQuery
             ->with('contacts')
             ->latest('id')
             ->paginate(25, ['*'], 'results_page');
+
+        // Results grouped by the query that found them (§6) — trouvées/gardées/exclues per query.
+        $queryGroups = $this->buildQueryResultGroups($model);
 
         $view = $this->getView('backend.contents.prospect_criteria.crud.view');
         $view->with('title', __('overview'))
@@ -107,28 +121,70 @@ class ProspectCriteriaController extends BackendController
 
         $viewConfig = \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::make(
             $model,
-            ['discovered_total' => $resultCompanies->total()]
+            [
+                'discovered_total' => $resultCompanies->total(),
+                'quota_tz'         => $quotaService->quotaTz(),
+            ]
         );
         $view->with('viewConfig', $viewConfig);
 
-        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining] = $this->resolveQuotaVars($quotaService);
+        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining, $activeDailyLimitSum] = $this->resolveQuotaVars($quotaService);
         $view->with('quotaRemaining', $quotaRemaining)
              ->with('quotaPackage', $quotaPackage)
              ->with('contactRemaining', $contactRemaining)
              ->with('monthlyRemaining', $monthlyRemaining)
              ->with('monthlyContactRemaining', $monthlyContactRemaining)
-             ->with('resultCompanies', $resultCompanies);
+             ->with('activeDailyLimitSum', $activeDailyLimitSum)
+             ->with('resultCompanies', $resultCompanies)
+             ->with('queryGroups', $queryGroups)
+             ->with('auditMode', $auditMode);
 
         return $view;
     }
 
     /**
-     * Safely read today's + monthly quota remaining, active package, and contact remaining.
+     * Group this criteria's discovered companies by `discovery_query` for the
+     * Résultats tab (§6): each query → trouvées / gardées / exclues counts,
+     * expandable to the company rows.
+     *
+     * "Gardées" = visible under the default notRejected scope; "exclues" only
+     * surface via withRejected(). Companies with a null discovery_query (pre-AI
+     * or manually created) are bucketed under a single "(sans requête)" group.
+     *
+     * @param  ProspectCriteria  $model
+     * @return list<array{query: ?string, found: int, kept: int, excluded: int, companies: \Illuminate\Support\Collection}>
+     */
+    private function buildQueryResultGroups(ProspectCriteria $model): array
+    {
+        $all = Company::withRejected()
+            ->where('criteria_id', $model->id)
+            ->with('contacts')
+            ->latest('id')
+            ->get()
+            ->groupBy(fn (Company $company) => $company->discovery_query ?: '');
+
+        return $all->map(function ($companies, $query) {
+            $excluded = $companies->where('qualification_status', 'rejected');
+            $kept     = $companies->reject(fn (Company $c) => $c->qualification_status === 'rejected');
+
+            return [
+                'query'     => $query !== '' ? $query : null,
+                'found'     => $companies->count(),
+                'kept'      => $kept->count(),
+                'excluded'  => $excluded->count(),
+                'companies' => $companies,
+            ];
+        })->values()->all();
+    }
+
+    /**
+     * Safely read today's + monthly quota remaining, active package, contact
+     * remaining, and the sum of daily_limit across active criteria (overbook check).
      *
      * Wraps in a try/catch for QueryException so pages render correctly even when
      * the quota tables do not yet exist on the dev DB (pre-migration).
      *
-     * @return array{0: ?int, 1: ?\App\Models\Package, 2: ?int, 3: ?int, 4: ?int}
+     * @return array{0: ?int, 1: ?\App\Models\Package, 2: ?int, 3: ?int, 4: ?int, 5: ?int}
      */
     private function resolveQuotaVars(DiscoveryQuotaService $quotaService): array
     {
@@ -139,18 +195,47 @@ class ProspectCriteriaController extends BackendController
                 $quotaService->contactRemainingTodayForDisplay(),
                 $quotaService->monthlyRemainingForDisplay(),
                 $quotaService->monthlyContactRemainingForDisplay(),
+                (int) ProspectCriteria::where('is_active', true)
+                    ->selectRaw('COALESCE(SUM(COALESCE(daily_limit, 20)), 0) AS s')
+                    ->value('s'),
             ];
         } catch (\Illuminate\Database\QueryException $e) {
             // Quota tables not yet migrated — treat as unlimited.
-            return [null, null, null, null, null];
+            return [null, null, null, null, null, null];
         }
     }
 
     /**
-     * Provide select options to the create/edit form views.
+     * Provide select options + automation hints to the create/edit form views.
+     *
+     * quotaPackage/activeDailyLimitSum reuse the same try/catch-QueryException
+     * safety as resolveQuotaVars() (form must render even pre-migration).
+     *
+     * activeDailyLimitSum here means "OTHER active criteria" on the edit form —
+     * the criteria being edited is excluded via the {id} route param so its own
+     * stored daily_limit does not double-count against itself in the overbook
+     * hint. resolveQuotaVars() (index badge) intentionally counts ALL active
+     * criteria and is untouched.
      */
     protected function getViewVars(): array
     {
+        $quotaService = app(DiscoveryQuotaService::class);
+        $editingId    = $this->currentRequest->route('id');
+
+        try {
+            $quotaPackage = $quotaService->activePackage();
+            $sumQuery     = ProspectCriteria::where('is_active', true);
+            if ($editingId !== null) {
+                $sumQuery->where('id', '!=', $editingId);
+            }
+            $activeDailyLimitSum = (int) $sumQuery
+                ->selectRaw('COALESCE(SUM(COALESCE(daily_limit, 20)), 0) AS s')
+                ->value('s');
+        } catch (\Illuminate\Database\QueryException $e) {
+            $quotaPackage        = null;
+            $activeDailyLimitSum = null;
+        }
+
         return [
             'companySizes'        => config('global.data.company_size_buckets', []),
             'countries'           => config('global.data.company_countries', []),
@@ -160,6 +245,11 @@ class ProspectCriteriaController extends BackendController
             'recommendedPositions' => collect(config('global.data.prospect_positions', []))
                 ->only(config('global.data.prospect_positions_recommended_groups', []))
                 ->flatten()->values()->all(),
+            'quotaPackage'        => $quotaPackage,
+            'activeDailyLimitSum' => $activeDailyLimitSum,
+            'globalMinScore'      => (int) \App\Models\Setting::get('decouverte.min_score_enrich', 50),
+            'globalAutoEnrich'    => (bool) \App\Models\Setting::get('decouverte.auto_enrich', true),
+            'quotaTz'             => $quotaService->quotaTz(),
         ];
     }
 
@@ -207,6 +297,19 @@ class ProspectCriteriaController extends BackendController
             $attributes['company_sizes'] = [];
         }
 
+        // ai_queries: posted as ai_queries[i][q]/[enabled] hidden form fields (form.blade.php).
+        // Only normalize when present in the request — absence (e.g. a non-form caller)
+        // must leave the existing stored value untouched, not null it out.
+        if (array_key_exists('ai_queries', $attributes) && is_array($attributes['ai_queries'])) {
+            $attributes['ai_queries'] = array_values(array_filter(array_map(function ($row) {
+                $q = is_array($row) ? trim((string) ($row['q'] ?? '')) : '';
+                if ($q === '') {
+                    return null;
+                }
+                return ['q' => $q, 'enabled' => (bool) ($row['enabled'] ?? false)];
+            }, $attributes['ai_queries']), fn ($r) => $r !== null));
+        }
+
         return $attributes;
     }
 
@@ -229,6 +332,7 @@ class ProspectCriteriaController extends BackendController
         $clone = $prospectCriteria->replicate();
         $clone->name      = $prefix . Str::limit($prospectCriteria->name, 100 - mb_strlen($prefix), '');
         $clone->is_active = false;
+        $clone->auto_run  = false;
         $clone->save();
 
         session()->flash('success', trans('app.creation_completed'));
@@ -240,7 +344,11 @@ class ProspectCriteriaController extends BackendController
      * Return the SerpAPI query strings that would be fired for the given criteria.
      *
      * Requires `view prospect_criteria` permission (enforced via middleware).
-     * Read-only — does not call SerpAPI; only builds the query list.
+     * Read-only — does not call SerpAPI, and does NOT call the AI query generator
+     * (that only fires from generateQueries(), keeping this a plain-page-load-safe
+     * preview). Returns the cached ai_queries (with per-query enabled flags) when
+     * present, else falls back to the structured buildQueries() list wrapped in
+     * the same {q, enabled} shape.
      *
      * @param  ProspectCriteria        $prospectCriteria
      * @param  CompanyDiscoveryService $discoveryService
@@ -248,9 +356,60 @@ class ProspectCriteriaController extends BackendController
      */
     public function previewQueries(ProspectCriteria $prospectCriteria, CompanyDiscoveryService $discoveryService)
     {
-        return response()->json([
-            'queries' => $discoveryService->buildQueries($prospectCriteria),
-        ]);
+        if (! empty($prospectCriteria->ai_queries)) {
+            return response()->json([
+                'queries' => $prospectCriteria->ai_queries,
+            ]);
+        }
+
+        $queries = array_map(
+            fn (string $q) => ['q' => $q, 'enabled' => true],
+            $discoveryService->buildQueries($prospectCriteria)
+        );
+
+        return response()->json(['queries' => $queries]);
+    }
+
+    /**
+     * Stateless preview: expand the POSTed (not-yet-saved) ai_target/ai_exclude
+     * descriptions into SerpAPI query strings, without persisting anything.
+     *
+     * Requires `edit prospect_criteria` permission (middleware + inline authorize()).
+     * The user's typed textareas — not the stored description — drive the expansion,
+     * so "Générer avec l'IA" reflects unsaved edits. Enabled flags are carried over
+     * from the POSTed current query list (not the DB) so a re-generate does not
+     * silently re-enable queries the user turned off in this same editing session.
+     * Persisting ai_queries happens only via Enregistrer → beforeSave().
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  int                       $id
+     * @param  IntentQueryService        $intentQueryService
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function generateQueries(Request $request, $id, IntentQueryService $intentQueryService)
+    {
+        $this->authorize('edit prospect_criteria');
+
+        $criteria = ProspectCriteria::findOrFail((int) $id);
+
+        // In-memory only — mirrors the unsaved form state, never save()d.
+        $criteria->ai_target  = $request->input('ai_target');
+        $criteria->ai_exclude = $request->input('ai_exclude');
+
+        // Index enabled flags from the POSTed current list (not the DB) so unchanged
+        // queries keep their current on/off state across a re-generate.
+        $previousEnabled = collect($request->input('queries', []))
+            ->mapWithKeys(fn (array $row) => [($row['q'] ?? '') => (bool) ($row['enabled'] ?? true)]);
+
+        $queries = collect($intentQueryService->expand($criteria))
+            ->map(fn (string $q) => [
+                'q'       => $q,
+                'enabled' => $previousEnabled->get($q, true),
+            ])
+            ->values()
+            ->all();
+
+        return response()->json(['queries' => $queries]);
     }
 
     /**
@@ -337,8 +496,9 @@ class ProspectCriteriaController extends BackendController
             ? "Découverte lancée — {$run->credits_reserved} entreprises possibles aujourd'hui"
             : 'Découverte lancée en arrière-plan';
 
-        // Append contact enrichment limit note when contact quota is capped.
-        if (! $quotaService->contactIsUnlimited() && $run->contact_credits_reserved < $run->credits_reserved) {
+        // Append contact enrichment limit note when contact quota is capped —
+        // also covers a per-criteria contact_limit binding on an unlimited package.
+        if ($run->contact_credits_reserved < $run->credits_reserved) {
             $successText .= " (enrichissement limité à {$run->contact_credits_reserved})";
         }
 
@@ -371,6 +531,7 @@ class ProspectCriteriaController extends BackendController
             'contacts_count'  => $run?->contacts_count ?? 0,
             'skipped_count'   => $run?->skipped_count ?? 0,
             'low_score_count' => (int) ($run?->low_score_count ?? 0),
+            'excluded_count'  => (int) ($run?->excluded_count ?? 0),
             'finished_at'     => optional($run?->finished_at)->toIso8601String(),
             'companies_total' => $criteria->companies()->count(),
             'stale'           => $run ? $run->isStale() : false,

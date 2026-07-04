@@ -3,6 +3,7 @@
 namespace App\Services\Discovery;
 
 use App\Models\ProspectCriteria;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -13,10 +14,21 @@ use Illuminate\Support\Facades\Log;
  *   'local'  → loads database/fixtures/discovery/serpapi.json — NO HTTP
  *   anything else  → calls live SerpAPI
  *
- * Returns a deduped list of ['domain', 'title', 'snippet', 'url'] capped at $max.
+ * Returns a deduped list of ['domain', 'title', 'snippet', 'url', 'discovery_query'] capped at $max.
+ * The 'discovery_query' key is only set by discoverFromSerpApi() (the query that
+ * surfaced the candidate) — discoverFromFixtures() (local dev driver) omits it.
+ *
+ * Query source (discoverFromSerpApi only): uses criteria.ai_queries (cached AI-generated
+ * queries, enabled ones only) when present, else falls back to buildQueries(). buildQueries()
+ * itself stays a pure criteria→string[] function (no HTTP) — the live IntentQueryService call
+ * only happens from the controller's generateQueries() action, never from here or from preview.
  */
 class CompanyDiscoveryService
 {
+    public function __construct(
+        private readonly IntentQueryService $intentQuery = new IntentQueryService(),
+    ) {}
+
     /**
      * Discover companies matching the given criteria.
      *
@@ -31,6 +43,58 @@ class CompanyDiscoveryService
         return $this->discoverFromSerpApi($criteria, $max);
     }
 
+    /**
+     * Fetch live SerpAPI account balance/usage for the superadmin quota page.
+     *
+     * Verified live 2026-07-04 (STATUS 200): SerpAPI /account returns plan_searches_left, total_searches_left, this_month_usage, searches_per_month, plan_name, account_email.
+     *
+     * @return array{plan_searches_left: ?int, total_searches_left: ?int, this_month_usage: ?int, searches_per_month: ?int, plan_name: ?string, account_email: ?string}|null
+     */
+    public function accountUsage(): ?array
+    {
+        if ($this->isLocal()) {
+            return null;
+        }
+
+        $apiKey = config('services.serpapi.api_key');
+
+        if (! $apiKey) {
+            return null;
+        }
+
+        // ponytail: cached null-on-failure for 10 min is acceptable here — this is a
+        // low-traffic admin page, not a hot path; a stuck failure self-heals in 10 min.
+        return Cache::remember('provider.serpapi.account', now()->addMinutes(10), function () use ($apiKey) {
+            try {
+                $response = Http::timeout(15)->acceptJson()->get('https://serpapi.com/account', [
+                    'api_key' => $apiKey,
+                ]);
+
+                if ($response->failed()) {
+                    Log::warning('[CompanyDiscoveryService] SerpAPI account request failed', [
+                        'status' => $response->status(),
+                    ]);
+                    return null;
+                }
+
+                $json = $response->json();
+
+                return [
+                    'plan_searches_left'  => $json['plan_searches_left']  ?? null,
+                    'total_searches_left' => $json['total_searches_left'] ?? null,
+                    'this_month_usage'    => $json['this_month_usage']    ?? null,
+                    'searches_per_month'  => $json['searches_per_month']  ?? null,
+                    'plan_name'           => $json['plan_name']           ?? null,
+                    'account_email'       => $json['account_email']       ?? null,
+                ];
+            } catch (\Throwable $e) {
+                Log::warning('[CompanyDiscoveryService] SerpAPI account call threw an exception', [
+                    'error' => $e->getMessage(),
+                ]);
+                return null;
+            }
+        });
+    }
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     public function extractDomain(string $url): ?string
@@ -105,7 +169,9 @@ class CompanyDiscoveryService
             return [];
         }
 
-        $queries = $this->buildQueries($criteria);
+        $queries = ! empty($criteria->ai_queries)
+            ? collect($criteria->ai_queries)->filter(fn ($r) => ($r['enabled'] ?? true) === true)->pluck('q')->all()
+            : $this->buildQueries($criteria);
         $results = [];
         $seen    = [];
 
@@ -149,10 +215,11 @@ class CompanyDiscoveryService
 
                     $seen[$domain] = true;
                     $results[]     = [
-                        'domain'  => $domain,
-                        'title'   => $item['title'] ?? null,
-                        'snippet' => $item['snippet'] ?? null,
-                        'url'     => $url,
+                        'domain'          => $domain,
+                        'title'           => $item['title'] ?? null,
+                        'snippet'         => $item['snippet'] ?? null,
+                        'url'             => $url,
+                        'discovery_query' => $query,
                     ];
                 }
             } catch (\Throwable $e) {

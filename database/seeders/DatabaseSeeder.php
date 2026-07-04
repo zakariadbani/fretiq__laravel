@@ -24,6 +24,7 @@ class DatabaseSeeder extends Seeder
             \Database\Seeders\DefaultProspectionSeeder::class,
             \Database\Seeders\SequenceSeeder::class,
             \Database\Seeders\ProspectCriteriaSeeder::class,
+            \Database\Seeders\PackagesSeeder::class,
         ]);
 
         if (app()->environment(['testing'])) {

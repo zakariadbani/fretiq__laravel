@@ -170,6 +170,7 @@ class SettingGeneratedTest extends TestCase
                         'auto_scoring'     => '1',
                         'auto_enrich'      => '1',
                         'min_score_enrich' => '0',
+                        'timezone'         => 'Europe/Paris',
                     ],
                 ],
             ])
@@ -199,6 +200,7 @@ class SettingGeneratedTest extends TestCase
                         'auto_scoring'     => '1',
                         'auto_enrich'      => '1',
                         'min_score_enrich' => '100',
+                        'timezone'         => 'Europe/Paris',
                     ],
                 ],
             ])

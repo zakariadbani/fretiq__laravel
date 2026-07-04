@@ -21,8 +21,9 @@ class SettingsSeeder extends Seeder
     protected array $defaults = [
         'decouverte' => [
             'auto_scoring'     => true,
-            'auto_enrich'      => true,
+            'auto_enrich'      => false,
             'min_score_enrich' => 50,
+            'timezone'         => 'Europe/Paris',
         ],
         'conformite' => [
             'cold_send_enabled' => false,

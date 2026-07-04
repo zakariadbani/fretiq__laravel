@@ -128,7 +128,9 @@ class RunDiscoveryPipelineJob implements ShouldQueue
         $budget = null; // null = unlimited (no run row / no quota)
 
         if ($run !== null) {
-            $budget = max(0, $run->credits_reserved - $run->consumed);
+            // Rejected candidates advance `consumed` (the scan cursor) but must not be
+            // billed against the reservation — only kept/failed candidates are.
+            $budget = max(0, $run->credits_reserved - ((int) $run->consumed - (int) $run->excluded_count));
 
             // If the full reservation has already been consumed (retry case), nothing left.
             if ($budget === 0) {
@@ -137,6 +139,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
                     'run_id'           => $this->runId,
                     'credits_reserved' => $run->credits_reserved,
                     'consumed'         => $run->consumed,
+                    'excluded_count'   => $run->excluded_count,
                 ]);
                 $run->update([
                     'status'      => 'failed',

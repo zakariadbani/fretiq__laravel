@@ -84,6 +84,41 @@ class PackageController extends BackendController
         $monthlyRemainingToday        = $quotaService->monthlyRemainingForDisplay();
         $monthlyContactRemainingToday = $quotaService->monthlyContactRemainingForDisplay();
 
+        // Provider capacity vs sold vs consumed (superadmin-only card; hidden
+        // when neither capacity key is configured).
+        // ponytail: single-client — sums the one active pack; multi-client later
+        // would sum consumed/sold across all active assignments instead.
+        $discoveryCapacity = config('prospecting.provider_discovery_monthly_capacity');
+        $enrichCapacity    = config('prospecting.provider_enrich_monthly_capacity');
+        $capacity          = null;
+
+        if ($discoveryCapacity !== null || $enrichCapacity !== null) {
+            [$pStart, $pEnd] = $quotaService->currentPeriod();
+            $activePackage   = $quotaService->activePackage();
+
+            $contactConsumed = $quotaService->contactUsedInPeriod($pStart, $pEnd);
+
+            // Discovery meter is an ESTIMATE (upper bound) — searches aren't
+            // persisted per-run, so we approximate from run count × max query budget.
+            $discoveryRunsCount = DiscoveryRun::where('type', 'discovery')
+                ->where('quota_date', '>=', $pStart->toDateString())
+                ->where('quota_date', '<',  $pEnd->toDateString())
+                ->count();
+            $estimatedSearches = $discoveryRunsCount * config('services.serpapi.max_queries_per_run', 40);
+
+            $capacity = [
+                'discovery' => [
+                    'capacity'          => $discoveryCapacity,
+                    'estimated_searches'=> $estimatedSearches,
+                ],
+                'enrich' => [
+                    'capacity' => $enrichCapacity,
+                    'sold'     => $activePackage?->monthly_contact_credits,
+                    'consumed' => $contactConsumed,
+                ],
+            ];
+        }
+
         return $this->currentDataTable->render(
             'backend.contents.packages.crud.index',
             [
@@ -97,6 +132,7 @@ class PackageController extends BackendController
                 'contactRemainingToday'        => $contactRemainingToday,
                 'monthlyRemainingToday'        => $monthlyRemainingToday,
                 'monthlyContactRemainingToday' => $monthlyContactRemainingToday,
+                'capacity'                     => $capacity,
             ]
         );
     }

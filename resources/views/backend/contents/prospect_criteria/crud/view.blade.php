@@ -60,6 +60,11 @@
 
     {{-- ── Tab 3: Résultats (inline discovered companies) ────────────────── --}}
     <div class="tab-pane fade" id="criteria_resultats" role="tabpanel">
+        @include('backend.contents.prospect_criteria.partials._query-results', [
+            'model'       => $model,
+            'queryGroups' => $queryGroups ?? [],
+            'auditMode'   => $auditMode ?? false,
+        ])
         @include('backend.contents.prospect_criteria.partials._results-tab', [
             'model'           => $model,
             'resultCompanies' => $resultCompanies,

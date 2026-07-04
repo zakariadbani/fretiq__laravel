@@ -212,6 +212,7 @@ class HeuristicScoringDriver implements ScoringDriverInterface
         return [
             'score'       => $score,
             'explanation' => $explanation,
+            'exclude'     => false, // ponytail: heuristic can't read NL, never excludes
         ];
     }
 

@@ -27,6 +27,7 @@
         'contactRemaining'        => $contactRemaining        ?? null,
         'monthlyRemaining'        => $monthlyRemaining        ?? null,
         'monthlyContactRemaining' => $monthlyContactRemaining ?? null,
+        'activeDailyLimitSum'     => $activeDailyLimitSum     ?? null,
     ])
 
     @can('run discovery')

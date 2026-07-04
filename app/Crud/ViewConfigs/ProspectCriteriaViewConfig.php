@@ -3,6 +3,7 @@
 namespace App\Crud\ViewConfigs;
 
 use App\Models\ProspectCriteria;
+use App\Models\Setting;
 use Illuminate\Support\Facades\Schema;
 
 /**
@@ -24,7 +25,8 @@ class ProspectCriteriaViewConfig
      */
     public static function make(?ProspectCriteria $model, ?array $stats = null): array
     {
-        $hasId = $model && $model->id;
+        $hasId   = $model && $model->id;
+        $quotaTz = $stats['quota_tz'] ?? 'Europe/Paris';
 
         // ── Subtitle pills ────────────────────────────────────────────────────
         $subtitle = [];
@@ -41,7 +43,10 @@ class ProspectCriteriaViewConfig
                 $subtitle[] = ['icon' => 'bi-geo-alt', 'text' => implode(', ', $mapped)];
             }
             if ($model->daily_limit) {
-                $subtitle[] = ['icon' => 'bi-clock', 'text' => $model->daily_limit . ' / jour'];
+                $subtitle[] = ['icon' => 'bi-clock', 'text' => $model->daily_limit . ' découvertes/j'];
+            }
+            if ($model->auto_run && $model->run_at_hour !== null) {
+                $subtitle[] = ['icon' => 'bi-alarm', 'text' => 'Auto · ' . sprintf('%02d:00', $model->run_at_hour)];
             }
         }
 
@@ -112,7 +117,13 @@ class ProspectCriteriaViewConfig
             $detailRows = [
                 ['label' => 'Nom',              'value' => $model->name,       'type' => 'text'],
                 ['label' => 'Actif',            'value' => $model->is_active,  'type' => 'boolean'],
-                ['label' => 'Limite / jour',    'value' => $model->daily_limit ? $model->daily_limit . ' contacts/j' : null, 'type' => 'text'],
+                ['label' => 'Découvertes / jour', 'value' => $model->daily_limit ? $model->daily_limit . ' découvertes/j' : null, 'type' => 'text'],
+                ['label' => 'Découverte automatique', 'value' => ($model->auto_run && $model->run_at_hour !== null)
+                    ? 'Quotidienne à ' . sprintf('%02d:00', $model->run_at_hour) . ' (heure ' . $quotaTz . ')'
+                    : 'Manuelle', 'type' => 'text'],
+                ['label' => 'Contacts max / exécution', 'value' => $model->contact_limit ?? 'Illimité (quota package)', 'type' => 'text'],
+                ['label' => 'Score min. d\'enrichissement', 'value' => $model->min_score_enrich ?? ('Hérité (' . Setting::get('decouverte.min_score_enrich', 50) . ')'), 'type' => 'text'],
+                ['label' => 'Enrichissement automatique', 'value' => $model->auto_enrich === null ? 'Hérité' : ($model->auto_enrich ? 'Activé' : 'Désactivé'), 'type' => 'text'],
                 ['label' => 'Secteurs',         'value' => !empty($sectors)        ? implode(', ', $sectors)        : null, 'type' => 'tags'],
                 ['label' => 'Pays',             'value' => !empty($countryDisplay) ? implode(', ', $countryDisplay) : null, 'type' => 'tags'],
                 ['label' => 'Tailles',          'value' => !empty($sizes)          ? implode(', ', $sizes)          : null, 'type' => 'tags'],

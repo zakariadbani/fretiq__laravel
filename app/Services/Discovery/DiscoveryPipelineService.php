@@ -32,6 +32,18 @@ use Illuminate\Support\Facades\Log;
  *   Candidates below the threshold are still counted (companies_count++) so that
  *   consumed stays exact; they increment low_score_count instead of contacts_count.
  *
+ * Exclusion gate (AI target/exclude descriptions):
+ *   When the scorer flags exclude=true (candidate matches the criteria's "à exclure"
+ *   description — a competitor), the company is upserted with qualification_status=
+ *   'rejected' and Hunter enrichment is skipped entirely. Rejected companies are
+ *   free: they do NOT count against the kept budget (companies_count/completedThisAttempt),
+ *   only against excluded_count, so a competitor-heavy intent doesn't starve the run of
+ *   real prospects. They still advance the `consumed` cursor (+1) — every scanned
+ *   candidate consumes exactly one credit regardless of outcome. To bound the extra
+ *   scanning cost, discover() over-fetches (OVERSCAN_FACTOR) up to a hard SCAN_CEILING.
+ *   A domain already rejected for this criteria is detected BEFORE scoring runs
+ *   (Company::withRejected() lookup) and skips re-scoring + re-enrichment entirely.
+ *
  * email_kind mapping:
  *   Hunter type = 'generic'  →  email_kind = 'role'
  *   Hunter type = 'personal' →  email_kind = 'personal'
@@ -41,6 +53,20 @@ use Illuminate\Support\Facades\Log;
  */
 class DiscoveryPipelineService
 {
+    /**
+     * Over-fetch multiplier applied to the kept budget when discovering candidates,
+     * so a competitor-heavy intent (many rejects) still has enough scanned candidates
+     * to reach the kept target. Bounded by SCAN_EXTRA_CEILING below.
+     */
+    private const OVERSCAN_FACTOR = 3;
+
+    /**
+     * Hard extra-scan ceiling added on top of $offset + $budget, bounding SerpAPI +
+     * Gemini cost when OVERSCAN_FACTOR alone would let a 100%-competitor intent scan
+     * the entire discovery pool.
+     */
+    private const SCAN_EXTRA_CEILING = 100;
+
     /**
      * ISO-2 country code map. Reused from ZohoCrmSyncService; inlined for isolation.
      */
@@ -106,11 +132,12 @@ class DiscoveryPipelineService
      * @param  int|null          $contactCap External contact-enrichment cap. null = unlimited (skip Hunter gate).
      *                                       When set, Hunter is only called while $contactSpent < $contactCap.
      *                                       Invariant: for discovery rows contact_consumed <= consumed; manual rows differ.
-     * @return array{companies: int, contacts: int, skipped: int, low_score: int, contacts_consumed: int}
+     * @return array{companies: int, contacts: int, skipped: int, low_score: int, contacts_consumed: int, excluded: int}
      */
     public function run(ProspectCriteria $criteria, ?int $cap = null, ?DiscoveryRun $run = null, ?int $contactCap = null): array
     {
         // When an external cap is provided, honour both the criteria daily_limit and the cap.
+        // $budget is now the KEPT-rows target — rejects are free and don't count against it.
         $budget = $cap !== null
             ? min($criteria->daily_limit ?: 20, $cap)
             : ($criteria->daily_limit ?: 20);
@@ -120,24 +147,29 @@ class DiscoveryPipelineService
         $contactBudget = $contactCap ?? PHP_INT_MAX;
         $contactSpent  = 0;
 
-        $stats = ['companies' => 0, 'contacts' => 0, 'skipped' => 0, 'low_score' => 0, 'new' => 0, 'contacts_consumed' => 0];
+        $stats = ['companies' => 0, 'contacts' => 0, 'skipped' => 0, 'low_score' => 0, 'new' => 0, 'contacts_consumed' => 0, 'excluded' => 0];
 
         // Read scoring/enrichment settings once per run (avoids repeated DB/cache reads).
         $autoScoring = (bool) Setting::get('decouverte.auto_scoring', true);
-        $autoEnrich  = (bool) Setting::get('decouverte.auto_enrich', true);
-        $minScore    = (int) Setting::get('decouverte.min_score_enrich', 50);
+        $autoEnrich  = $criteria->auto_enrich ?? (bool) Setting::get('decouverte.auto_enrich', true);
+        $minScore    = (int) ($criteria->min_score_enrich ?? Setting::get('decouverte.min_score_enrich', 50));
 
-        // Resume cursor: $offset = number of candidates already processed.
-        // Fetch offset+budget candidates so we can slice from the correct position.
+        // Resume cursor: $offset = number of candidates already processed (scanned, not just kept).
         $offset = ($run !== null) ? (int) $run->consumed : 0;
 
-        $allCandidates = $this->discovery->discover($criteria, $offset + $budget);
+        // Over-fetch so rejects (which don't count toward $budget) don't starve the kept
+        // target — bounded by a hard scan ceiling so a 100%-competitor intent can't scan
+        // the whole pool. See class docblock "Exclusion gate".
+        $scanTarget = min($budget * self::OVERSCAN_FACTOR, $budget + self::SCAN_EXTRA_CEILING);
+
+        $allCandidates = $this->discovery->discover($criteria, $offset + $scanTarget);
         $candidates    = array_slice($allCandidates, $offset);
 
-        $completedThisAttempt = 0;
+        $completedThisAttempt = 0; // kept rows only — gates the $budget break condition
+        $scannedThisAttempt   = 0; // every processed candidate (kept + rejected) — gates the scan ceiling
 
         foreach ($candidates as $candidate) {
-            if ($completedThisAttempt >= $budget) {
+            if ($completedThisAttempt >= $budget || $scannedThisAttempt >= $scanTarget) {
                 break;
             }
 
@@ -150,24 +182,64 @@ class DiscoveryPipelineService
             }
 
             // CAS expected position: consumed must equal this value for our UPDATE to land.
-            $expected    = $offset + $completedThisAttempt;
+            $expected    = $offset + $scannedThisAttempt;
             $hunterCalled = false; // declared before try so catch can read it
 
             try {
+                // ── Step 0: Skip re-scoring known rejects (cost guard) ───────
+                // A domain already rejected for THIS criteria is detected before any
+                // scoring/Hunter call — re-discovering it must not re-pay Gemini every run.
+                /** @var Company|null $existingForDomain */
+                $existingForDomain = Company::withRejected()->where('domain', $domain)->first();
+
+                $alreadyRejectedHere = $existingForDomain
+                    && $existingForDomain->qualification_status === 'rejected'
+                    && (int) $existingForDomain->criteria_id === (int) $criteria->id;
+
+                if ($alreadyRejectedHere) {
+                    if ($run !== null) {
+                        $advanced = DiscoveryRun::where('id', $run->id)
+                            ->where('status', 'running')
+                            ->where('consumed', $expected)
+                            ->update([
+                                'consumed'       => DB::raw('consumed + 1'),
+                                'excluded_count' => DB::raw('excluded_count + 1'),
+                            ]);
+
+                        if ($advanced === 0) {
+                            Log::info('[DiscoveryPipelineService] CAS debit blocked — run terminalized or cursor mismatch; returning partial stats.', [
+                                'run_id'      => $run->id,
+                                'criteria_id' => $criteria->id,
+                                'expected'    => $expected,
+                            ]);
+                            return $stats;
+                        }
+                    }
+
+                    $stats['excluded']++;
+                    $scannedThisAttempt++;
+                    continue;
+                }
+
                 // ── Step 1: Scoring gate ─────────────────────────────────────
                 $score       = null;
                 $explanation = null;
+                $excludeFlag = false;
 
                 if ($autoScoring) {
-                    ['score' => $score, 'explanation' => $explanation] =
-                        $this->scoring->score($candidate, $criteria);
+                    $scoreResult = $this->scoring->score($candidate, $criteria);
+                    $score       = $scoreResult['score'];
+                    $explanation = $scoreResult['explanation'];
+                    $excludeFlag = $scoreResult['exclude'] ?? false;
                 }
 
+                $excluded = $autoScoring && $excludeFlag;
+
                 // ── Step 2: Enrichment decision ──────────────────────────────
-                // Enrich when: auto_enrich is on, AND either scoring is off OR score passes the gate,
-                // AND the per-attempt contact budget has not been exhausted.
+                // Enrich when: not excluded, auto_enrich is on, AND either scoring is off OR
+                // score passes the gate, AND the per-attempt contact budget has not been exhausted.
                 // Once contactBudget is spent, companies continue being discovered but Hunter is skipped.
-                $shouldEnrich = $autoEnrich && (! $autoScoring || $score >= $minScore) && ($contactSpent < $contactBudget);
+                $shouldEnrich = ! $excluded && $autoEnrich && (! $autoScoring || $score >= $minScore) && ($contactSpent < $contactBudget);
 
                 // ── Step 3: Hunter enrichment (if gate passed) ───────────────
                 // $hunterCalled tracks whether Hunter was actually invoked for this candidate.
@@ -182,7 +254,7 @@ class DiscoveryPipelineService
                 // ── Step 4: Upsert Company + Contacts ────────────────────────
                 $company = $this->upsertCompany(
                     $criteria, $domain, $candidate, $enrichment,
-                    $score, $explanation, $autoScoring
+                    $score, $explanation, $autoScoring, $excluded
                 );
 
                 $isNew = $company->wasRecentlyCreated;
@@ -192,16 +264,22 @@ class DiscoveryPipelineService
                     : 0;
 
                 // ── Step 5: Determine low-score flag ────────────────────────
-                // A candidate is "low score" when auto_enrich is on, scoring is on,
+                // A candidate is "low score" when not excluded, auto_enrich is on, scoring is on,
                 // and the score is below the gate.
-                $isLowScore = $autoEnrich && $autoScoring && ($score < $minScore);
+                $isLowScore = ! $excluded && $autoEnrich && $autoScoring && ($score < $minScore);
 
                 // ── Step 6: CAS debit + incremental stats (AFTER upserts) ───
+                // Rejects do NOT increment companies_count/new_companies_count (they'd
+                // inflate "success" stats while the visible list stays near-empty) —
+                // they get their own excluded_count bucket instead.
                 if ($run !== null) {
                     $advanced = DiscoveryRun::where('id', $run->id)
                         ->where('status', 'running')
                         ->where('consumed', $expected)
-                        ->update([
+                        ->update($excluded ? [
+                            'consumed'       => DB::raw('consumed + 1'),
+                            'excluded_count' => DB::raw('excluded_count + 1'),
+                        ] : [
                             'consumed'            => DB::raw('consumed + 1'),
                             'companies_count'     => DB::raw('companies_count + 1'),
                             'new_companies_count' => DB::raw('COALESCE(new_companies_count, 0) + ' . ($isNew ? 1 : 0)),
@@ -222,16 +300,20 @@ class DiscoveryPipelineService
                 }
 
                 // Local stats for return value and logging.
-                $stats['companies']++;
-                if ($isNew) {
-                    $stats['new']++;
-                }
-                $stats['contacts'] += $contactCount;
-                if ($isLowScore) {
-                    $stats['low_score']++;
-                }
-                if ($hunterCalled) {
-                    $stats['contacts_consumed']++;
+                if ($excluded) {
+                    $stats['excluded']++;
+                } else {
+                    $stats['companies']++;
+                    if ($isNew) {
+                        $stats['new']++;
+                    }
+                    $stats['contacts'] += $contactCount;
+                    if ($isLowScore) {
+                        $stats['low_score']++;
+                    }
+                    if ($hunterCalled) {
+                        $stats['contacts_consumed']++;
+                    }
                 }
             } catch (\Throwable $e) {
                 Log::warning('[DiscoveryPipelineService] Domain processing failed — skipping', [
@@ -259,9 +341,14 @@ class DiscoveryPipelineService
                 }
 
                 $stats['skipped']++;
+                $scannedThisAttempt++;
+                continue;
             }
 
-            $completedThisAttempt++;
+            $scannedThisAttempt++;
+            if (! ($excluded ?? false)) {
+                $completedThisAttempt++;
+            }
         }
 
         return $stats;
@@ -280,6 +367,19 @@ class DiscoveryPipelineService
      * Client-downgrade guard: companies with relationship='client' are never
      * downgraded to 'prospect'; only criteria_id is updated.
      *
+     * Global-scope sharp edge: the domain lookup MUST use withRejected() — Company
+     * has a global scope hiding qualification_status='rejected' rows. Without the
+     * opt-out, a re-discovered rejected domain would not be found here, Company::create()
+     * would fire, and the unique `domain` constraint would throw.
+     *
+     * Rejection: when $excluded is true, qualification_status is forced to 'rejected'
+     * and enrichment/scoring fields are still written (so the explanation stays visible
+     * on the audit view) but enrichment_data is never written (Hunter is never called
+     * for excluded candidates — see run()).
+     *
+     * discovery_query is only set on first insert — a domain deduped across multiple
+     * queries keeps the query that first found it (enables per-request results grouping).
+     *
      * @param  ProspectCriteria $criteria
      * @param  string           $domain
      * @param  array            $candidate      SerpAPI-normalised candidate.
@@ -287,6 +387,7 @@ class DiscoveryPipelineService
      * @param  int|null         $score          AI/heuristic score (null when scoring disabled).
      * @param  string|null      $explanation    Score explanation (null when scoring disabled).
      * @param  bool             $scored         Whether scoring ran for this candidate.
+     * @param  bool             $excluded       Whether the scorer flagged this candidate for rejection.
      * @return Company
      */
     private function upsertCompany(
@@ -296,10 +397,11 @@ class DiscoveryPipelineService
         ?array $enrichment,
         ?int $score,
         ?string $explanation,
-        bool $scored
+        bool $scored,
+        bool $excluded = false
     ): Company {
         /** @var Company|null $existing */
-        $existing = Company::where('domain', $domain)->first();
+        $existing = Company::withRejected()->where('domain', $domain)->first();
 
         $isClient = $existing && $existing->relationship === 'client';
 
@@ -327,6 +429,15 @@ class DiscoveryPipelineService
             $attributes['ai_explanation'] = $explanation;
         }
 
+        if ($excluded) {
+            $attributes['qualification_status'] = 'rejected';
+        } elseif ($existing && ! $isClient && $existing->qualification_status === 'rejected') {
+            // A prior criteria rejected this domain, but the current (new/edited) criteria
+            // just kept it — un-hide it rather than leaving it stuck behind the
+            // notRejected global scope forever.
+            $attributes['qualification_status'] = 'pending';
+        }
+
         if (! $isClient) {
             // Safe to set / overwrite relationship for non-clients
             $attributes['relationship'] = 'prospect';
@@ -342,8 +453,11 @@ class DiscoveryPipelineService
             return $existing;
         }
 
-        // New company
-        return Company::create(array_merge($attributes, ['domain' => $domain]));
+        // New company — discovery_query is only ever set here (first insert).
+        return Company::create(array_merge($attributes, [
+            'domain'          => $domain,
+            'discovery_query' => $candidate['discovery_query'] ?? null,
+        ]));
     }
 
     /**

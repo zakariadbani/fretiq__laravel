@@ -26,6 +26,7 @@ class DiscoveryRun extends Model
         'consumed',
         'contact_credits_reserved',
         'contact_consumed',
+        'excluded_count',
         'quota_date',
         'package_assignment_id',
         'started_at',
@@ -50,6 +51,7 @@ class DiscoveryRun extends Model
         'consumed'                  => 'integer',
         'contact_credits_reserved'  => 'integer',
         'contact_consumed'          => 'integer',
+        'excluded_count'            => 'integer',
         'quota_date'                => 'date',
     ];
 

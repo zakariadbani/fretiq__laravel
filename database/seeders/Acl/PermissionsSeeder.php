@@ -18,7 +18,7 @@ class PermissionsSeeder extends Seeder
      *
      * Keyword permissions: backend.access, send campaigns, manage roles, manage permissions,
      *                      view zoho, sync zoho, run discovery, view settings, edit settings,
-     *                      enrich companies
+     *                      enrich companies, view consumption, view provider quota
      *
      * Role mapping:
      *   superadmin  → all permissions
@@ -62,6 +62,8 @@ class PermissionsSeeder extends Seeder
             'view settings',     // admin/superadmin only — commercial does NOT get this
             'edit settings',     // admin/superadmin only — commercial does NOT get this
             'enrich companies',  // commercial can trigger Hunter enrichment manually
+            'view consumption',  // client-facing "Ma consommation" page — commercial + admin
+            'view provider quota', // superadmin only — real vendor-account balances, NOT for admin/commercial
         ];
 
         foreach ($keywordPermissions as $perm) {
@@ -83,10 +85,9 @@ class PermissionsSeeder extends Seeder
 
         $admin = Role::where('name', 'admin')->where('guard_name', 'web')->first();
         if ($admin) {
-            // Admin gets all permissions EXCEPT 'manage packages' — package management
-            // is superadmin-only so the client (admin role) never sees quota management.
+            // Admin gets all permissions EXCEPT superadmin-only vendor/package controls.
             $adminPermissions = $allPermissions->filter(
-                fn ($p) => $p->name !== 'manage packages'
+                fn ($p) => ! in_array($p->name, ['manage packages', 'view provider quota'], true)
             );
             $admin->syncPermissions($adminPermissions);
         }
@@ -116,6 +117,7 @@ class PermissionsSeeder extends Seeder
         $commercialPermissions[] = 'backend.access';
         $commercialPermissions[] = 'run discovery';
         $commercialPermissions[] = 'enrich companies';
+        $commercialPermissions[] = 'view consumption';
 
         $commercial = Role::where('name', 'commercial')->where('guard_name', 'web')->first();
         if ($commercial) {

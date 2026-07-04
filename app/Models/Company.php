@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Traits\Validator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -40,6 +41,7 @@ class Company extends Model
         'qualification_status',
         'is_active',
         'zoho_account_id',
+        'discovery_query',
     ];
 
     /**
@@ -66,6 +68,27 @@ class Company extends Model
             $company->qualification_status ??= 'pending';
             $company->is_active           ??= true;
         });
+
+        // Hide rejected (AI-excluded competitor) companies from every read path
+        // by default — Companies CRUD, dashboards, contact/segment pickers, audiences.
+        // Use withRejected() to opt back in (audit view, dedup/upsert lookups).
+        static::addGlobalScope('notRejected', function (Builder $builder): void {
+            $builder->where(function (Builder $query): void {
+                $query->where('companies.qualification_status', '!=', 'rejected')
+                    ->orWhereNull('companies.qualification_status');
+            });
+        });
+    }
+
+    /**
+     * Escape hatch for the notRejected global scope — removes it so rejected
+     * companies are included again. Required on the upsert domain-lookup path
+     * (else a re-discovered rejected domain isn't found and Company::create()
+     * throws on the unique domain constraint) and on the results audit toggle.
+     */
+    public function scopeWithRejected(Builder $query): Builder
+    {
+        return $query->withoutGlobalScope('notRejected');
     }
 
     // ── Relationships ──────────────────────────────────────────────────────────

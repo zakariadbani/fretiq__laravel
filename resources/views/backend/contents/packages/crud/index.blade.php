@@ -126,6 +126,88 @@
 </div>
 @endcan
 
+{{-- ── Card : Capacité fournisseur (mois en cours) ─────────────────────── --}}
+@can('manage packages')
+@if($capacity)
+<div class="card mb-6">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <h3 class="card-label fw-bold fs-3 mb-0">
+                <i class="bi bi-speedometer2 text-warning fs-3 me-2"></i>
+                Capacité fournisseur (mois en cours)
+            </h3>
+        </div>
+    </div>
+    <div class="card-body pt-3 pb-6">
+
+        @if($capacity['enrich']['capacity'] !== null)
+            @php
+                $enrichCap      = $capacity['enrich']['capacity'];
+                $enrichSold     = $capacity['enrich']['sold'];
+                $enrichConsumed = $capacity['enrich']['consumed'];
+                $enrichPct      = $enrichCap > 0 ? min(100, round(($enrichConsumed / $enrichCap) * 100)) : 0;
+                $enrichBar      = $enrichPct >= 100 ? 'bg-danger' : ($enrichPct >= 80 ? 'bg-warning' : 'bg-success');
+            @endphp
+            <div class="mb-6">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="fw-semibold text-gray-700">
+                        <i class="bi bi-person-lines-fill me-1"></i> Enrichissement (contacts)
+                    </span>
+                    <span class="text-muted fs-7">Capacité : <strong>{{ number_format($enrichCap) }}</strong></span>
+                </div>
+                <div class="d-flex flex-wrap gap-2 mb-2">
+                    <span class="badge badge-light-primary">
+                        Vendu au client actif :
+                        @if($enrichSold === null)
+                            Illimité
+                            @if($enrichCap !== null)
+                                <i class="bi bi-exclamation-triangle text-warning ms-1" title="Pack illimité mais capacité fournisseur finie"></i>
+                            @endif
+                        @else
+                            {{ number_format($enrichSold) }} / mois
+                        @endif
+                    </span>
+                    <span class="badge badge-light-info">Consommé : {{ number_format($enrichConsumed) }}</span>
+                </div>
+                <div class="progress h-8px">
+                    <div class="progress-bar {{ $enrichBar }}" style="width: {{ $enrichPct }}%"></div>
+                </div>
+            </div>
+        @endif
+
+        @if($capacity['discovery']['capacity'] !== null)
+            @php
+                $discCap       = $capacity['discovery']['capacity'];
+                $discEstimated = $capacity['discovery']['estimated_searches'];
+                $discPct       = $discCap > 0 ? min(100, round(($discEstimated / $discCap) * 100)) : 0;
+                $discBar       = $discPct >= 100 ? 'bg-danger' : ($discPct >= 80 ? 'bg-warning' : 'bg-success');
+            @endphp
+            <div>
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="fw-semibold text-gray-700">
+                        <i class="bi bi-building me-1"></i> Découverte (recherches)
+                    </span>
+                    <span class="text-muted fs-7">Capacité : <strong>{{ number_format($discCap) }}</strong></span>
+                </div>
+                <div class="d-flex flex-wrap gap-2 mb-2">
+                    <span class="badge badge-light-warning">
+                        Recherches estimées : ~{{ number_format($discEstimated) }} (estimation haute)
+                    </span>
+                </div>
+                <div class="progress h-8px">
+                    <div class="progress-bar {{ $discBar }}" style="width: {{ $discPct }}%"></div>
+                </div>
+                <div class="text-muted fs-7 mt-1">
+                    Estimation : nombre de runs × requêtes max/run — les recherches individuelles ne sont pas persistées.
+                </div>
+            </div>
+        @endif
+
+    </div>
+</div>
+@endif
+@endcan
+
 {{-- ── Card 2 : Consommation (14 derniers jours) ──────────────────────── --}}
 @can('manage packages')
 <div class="card mb-6">

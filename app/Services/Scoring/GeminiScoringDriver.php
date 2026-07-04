@@ -94,6 +94,12 @@ class GeminiScoringDriver implements ScoringDriverInterface
         $positions = implode(', ', $criteria->target_positions  ?? []);
         $name      = $criteria->name ?? '';
 
+        $aiTarget  = trim((string) ($criteria->ai_target  ?? ''));
+        $aiExclude = trim((string) ($criteria->ai_exclude ?? ''));
+
+        $targetBlock  = $aiTarget  !== '' ? "- Cible: {$aiTarget}\n"      : '';
+        $excludeBlock = $aiExclude !== '' ? "- À exclure: {$aiExclude}\n" : '';
+
         return <<<PROMPT
 Tu es un expert en prospection B2B pour TCL France, un commissionnaire de transport.
 Évalue la pertinence de ce prospect pour une campagne de prospection fret.
@@ -109,9 +115,14 @@ Critères de prospection:
 - Secteurs cibles: {$sectors}
 - Pays cibles: {$countries}
 - Postes cibles: {$positions}
+{$targetBlock}{$excludeBlock}
+Classe la pertinence du candidat par rapport à la Cible ci-dessus si elle est précisée.
+Si le candidat correspond à la description "À exclure" (ex: transporteur, transitaire,
+commissionnaire de transport ou logisticien concurrent), mets exclude à true et explique
+pourquoi dans explanation.
 
 Réponds UNIQUEMENT avec un objet JSON strict (sans markdown, sans commentaire):
-{"score": <entier entre 0 et 100>, "explanation": "<1-2 phrases en français expliquant le score>"}
+{"score": <entier entre 0 et 100>, "explanation": "<1-2 phrases en français expliquant le score>", "exclude": <true ou false>}
 
 Le score reflète la probabilité que ce prospect soit un chargeur ou une entreprise intéressée
 par des services de fret international (transit, freight forwarding, logistique).
@@ -121,7 +132,7 @@ PROMPT;
     /**
      * Parse and validate the JSON text returned by Gemini.
      *
-     * @return array{score: int, explanation: string}|null
+     * @return array{score: int, explanation: string, exclude: bool}|null
      */
     private function parseResult(string $text, array $candidate): ?array
     {
@@ -176,6 +187,7 @@ PROMPT;
         return [
             'score'       => $score,
             'explanation' => trim($explanation),
+            'exclude'     => (bool) ($data['exclude'] ?? false),
         ];
     }
 }

@@ -121,7 +121,7 @@ return [
         //---------------------------------------------------------------------------
         [
             'content' => 'Suivi',
-            'permission' => ['view demandes', 'view suppressions'],
+            'permission' => ['view demandes', 'view suppressions', 'view consumption'],
             'classes' => ['content' => 'pt-8 pb-2'],
         ],
 
@@ -145,12 +145,22 @@ return [
             'path' => 'admin/suppressions',
         ],
 
+        [
+            'title' => 'Ma consommation',
+            'permission' => 'view consumption',
+            'icon' => [
+                'svg' => 'abstract-26',
+                'font' => '<i class="bi bi-pie-chart fs-2"></i>',
+            ],
+            'path' => 'admin/consumption',
+        ],
+
         //---------------------------------------------------------------------------
         // Section : Administration
         //---------------------------------------------------------------------------
         [
             'content' => 'Administration',
-            'permission' => ['view users', 'manage roles', 'manage permissions', 'view sender_identities', 'manage packages', 'view settings'],
+            'permission' => ['view users', 'manage roles', 'manage permissions', 'view sender_identities', 'manage packages', 'view provider quota', 'view settings'],
             'classes' => ['content' => 'pt-8 pb-2'],
         ],
 
@@ -162,6 +172,16 @@ return [
                 'font' => '<i class="bi bi-box-seam fs-2"></i>',
             ],
             'path' => 'admin/packages',
+        ],
+
+        [
+            'title' => 'Quota fournisseurs',
+            'permission' => 'view provider quota',
+            'icon' => [
+                'svg' => 'abstract-26',
+                'font' => '<i class="bi bi-speedometer2 fs-2"></i>',
+            ],
+            'path' => 'admin/provider-quota',
         ],
 
         [

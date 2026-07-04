@@ -12,6 +12,7 @@ use App\Models\DiscoveryRun;
 use App\Models\Package;
 use App\Models\PackageAssignment;
 use App\Models\ProspectCriteria;
+use App\Models\Setting;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -54,6 +55,49 @@ class DiscoveryQuotaService
     public function activePackage(): ?Package
     {
         return PackageAssignment::latestActive()?->package;
+    }
+
+    // ── Quota timezone (single source of truth) ────────────────────────────────
+
+    /**
+     * The configured quota timezone — 'Europe/Paris' (default) or 'UTC'.
+     *
+     * Every quota-day computation (today(), currentHour(), quota_date writes)
+     * MUST read this instead of hardcoding a zone. The scheduler gate and the
+     * quota_date persisted on reservation both route through this same source,
+     * so a criterion cannot double-fire across the UTC/local-midnight band.
+     */
+    public function quotaTz(): string
+    {
+        return (string) Setting::get('decouverte.timezone', 'Europe/Paris');
+    }
+
+    /**
+     * "Today" in the configured quota timezone — the calendar day used for
+     * quota_date and all daily-meter reads.
+     *
+     * Only the calendar DATE is computed in the quota tz; the returned Carbon
+     * is a tz-neutral midnight in the app's default timezone (UTC). This
+     * matters because quota_date is a plain `date` column and quota_anchor_date
+     * is parsed with Carbon::parse() (both with NO timezone offset) — building
+     * "today" as an absolute instant at Europe/Paris 00:00 (which is UTC 22:00
+     * the PRIOR day) would shift every currentPeriod() anchor-walk comparison
+     * by the UTC/Paris offset and desync from quota_date string comparisons.
+     * Deriving the date string first, then parsing it plainly, keeps this
+     * value comparable the same way every other quota_date read/write is.
+     */
+    public function today(): Carbon
+    {
+        return Carbon::parse(Carbon::now($this->quotaTz())->toDateString());
+    }
+
+    /**
+     * Current hour (0-23) in the configured quota timezone — used by the
+     * auto-discovery scheduler gate (run_at_hour <= currentHour()).
+     */
+    public function currentHour(): int
+    {
+        return Carbon::now($this->quotaTz())->hour;
     }
 
     // ── Unlimited guard ────────────────────────────────────────────────────────
@@ -156,12 +200,12 @@ class DiscoveryQuotaService
      * from the lte($on) walk, not the diff. The backward walk has no $i>0 gate
      * so it can reach negative $i to find a pre-anchor window.
      *
-     * @param  CarbonInterface|null  $on  Reference "today"; defaults to Carbon::today().
+     * @param  CarbonInterface|null  $on  Reference "today"; defaults to $this->today() (quota tz).
      * @return array{0: \Carbon\Carbon, 1: \Carbon\Carbon}  [$start, $end] half-open.
      */
     public function currentPeriod(?CarbonInterface $on = null): array
     {
-        $on  = ($on ?? Carbon::today())->copy()->startOfDay();
+        $on  = ($on ?? $this->today())->copy()->startOfDay();
         $raw = $this->activePackage()?->quota_anchor_date;
         $anchor = $raw ? Carbon::parse($raw)->startOfDay() : $on->copy()->startOfMonth();
 
@@ -199,11 +243,11 @@ class DiscoveryQuotaService
             ->selectRaw(
                 "SUM(CASE
                     WHEN status IN ('completed', 'failed')
-                        THEN consumed
+                        THEN (consumed - COALESCE(excluded_count, 0))
                     ELSE
-                        CASE WHEN credits_reserved > consumed
+                        CASE WHEN credits_reserved > (consumed - COALESCE(excluded_count, 0))
                             THEN credits_reserved
-                            ELSE consumed
+                            ELSE (consumed - COALESCE(excluded_count, 0))
                         END
                  END) as total_used"
             );
@@ -251,7 +295,7 @@ class DiscoveryQuotaService
             return null;
         }
 
-        return $this->remainingOn(Carbon::today());
+        return $this->remainingOn($this->today());
     }
 
     // ── Contact meter accounting ───────────────────────────────────────────────
@@ -327,7 +371,7 @@ class DiscoveryQuotaService
             return null;
         }
 
-        return $this->contactRemainingOn(Carbon::today());
+        return $this->contactRemainingOn($this->today());
     }
 
     // ── Monthly consumption accounting ────────────────────────────────────────
@@ -359,11 +403,11 @@ class DiscoveryQuotaService
             ->selectRaw(
                 "SUM(CASE
                     WHEN status IN ('completed', 'failed')
-                        THEN consumed
+                        THEN (consumed - COALESCE(excluded_count, 0))
                     ELSE
-                        CASE WHEN credits_reserved > consumed
+                        CASE WHEN credits_reserved > (consumed - COALESCE(excluded_count, 0))
                             THEN credits_reserved
-                            ELSE consumed
+                            ELSE (consumed - COALESCE(excluded_count, 0))
                         END
                  END) as total_used"
             );
@@ -525,7 +569,7 @@ class DiscoveryQuotaService
     public function effectiveBatchFor(ProspectCriteria $criteria): int
     {
         $wantedBatch = $criteria->daily_limit ?: 20;
-        $today       = Carbon::today();
+        $today       = $this->today();
 
         // Collect only the caps that are active (not unlimited); each guarded before append.
         $caps = [];
@@ -606,7 +650,7 @@ class DiscoveryQuotaService
                     throw new DiscoveryRunInFlightException($latest);
                 }
 
-                $today       = Carbon::today();
+                $today       = $this->today();
                 $wantedBatch = $criteria->daily_limit ?: 20;
 
                 // Pin the monthly period ONCE — both company and contact monthly reads
@@ -635,6 +679,7 @@ class DiscoveryQuotaService
                 // Each cap is appended only after its *IsUnlimited() guard so null
                 // never reaches min() (PHP null footgun).
                 $contactCaps = [$batch];   // upper-bound by company batch
+                if ($criteria->contact_limit !== null)    $contactCaps[] = (int) $criteria->contact_limit;  // per-criteria cap
                 if (! $this->contactIsUnlimited())        $contactCaps[] = $this->contactRemainingOn($today);
                 if (! $this->monthlyContactIsUnlimited()) $contactCaps[] = $this->monthlyContactRemaining($pStart, $pEnd);
                 $contactReserved = min($contactCaps);
@@ -708,7 +753,7 @@ class DiscoveryQuotaService
                     }
                 }
 
-                $today = Carbon::today();
+                $today = $this->today();
 
                 // Pin the monthly period once — both daily and monthly contact guards
                 // use the same window so they cannot see two different periods.
@@ -750,5 +795,111 @@ class DiscoveryQuotaService
                 DB::selectOne('SELECT RELEASE_LOCK(?)', [$lockName]);
             }
         }
+    }
+
+    // ── Reporting ──────────────────────────────────────────────────────────────
+
+    /**
+     * Daily series of discovery + contact consumption over [$start, $end).
+     *
+     * Zero-fills every day in the half-open range so the caller always gets a
+     * dense series (no gaps for days with no runs) — CarbonPeriod is INCLUSIVE
+     * by default, so we fill $start through $end->copy()->subDay() to land
+     * exactly on the half-open range's calendar days.
+     *
+     * Accounting shape MUST match usedOn()/contactUsedOn(): discoveries subtract
+     * COALESCE(excluded_count, 0) from `consumed` (mirrors usedOn() — a candidate
+     * rejected by AI targeting still advances `consumed` but is refunded via
+     * excluded_count) for both terminal and in-flight branches; contacts mirror
+     * contactUsedOn() and are NOT excluded_count-adjusted (plain contact_consumed).
+     * Otherwise the chart's "today" point disagrees with the today progress bar
+     * rendered from usedOn() on the same page.
+     *
+     * @param  CarbonInterface  $start  Inclusive lower bound.
+     * @param  CarbonInterface  $end    Exclusive upper bound.
+     * @return array{dates: array<string>, discoveries: array<int>, contacts: array<int>}
+     */
+    public function dailySeries(CarbonInterface $start, CarbonInterface $end): array
+    {
+        $rows = DiscoveryRun::query()
+            ->where('quota_date', '>=', $start->toDateString())
+            ->where('quota_date', '<',  $end->toDateString())
+            ->selectRaw(
+                "quota_date,
+                 COALESCE(SUM(CASE
+                    WHEN status IN ('completed', 'failed') THEN (consumed - COALESCE(excluded_count, 0))
+                    ELSE CASE WHEN credits_reserved > (consumed - COALESCE(excluded_count, 0))
+                        THEN credits_reserved
+                        ELSE (consumed - COALESCE(excluded_count, 0))
+                    END
+                 END), 0) as discoveries,
+                 COALESCE(SUM(CASE
+                    WHEN status IN ('completed', 'failed') THEN contact_consumed
+                    ELSE CASE WHEN contact_credits_reserved > contact_consumed THEN contact_credits_reserved ELSE contact_consumed END
+                 END), 0) as contacts"
+            )
+            ->groupBy('quota_date')
+            ->get()
+            ->keyBy(fn ($row) => Carbon::parse($row->quota_date)->toDateString());
+
+        $dates       = [];
+        $discoveries = [];
+        $contacts    = [];
+
+        // CarbonPeriod is inclusive of both endpoints — stop at $end minus a day
+        // so the half-open [$start, $end) range yields exactly the right day count.
+        foreach (\Carbon\CarbonPeriod::create($start, $end->copy()->subDay()) as $day) {
+            $key           = $day->toDateString();
+            $row           = $rows->get($key);
+            $dates[]       = $key;
+            $discoveries[] = $row ? (int) $row->discoveries : 0;
+            $contacts[]    = $row ? (int) $row->contacts : 0;
+        }
+
+        return [
+            'dates'       => $dates,
+            'discoveries' => $discoveries,
+            'contacts'    => $contacts,
+        ];
+    }
+
+    /**
+     * Per-criteria breakdown of runs/companies/contacts/credits over [$start, $end).
+     *
+     * Grouping key is CASE WHEN type='manual' THEN NULL ELSE prospect_criteria_id END —
+     * manual enrichment runs carry the target company's criteria_id (see
+     * reserveManualEnrichment()), so grouping by prospect_criteria_id alone would
+     * fold manual-enrichment spend into that criterion's row. Bucketing manual
+     * runs under a NULL key keeps them in their own "Enrichissement manuel" row.
+     *
+     * @param  CarbonInterface  $start  Inclusive lower bound.
+     * @param  CarbonInterface  $end    Exclusive upper bound.
+     * @return \Illuminate\Support\Collection
+     */
+    public function perCriteriaBreakdown(CarbonInterface $start, CarbonInterface $end): \Illuminate\Support\Collection
+    {
+        return DiscoveryRun::query()
+            ->leftJoin('prospect_criteria', function ($join) {
+                $join->on('prospect_criteria.id', '=', DB::raw(
+                    "(CASE WHEN discovery_runs.type = 'manual' THEN NULL ELSE discovery_runs.prospect_criteria_id END)"
+                ));
+            })
+            ->where('discovery_runs.quota_date', '>=', $start->toDateString())
+            ->where('discovery_runs.quota_date', '<',  $end->toDateString())
+            // consumed is EFFECTIVE (net of AI-excluded candidates), matching the
+            // usedOn()/usedInPeriod() meter — not raw consumed.
+            ->selectRaw(
+                "CASE WHEN discovery_runs.type = 'manual' THEN NULL ELSE discovery_runs.prospect_criteria_id END as criteria_key,
+                 COALESCE(prospect_criteria.name, 'Enrichissement manuel') as label,
+                 COUNT(*) as runs_count,
+                 COALESCE(SUM(discovery_runs.companies_count), 0) as companies_count,
+                 COALESCE(SUM(discovery_runs.new_companies_count), 0) as new_companies_count,
+                 COALESCE(SUM(discovery_runs.contacts_count), 0) as contacts_count,
+                 COALESCE(SUM(discovery_runs.consumed - COALESCE(discovery_runs.excluded_count, 0)), 0) as consumed,
+                 COALESCE(SUM(discovery_runs.contact_consumed), 0) as contact_consumed"
+            )
+            ->groupBy('criteria_key', 'label')
+            ->orderByDesc('runs_count')
+            ->get();
     }
 }

@@ -541,4 +541,106 @@ class ProspectCriteriaTest extends TestCase
 
         $response->assertStatus(403);
     }
+
+    // ── Automation fields (auto_run/run_at_hour/contact_limit/min_score_enrich/auto_enrich) ──
+
+    /**
+     * Updating a criteria with automation fields persists all 5 columns correctly-typed.
+     */
+    public function test_update_persists_automation_fields(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name'        => 'Critère Automatisation',
+            'daily_limit' => 10,
+            'is_active'   => true,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->put('/admin/prospect_criteria/' . $criteria->id, [
+                'name'             => 'Critère Automatisation',
+                'daily_limit'      => 10,
+                'is_active'        => 1,
+                'auto_run'         => 1,
+                'run_at_hour'      => 8,
+                'contact_limit'    => 5,
+                'min_score_enrich' => 70,
+                'auto_enrich'      => 0,
+            ]);
+
+        $response->assertStatus(200);
+
+        $criteria->refresh();
+        $this->assertTrue((bool) $criteria->auto_run);
+        $this->assertSame(8, $criteria->run_at_hour);
+        $this->assertSame(5, $criteria->contact_limit);
+        $this->assertSame(70, $criteria->min_score_enrich);
+        $this->assertFalse((bool) $criteria->auto_enrich);
+    }
+
+    /**
+     * auto_enrich posted as an empty string ('' — the Hérité select option) round-trips
+     * to null in the DB (ConvertEmptyStringsToNull + nullable|boolean rule), preserving
+     * the tri-state "inherit global setting" semantics.
+     */
+    public function test_auto_enrich_empty_string_saves_as_null(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name'        => 'Critère Tri-State',
+            'daily_limit' => 10,
+            'is_active'   => true,
+            'auto_enrich' => true,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->put('/admin/prospect_criteria/' . $criteria->id, [
+                'name'        => 'Critère Tri-State',
+                'daily_limit' => 10,
+                'is_active'   => 1,
+                'auto_enrich' => '',
+            ]);
+
+        $response->assertStatus(200);
+
+        $criteria->refresh();
+        $this->assertNull($criteria->auto_enrich, 'auto_enrich must round-trip to null when posted as an empty string');
+    }
+
+    /**
+     * run_at_hour is required when auto_run=1 — omitting it returns 406 with a
+     * validation error on run_at_hour (required_if:auto_run,1).
+     */
+    public function test_run_at_hour_required_when_auto_run_enabled(): void
+    {
+        $response = $this->actingAs($this->superadmin)
+            ->post('/admin/prospect_criteria', [
+                'name'        => 'Critère Auto Sans Heure',
+                'daily_limit' => 10,
+                'is_active'   => 1,
+                'auto_run'    => 1,
+            ]);
+
+        $response->assertStatus(406);
+        $response->assertJsonStructure(['message', 'errors' => ['run_at_hour']]);
+
+        $this->assertDatabaseMissing('prospect_criteria', ['name' => 'Critère Auto Sans Heure']);
+    }
+
+    /**
+     * min_score_enrich above 100 is rejected by the between:0,100 rule (406).
+     */
+    public function test_min_score_enrich_above_100_rejected(): void
+    {
+        $response = $this->actingAs($this->superadmin)
+            ->post('/admin/prospect_criteria', [
+                'name'             => 'Critère Score Invalide',
+                'daily_limit'      => 10,
+                'is_active'        => 1,
+                'min_score_enrich' => 101,
+            ]);
+
+        $response->assertStatus(406);
+        $response->assertJsonStructure(['message', 'errors' => ['min_score_enrich']]);
+
+        $this->assertDatabaseMissing('prospect_criteria', ['name' => 'Critère Score Invalide']);
+    }
 }

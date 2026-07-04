@@ -108,9 +108,9 @@
                                        required />
                             </div>
 
-                            {{-- Limite / jour --}}
+                            {{-- Découvertes / jour --}}
                             <div class="fv-row mb-7">
-                                <label class="required fw-semibold fs-6 mb-2">Limite / jour</label>
+                                <label class="required fw-semibold fs-6 mb-2">Découvertes / jour</label>
                                 <div class="input-group input-group-solid">
                                     <input type="number"
                                            name="daily_limit"
@@ -118,10 +118,13 @@
                                            value="{{ old('daily_limit', $model->daily_limit ?? 20) }}"
                                            min="1"
                                            max="500" />
-                                    <span class="input-group-text fw-semibold text-gray-500">entreprises / jour</span>
+                                    <span class="input-group-text fw-semibold text-gray-500">découvertes / jour</span>
                                 </div>
-                                <div class="form-text text-muted mt-1">
-                                    Nombre maximum d'entreprises découvertes par jour pour ce critère. Chaque entreprise déclenche un enrichissement (consommation de crédits) — cette limite plafonne le coût quotidien et la cadence d'envoi.
+                                @php
+                                    $overbooked = ($quotaPackage?->daily_credits !== null) && (($activeDailyLimitSum ?? 0) > $quotaPackage->daily_credits);
+                                @endphp
+                                <div class="form-text mt-1 {{ $overbooked ? 'text-warning' : 'text-muted' }}">
+                                    Quota package : {{ $quotaPackage?->daily_credits ?? '∞' }} découvertes/j &middot; {{ $quotaPackage?->daily_contact_credits ?? '∞' }} contacts/j — total réservé par les critères actifs : {{ $activeDailyLimitSum ?? 0 }}/j
                                 </div>
                             </div>
 
@@ -155,6 +158,120 @@
                 </div>
             </div>
 
+            {{-- Automatisation card --}}
+            <div class="card mb-5">
+                <div class="card-header border-0 pt-5">
+                    <h3 class="card-title fw-bolder m-0">
+                        <i class="bi bi-clock-history text-success fs-3 me-2"></i>
+                        Automatisation
+                    </h3>
+                    <div class="card-toolbar">
+                        <span class="text-muted fs-7">Découverte + enrichissement automatiques pour ce critère</span>
+                    </div>
+                </div>
+                <div class="card-body border-top p-9">
+                    <div class="row">
+                        {{-- Left column --}}
+                        <div class="col-lg-6">
+
+                            {{-- auto_run — hidden input + checkbox switch, same pattern as is_active --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2 d-block">Découverte automatique</label>
+                                <div class="d-flex align-items-center justify-content-between border border-dashed rounded p-4">
+                                    <div>
+                                        <div class="fw-semibold text-gray-800 fs-6">Découverte automatique quotidienne</div>
+                                        <div class="text-muted fs-7">Lance la découverte une fois par jour, à l'heure choisie.</div>
+                                    </div>
+                                    <div class="form-check form-check-solid form-switch ms-4">
+                                        <input type="hidden" name="auto_run" value="0" />
+                                        <input class="form-check-input h-20px w-30px"
+                                               type="checkbox"
+                                               name="auto_run"
+                                               id="auto_run"
+                                               value="1"
+                                               {{ old('auto_run', ($model->auto_run ?? false) ? '1' : '0') == '1' ? 'checked' : '' }} />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {{-- run_at_hour — placeholder '' option + 0..23 as HH:00 --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Heure de lancement</label>
+                                @php
+                                    $currentRunAtHour = old('run_at_hour', $model->run_at_hour ?? null);
+                                @endphp
+                                <select name="run_at_hour" id="run_at_hour" class="form-select form-select-solid">
+                                    <option value="">&mdash;</option>
+                                    @for($h = 0; $h <= 23; $h++)
+                                        <option value="{{ $h }}" {{ (string) $currentRunAtHour === (string) $h ? 'selected' : '' }}>
+                                            {{ sprintf('%02d:00', $h) }}
+                                        </option>
+                                    @endfor
+                                </select>
+                                <div class="form-text text-muted mt-1">
+                                    Heure ({{ $quotaTz ?? 'Europe/Paris' }}) — lancement une fois par jour, à partir de l'heure choisie.
+                                </div>
+                            </div>
+
+                            {{-- contact_limit --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Contacts max / exécution</label>
+                                <div class="input-group input-group-solid">
+                                    <input type="number"
+                                           name="contact_limit"
+                                           class="form-control form-control-solid"
+                                           value="{{ old('contact_limit', $model->contact_limit ?? '') }}"
+                                           placeholder="Illimité (borné par le quota package)"
+                                           min="1"
+                                           max="500" />
+                                    <span class="input-group-text fw-semibold text-gray-500">contacts / exécution</span>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        {{-- Right column --}}
+                        <div class="col-lg-6">
+
+                            {{-- min_score_enrich --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Score min. d'enrichissement</label>
+                                <input type="number"
+                                       name="min_score_enrich"
+                                       class="form-control form-control-solid"
+                                       value="{{ old('min_score_enrich', $model->min_score_enrich ?? '') }}"
+                                       placeholder="Hérité : {{ $globalMinScore }}"
+                                       min="0"
+                                       max="100" />
+                                <div class="form-text text-muted mt-1">
+                                    Seules les entreprises dont le score dépasse ce seuil sont enrichies automatiquement. Vide = valeur globale.
+                                </div>
+                            </div>
+
+                            {{-- auto_enrich — plain tri-state select ('' = Hérité), NEVER the hidden-checkbox pattern --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Enrichissement automatique</label>
+                                @php
+                                    $currentAutoEnrich = $model->auto_enrich ?? null;
+                                @endphp
+                                <select name="auto_enrich" class="form-select form-select-solid">
+                                    <option value="" {{ old('auto_enrich', $currentAutoEnrich === null ? '' : ($currentAutoEnrich ? '1' : '0')) === '' ? 'selected' : '' }}>
+                                        Hérité (@if($globalAutoEnrich) activé @else désactivé @endif)
+                                    </option>
+                                    <option value="1" {{ old('auto_enrich', $currentAutoEnrich === null ? '' : ($currentAutoEnrich ? '1' : '0')) === '1' ? 'selected' : '' }}>
+                                        Activé
+                                    </option>
+                                    <option value="0" {{ old('auto_enrich', $currentAutoEnrich === null ? '' : ($currentAutoEnrich ? '1' : '0')) === '0' ? 'selected' : '' }}>
+                                        Désactivé
+                                    </option>
+                                </select>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             {{-- Targeting card --}}
             <div class="card mb-5">
                 <div class="card-header border-0 pt-5">
@@ -163,10 +280,46 @@
                         Ciblage
                     </h3>
                     <div class="card-toolbar">
-                        <span class="text-muted fs-7">Secteurs, pays, tailles d'entreprise et postes cibles</span>
+                        <span class="text-muted fs-7">Décrivez votre cible, ou affinez avec les filtres structurés</span>
                     </div>
                 </div>
                 <div class="card-body border-top p-9">
+
+                    {{-- Décrivez votre cible — natural-language Cible/Exclure, feeds the AI query builder + scorer --}}
+                    <div class="row g-7 mb-7">
+                        <div class="col-lg-6">
+                            <label class="fw-semibold fs-6 mb-2 d-flex align-items-center">
+                                <i class="bi bi-check-circle text-success me-2"></i>
+                                Cible — qui trouver
+                            </label>
+                            <textarea name="ai_target"
+                                      class="form-control form-control-solid"
+                                      rows="4"
+                                      maxlength="2000"
+                                      placeholder="Ex : entreprises du textile — fabricants, importateurs, grossistes, marques de vêtements.">{{ old('ai_target', $model->ai_target ?? '') }}</textarea>
+                        </div>
+                        <div class="col-lg-6">
+                            <label class="fw-semibold fs-6 mb-2 d-flex align-items-center">
+                                <i class="bi bi-x-circle text-danger me-2"></i>
+                                Exclure — qui écarter
+                            </label>
+                            <textarea name="ai_exclude"
+                                      class="form-control form-control-solid"
+                                      rows="4"
+                                      maxlength="2000"
+                                      placeholder="Ex : transporteurs, transitaires, commissionnaires, logisticiens.">{{ old('ai_exclude', $model->ai_exclude ?? '') }}</textarea>
+                        </div>
+                    </div>
+
+                    @if(empty(config('services.gemini.api_key')))
+                        <div class="alert alert-warning d-flex align-items-center mb-7">
+                            <i class="bi bi-exclamation-triangle fs-3 me-3"></i>
+                            <div>
+                                L'exclusion par IA nécessite l'assistant IA (non activé). Contactez l'administrateur.
+                            </div>
+                        </div>
+                    @endif
+
                     <div class="row g-7">
                         {{-- Left column --}}
                         <div class="col-lg-6">
@@ -261,10 +414,10 @@
                 Aperçu des requêtes de découverte
             </h3>
             <div class="card-toolbar">
-                <span class="text-muted fs-7 me-3">Basé sur les critères enregistrés</span>
-                <button type="button" class="btn btn-sm btn-light-warning" id="btn-refresh-queries">
-                    <i class="bi bi-arrow-clockwise me-1"></i>
-                    Actualiser
+                <span class="text-muted fs-7 me-3">Activez/désactivez chaque requête</span>
+                <button type="button" class="btn btn-sm btn-light-primary" id="btn-generate-ai">
+                    <i class="bi bi-stars me-1"></i>
+                    Générer avec l'IA
                 </button>
             </div>
         </div>
@@ -290,30 +443,72 @@
     <script>
         @if(isset($model) && $model->id)
         (function () {
-            var previewUrl = '{{ route('admin.prospect_criteria.preview_queries', $model->id) }}';
-            var $container = $('#query-preview-content');
+            var previewUrl  = '{{ route('admin.prospect_criteria.preview_queries', $model->id) }}';
+            var generateUrl = '{{ route('admin.prospect_criteria.generate_queries', $model->id) }}';
+            var csrfToken   = '{{ csrf_token() }}';
+            var $container  = $('#query-preview-content');
+            var $genBtn     = $('#btn-generate-ai');
+
+            // Renders queries as real form inputs (name="ai_queries[i][q|enabled]") so
+            // they submit with Enregistrer — this card is a stateless preview, Enregistrer
+            // is the only action that persists ai_queries (beforeSave() on the controller).
+            function renderQueries(queries) {
+                if (!queries || queries.length === 0) {
+                    $container.html(
+                        '<div class="text-muted fs-7"><i class="bi bi-exclamation-circle me-1"></i>Aucune requête générée — renseignez une description de cible ou au moins un secteur/pays.</div>'
+                    );
+                    return;
+                }
+                var html = '<div class="text-muted fs-7 mb-4">' + queries.length + ' requête(s) — désactivez celles que vous ne voulez pas lancer, puis Enregistrer.</div>';
+                $.each(queries, function (i, item) {
+                    var q       = item.q != null ? item.q : item;
+                    var qEsc    = $('<div>').text(q).html();
+                    var enabled = item.enabled !== false;
+                    html += '<div class="border border-gray-300 rounded p-4 mb-3' + (enabled ? '' : ' opacity-50') + '" data-qi="' + i + '">'
+                          + '<div class="d-flex align-items-center">'
+                          + '<input type="hidden" name="ai_queries[' + i + '][q]" value="' + qEsc + '" />'
+                          + '<label class="form-check form-switch form-check-custom form-check-solid me-4 mb-0">'
+                          + '<input type="hidden" name="ai_queries[' + i + '][enabled]" value="0" />'
+                          + '<input class="form-check-input h-20px w-35px q-toggle" type="checkbox" name="ai_queries[' + i + '][enabled]" value="1" ' + (enabled ? 'checked' : '') + ' />'
+                          + '</label>'
+                          + '<span class="badge badge-light-warning me-3">' + (i + 1) + '</span>'
+                          + '<span class="text-gray-700 fs-7">' + qEsc + '</span>'
+                          + '</div>'
+                          + '</div>';
+                });
+                $container.html(html);
+                bindToggles();
+            }
+
+            // Toggling only dims the row locally — no server call. The state submits
+            // with the rest of the form on Enregistrer.
+            function bindToggles() {
+                $container.find('.q-toggle').on('change', function () {
+                    var $box = $(this).closest('[data-qi]');
+                    $box.toggleClass('opacity-50', !this.checked);
+                });
+            }
+
+            // Reads the currently rendered {q, enabled} list — used to preserve enabled
+            // flags across a re-generate and to seed generateQueries()'s preview payload.
+            function collectQueries() {
+                var queries = [];
+                $container.find('[data-qi]').each(function () {
+                    var $box = $(this);
+                    queries.push({
+                        q: $box.find('input[name$="[q]"]').val(),
+                        enabled: $box.find('.q-toggle').is(':checked'),
+                    });
+                });
+                return queries;
+            }
 
             function loadQueries() {
                 $container.html(
                     '<div class="text-muted fs-7"><i class="bi bi-hourglass-split me-1"></i>Chargement des requêtes…</div>'
                 );
                 $.getJSON(previewUrl, function (data) {
-                    var queries = data.queries || [];
-                    if (queries.length === 0) {
-                        $container.html(
-                            '<div class="text-muted fs-7"><i class="bi bi-exclamation-circle me-1"></i>Aucune requête générée — renseignez au moins un secteur ou un pays.</div>'
-                        );
-                        return;
-                    }
-                    var html = '<ul class="list-unstyled mb-0">';
-                    $.each(queries, function (i, q) {
-                        html += '<li class="d-flex align-items-start mb-2">'
-                              + '<span class="badge badge-light-warning me-2 mt-1 fs-8">' + (i + 1) + '</span>'
-                              + '<span class="text-gray-700 fs-7">' + $('<div>').text(q).html() + '</span>'
-                              + '</li>';
-                    });
-                    html += '</ul>';
-                    $container.html(html);
+                    renderQueries(data.queries || []);
                 }).fail(function () {
                     $container.html(
                         '<div class="text-danger fs-7"><i class="bi bi-x-circle me-1"></i>Erreur lors du chargement des requêtes.</div>'
@@ -321,15 +516,53 @@
                 });
             }
 
-            // Load on page ready
+            // Stateless preview: POSTs the CURRENT (possibly unsaved) textarea values
+            // plus the current query list (for enabled-flag preservation). Nothing is
+            // persisted here — only Enregistrer saves ai_queries.
+            function generateQueries() {
+                $genBtn.prop('disabled', true);
+                $container.html(
+                    '<div class="text-muted fs-7"><i class="bi bi-hourglass-split me-1"></i>Génération des requêtes par l\'IA…</div>'
+                );
+                $.ajax({
+                    url: generateUrl,
+                    method: 'POST',
+                    dataType: 'json',
+                    headers: { 'X-CSRF-TOKEN': csrfToken },
+                    data: {
+                        ai_target:  $('textarea[name="ai_target"]').val(),
+                        ai_exclude: $('textarea[name="ai_exclude"]').val(),
+                        queries:    collectQueries(),
+                    },
+                }).done(function (data) {
+                    renderQueries(data.queries || []);
+                }).fail(function () {
+                    $container.html(
+                        '<div class="text-danger fs-7"><i class="bi bi-x-circle me-1"></i>Erreur lors de la génération des requêtes.</div>'
+                    );
+                }).always(function () {
+                    $genBtn.prop('disabled', false);
+                });
+            }
+
+            // Load cached/structured preview on page ready — populates the form fields
+            // so unmodified queries re-submit unchanged if the user doesn't regenerate.
             $(loadQueries);
 
-            // Refresh button
-            $('#btn-refresh-queries').on('click', loadQueries);
+            // Générer avec l'IA button
+            $genBtn.on('click', generateQueries);
         })();
         @endif
 
         $(function () {
+            // Disable run_at_hour while auto_run is unchecked (cosmetic only —
+            // server validation via required_if:auto_run,1 is the real guard).
+            function toggleRunAtHour() {
+                $('#run_at_hour').prop('disabled', !$('#auto_run').is(':checked'));
+            }
+            $('#auto_run').on('change', toggleRunAtHour);
+            toggleRunAtHour();
+
             // UE-27 / Effacer quick-pick buttons (D6, union semantics).
             // EU27 list sourced from PHP config — never hard-coded in JS.
             const EU27 = @json($euCodes);

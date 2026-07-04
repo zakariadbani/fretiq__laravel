@@ -35,6 +35,11 @@ class DiscoveryScoringGateTest extends TestCase
 
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
+        config([
+            'services.serpapi.driver' => 'local',
+            'services.hunter.driver'  => 'local',
+        ]);
+
         // Reset settings to defaults before each test to prevent leakage.
         app(\App\Services\Settings\SettingService::class)->clearCache();
     }
@@ -445,4 +450,164 @@ class DiscoveryScoringGateTest extends TestCase
         $this->assertSame(0, $unscoredCount,
             'All discovered companies must be scored with default settings');
     }
+
+    // ── Per-criteria overrides (min_score_enrich / auto_enrich) ─────────────────
+
+    /**
+     * criteria.min_score_enrich overrides the global setting — global=0 (all pass)
+     * but criteria override=101 (above max) gates all enrichment despite the
+     * permissive global default.
+     */
+    public function test_criteria_min_score_override_beats_global(): void
+    {
+        Setting::set('decouverte.auto_scoring', true);
+        Setting::set('decouverte.auto_enrich', true);
+        Setting::set('decouverte.min_score_enrich', 0);  // global: all pass
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6, 'min_score_enrich' => 101]);
+        $run      = $this->makeRunningRun($criteria, 6);
+
+        /** @var DiscoveryPipelineService $pipeline */
+        $pipeline = app(DiscoveryPipelineService::class);
+        $pipeline->run($criteria, 6, $run);
+
+        $run->refresh();
+
+        $this->assertSame(0, (int) $run->contacts_count,
+            'contacts_count must be 0 — criteria override min_score_enrich=101 beats the permissive global setting');
+        $this->assertSame($run->companies_count, (int) $run->low_score_count,
+            'low_score_count must equal companies_count when the criteria override gates all enrichment');
+    }
+
+    /**
+     * criteria.min_score_enrich = null falls back to the global setting —
+     * identical behavior to the pre-override code path.
+     */
+    public function test_null_min_score_enrich_falls_back_to_global(): void
+    {
+        Setting::set('decouverte.auto_scoring', true);
+        Setting::set('decouverte.auto_enrich', true);
+        Setting::set('decouverte.min_score_enrich', 0);  // global: all pass
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6, 'min_score_enrich' => null]);
+        $run      = $this->makeRunningRun($criteria, 6);
+
+        /** @var DiscoveryPipelineService $pipeline */
+        $pipeline = app(DiscoveryPipelineService::class);
+        $pipeline->run($criteria, 6, $run);
+
+        $run->refresh();
+
+        $this->assertGreaterThan(0, $run->contacts_count,
+            'contacts_count must be > 0 — null override falls back to the permissive global min_score_enrich=0');
+        $this->assertSame(0, (int) $run->low_score_count,
+            'low_score_count must be 0 when the global (fallback) gate is permissive');
+    }
+
+    /**
+     * criteria.auto_enrich = false overrides a global auto_enrich=true — no
+     * Hunter calls / contacts regardless of the permissive global setting.
+     */
+    public function test_criteria_auto_enrich_false_overrides_global_true(): void
+    {
+        Setting::set('decouverte.auto_scoring', true);
+        Setting::set('decouverte.auto_enrich', true);  // global: enrich on
+        Setting::set('decouverte.min_score_enrich', 0);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6, 'auto_enrich' => false]);
+        $run      = $this->makeRunningRun($criteria, 6);
+
+        /** @var DiscoveryPipelineService $pipeline */
+        $pipeline = app(DiscoveryPipelineService::class);
+        $pipeline->run($criteria, 6, $run);
+
+        $run->refresh();
+
+        $this->assertSame(0, (int) $run->contacts_count,
+            'contacts_count must be 0 — criteria auto_enrich=false overrides the global auto_enrich=true');
+        $this->assertSame(0, (int) $run->contact_consumed,
+            'contact_consumed must be 0 — Hunter must never be called when the criteria override disables enrichment');
+    }
+
+    /**
+     * criteria.auto_enrich = true overrides a global auto_enrich=false — Hunter
+     * still runs despite the restrictive global default.
+     */
+    public function test_criteria_auto_enrich_true_overrides_global_false(): void
+    {
+        Setting::set('decouverte.auto_scoring', true);
+        Setting::set('decouverte.auto_enrich', false);  // global: enrich off
+        Setting::set('decouverte.min_score_enrich', 0);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6, 'auto_enrich' => true]);
+        $run      = $this->makeRunningRun($criteria, 6);
+
+        /** @var DiscoveryPipelineService $pipeline */
+        $pipeline = app(DiscoveryPipelineService::class);
+        $pipeline->run($criteria, 6, $run);
+
+        $run->refresh();
+
+        $this->assertGreaterThan(0, $run->contacts_count,
+            'contacts_count must be > 0 — criteria auto_enrich=true overrides the global auto_enrich=false');
+    }
+
+    /**
+     * criteria.auto_enrich = null falls back to the global setting — identical
+     * behavior to the pre-override code path.
+     */
+    public function test_null_auto_enrich_inherits_global(): void
+    {
+        Setting::set('decouverte.auto_scoring', true);
+        Setting::set('decouverte.auto_enrich', false);  // global: enrich off
+        Setting::set('decouverte.min_score_enrich', 0);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6, 'auto_enrich' => null]);
+        $run      = $this->makeRunningRun($criteria, 6);
+
+        /** @var DiscoveryPipelineService $pipeline */
+        $pipeline = app(DiscoveryPipelineService::class);
+        $pipeline->run($criteria, 6, $run);
+
+        $run->refresh();
+
+        $this->assertSame(0, (int) $run->contacts_count,
+            'contacts_count must be 0 — null override falls back to the restrictive global auto_enrich=false');
+    }
+    public function test_criteria_min_score_null_falls_back_to_global(): void
+    {
+        Setting::set('decouverte.auto_scoring', true);
+        Setting::set('decouverte.auto_enrich', true);
+        Setting::set('decouverte.min_score_enrich', 101);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6, 'min_score_enrich' => null]);
+        $run      = $this->makeRunningRun($criteria, 6);
+
+        /** @var DiscoveryPipelineService $pipeline */
+        $pipeline = app(DiscoveryPipelineService::class);
+        $pipeline->run($criteria, 6, $run);
+
+        $run->refresh();
+
+        $this->assertSame(0, (int) $run->contacts_count);
+    }
+
+    public function test_criteria_auto_enrich_null_inherits_global(): void
+    {
+        Setting::set('decouverte.auto_enrich', false);
+        Setting::set('decouverte.auto_scoring', true);
+        Setting::set('decouverte.min_score_enrich', 0);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6, 'auto_enrich' => null]);
+        $run      = $this->makeRunningRun($criteria, 6);
+
+        /** @var DiscoveryPipelineService $pipeline */
+        $pipeline = app(DiscoveryPipelineService::class);
+        $pipeline->run($criteria, 6, $run);
+
+        $run->refresh();
+
+        $this->assertSame(0, (int) $run->contacts_count);
+    }
+
 }

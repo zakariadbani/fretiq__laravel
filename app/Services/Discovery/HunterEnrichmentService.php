@@ -2,6 +2,7 @@
 
 namespace App\Services\Discovery;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -35,6 +36,58 @@ class HunterEnrichmentService
         return $this->domainSearchFromHunter($domain, $limit);
     }
 
+    /**
+     * Fetch live Hunter.io account balance/usage for the superadmin quota page.
+     *
+     * Verified live 2026-07-04 (STATUS 200): Hunter /account data.* returns requests.searches.{used,available}, requests.verifications.{used,available}, plan_name, reset_date.
+     *
+     * @return array{searches_used: ?int, searches_available: ?int, verifications_used: ?int, verifications_available: ?int, plan_name: ?string, reset_date: ?string}|null
+     */
+    public function accountUsage(): ?array
+    {
+        if ($this->isLocal()) {
+            return null;
+        }
+
+        $apiKey = config('services.hunter.api_key');
+
+        if (! $apiKey) {
+            return null;
+        }
+
+        // ponytail: cached null-on-failure for 10 min is acceptable here — same rationale as
+        // CompanyDiscoveryService::accountUsage().
+        return Cache::remember('provider.hunter.account', now()->addMinutes(10), function () use ($apiKey) {
+            try {
+                $response = Http::timeout(15)->acceptJson()->get('https://api.hunter.io/v2/account', [
+                    'api_key' => $apiKey,
+                ]);
+
+                if ($response->failed()) {
+                    Log::warning('[HunterEnrichmentService] Hunter account request failed', [
+                        'status' => $response->status(),
+                    ]);
+                    return null;
+                }
+
+                $data = $response->json('data', []);
+
+                return [
+                    'searches_used'           => data_get($data, 'requests.searches.used'),
+                    'searches_available'      => data_get($data, 'requests.searches.available'),
+                    'verifications_used'      => data_get($data, 'requests.verifications.used'),
+                    'verifications_available' => data_get($data, 'requests.verifications.available'),
+                    'plan_name'               => $data['plan_name'] ?? null,
+                    'reset_date'              => $data['reset_date'] ?? null,
+                ];
+            } catch (\Throwable $e) {
+                Log::warning('[HunterEnrichmentService] Hunter account call threw an exception', [
+                    'error' => $e->getMessage(),
+                ]);
+                return null;
+            }
+        });
+    }
     // ── Local fixture driver ──────────────────────────────────────────────────
 
     private function domainSearchFromFixtures(string $domain): ?array

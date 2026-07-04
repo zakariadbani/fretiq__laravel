@@ -70,6 +70,13 @@ class SettingController extends Controller
                     'type'  => 'static',
                     'label' => 'Fournisseur IA',
                 ],
+                'timezone' => [
+                    'type'    => 'select',
+                    'label'   => 'Fuseau horaire (quota quotidien)',
+                    'default' => 'Europe/Paris',
+                    'options' => ['Europe/Paris' => 'Europe/Paris', 'UTC' => 'UTC/GMT'],
+                    'help'    => 'Détermine le jour « quotidien » pour les quotas de découverte et l\'heure de lancement automatique.',
+                ],
             ],
         ],
 
@@ -145,11 +152,14 @@ class SettingController extends Controller
         $request->validate(
             [
                 'settings.decouverte.min_score_enrich' => 'required|integer|between:0,100',
+                'settings.decouverte.timezone'         => 'required|string|in:Europe/Paris,UTC',
             ],
             [
                 'settings.decouverte.min_score_enrich.required'  => 'Le score minimal est obligatoire.',
                 'settings.decouverte.min_score_enrich.integer'   => 'Le score minimal doit être un entier.',
                 'settings.decouverte.min_score_enrich.between'   => 'Le score minimal doit être compris entre 0 et 100.',
+                'settings.decouverte.timezone.required'          => 'Le fuseau horaire est obligatoire.',
+                'settings.decouverte.timezone.in'                => 'Le fuseau horaire doit être Europe/Paris ou UTC.',
             ]
         );
 

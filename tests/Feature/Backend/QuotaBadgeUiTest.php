@@ -466,4 +466,79 @@ class QuotaBadgeUiTest extends TestCase
         // 'Solde épuisé' appears only in the disabled-button tooltip, not the badge.
         $response->assertSee('Solde épuisé', false);
     }
+
+    // ── Test 7: overbook warning (sum of active daily_limit vs package cap) ─────
+
+    /**
+     * Two active criteria with daily_limit=10 each (sum=20) against a package
+     * capped at daily_credits=15 → the "Quota sur-réservé" warning pill renders.
+     */
+    public function test_index_shows_overbook_warning_when_active_daily_limits_exceed_package(): void
+    {
+        $this->assignPackage(15);
+
+        ProspectCriteria::create([
+            'name'        => 'Critère Overbook A',
+            'daily_limit' => 10,
+            'is_active'   => true,
+        ]);
+        ProspectCriteria::create([
+            'name'        => 'Critère Overbook B',
+            'daily_limit' => 10,
+            'is_active'   => true,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria');
+
+        $response->assertStatus(200);
+        $response->assertSee('Quota sur-réservé', false);
+    }
+
+    /**
+     * Active criteria daily_limit sum stays within the package cap → no warning pill.
+     */
+    public function test_index_hides_overbook_warning_when_within_quota(): void
+    {
+        $this->assignPackage(50);
+
+        ProspectCriteria::create([
+            'name'        => 'Critère Dans Quota A',
+            'daily_limit' => 10,
+            'is_active'   => true,
+        ]);
+        ProspectCriteria::create([
+            'name'        => 'Critère Dans Quota B',
+            'daily_limit' => 10,
+            'is_active'   => true,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria');
+
+        $response->assertStatus(200);
+        $response->assertDontSee('Quota sur-réservé', false);
+    }
+
+    /**
+     * No package assignment (unlimited) → overbook warning never renders, regardless
+     * of how high the active daily_limit sum is.
+     */
+    public function test_index_hides_overbook_warning_when_package_unlimited(): void
+    {
+        PackageAssignment::query()->delete();
+        Package::query()->delete();
+
+        ProspectCriteria::create([
+            'name'        => 'Critère Illimité A',
+            'daily_limit' => 500,
+            'is_active'   => true,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria');
+
+        $response->assertStatus(200);
+        $response->assertDontSee('Quota sur-réservé', false);
+    }
 }

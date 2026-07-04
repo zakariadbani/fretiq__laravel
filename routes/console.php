@@ -88,3 +88,17 @@ Schedule::command('campaign:sync-stats')
 Schedule::command('discovery:terminalize-stale')
     ->everyMinute()
     ->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Per-criteria auto-discovery scheduler
+|--------------------------------------------------------------------------
+| Dispatches scheduled discovery runs for criteria with auto_run=true whose
+| run_at_hour (Europe/Paris) is due. Runs hourly. withoutOverlapping()
+| prevents a slow tick from stacking with the next hour's. Idempotency is
+| handled by the same-day discovery run guard in prospect:auto-discover.
+*/
+
+Schedule::command('prospect:auto-discover')
+    ->hourly()
+    ->withoutOverlapping();

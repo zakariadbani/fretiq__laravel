@@ -7,6 +7,7 @@
         $contactRemaining        ?int   — null when unlimited, int >= 0 when limited (contact/enrichment meter, daily)
         $monthlyRemaining        ?int   — null when no monthly cap, int >= 0 when monthly-limited (company meter)
         $monthlyContactRemaining ?int   — null when no monthly cap, int >= 0 when monthly-limited (contact meter)
+        $activeDailyLimitSum     ?int   — SUM(daily_limit) across active criteria (overbook warning only)
 
     Renders a compact two-meter badge. Gracefully defaults optional vars to null.
 --}}
@@ -15,6 +16,7 @@
     $contactRemaining        = $contactRemaining        ?? null;
     $monthlyRemaining        = $monthlyRemaining        ?? null;
     $monthlyContactRemaining = $monthlyContactRemaining ?? null;
+    $activeDailyLimitSum     = $activeDailyLimitSum     ?? null;
 
     /**
      * Severity helper — returns 0 (success), 2 (warning), or 3 (danger).
@@ -113,4 +115,15 @@
         <i class="bi bi-person-lines-fill me-1"></i>
         Contacts : {{ $contactText }}
     </span>
+
+    {{-- Overbook warning — sum of active criteria daily_limit exceeds the package's daily cap.
+         Warn only: the engine still clamps at reservation time (first-launched criteria wins). --}}
+    @if($quotaPackage?->daily_credits !== null && $activeDailyLimitSum > $quotaPackage->daily_credits)
+        <span class="badge badge-light-warning fs-7 fw-semibold ms-1"
+              data-bs-toggle="tooltip"
+              title="La somme des découvertes/jour des critères actifs ({{ $activeDailyLimitSum }}) dépasse le quota du package ({{ $quotaPackage->daily_credits }}/j). Le premier critère lancé consomme le quota du jour — les autres attendent.">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            Quota sur-réservé &middot; {{ $activeDailyLimitSum }}/{{ $quotaPackage->daily_credits }} /j
+        </span>
+    @endif
 @endif

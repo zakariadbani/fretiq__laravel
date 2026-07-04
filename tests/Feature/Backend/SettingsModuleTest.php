@@ -92,6 +92,7 @@ class SettingsModuleTest extends TestCase
                         'auto_scoring'     => '1',
                         'auto_enrich'      => '1',
                         'min_score_enrich' => '75',
+                        'timezone'         => 'Europe/Paris',
                     ],
                 ],
             ]);
@@ -156,6 +157,7 @@ class SettingsModuleTest extends TestCase
                         // auto_scoring intentionally absent → unchecked
                         'auto_enrich'      => '1',
                         'min_score_enrich' => '50',
+                        'timezone'         => 'Europe/Paris',
                     ],
                 ],
             ]);
@@ -205,6 +207,7 @@ class SettingsModuleTest extends TestCase
                         'auto_scoring'     => '1',
                         'auto_enrich'      => '1',
                         'min_score_enrich' => '90',
+                        'timezone'         => 'Europe/Paris',
                     ],
                 ],
             ]);
@@ -234,6 +237,7 @@ class SettingsModuleTest extends TestCase
                         'auto_scoring'     => '1',
                         'auto_enrich'      => '1',
                         'min_score_enrich' => '50',
+                        'timezone'         => 'Europe/Paris',
                         'unknown_evil_key' => 'should_be_ignored',
                     ],
                     'hacker_group' => [

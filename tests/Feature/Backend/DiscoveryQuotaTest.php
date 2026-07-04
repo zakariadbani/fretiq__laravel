@@ -48,6 +48,11 @@ class DiscoveryQuotaTest extends TestCase
 
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
+        config([
+            'services.serpapi.driver' => 'local',
+            'services.hunter.driver'  => 'local',
+        ]);
+
         $this->superadmin = User::factory()->create([
             'email_verified_at' => now(),
             'is_active'         => true,
@@ -366,9 +371,10 @@ class DiscoveryQuotaTest extends TestCase
         /** @var DiscoveryQuotaService $svc */
         $svc = app(DiscoveryQuotaService::class);
 
-        // Travel to 23:59 today and reserve a run.
-        $this->travelTo(Carbon::today()->endOfDay()->subMinute());
-        $dispatchDay = Carbon::today()->toDateString();
+        // Travel to 23:59 in the quota timezone (Europe/Paris) and reserve a run.
+        // quota_date is pinned to the QUOTA TZ calendar day (not the app's UTC day).
+        $this->travelTo($svc->today()->endOfDay()->subMinute());
+        $dispatchDay = $svc->today()->toDateString();
         $run         = $svc->reserveRun($criteria);
 
         $this->assertSame(
@@ -377,9 +383,9 @@ class DiscoveryQuotaTest extends TestCase
             'Run quota_date must match the dispatch day'
         );
 
-        // Now travel to the next day 00:05.
-        $this->travelTo(Carbon::today()->addDay()->startOfDay()->addMinutes(5));
-        $nextDay = Carbon::today();
+        // Now travel to the next day 00:05 (quota tz).
+        $this->travelTo($svc->today()->addDay()->startOfDay()->addMinutes(5));
+        $nextDay = $svc->today();
         $prevDay = $nextDay->copy()->subDay();
 
         // New day: full 10 credits available (the pending run is pinned to yesterday).
@@ -1183,4 +1189,168 @@ class DiscoveryQuotaTest extends TestCase
             )
         );
     }
+
+    // ── Scenario 23: per-criteria contact_limit clamps reservation ───────────────
+
+    /**
+     * Package 15 company / 10 contact per day, criteria daily_limit=10 and
+     * contact_limit=3 (per-criteria override). reserveRun must reserve
+     * credits_reserved=10 (unaffected — contact_limit only clamps the contact
+     * meter) and contact_credits_reserved=3 (min(batch=10, contact_limit=3, contactRemaining=10)).
+     */
+    public function test_contact_limit_clamps_reservation(): void
+    {
+        $this->assignPackageWith(15, 10);
+        $criteria = $this->makeCriteria(['daily_limit' => 10, 'contact_limit' => 3]);
+
+        /** @var DiscoveryQuotaService $svc */
+        $svc = app(DiscoveryQuotaService::class);
+        $run = $svc->reserveRun($criteria);
+
+        $this->assertSame(10, (int) $run->credits_reserved,
+            'credits_reserved must be unaffected by contact_limit (company meter has room)');
+        $this->assertSame(3, (int) $run->contact_credits_reserved,
+            'contact_credits_reserved must be clamped to contact_limit=3');
+    }
+
+    /**
+     * contact_limit=null preserves existing behavior — contact_credits_reserved
+     * is bound only by the package contact meter, unaffected by any per-criteria cap.
+     */
+    public function test_null_contact_limit_preserves_existing_behavior(): void
+    {
+        $this->assignPackageWith(15, 10);
+        $criteria = $this->makeCriteria(['daily_limit' => 10, 'contact_limit' => null]);
+
+        /** @var DiscoveryQuotaService $svc */
+        $svc = app(DiscoveryQuotaService::class);
+        $run = $svc->reserveRun($criteria);
+
+        $this->assertSame(10, (int) $run->credits_reserved);
+        $this->assertSame(10, (int) $run->contact_credits_reserved,
+            'contact_credits_reserved must equal min(batch=10, contactRemaining=10) when contact_limit is null');
+    }
+
+    /**
+     * contact_limit above the package's remaining contact balance is clamped by
+     * the global package cap, not by contact_limit — min() picks the smaller.
+     */
+    public function test_contact_limit_above_global_is_clamped_by_global(): void
+    {
+        $this->assignPackageWith(15, 5);
+        $criteria = $this->makeCriteria(['daily_limit' => 10, 'contact_limit' => 100]);
+
+        /** @var DiscoveryQuotaService $svc */
+        $svc = app(DiscoveryQuotaService::class);
+        $run = $svc->reserveRun($criteria);
+
+        $this->assertSame(5, (int) $run->contact_credits_reserved,
+            'contact_credits_reserved must be clamped to the package contact meter (5) even though contact_limit=100');
+    }
+
+    /**
+     * Company meter unlimited (daily_credits=null, no contact meter set → contact
+     * also unlimited) + contact_limit=2 → contact_credits_reserved must be exactly 2
+     * (the per-criteria cap is the only binding contact constraint).
+     */
+    public function test_contact_limit_binds_on_unlimited_package(): void
+    {
+        $this->assignUnlimitedPackage();
+        $criteria = $this->makeCriteria(['daily_limit' => 10, 'contact_limit' => 2]);
+
+        /** @var DiscoveryQuotaService $svc */
+        $svc = app(DiscoveryQuotaService::class);
+        $run = $svc->reserveRun($criteria);
+
+        $this->assertSame(10, (int) $run->credits_reserved,
+            'credits_reserved must be the wanted batch (10) — company meter unlimited');
+        $this->assertSame(2, (int) $run->contact_credits_reserved,
+            'contact_credits_reserved must be clamped to contact_limit=2 on an unlimited package');
+    }
+    public function test_contact_limit_clamps_contact_credits_reserved(): void
+    {
+        $this->assignPackageWith(15, 10);
+        $criteria = $this->makeCriteria(['daily_limit' => 10, 'contact_limit' => 3]);
+
+        /** @var DiscoveryQuotaService $quotaService */
+        $quotaService = app(DiscoveryQuotaService::class);
+        $run          = $quotaService->reserveRun($criteria);
+
+        $this->assertSame(10, (int) $run->credits_reserved);
+        $this->assertSame(3, (int) $run->contact_credits_reserved);
+    }
+
+    public function test_contact_limit_null_preserves_current_behavior(): void
+    {
+        $this->assignPackageWith(15, 10);
+        $criteria = $this->makeCriteria(['daily_limit' => 10, 'contact_limit' => null]);
+
+        /** @var DiscoveryQuotaService $quotaService */
+        $quotaService = app(DiscoveryQuotaService::class);
+        $run          = $quotaService->reserveRun($criteria);
+
+        $this->assertSame(10, (int) $run->contact_credits_reserved);
+    }
+
+    public function test_contact_limit_above_global_cap_is_clamped_by_global(): void
+    {
+        $this->assignPackageWith(15, 5);
+        $criteria = $this->makeCriteria(['daily_limit' => 10, 'contact_limit' => 20]);
+
+        /** @var DiscoveryQuotaService $quotaService */
+        $quotaService = app(DiscoveryQuotaService::class);
+        $run          = $quotaService->reserveRun($criteria);
+
+        $this->assertSame(5, (int) $run->contact_credits_reserved);
+    }
+
+    public function test_contact_limit_applies_when_package_unlimited(): void
+    {
+        $package = Package::create([
+            'name'                  => 'Illimite complet',
+            'daily_credits'         => null,
+            'daily_contact_credits' => null,
+            'is_active'             => true,
+            'sort_order'            => 0,
+        ]);
+
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 10, 'contact_limit' => 2]);
+
+        /** @var DiscoveryQuotaService $quotaService */
+        $quotaService = app(DiscoveryQuotaService::class);
+        $run          = $quotaService->reserveRun($criteria);
+
+        $this->assertSame(10, (int) $run->credits_reserved);
+        $this->assertSame(2, (int) $run->contact_credits_reserved);
+    }
+
+    /**
+     * No package assignment (unlimited by convention) + daily_limit=6 and
+     * contact_limit=2 → reserveRun must reserve credits_reserved=6 (company
+     * meter uncapped) and contact_credits_reserved=2 (only the per-criteria
+     * contact_limit binds since the contact meter is also unlimited).
+     */
+    public function test_reserve_run_with_contact_limit_on_unassigned_unlimited_package(): void
+    {
+        // No PackageAssignment at all — treated as unlimited by convention.
+        PackageAssignment::query()->delete();
+        Package::query()->delete();
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6, 'contact_limit' => 2]);
+
+        /** @var DiscoveryQuotaService $quotaService */
+        $quotaService = app(DiscoveryQuotaService::class);
+        $run          = $quotaService->reserveRun($criteria);
+
+        $this->assertSame(6, (int) $run->credits_reserved,
+            'credits_reserved must equal daily_limit=6 when no package assignment exists (unlimited)');
+        $this->assertSame(2, (int) $run->contact_credits_reserved,
+            'contact_credits_reserved must equal contact_limit=2 (only binding contact constraint)');
+    }
+
 }

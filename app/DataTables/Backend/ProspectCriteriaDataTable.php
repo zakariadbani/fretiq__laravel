@@ -40,9 +40,15 @@ class ProspectCriteriaDataTable extends BackendDataTable
             'raw'        => true,
         ],
         'daily_limit' => [
-            'title'      => 'Limite/jour',
+            'title'      => 'Découvertes/j',
             'orderable'  => true,
             'searchable' => false,
+        ],
+        'automation' => [
+            'title'      => 'Automatisation',
+            'orderable'  => false,
+            'searchable' => false,
+            'raw'        => true,
         ],
         'is_active' => [
             'title'      => 'Actif',
@@ -148,6 +154,18 @@ class ProspectCriteriaDataTable extends BackendDataTable
             $n = (int) ($row->contacts_count ?? 0);
             $class = $n > 0 ? 'badge badge-light-info' : 'badge badge-light text-muted';
             return '<span class="' . $class . '">' . $n . '</span>';
+        });
+
+        $this->datatables->addColumn('automation', function (ProspectCriteria $row) {
+            if ($row->auto_run && $row->run_at_hour !== null) {
+                $html = '<span class="badge badge-light-success">Auto &middot; ' . sprintf('%02d:00', $row->run_at_hour) . '</span>';
+            } else {
+                $html = '<span class="text-muted">Manuel</span>';
+            }
+            if ($row->contact_limit !== null) {
+                $html .= '<div class="text-muted fs-8 mt-1">&le; ' . (int) $row->contact_limit . ' contacts</div>';
+            }
+            return $html;
         });
 
         $this->datatables->addColumn('last_discovery', function (ProspectCriteria $row) {

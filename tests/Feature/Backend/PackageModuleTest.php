@@ -171,4 +171,35 @@ class PackageModuleTest extends TestCase
         $this->assertNull($package->daily_contact_credits,
             'daily_contact_credits must be NULL when not provided (unlimited)');
     }
+
+    // ── Capacity card (superadmin-only, config-gated) ───────────────────────
+
+    /**
+     * Capacity card shows when at least one provider capacity config key is set.
+     */
+    public function test_capacity_card_shows_when_capacity_configured(): void
+    {
+        config(['prospecting.provider_discovery_monthly_capacity' => 1000]);
+
+        $response = $this->actingAs($this->superadmin)->get(route('admin.packages.index'));
+
+        $response->assertStatus(200);
+        $response->assertSee('Capacité fournisseur');
+    }
+
+    /**
+     * Capacity card is hidden when both provider capacity config keys are null.
+     */
+    public function test_capacity_card_hidden_when_capacity_not_configured(): void
+    {
+        config([
+            'prospecting.provider_discovery_monthly_capacity' => null,
+            'prospecting.provider_enrich_monthly_capacity'    => null,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)->get(route('admin.packages.index'));
+
+        $response->assertStatus(200);
+        $response->assertDontSee('Capacité fournisseur');
+    }
 }

@@ -11,6 +11,7 @@ Route::controller(ProspectCriteriaController::class)->prefix('admin')->name('adm
     Route::get('/prospect_criteria/{id}/discovery-status', 'discoveryStatus')->name('prospect_criteria.discovery_status');
     Route::post('/prospect_criteria/{prospect_criteria}/duplicate', 'duplicate')->name('prospect_criteria.duplicate');
     Route::get('/prospect_criteria/{prospect_criteria}/preview-queries', 'previewQueries')->name('prospect_criteria.preview_queries');
+    Route::post('/prospect_criteria/{id}/generate-queries', 'generateQueries')->name('prospect_criteria.generate_queries');
     Route::get('/prospect_criteria/{id}', 'view')->name('prospect_criteria.view');
     Route::get('/prospect_criteria/{id}/edit', 'edit')->name('prospect_criteria.edit');
     Route::put('/prospect_criteria/{id}', 'update')->name('prospect_criteria.update');
