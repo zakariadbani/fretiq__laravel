@@ -11,5 +11,5 @@
  */
 
 return [
-    // Exemple : 'name' => 'Nom',
+    'next_run_at' => 'Premier envoi',
 ];

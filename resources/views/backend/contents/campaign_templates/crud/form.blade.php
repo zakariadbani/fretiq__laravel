@@ -225,7 +225,36 @@
 @push('scripts')
     <script src="{{ asset('assets/plugins/custom/tinymce/tinymce.js') }}?v={{ filemtime(public_path('assets/plugins/custom/tinymce/tinymce.js')) }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
-    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}?v={{ filemtime(public_path('assets/js/custom/backend/crud-tabs.js')) }}"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var translationPane = '#template_traductions';
+
+            function syncTemplateFormActions(href) {
+                var activeHref = href;
+                if (!activeHref) {
+                    var activeLink = document.querySelector('a[data-bs-toggle="tab"].active');
+                    activeHref = activeLink ? activeLink.getAttribute('href') : '';
+                }
+
+                document.querySelectorAll('[data-crud-form-actions="sticky"]').forEach(function (actions) {
+                    var hide = activeHref === translationPane;
+                    actions.classList.toggle('d-none', hide);
+                    actions.setAttribute('aria-hidden', hide ? 'true' : 'false');
+                });
+            }
+
+            document.querySelectorAll('a[data-bs-toggle="tab"]').forEach(function (link) {
+                link.addEventListener('shown.bs.tab', function (event) {
+                    syncTemplateFormActions(event.target.getAttribute('href'));
+                });
+            });
+
+            requestAnimationFrame(function () {
+                syncTemplateFormActions(window.location.hash || null);
+            });
+        });
+    </script>
     <script src="{{ asset('assets/js/custom/backend/tinymce-html-field.js') }}?v={{ filemtime(public_path('assets/js/custom/backend/tinymce-html-field.js')) }}"></script>
     <script src="{{ asset('assets/js/custom/backend/campaign-template-translations.js') }}?v={{ file_exists(public_path('assets/js/custom/backend/campaign-template-translations.js')) ? filemtime(public_path('assets/js/custom/backend/campaign-template-translations.js')) : '1' }}"></script>
 @endpush

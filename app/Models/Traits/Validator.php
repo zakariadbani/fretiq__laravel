@@ -28,7 +28,8 @@ trait Validator
         }
 
         $this->fill($data);
-        $validator = \Validator::make($data, $this->rules());
+        $messages = method_exists($this, 'messages') ? $this->messages() : [];
+        $validator = \Validator::make($data, $this->rules(), $messages);
         $validator->setAttributeNames($this->niceNames());
 
         return $validator;

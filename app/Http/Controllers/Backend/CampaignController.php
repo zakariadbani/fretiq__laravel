@@ -592,7 +592,7 @@ class CampaignController extends BackendController
             ) {
                 return response()->json([
                     'success' => false,
-                    'msg'     => 'Cette campagne récurrente est terminée. Planifiez-la pour définir une nouvelle occurrence.',
+                    'msg'     => 'Cette campagne récurrente est terminée. Renseignez le champ Premier envoi avant de l’activer.',
                 ], 422);
             }
         }

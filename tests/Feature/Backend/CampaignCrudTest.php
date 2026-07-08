@@ -34,6 +34,39 @@ class CampaignCrudTest extends TestCase
         $this->superadmin->assignRole('superadmin');
     }
 
+    private function makeCampaignFixtures(): array
+    {
+        $segment = Segment::create(['name' => 'Clients Test ' . uniqid(), 'scope' => 'client']);
+        $template = CampaignTemplate::create([
+            'name'         => 'Template Test ' . uniqid(),
+            'subject'      => 'Objet test',
+            'html_content' => '<p>Bonjour</p>',
+        ]);
+        $sender = SenderIdentity::create([
+            'name'  => 'TCL France ' . uniqid(),
+            'email' => 'noreply_' . uniqid() . '@tcl.test',
+        ]);
+
+        return compact('segment', 'template', 'sender');
+    }
+
+    private function makeRecurringCampaign(bool $isActive = false, mixed $nextRunAt = null): Campaign
+    {
+        $fixtures = $this->makeCampaignFixtures();
+
+        return Campaign::create([
+            'name'               => 'Campagne récurrente ' . uniqid(),
+            'segment_id'         => $fixtures['segment']->id,
+            'template_id'        => $fixtures['template']->id,
+            'sender_identity_id' => $fixtures['sender']->id,
+            'schedule_type'      => 'recurring',
+            'recurrence'         => ['frequency' => 'daily', 'interval' => 1],
+            'next_run_at'        => $nextRunAt,
+            'timezone'           => 'Europe/Paris',
+            'is_active'          => $isActive,
+        ]);
+    }
+
     // ── Campaigns ─────────────────────────────────────────────────────────────
 
     public function test_campaigns_index_renders(): void
@@ -50,6 +83,129 @@ class CampaignCrudTest extends TestCase
             ->get('/admin/campaigns/create');
 
         $response->assertStatus(200);
+    }
+
+    public function test_campaign_form_renders_template_preview_popover_data(): void
+    {
+        CampaignTemplate::create([
+            'name'         => 'Modèle Port Maritime',
+            'subject'      => 'Besoin transport maritime',
+            'preview_text' => 'Une opportunité logistique ciblée.',
+            'html_content' => '<h1>Bonjour {{contact.name}}</h1><p>Voici notre offre.</p>',
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/campaigns/create');
+
+        $response->assertStatus(200);
+        $response->assertSee('template-preview-button', false);
+        $response->assertSee('campaignTemplatePreviews', false);
+        $response->assertSee('Aperçu du modèle d\'email', false);
+        $response->assertSee('Modèle Port Maritime', false);
+        $response->assertSee('Besoin transport maritime', false);
+        $response->assertSee('preview_text', false);
+        $response->assertSee('campaign-template-preview-popover', false);
+    }
+
+    public function test_campaign_edit_uses_form_status_switch_instead_of_header_ajax_toggle(): void
+    {
+        $campaign = $this->makeRecurringCampaign(isActive: false);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get("/admin/campaigns/{$campaign->id}/edit");
+
+        $response->assertStatus(200);
+        $body = $response->getContent();
+
+        $this->assertStringContainsString('id="is_active_toggle"', $body);
+        $this->assertStringContainsString('class="required fw-semibold fs-6 mb-2">Premier envoi</label>', $body);
+        $this->assertStringContainsString('Obligatoire pour activer une campagne récurrente.', $body);
+        $this->assertStringNotContainsString('status-toggle', $body,
+            'Edit page must not render the hero AJAX status toggle; status is saved with the form.');
+    }
+
+    public function test_recurring_campaign_cannot_be_reactivated_without_next_run_at(): void
+    {
+        $campaign = $this->makeRecurringCampaign(isActive: false, nextRunAt: null);
+
+        $response = $this->actingAs($this->superadmin)
+            ->putJson("/admin/campaigns/{$campaign->id}", [
+                'name'               => $campaign->name,
+                'segment_id'         => $campaign->segment_id,
+                'template_id'        => $campaign->template_id,
+                'sender_identity_id' => $campaign->sender_identity_id,
+                'schedule_type'      => 'recurring',
+                'recurrence_frequency' => 'daily',
+                'recurrence_interval'  => 1,
+                'next_run_at'        => '',
+                'timezone'           => 'Europe/Paris',
+                'is_active'          => '1',
+            ]);
+
+        $response->assertStatus(406)
+            ->assertJsonValidationErrors(['next_run_at']);
+
+        $message = $response->json('errors.next_run_at.0') ?? '';
+        $this->assertStringContainsString('Premier envoi', $message);
+        $this->assertStringNotContainsString('attribute.next_run_at', $message);
+
+        $this->assertDatabaseHas('campaigns', [
+            'id'        => $campaign->id,
+            'is_active' => 0,
+        ]);
+    }
+
+    public function test_inactive_recurring_campaign_can_be_saved_without_next_run_at(): void
+    {
+        $campaign = $this->makeRecurringCampaign(isActive: false, nextRunAt: null);
+
+        $response = $this->actingAs($this->superadmin)
+            ->putJson("/admin/campaigns/{$campaign->id}", [
+                'name'                 => $campaign->name . ' modifiée',
+                'segment_id'           => $campaign->segment_id,
+                'template_id'          => $campaign->template_id,
+                'sender_identity_id'   => $campaign->sender_identity_id,
+                'schedule_type'        => 'recurring',
+                'recurrence_frequency' => 'daily',
+                'recurrence_interval'  => 1,
+                'next_run_at'          => '',
+                'timezone'             => 'Europe/Paris',
+                'is_active'            => '0',
+            ]);
+
+        $response->assertStatus(200);
+
+        $this->assertDatabaseHas('campaigns', [
+            'id'        => $campaign->id,
+            'name'      => $campaign->name . ' modifiée',
+            'is_active' => 0,
+        ]);
+    }
+
+    public function test_recurring_campaign_can_be_reactivated_with_next_run_at(): void
+    {
+        $campaign = $this->makeRecurringCampaign(isActive: false, nextRunAt: null);
+        $nextRunAt = now()->addDay()->format('Y-m-d H:i');
+
+        $response = $this->actingAs($this->superadmin)
+            ->putJson("/admin/campaigns/{$campaign->id}", [
+                'name'                 => $campaign->name,
+                'segment_id'           => $campaign->segment_id,
+                'template_id'          => $campaign->template_id,
+                'sender_identity_id'   => $campaign->sender_identity_id,
+                'schedule_type'        => 'recurring',
+                'recurrence_frequency' => 'daily',
+                'recurrence_interval'  => 1,
+                'next_run_at'          => $nextRunAt,
+                'timezone'             => 'Europe/Paris',
+                'is_active'            => '1',
+            ]);
+
+        $response->assertStatus(200);
+
+        $campaign->refresh();
+        $this->assertTrue((bool) $campaign->is_active);
+        $this->assertNotNull($campaign->next_run_at);
     }
 
     public function test_store_campaign(): void

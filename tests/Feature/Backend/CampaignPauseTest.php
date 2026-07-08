@@ -458,6 +458,11 @@ class CampaignPauseTest extends TestCase
             $response->json('msg') ?? '',
             'The 422 message must mention terminée',
         );
+        $this->assertStringContainsString(
+            'Premier envoi',
+            $response->json('msg') ?? '',
+            'The 422 message must include the actionable detail shown by the active toggle',
+        );
 
         // is_active must remain 0.
         $this->assertDatabaseHas('campaigns', [

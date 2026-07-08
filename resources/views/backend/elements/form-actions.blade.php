@@ -8,7 +8,7 @@
 @endphp
 
 @unless($isToolbar)
-<div class="sticky-bottom bg-body border-top shadow-sm py-4 mt-4">
+<div class="sticky-bottom bg-body border-top shadow-sm py-4 mt-4" data-crud-form-actions="sticky">
     <div class="container-fluid">
         <div class="d-flex justify-content-end gap-3">
 @endunless

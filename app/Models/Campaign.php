@@ -6,6 +6,7 @@ use App\Models\Traits\Validator;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Validation\Rule;
 
 class Campaign extends Model
 {
@@ -133,6 +134,8 @@ class Campaign extends Model
      */
     public function rules(): array
     {
+        $isActive = in_array($this->is_active, [true, 1, '1', 'true', 'on'], true);
+
         return [
             'name'               => 'required|string|max:255',
             'segment_id'         => 'required|integer|exists:segments,id',
@@ -145,11 +148,27 @@ class Campaign extends Model
             'schedule_type'      => 'nullable|in:' . implode(',', array_keys(config('global.data.schedule_types', []))),
             'scheduled_at'       => 'nullable|date',
             'recurrence'         => 'nullable|array',
-            'next_run_at'        => 'nullable|date',
+            'next_run_at'        => [
+                'nullable',
+                Rule::requiredIf(fn () => $this->schedule_type === 'recurring' && $isActive),
+                'date',
+            ],
             'timezone'           => 'nullable|string|max:64',
             'send_window'        => 'nullable|array',
             'is_active'          => 'nullable|boolean',
             'driver'             => 'nullable|in:local,zoho',
+        ];
+    }
+
+    /**
+     * Campaign-specific validation messages.
+     *
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'next_run_at.required' => 'Le champ Premier envoi est obligatoire pour activer une campagne récurrente.',
         ];
     }
 

@@ -52,6 +52,39 @@
     subject hint, schedule switcher) all fire.
 --}}
 
+<style>
+    .campaign-template-preview-popover {
+        --bs-popover-max-width: min(560px, calc(100vw - 2rem));
+        --bs-popover-border-color: var(--bs-primary-light, #e1e9ff);
+        box-shadow: 0 1rem 3rem rgba(15, 23, 42, .16);
+    }
+
+    .campaign-template-preview-card {
+        width: min(520px, calc(100vw - 3rem));
+    }
+
+    .campaign-template-preview-toolbar {
+        background: linear-gradient(135deg, #eef6ff 0%, #f8f5ff 100%);
+        border: 1px solid #edf2f7;
+        border-radius: .85rem;
+    }
+
+    .campaign-template-preview-frame {
+        height: 360px;
+        border: 1px solid #e4e6ef;
+        border-radius: .85rem;
+        overflow: hidden;
+        background: #f5f8fa;
+    }
+
+    .campaign-template-preview-frame iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #fff;
+    }
+</style>
+
 <form method="POST" action="{{ $route }}" class="form" id="form_crud">
     @csrf
     @if(isset($model) && $model->id)
@@ -189,7 +222,17 @@
                         {{-- Modèle d'email (W1: hidden in sequence mode) --}}
                         <div class="col-lg-6" id="field-template-wrapper">
                             <div class="fv-row mb-7">
-                                <label class="required fw-semibold fs-6 mb-2" id="label-template">Modèle d'email</label>
+                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                    <label class="required fw-semibold fs-6 mb-0" id="label-template">Modèle d'email</label>
+                                    <button type="button"
+                                            class="btn btn-icon btn-sm btn-light-primary rounded-circle"
+                                            id="template-preview-button"
+                                            aria-label="Aperçu du modèle d'email"
+                                            data-bs-toggle="popover"
+                                            disabled>
+                                        <i class="bi bi-eye fs-5"></i>
+                                    </button>
+                                </div>
                                 <select name="template_id" class="form-select form-select-solid" id="template_select" data-control="select2" data-placeholder="Sélectionner un modèle...">
                                     <option value="">Sélectionner un modèle...</option>
                                     @foreach($templates as $template)
@@ -200,6 +243,9 @@
                                         </option>
                                     @endforeach
                                 </select>
+                                <div class="form-text text-muted mt-2 fs-7" id="template-preview-hint">
+                                    Sélectionnez un modèle puis cliquez sur l’icône œil pour prévisualiser l’email.
+                                </div>
                             </div>
                         </div>
 
@@ -310,7 +356,7 @@
                         </div>
                         <div class="col-lg-3">
                             <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Premier envoi (next_run_at)</label>
+                                <label class="required fw-semibold fs-6 mb-2">Premier envoi</label>
                                 <input type="text"
                                        name="next_run_at"
                                        id="next_run_at"
@@ -318,6 +364,9 @@
                                        placeholder="Date du premier envoi..."
                                        value="{{ old('next_run_at', isset($model) && $model->next_run_at ? $model->next_run_at->format('Y-m-d H:i') : '') }}"
                                        autocomplete="off" />
+                                <div class="form-text text-muted mt-1 fs-7">
+                                    Obligatoire pour activer une campagne récurrente.
+                                </div>
                             </div>
                         </div>
                         <div class="col-lg-3">
@@ -429,7 +478,7 @@
                     <div class="flex-grow-1">
                         <label class="fw-semibold fs-6 mb-1">Active</label>
                         <div class="text-muted fs-7">
-                            Décochez pour mettre en pause (le planificateur ignore la campagne).
+                            Décochez pour mettre en pause. Pour réactiver une campagne récurrente, renseignez aussi le premier envoi.
                         </div>
                     </div>
                     <div>
@@ -470,6 +519,18 @@
     @if(class_exists(\App\Services\Campaign\SegmentService::class))
     <script>
         document.addEventListener('DOMContentLoaded', function () {
+            const campaignTemplatePreviews = {!! \Illuminate\Support\Js::from($templates->mapWithKeys(function ($template) {
+                return [
+                    (string) $template->id => [
+                        'id'           => $template->id,
+                        'name'         => $template->name,
+                        'subject'      => $template->subject,
+                        'preview_text' => $template->preview_text,
+                        'html_content' => $template->html_content,
+                        'edit_url'     => route('admin.campaign_templates.edit', $template->id),
+                    ],
+                ];
+            })) !!};
 
             // ── select2 → native change bridge ──────────────────────
             // select2 fires `change` via jQuery .trigger() only, which does NOT reach
@@ -514,6 +575,168 @@
             // ── Auto-fill subject hint from template ────────────────
             const templateSelect  = document.getElementById('template_select');
             const subjectOverride = document.getElementById('subject_override');
+            const templatePreviewButton = document.getElementById('template-preview-button');
+            const templatePreviewHint = document.getElementById('template-preview-hint');
+            let templatePreviewPopover = null;
+
+            function selectedTemplatePreview() {
+                if (!templateSelect || !templateSelect.value) return null;
+                return campaignTemplatePreviews[String(templateSelect.value)] || null;
+            }
+
+            function emailPreviewDocument(template) {
+                const body = template.html_content || '<p style="color:#7e8299;font-family:Arial,sans-serif;">Ce modèle ne contient pas encore de contenu HTML.</p>';
+
+                return '<!doctype html><html><head><meta charset="utf-8"><base target="_blank">' +
+                    '<style>' +
+                    'html,body{margin:0;padding:0;background:#f5f8fa;color:#181c32;font-family:Arial,Helvetica,sans-serif;}' +
+                    '.email-shell{max-width:700px;margin:0 auto;padding:18px;}' +
+                    '.email-card{background:#fff;border-radius:14px;box-shadow:0 8px 28px rgba(15,23,42,.08);padding:22px;}' +
+                    'img{max-width:100%;height:auto;}a{color:#009ef7;}table{max-width:100%;}' +
+                    '</style></head><body><div class="email-shell"><div class="email-card">' + body +
+                    '</div></div></body></html>';
+            }
+
+            function buildTemplatePreviewContent(template) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'campaign-template-preview-card';
+
+                const toolbar = document.createElement('div');
+                toolbar.className = 'campaign-template-preview-toolbar p-4 mb-4';
+
+                const titleRow = document.createElement('div');
+                titleRow.className = 'd-flex align-items-start gap-3';
+
+                const icon = document.createElement('span');
+                icon.className = 'symbol symbol-40px symbol-circle flex-shrink-0';
+                const iconLabel = document.createElement('span');
+                iconLabel.className = 'symbol-label bg-primary text-white';
+                const iconInner = document.createElement('i');
+                iconInner.className = 'bi bi-envelope-paper-heart fs-3 text-white';
+                iconLabel.appendChild(iconInner);
+                icon.appendChild(iconLabel);
+
+                const meta = document.createElement('div');
+                meta.className = 'flex-grow-1 min-w-0';
+                const name = document.createElement('div');
+                name.className = 'fw-bold text-gray-900 fs-6 text-truncate';
+                name.textContent = template.name || 'Modèle sans nom';
+                const subject = document.createElement('div');
+                subject.className = 'mt-1 fs-7 text-gray-700';
+                subject.textContent = template.subject ? ('Sujet : ' + template.subject) : 'Aucun sujet renseigné';
+                meta.appendChild(name);
+                meta.appendChild(subject);
+
+                titleRow.appendChild(icon);
+                titleRow.appendChild(meta);
+                toolbar.appendChild(titleRow);
+
+                if (template.preview_text) {
+                    const preheader = document.createElement('div');
+                    preheader.className = 'badge badge-light-info text-wrap text-start mt-3 px-3 py-2';
+                    preheader.textContent = 'Pré-en-tête : ' + template.preview_text;
+                    toolbar.appendChild(preheader);
+                }
+
+                wrapper.appendChild(toolbar);
+
+                const frameWrap = document.createElement('div');
+                frameWrap.className = 'campaign-template-preview-frame';
+                const iframe = document.createElement('iframe');
+                iframe.setAttribute('title', 'Aperçu du modèle d\'email');
+                iframe.setAttribute('sandbox', '');
+                iframe.setAttribute('referrerpolicy', 'no-referrer');
+                iframe.srcdoc = emailPreviewDocument(template);
+                frameWrap.appendChild(iframe);
+                wrapper.appendChild(frameWrap);
+
+                const footer = document.createElement('div');
+                footer.className = 'd-flex justify-content-between align-items-center mt-3';
+                const note = document.createElement('span');
+                note.className = 'text-muted fs-8';
+                note.textContent = 'Aperçu indicatif avant personnalisation des variables.';
+                footer.appendChild(note);
+                if (template.edit_url) {
+                    const link = document.createElement('a');
+                    link.className = 'btn btn-sm btn-light-primary';
+                    link.href = template.edit_url;
+                    link.target = '_blank';
+                    link.rel = 'noopener';
+                    link.textContent = 'Ouvrir le modèle';
+                    footer.appendChild(link);
+                }
+                wrapper.appendChild(footer);
+
+                return wrapper;
+            }
+
+            function disposeTemplatePreviewPopover() {
+                if (templatePreviewPopover) {
+                    templatePreviewPopover.dispose();
+                    templatePreviewPopover = null;
+                }
+            }
+
+            function ensureTemplatePreviewPopover(template) {
+                if (!templatePreviewButton || typeof bootstrap === 'undefined' || !bootstrap.Popover) return null;
+                disposeTemplatePreviewPopover();
+                templatePreviewPopover = new bootstrap.Popover(templatePreviewButton, {
+                    container: 'body',
+                    html: true,
+                    sanitize: false,
+                    trigger: 'manual',
+                    placement: 'left',
+                    customClass: 'campaign-template-preview-popover',
+                    title: 'Aperçu du modèle',
+                    content: function () {
+                        return buildTemplatePreviewContent(template);
+                    },
+                });
+                return templatePreviewPopover;
+            }
+
+            function updateTemplatePreviewState() {
+                if (!templatePreviewButton) return;
+                const template = selectedTemplatePreview();
+                disposeTemplatePreviewPopover();
+
+                if (!template) {
+                    templatePreviewButton.disabled = true;
+                    templatePreviewButton.classList.add('btn-light-primary');
+                    templatePreviewButton.classList.remove('btn-primary');
+                    if (templatePreviewHint) {
+                        templatePreviewHint.textContent = 'Sélectionnez un modèle puis cliquez sur l’icône œil pour prévisualiser l’email.';
+                    }
+                    return;
+                }
+
+                templatePreviewButton.disabled = false;
+                templatePreviewButton.classList.remove('btn-light-primary');
+                templatePreviewButton.classList.add('btn-primary');
+                if (templatePreviewHint) {
+                    templatePreviewHint.textContent = 'Aperçu disponible : ' + (template.name || 'modèle sélectionné') + '.';
+                }
+            }
+
+            if (templatePreviewButton) {
+                templatePreviewButton.addEventListener('click', function (event) {
+                    event.preventDefault();
+                    const template = selectedTemplatePreview();
+                    if (!template) return;
+
+                    const popover = templatePreviewPopover || ensureTemplatePreviewPopover(template);
+                    if (popover) {
+                        popover.toggle();
+                    }
+                });
+
+                document.addEventListener('click', function (event) {
+                    if (!templatePreviewPopover || !templatePreviewButton) return;
+                    const popoverEl = document.querySelector('.campaign-template-preview-popover');
+                    if (templatePreviewButton.contains(event.target) || (popoverEl && popoverEl.contains(event.target))) return;
+                    templatePreviewPopover.hide();
+                });
+            }
 
             if (templateSelect && subjectOverride) {
                 templateSelect.addEventListener('change', function () {
@@ -527,6 +750,11 @@
                 if (templateSelect.value) {
                     templateSelect.dispatchEvent(new Event('change'));
                 }
+            }
+
+            if (templateSelect) {
+                templateSelect.addEventListener('change', updateTemplatePreviewState);
+                updateTemplatePreviewState();
             }
 
             // ── Flatpickr date/time picker — one_shot scheduled_at ──

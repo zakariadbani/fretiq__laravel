@@ -162,6 +162,29 @@ class CampaignTemplateGeneratedTest extends TestCase
         $response->assertStatus(200);
     }
 
+    public function test_edit_page_renders_translation_workspace_without_main_form_sticky_actions(): void
+    {
+        $template = $this->makeTemplate();
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/campaign_templates/' . $template->id . '/edit');
+
+        $response->assertStatus(200);
+        $response->assertSee('id="traductions-pane-root"', false);
+        $response->assertSee('tr-command-bar', false);
+        $response->assertSee('Aucune traduction anglaise enregistrée', false);
+        $response->assertSee('id="tr-translate-btn"', false);
+        $response->assertSee('Versions du modèle', false);
+        $response->assertSee('Source française à gauche, traduction anglaise à droite.', false);
+        $response->assertSee('Version française source', false);
+        $response->assertSee('Version anglaise éditable', false);
+        $response->assertSee('WYSIWYG français', false);
+        $response->assertSee('data-tinymce-readonly', false);
+        $response->assertSee('WYSIWYG anglais (EN)', false);
+        $response->assertSee('EN non créée', false);
+        $response->assertSee('data-crud-form-actions="sticky"', false);
+    }
+
     // ── Store happy-path ──────────────────────────────────────────────────────
 
     /**

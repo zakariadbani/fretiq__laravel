@@ -45,7 +45,12 @@
     $heroBadges    = $hp['badges']    ?? ($config['badges']    ?? []);
     $heroSubtitle  = $hp['subtitle']  ?? ($config['subtitle']  ?? []);
     $heroTiles     = $hp['tiles']     ?? ($config['tiles']     ?? []);
-    $heroStatusBar = $hp['statusBar'] ?? ($config['toggle']    ?? null);
+    // Allow callers to explicitly suppress the inherited config toggle by
+    // passing ['statusBar' => null]. Null-coalescing would otherwise fall back
+    // to $config['toggle'] and make the override impossible.
+    $heroStatusBar = array_key_exists('statusBar', $hp)
+        ? $hp['statusBar']
+        : ($config['toggle'] ?? null);
 
     $routeBase   = $config['route_base']    ?? '';
     $routeBaseId = $config['route_base_id'] ?? '';
