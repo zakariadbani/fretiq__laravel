@@ -31,6 +31,7 @@ class ProspectCriteria extends Model
         'ai_target',
         'ai_exclude',
         'ai_queries',
+        'discovery_cursors',
         'sectors',
         'countries',
         'company_sizes',
@@ -51,6 +52,7 @@ class ProspectCriteria extends Model
      */
     protected $casts = [
         'ai_queries'       => 'array',
+        'discovery_cursors' => 'array',
         'sectors'          => 'array',
         'countries'        => 'array',
         'company_sizes'    => 'array',

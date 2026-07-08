@@ -122,28 +122,31 @@ class RunDiscoveryPipelineJob implements ShouldQueue
             'criteria_name' => $criteria->name,
         ]);
 
-        // ── Quota budget check ─────────────────────────────────────────────────
-        // Compute what this attempt is still allowed to process.
-        // budget = credits_reserved − consumed (retry gets only what prior attempt didn't burn).
-        $budget = null; // null = unlimited (no run row / no quota)
+        // ── SerpAPI search-call budget check ───────────────────────────────────
+        // Compute what this attempt is still allowed to fetch from SerpAPI.
+        // Candidate processing uses DiscoveryRun.consumed as its cursor; provider
+        // calls use searches_reserved/searches_consumed.
+        $searchBudget = null; // null = legacy/no run row; pipeline falls back to criteria daily_limit
 
         if ($run !== null) {
-            // Rejected candidates advance `consumed` (the scan cursor) but must not be
-            // billed against the reservation — only kept/failed candidates are.
-            $budget = max(0, $run->credits_reserved - ((int) $run->consumed - (int) $run->excluded_count));
+            $reservedSearches = (int) ($run->searches_reserved ?? $run->credits_reserved);
+            $searchBudget = max(0, $reservedSearches - (int) ($run->searches_consumed ?? 0));
+            $snapshotCount = is_array($run->candidates_snapshot) ? count($run->candidates_snapshot) : 0;
+            $hasUnprocessedSnapshot = $snapshotCount > (int) $run->consumed;
 
-            // If the full reservation has already been consumed (retry case), nothing left.
-            if ($budget === 0) {
-                Log::info('[RunDiscoveryPipelineJob] Budget épuisé (retry) — aborting.', [
-                    'criteria_id'      => $this->criteriaId,
-                    'run_id'           => $this->runId,
-                    'credits_reserved' => $run->credits_reserved,
-                    'consumed'         => $run->consumed,
-                    'excluded_count'   => $run->excluded_count,
+            // If the full search reservation has already been consumed on a retry,
+            // still process any candidates already present in the durable snapshot.
+            if ($searchBudget === 0 && ! $hasUnprocessedSnapshot) {
+                Log::info('[RunDiscoveryPipelineJob] SerpAPI search budget épuisé (retry) — aborting.', [
+                    'criteria_id'       => $this->criteriaId,
+                    'run_id'            => $this->runId,
+                    'searches_reserved' => $reservedSearches,
+                    'searches_consumed' => (int) ($run->searches_consumed ?? 0),
+                    'consumed'          => $run->consumed,
                 ]);
                 $run->update([
                     'status'      => 'failed',
-                    'error'       => 'Budget épuisé (retry)',
+                    'error'       => 'Budget SerpAPI épuisé (retry)',
                     'finished_at' => now(),
                 ]);
                 return;
@@ -173,7 +176,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
                     );
                     $dailyCap  = (int) $quotaService->activePackage()?->daily_credits;
                     $available = max(0, $dailyCap - $usedByOthers);
-                    $budget    = min($budget, $available);
+                    $searchBudget = min($searchBudget, $available);
                 }
 
                 // ── Monthly company cap ────────────────────────────────────────
@@ -182,11 +185,11 @@ class RunDiscoveryPipelineJob implements ShouldQueue
                 if (! $quotaService->monthlyIsUnlimited()) {
                     $monthlyUsedByOthers = $quotaService->usedInPeriod($pStart, $pEnd, $run->id);
                     $monthlyCap          = (int) $quotaService->activePackage()?->monthly_credits;
-                    $budget              = min($budget, max(0, $monthlyCap - $monthlyUsedByOthers));
+                    $searchBudget        = min($searchBudget, max(0, $monthlyCap - $monthlyUsedByOthers));
                 }
 
-                // Single abort: fires whether daily, monthly, or both drove budget to 0.
-                if ($budget === 0) {
+                // Single abort: fires whether daily, monthly, or both drove search budget to 0.
+                if ($searchBudget === 0 && ! $hasUnprocessedSnapshot) {
                     Log::info('[RunDiscoveryPipelineJob] Solde épuisé (daily ou mensuel) — aborting.', [
                         'criteria_id' => $this->criteriaId,
                         'run_id'      => $this->runId,
@@ -251,7 +254,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
         $pipeline = app(DiscoveryPipelineService::class);
 
         try {
-            $stats = $pipeline->run($criteria, $budget, $run, $contactBudget); // returns ['companies'=>int,'contacts'=>int,'skipped'=>int,'low_score'=>int,'contacts_consumed'=>int]
+            $stats = $pipeline->run($criteria, $searchBudget, $run, $contactBudget); // returns ['companies'=>int,'contacts'=>int,'skipped'=>int,'low_score'=>int,'contacts_consumed'=>int]
 
             // Counts (companies_count, contacts_count, skipped_count, low_score_count)
             // are now persisted incrementally by the pipeline's CAS UPDATE after each

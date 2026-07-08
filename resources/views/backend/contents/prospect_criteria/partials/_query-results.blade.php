@@ -15,12 +15,23 @@
 
 @can('view companies')
 
+@php
+    $totalFound    = collect($queryGroups)->sum('found');
+    $totalKept     = collect($queryGroups)->sum('kept');
+    $totalExcluded = collect($queryGroups)->sum('excluded');
+@endphp
+
 <div class="card mb-5">
     <div class="card-header border-0 pt-5">
-        <h3 class="card-title fw-bolder m-0">
-            <i class="bi bi-diagram-3 text-info fs-3 me-2"></i>
-            Résultats par requête
-        </h3>
+        <div>
+            <h3 class="card-title fw-bolder m-0">
+                <i class="bi bi-diagram-3 text-info fs-3 me-2"></i>
+                Résultats par requête SerpAPI
+            </h3>
+            <div class="text-muted fs-7 mt-2">
+                {{ number_format($totalFound) }} candidat(s) trouvé(s) · {{ number_format($totalKept) }} entreprise(s) gardée(s) · {{ number_format($totalExcluded) }} exclue(s) par l'IA.
+            </div>
+        </div>
         <div class="card-toolbar">
             @if($auditMode)
                 <a href="{{ route('admin.prospect_criteria.view', $model->id) }}#criteria_resultats"
@@ -60,18 +71,20 @@
                             @endif
                         </div>
                         <div class="d-flex align-items-center">
-                            <span class="badge badge-light-primary me-2">{{ $group['found'] }} trouvées</span>
-                            <span class="badge badge-light-success me-2">{{ $group['kept'] }} gardées</span>
+                            <span class="badge badge-light-primary me-2">{{ $group['found'] }} candidat(s)</span>
+                            <span class="badge badge-light-success me-2">{{ $group['kept'] }} gardée(s)</span>
                             @if($group['excluded'] > 0)
-                                <span class="badge badge-light-danger me-3">{{ $group['excluded'] }} exclues</span>
+                                <span class="badge badge-light-danger me-3">{{ $group['excluded'] }} exclue(s)</span>
                             @endif
                             <button type="button"
                                     class="btn btn-sm btn-light"
                                     data-bs-toggle="collapse"
                                     data-bs-target="#{{ $groupId }}"
                                     aria-expanded="false"
-                                    aria-controls="{{ $groupId }}">
-                                <i class="bi bi-chevron-down fs-7"></i>
+                                    aria-controls="{{ $groupId }}"
+                                    title="Afficher les entreprises de cette requête">
+                                <i class="bi bi-chevron-down fs-7 me-1"></i>
+                                Détails
                             </button>
                         </div>
                     </div>

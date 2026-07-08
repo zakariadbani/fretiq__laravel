@@ -108,9 +108,9 @@
                                        required />
                             </div>
 
-                            {{-- Découvertes / jour --}}
+                            {{-- Recherches SerpAPI / jour --}}
                             <div class="fv-row mb-7">
-                                <label class="required fw-semibold fs-6 mb-2">Découvertes / jour</label>
+                                <label class="required fw-semibold fs-6 mb-2">Recherches SerpAPI / jour</label>
                                 <div class="input-group input-group-solid">
                                     <input type="number"
                                            name="daily_limit"
@@ -118,13 +118,13 @@
                                            value="{{ old('daily_limit', $model->daily_limit ?? 20) }}"
                                            min="1"
                                            max="500" />
-                                    <span class="input-group-text fw-semibold text-gray-500">découvertes / jour</span>
+                                    <span class="input-group-text fw-semibold text-gray-500">recherches / jour</span>
                                 </div>
                                 @php
                                     $overbooked = ($quotaPackage?->daily_credits !== null) && (($activeDailyLimitSum ?? 0) > $quotaPackage->daily_credits);
                                 @endphp
                                 <div class="form-text mt-1 {{ $overbooked ? 'text-warning' : 'text-muted' }}">
-                                    Quota package : {{ $quotaPackage?->daily_credits ?? '∞' }} découvertes/j &middot; {{ $quotaPackage?->daily_contact_credits ?? '∞' }} contacts/j — total réservé par les critères actifs : {{ $activeDailyLimitSum ?? 0 }}/j
+                                    Quota package : {{ $quotaPackage?->daily_credits ?? '∞' }} recherches SerpAPI/j &middot; {{ $quotaPackage?->daily_contact_credits ?? '∞' }} contacts/j — total réservé par les critères actifs : {{ $activeDailyLimitSum ?? 0 }} recherches/j. 1 recherche retourne jusqu'à {{ \App\Services\Discovery\CompanyDiscoveryService::PAGE_SIZE }} résultats Google avant filtrage IA.
                                 </div>
                             </div>
 
@@ -446,38 +446,159 @@
             var previewUrl  = '{{ route('admin.prospect_criteria.preview_queries', $model->id) }}';
             var generateUrl = '{{ route('admin.prospect_criteria.generate_queries', $model->id) }}';
             var csrfToken   = '{{ csrf_token() }}';
+            var discoveryCursors = @json($model->discovery_cursors ?? []);
             var $container  = $('#query-preview-content');
             var $genBtn     = $('#btn-generate-ai');
+
+            var executionBudget = null;
 
             // Renders queries as real form inputs (name="ai_queries[i][q|enabled]") so
             // they submit with Enregistrer — this card is a stateless preview, Enregistrer
             // is the only action that persists ai_queries (beforeSave() on the controller).
-            function renderQueries(queries) {
+            function renderQueries(queries, execution) {
+                if (execution && execution.search_budget !== undefined) {
+                    executionBudget = parseInt(execution.search_budget, 10);
+                    if (isNaN(executionBudget)) {
+                        executionBudget = null;
+                    }
+                }
+
                 if (!queries || queries.length === 0) {
                     $container.html(
                         '<div class="text-muted fs-7"><i class="bi bi-exclamation-circle me-1"></i>Aucune requête générée — renseignez une description de cible ou au moins un secteur/pays.</div>'
                     );
                     return;
                 }
-                var html = '<div class="text-muted fs-7 mb-4">' + queries.length + ' requête(s) — désactivez celles que vous ne voulez pas lancer, puis Enregistrer.</div>';
+
+                var plan = buildExecutionPlan(queries);
+                var html = executionSummary(queries, plan);
+
                 $.each(queries, function (i, item) {
-                    var q       = item.q != null ? item.q : item;
-                    var qEsc    = $('<div>').text(q).html();
-                    var enabled = item.enabled !== false;
+                    var q          = item.q != null ? item.q : item;
+                    var qTextEsc   = $('<div>').text(q).html();
+                    // jQuery's text().html() is safe for text nodes, but it does not
+                    // necessarily encode quotes. AI-generated Google queries often contain
+                    // quoted phrases; if those raw quotes are injected into value="...", the
+                    // hidden input is parsed with a truncated/empty value and Enregistrer
+                    // saves incorrect ai_queries even though the preview looked correct.
+                    var qAttrEsc   = qTextEsc.replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+                    var enabled    = item.enabled !== false;
+                    var status     = plan.statuses[q] || {state: enabled ? 'queued' : 'disabled'};
                     html += '<div class="border border-gray-300 rounded p-4 mb-3' + (enabled ? '' : ' opacity-50') + '" data-qi="' + i + '">'
-                          + '<div class="d-flex align-items-center">'
-                          + '<input type="hidden" name="ai_queries[' + i + '][q]" value="' + qEsc + '" />'
-                          + '<label class="form-check form-switch form-check-custom form-check-solid me-4 mb-0">'
+                          + '<div class="d-flex align-items-center flex-wrap gap-2">'
+                          + '<input type="hidden" name="ai_queries[' + i + '][q]" value="' + qAttrEsc + '" />'
+                          + '<label class="form-check form-switch form-check-custom form-check-solid me-2 mb-0">'
                           + '<input type="hidden" name="ai_queries[' + i + '][enabled]" value="0" />'
                           + '<input class="form-check-input h-20px w-35px q-toggle" type="checkbox" name="ai_queries[' + i + '][enabled]" value="1" ' + (enabled ? 'checked' : '') + ' />'
                           + '</label>'
-                          + '<span class="badge badge-light-warning me-3">' + (i + 1) + '</span>'
-                          + '<span class="text-gray-700 fs-7">' + qEsc + '</span>'
+                          + '<span class="badge badge-light-warning me-1">' + (i + 1) + '</span>'
+                          + '<span class="text-gray-700 fs-7 flex-grow-1">' + qTextEsc + '</span>'
+                          + statusBadges(q, status)
                           + '</div>'
                           + '</div>';
                 });
                 $container.html(html);
                 bindToggles();
+            }
+
+            function cursorInfo(q) {
+                var found = null;
+                $.each(discoveryCursors || {}, function (key, value) {
+                    if (key !== '_rotation' && value && value.q === q) {
+                        found = { key: key, cursor: value };
+                        return false;
+                    }
+                });
+                return found;
+            }
+
+            function buildExecutionPlan(queries) {
+                var actionable = [];
+                var disabled = 0;
+                var exhausted = 0;
+                var statuses = {};
+
+                $.each(queries, function (i, item) {
+                    var q = item.q != null ? item.q : item;
+                    var enabled = item.enabled !== false;
+                    var info = cursorInfo(q);
+                    if (!enabled) {
+                        disabled++;
+                        statuses[q] = { state: 'disabled' };
+                        return;
+                    }
+                    if (info && info.cursor && info.cursor.exhausted) {
+                        exhausted++;
+                        statuses[q] = { state: 'exhausted', cursor: info.cursor };
+                        return;
+                    }
+                    actionable.push({ q: q, key: info ? info.key : null, cursor: info ? info.cursor : null });
+                });
+
+                var rotationKey = discoveryCursors ? discoveryCursors._rotation : null;
+                var start = 0;
+                if (rotationKey) {
+                    $.each(actionable, function (i, item) {
+                        if (item.key === rotationKey) {
+                            start = (i + 1) % actionable.length;
+                            return false;
+                        }
+                    });
+                }
+                var ordered = actionable.length
+                    ? actionable.slice(start).concat(actionable.slice(0, start))
+                    : [];
+                var budget = executionBudget === null ? ordered.length : Math.max(0, executionBudget);
+
+                $.each(ordered, function (i, item) {
+                    statuses[item.q] = {
+                        state: i < budget ? 'immediate' : 'queued',
+                        rank: i + 1,
+                        cursor: item.cursor,
+                    };
+                });
+
+                return {
+                    statuses: statuses,
+                    prepared: queries.length,
+                    actionable: actionable.length,
+                    immediate: Math.min(budget, actionable.length),
+                    queued: Math.max(0, actionable.length - budget),
+                    disabled: disabled,
+                    exhausted: exhausted,
+                    budget: budget,
+                };
+            }
+
+            function executionSummary(queries, plan) {
+                return '<div class="alert alert-light-info border border-info border-dashed p-4 mb-4">'
+                    + '<div class="fw-bold text-gray-800 mb-1">Prochain lancement : jusqu\'à ' + plan.budget + ' recherche(s) SerpAPI exécutée(s) maintenant</div>'
+                    + '<div class="text-muted fs-7">' + plan.prepared + ' requête(s) préparée(s) · ' + plan.immediate + ' dans le budget immédiat · ' + plan.queued + ' en attente · ' + plan.exhausted + ' déjà épuisée(s) · ' + plan.disabled + ' désactivée(s).</div>'
+                    + '<div class="text-muted fs-8 mt-2"><i class="bi bi-info-circle me-1"></i>L\'aperçu ne consomme aucun crédit. 1 recherche SerpAPI = 1 crédit. Une même requête peut consommer plusieurs pages si Google renvoie une page suivante.</div>'
+                    + '</div>';
+            }
+
+            function statusBadges(q, status) {
+                var html = '';
+                if (status.state === 'disabled') {
+                    return '<span class="badge badge-light-secondary ms-3">Désactivée</span>';
+                }
+                if (status.state === 'exhausted') {
+                    return '<span class="badge badge-light-danger ms-3">Déjà épuisée</span>';
+                }
+                if (status.state === 'immediate') {
+                    html += '<span class="badge badge-light-success ms-3">Dans le budget · rang ' + status.rank + '</span>';
+                } else if (status.state === 'queued') {
+                    html += '<span class="badge badge-light-secondary ms-3">En attente · rang ' + status.rank + '</span>';
+                }
+
+                if (status.cursor) {
+                    var start = parseInt(status.cursor.start || 0, 10);
+                    var page = Math.floor((isNaN(start) ? 0 : start) / 10) + 1;
+                    html += '<span class="badge badge-light-info ms-2">Page suivante : ' + page + '</span>';
+                }
+
+                return html;
             }
 
             // Toggling only dims the row locally — no server call. The state submits
@@ -508,7 +629,7 @@
                     '<div class="text-muted fs-7"><i class="bi bi-hourglass-split me-1"></i>Chargement des requêtes…</div>'
                 );
                 $.getJSON(previewUrl, function (data) {
-                    renderQueries(data.queries || []);
+                    renderQueries(data.queries || [], data.execution || null);
                 }).fail(function () {
                     $container.html(
                         '<div class="text-danger fs-7"><i class="bi bi-x-circle me-1"></i>Erreur lors du chargement des requêtes.</div>'

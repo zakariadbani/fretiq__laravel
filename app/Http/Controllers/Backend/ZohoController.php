@@ -3,10 +3,10 @@
 namespace App\Http\Controllers\Backend;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\RunZohoCrmSyncJob;
 use App\Models\ZohoSyncLog;
 use App\Models\ZohoToken;
 use App\Services\Zoho\CampaignsReadinessService;
-use App\Services\Zoho\ZohoCrmSyncService;
 use App\Services\Zoho\ZohoCrmTemplatesService;
 use Illuminate\Http\Request;
 
@@ -77,11 +77,12 @@ class ZohoController extends Controller
     }
 
     /**
-     * Run a synchronous on-demand sync and redirect back with a flash message.
+     * Dispatch an async Zoho CRM sync and redirect back with a flash message.
      *
      * The optional `module` parameter restricts to Accounts or Contacts only;
-     * omitting it runs both. RunZohoCrmSyncJob remains available for async/
-     * scheduled use — this action is intentionally synchronous for immediacy.
+     * omitting it runs both. The work runs in RunZohoCrmSyncJob on the queue
+     * (a full pull can take ~100 s — too long for a synchronous request), so a
+     * queue worker must be running for the sync to actually execute.
      */
     public function sync(Request $request)
     {
@@ -92,13 +93,13 @@ class ZohoController extends Controller
         $module = $request->input('module');
 
         try {
-            app(ZohoCrmSyncService::class)->sync($module);
+            RunZohoCrmSyncJob::dispatch($module);
 
             $label = $module ? $module : 'Accounts + Contacts';
-            session()->flash('success', "Synchronisation terminée — {$label} mis à jour.");
+            session()->flash('success', "Synchronisation lancée en arrière-plan — {$label}. Les résultats s'afficheront ici une fois terminée.");
         } catch (\Throwable $e) {
             $message = mb_substr($e->getMessage(), 0, 200);
-            session()->flash('error', "Erreur lors de la synchronisation : {$message}");
+            session()->flash('error', "Erreur lors du lancement de la synchronisation : {$message}");
         }
 
         return redirect()->route('admin.zoho.index');

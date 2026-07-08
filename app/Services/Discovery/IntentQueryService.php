@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Log;
  * IntentQueryService — turns free-text targeting (ai_target / ai_exclude) into
  * Google `q` search strings for SerpAPI, via the Gemini API.
  *
- * Mirrors GeminiScoringDriver's HTTP block verbatim: api-key guard → HTTP call
+ * Mirrors GeminiTranslationDriver's HTTP block: api-key guard → HTTP call
  * with response_mime_type=application/json → read candidates.0.content.parts.0.text
  * → strip ```json fences → json_decode → catch(\Throwable) → NEVER throw.
  *
@@ -52,7 +52,7 @@ class IntentQueryService
         $prompt = $this->buildPrompt($criteria, $target, $exclude);
 
         try {
-            $response = Http::timeout(20)
+            $response = Http::timeout(60)
                 ->withHeaders(['x-goog-api-key' => $apiKey])
                 ->post(
                     "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent",
@@ -66,6 +66,7 @@ class IntentQueryService
                         ],
                         'generationConfig' => [
                             'response_mime_type' => 'application/json',
+                            'maxOutputTokens'    => 8192,
                         ],
                     ]
                 );

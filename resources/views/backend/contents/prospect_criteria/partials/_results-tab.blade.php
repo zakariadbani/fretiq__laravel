@@ -3,8 +3,10 @@
     per-company expandable contacts (Bootstrap collapse, no custom JS).
 
     Expects:
-        $model           — ProspectCriteria
-        $resultCompanies — LengthAwarePaginator (companies()->with('contacts'), 25/page, 'results_page')
+        $model            — ProspectCriteria
+        $resultCompanies  — LengthAwarePaginator (companies()->with('contacts'), 25/page, 'results_page')
+        $resultsSort      — current table sort key (score/created_at/recent/name/sector/country/size/contacts)
+        $resultsDir       — current table sort direction (asc/desc)
 
     Permissions:
         @can('view companies')  — gates the entire data table
@@ -12,16 +14,43 @@
         @can('run discovery')   — gates the empty-state CTA
 --}}
 
+@php
+    $resultsSort = $resultsSort ?? 'score';
+    $resultsDir  = $resultsDir ?? 'desc';
+
+    $sortUrl = function (string $key) use ($model, $resultsSort, $resultsDir): string {
+        $params = request()->except(['results_sort', 'results_dir', 'results_page']);
+        $params['results_sort'] = $key;
+        $params['results_dir']  = ($resultsSort === $key && $resultsDir === 'asc') ? 'desc' : 'asc';
+        $query = http_build_query($params);
+
+        return route('admin.prospect_criteria.view', $model->id) . ($query !== '' ? '?' . $query : '') . '#criteria_resultats';
+    };
+
+    $sortIcon = fn (string $key): string => $resultsSort === $key
+        ? ($resultsDir === 'asc' ? 'bi-sort-alpha-down' : 'bi-sort-alpha-up')
+        : 'bi-arrow-down-up';
+
+    $sortClass = fn (string $key): string => $resultsSort === $key
+        ? 'text-primary fw-bold text-decoration-none'
+        : 'text-muted text-hover-primary text-decoration-none';
+@endphp
+
 <div class="card">
     <div class="card-header border-0 pt-5">
-        <h3 class="card-title fw-bolder m-0">
-            <i class="bi bi-building-check text-primary fs-3 me-2"></i>
-            Entreprises découvertes ({{ $resultCompanies->total() }})
-        </h3>
+        <div>
+            <h3 class="card-title fw-bolder m-0">
+                <i class="bi bi-building-check text-primary fs-3 me-2"></i>
+                Entreprises gardées ({{ $resultCompanies->total() }})
+            </h3>
+            <div class="text-muted fs-7 mt-2">
+                Liste des entreprises conservées après filtrage IA. Cliquez sur un en-tête pour trier la table. Les exclusions se consultent dans « Résultats par requête SerpAPI ».
+            </div>
+        </div>
         <div class="card-toolbar">
             <a href="{{ route('admin.companies.index') . '?criteria_id=' . $model->id }}"
                class="btn btn-sm btn-light-primary">
-                Voir toutes les entreprises
+                Voir les entreprises gardées
                 <i class="bi bi-arrow-right ms-1"></i>
             </a>
         </div>
@@ -55,12 +84,41 @@
                     <table class="table table-row-bordered table-row-gray-300 align-middle gs-0 gy-3">
                         <thead>
                             <tr class="fw-bold text-muted bg-light">
-                                <th class="ps-5 min-w-160px">Entreprise</th>
-                                <th class="min-w-100px">Secteur</th>
-                                <th class="min-w-80px">Pays</th>
-                                <th class="min-w-80px">Taille</th>
-                                <th class="min-w-60px">Score</th>
-                                <th class="min-w-80px">Contacts</th>
+                                <th class="ps-5 min-w-160px">
+                                    <a href="{{ $sortUrl('name') }}" class="{{ $sortClass('name') }}">
+                                        Entreprise <i class="bi {{ $sortIcon('name') }} ms-1"></i>
+                                    </a>
+                                </th>
+                                <th class="min-w-100px">
+                                    <a href="{{ $sortUrl('sector') }}" class="{{ $sortClass('sector') }}">
+                                        Secteur <i class="bi {{ $sortIcon('sector') }} ms-1"></i>
+                                    </a>
+                                </th>
+                                <th class="min-w-80px">
+                                    <a href="{{ $sortUrl('country') }}" class="{{ $sortClass('country') }}">
+                                        Pays <i class="bi {{ $sortIcon('country') }} ms-1"></i>
+                                    </a>
+                                </th>
+                                <th class="min-w-80px">
+                                    <a href="{{ $sortUrl('size') }}" class="{{ $sortClass('size') }}">
+                                        Taille <i class="bi {{ $sortIcon('size') }} ms-1"></i>
+                                    </a>
+                                </th>
+                                <th class="min-w-60px">
+                                    <a href="{{ $sortUrl('score') }}" class="{{ $sortClass('score') }}">
+                                        Score <i class="bi {{ $sortIcon('score') }} ms-1"></i>
+                                    </a>
+                                </th>
+                                <th class="min-w-110px">
+                                    <a href="{{ $sortUrl('created_at') }}" class="{{ $sortClass('created_at') }}">
+                                        Créée le <i class="bi {{ $sortIcon('created_at') }} ms-1"></i>
+                                    </a>
+                                </th>
+                                <th class="min-w-80px">
+                                    <a href="{{ $sortUrl('contacts') }}" class="{{ $sortClass('contacts') }}">
+                                        Contacts <i class="bi {{ $sortIcon('contacts') }} ms-1"></i>
+                                    </a>
+                                </th>
                                 <th class="text-end pe-5">Actions</th>
                             </tr>
                         </thead>
@@ -125,6 +183,12 @@
                                         @endif
                                     </td>
                                     <td>
+                                        <span class="text-gray-700 fs-7">{{ $company->created_at?->format('d/m/Y') ?? '—' }}</span>
+                                        @if($company->created_at)
+                                            <span class="text-muted d-block fs-8">{{ $company->created_at->format('H:i') }}</span>
+                                        @endif
+                                    </td>
+                                    <td>
                                         <button type="button"
                                                 class="btn btn-sm btn-light d-flex align-items-center gap-1"
                                                 data-bs-toggle="collapse"
@@ -148,7 +212,7 @@
 
                                 {{-- Expandable contacts row — full colspan, no padding so collapsed = invisible --}}
                                 <tr>
-                                    <td colspan="7" class="p-0 border-0">
+                                    <td colspan="8" class="p-0 border-0">
                                         <div class="collapse" id="criteria_contacts_{{ $company->id }}">
                                             <div class="px-5 py-4 bg-light-secondary">
                                                 @can('view contacts')

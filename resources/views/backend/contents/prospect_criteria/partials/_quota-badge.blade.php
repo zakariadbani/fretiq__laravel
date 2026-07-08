@@ -1,5 +1,5 @@
 {{--
-    Quota badge — shows daily + monthly solde for both meters (découvertes + contacts).
+    Quota badge — shows daily + monthly solde for both meters (SerpAPI searches + contacts).
 
     Variables (injected by the including template):
         $quotaRemaining          ?int   — null when unlimited, int >= 0 when limited (company/discovery meter, daily)
@@ -109,7 +109,7 @@
     @endphp
     <span class="badge {{ $companyClass }} fs-7 fw-semibold me-1">
         <i class="bi bi-building me-1"></i>
-        Découvertes : {{ $companyText }}
+        Recherches SerpAPI : {{ $companyText }}
     </span>
     <span class="badge {{ $contactClass }} fs-7 fw-semibold">
         <i class="bi bi-person-lines-fill me-1"></i>
@@ -121,7 +121,7 @@
     @if($quotaPackage?->daily_credits !== null && $activeDailyLimitSum > $quotaPackage->daily_credits)
         <span class="badge badge-light-warning fs-7 fw-semibold ms-1"
               data-bs-toggle="tooltip"
-              title="La somme des découvertes/jour des critères actifs ({{ $activeDailyLimitSum }}) dépasse le quota du package ({{ $quotaPackage->daily_credits }}/j). Le premier critère lancé consomme le quota du jour — les autres attendent.">
+              title="La somme des recherches SerpAPI/jour des critères actifs ({{ $activeDailyLimitSum }}) dépasse le quota du package ({{ $quotaPackage->daily_credits }}/j). Le premier critère lancé consomme le quota du jour — les autres attendent.">
             <i class="bi bi-exclamation-triangle me-1"></i>
             Quota sur-réservé &middot; {{ $activeDailyLimitSum }}/{{ $quotaPackage->daily_credits }} /j
         </span>

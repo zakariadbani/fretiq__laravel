@@ -2,8 +2,12 @@
 
 namespace Tests\Unit;
 
+use App\Models\Company;
+use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Services\Discovery\CompanyDiscoveryService;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 /**
@@ -11,10 +15,12 @@ use Tests\TestCase;
  *
  * Extends Tests\TestCase (not PHPUnit\Framework\TestCase) because buildQueries()
  * calls config('global.data.company_countries') which requires the Laravel app.
- * No RefreshDatabase — unsaved ProspectCriteria instances used (fill() + no DB).
+ * RefreshDatabase is required for cursor/snapshot tests that persist criteria and runs.
  */
 class CompanyDiscoveryServiceTest extends TestCase
 {
+    use RefreshDatabase;
+
     private CompanyDiscoveryService $service;
 
     protected function setUp(): void
@@ -31,6 +37,111 @@ class CompanyDiscoveryServiceTest extends TestCase
         $criteria = new ProspectCriteria();
         $criteria->fill($attributes);
         return $criteria;
+    }
+
+    private function makePersistedCriteria(array $overrides = []): ProspectCriteria
+    {
+        return ProspectCriteria::create(array_merge([
+            'name'        => 'Pagination ' . uniqid(),
+            'ai_queries'  => [['q' => 'transitaire France', 'enabled' => true]],
+            'sectors'     => [],
+            'countries'   => [],
+            'daily_limit' => 10,
+            'is_active'   => true,
+        ], $overrides));
+    }
+
+    private function makeRun(ProspectCriteria $criteria): DiscoveryRun
+    {
+        return DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type'                 => 'discovery',
+            'status'               => 'running',
+            'credits_reserved'     => 10,
+            'consumed'             => 0,
+        ]);
+    }
+
+    private function serpResult(string $domain): array
+    {
+        return [
+            'title'   => ucfirst(str_replace('.', ' ', $domain)),
+            'link'    => 'https://' . $domain . '/about',
+            'snippet' => 'Fixture result',
+        ];
+    }
+
+    private function serpResults(string $prefix, int $count): array
+    {
+        return collect(range(1, $count))
+            ->map(fn ($i) => $this->serpResult("{$prefix}-{$i}.test"))
+            ->all();
+    }
+
+    private function requestQuery($request): array
+    {
+        parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $params);
+
+        return $params;
+    }
+
+    public function test_live_discovery_call_budget_one_search_can_return_page_size_candidates(): void
+    {
+        config([
+            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+        ]);
+
+        Http::fake([
+            '*' => Http::response([
+                'organic_results' => $this->serpResults('budget-one', 10),
+                'serpapi_pagination' => ['next' => 'https://serpapi.test/next'],
+            ], 200),
+        ]);
+
+        $criteria = $this->makePersistedCriteria([
+            'daily_limit' => 1,
+            'ai_queries'  => [['q' => 'budget query', 'enabled' => true]],
+        ]);
+        $run = $this->makeRun($criteria);
+
+        $snapshot = $this->service->discoverForRun($criteria, $run, 1);
+
+        Http::assertSentCount(1);
+        $this->assertCount(10, $snapshot);
+        $this->assertSame(10, (int) data_get($criteria->refresh()->discovery_cursors, md5('budget query') . '.start'));
+    }
+
+    public function test_live_discovery_call_budget_two_searches_can_append_two_pages(): void
+    {
+        config([
+            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+        ]);
+
+        $requests = [];
+        Http::fake(function ($request) use (&$requests) {
+            $requests[] = $request;
+            $prefix = count($requests) === 1 ? 'budget-two-a' : 'budget-two-b';
+
+            return Http::response([
+                'organic_results' => $this->serpResults($prefix, 10),
+                'serpapi_pagination' => ['next' => 'https://serpapi.test/next'],
+            ], 200);
+        });
+
+        $criteria = $this->makePersistedCriteria([
+            'daily_limit' => 2,
+            'ai_queries'  => [['q' => 'budget query', 'enabled' => true]],
+        ]);
+        $run = $this->makeRun($criteria);
+
+        $snapshot = $this->service->discoverForRun($criteria, $run, 2);
+
+        Http::assertSentCount(2);
+        $this->assertCount(20, $snapshot);
+        $this->assertSame(20, (int) data_get($criteria->refresh()->discovery_cursors, md5('budget query') . '.start'));
+        $this->assertSame('10', (string) $this->requestQuery($requests[1])['start']);
     }
 
     // ── ISO → French label mapping ─────────────────────────────────────────────
@@ -248,5 +359,234 @@ class CompanyDiscoveryServiceTest extends TestCase
                 'Without sectors, only freight-keyword queries expected'
             );
         }
+    }
+
+    public function test_live_discovery_advances_start_for_single_query_between_runs(): void
+    {
+        config([
+            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+        ]);
+
+        $requests = [];
+        Http::fake(function ($request) use (&$requests) {
+            $requests[] = $request;
+            $domain = count($requests) === 1 ? 'alpha.test' : 'bravo.test';
+
+            return Http::response([
+                'organic_results' => [$this->serpResult($domain)],
+                'serpapi_pagination' => ['next' => 'https://serpapi.test/next'],
+            ], 200);
+        });
+
+        $criteria = $this->makePersistedCriteria();
+        $query = 'transitaire France';
+        $key = md5($query);
+
+        $run1 = $this->makeRun($criteria);
+        $this->service->discover($criteria, $run1, 1);
+
+        $criteria->refresh();
+        $this->assertSame(10, (int) data_get($criteria->discovery_cursors, "{$key}.start"));
+
+        $run2 = $this->makeRun($criteria);
+        $this->service->discover($criteria->refresh(), $run2, 1);
+
+        $first = $this->requestQuery($requests[0]);
+        $second = $this->requestQuery($requests[1]);
+
+        $this->assertArrayNotHasKey('start', $first);
+        $this->assertSame('10', (string) $second['start']);
+        $this->assertSame('0', (string) $first['filter']);
+        $this->assertSame('10', (string) $first['num']);
+
+        $criteria->refresh();
+        $this->assertSame(20, (int) data_get($criteria->discovery_cursors, "{$key}.start"));
+    }
+
+    public function test_live_discovery_does_not_append_page_when_expected_start_mismatches(): void
+    {
+        config([
+            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+        ]);
+
+        $query = 'stale query';
+        $key = md5($query);
+
+        $criteria = $this->makePersistedCriteria([
+            'ai_queries' => [['q' => $query, 'enabled' => true]],
+        ]);
+
+        Http::fake(function () use ($criteria, $key, $query) {
+            $criteria->forceFill([
+                'discovery_cursors' => [
+                    $key => [
+                        'q'         => $query,
+                        'start'     => 10,
+                        'exhausted' => false,
+                    ],
+                    '_rotation' => $key,
+                ],
+            ])->save();
+
+            return Http::response([
+                'organic_results' => [$this->serpResult('stale-page.test')],
+                'serpapi_pagination' => ['next' => 'https://serpapi.test/next'],
+            ], 200);
+        });
+
+        $run = $this->makeRun($criteria);
+        $snapshot = $this->service->discover($criteria, $run, 1);
+
+        Http::assertSentCount(1);
+        $this->assertSame([], $snapshot);
+        $this->assertNull($run->refresh()->candidates_snapshot);
+        $this->assertSame(10, (int) data_get($criteria->refresh()->discovery_cursors, "{$key}.start"));
+    }
+
+    public function test_live_discovery_rotates_to_next_query_each_run(): void
+    {
+        config([
+            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+        ]);
+
+        $queriesSeen = [];
+        Http::fake(function ($request) use (&$queriesSeen) {
+            $params = $this->requestQuery($request);
+            $queriesSeen[] = $params['q'];
+
+            return Http::response([
+                'organic_results' => [$this->serpResult('rotation-' . count($queriesSeen) . '.test')],
+                'serpapi_pagination' => ['next' => 'https://serpapi.test/next'],
+            ], 200);
+        });
+
+        $criteria = $this->makePersistedCriteria([
+            'ai_queries' => [
+                ['q' => 'query A', 'enabled' => true],
+                ['q' => 'query B', 'enabled' => true],
+            ],
+        ]);
+
+        $this->service->discover($criteria, $this->makeRun($criteria), 1);
+        $this->service->discover($criteria->refresh(), $this->makeRun($criteria), 1);
+
+        $this->assertSame(['query A', 'query B'], $queriesSeen);
+        $this->assertSame(md5('query B'), $criteria->refresh()->discovery_cursors['_rotation']);
+    }
+
+    public function test_live_discovery_marks_last_page_exhausted_and_failed_response_advances_nothing(): void
+    {
+        config([
+            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+        ]);
+
+        $failMode = false;
+        Http::fake(function () use (&$failMode) {
+            if ($failMode) {
+                return Http::response([], 500);
+            }
+
+            return Http::response([
+                'organic_results' => [$this->serpResult('last-page.test')],
+            ], 200);
+        });
+
+        $criteria = $this->makePersistedCriteria();
+        $run = $this->makeRun($criteria);
+        $snapshot = $this->service->discover($criteria, $run, 3);
+        $cursor = $criteria->refresh()->discovery_cursors[md5('transitaire France')];
+
+        $this->assertSame(['last-page.test'], array_column($snapshot, 'domain'));
+        $this->assertTrue($cursor['exhausted']);
+        $this->assertSame(10, (int) $cursor['start']);
+
+        $failMode = true;
+
+        $failedCriteria = $this->makePersistedCriteria([
+            'name' => 'Failed SerpAPI ' . uniqid(),
+            'ai_queries' => [['q' => 'failed query', 'enabled' => true]],
+        ]);
+        $failedRun = $this->makeRun($failedCriteria);
+
+        $this->assertSame([], $this->service->discover($failedCriteria, $failedRun, 1));
+        $this->assertNull($failedCriteria->refresh()->discovery_cursors);
+        $this->assertNull($failedRun->refresh()->candidates_snapshot);
+    }
+
+    public function test_live_discovery_filters_visible_and_same_criteria_rejected_domains_only(): void
+    {
+        config([
+            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+        ]);
+
+        $criteria = $this->makePersistedCriteria();
+        $otherCriteria = $this->makePersistedCriteria(['name' => 'Other ' . uniqid()]);
+
+        Company::create([
+            'criteria_id' => $otherCriteria->id,
+            'name'        => 'Visible',
+            'domain'      => 'visible.test',
+            'source'      => 'discovered',
+        ]);
+        Company::create([
+            'criteria_id'           => $criteria->id,
+            'name'                  => 'Rejected here',
+            'domain'                => 'same-rejected.test',
+            'source'                => 'discovered',
+            'qualification_status'  => 'rejected',
+        ]);
+        Company::create([
+            'criteria_id'           => $otherCriteria->id,
+            'name'                  => 'Rejected elsewhere',
+            'domain'                => 'other-rejected.test',
+            'source'                => 'discovered',
+            'qualification_status'  => 'rejected',
+        ]);
+
+        Http::fake([
+            '*' => Http::response([
+                'organic_results' => [
+                    $this->serpResult('visible.test'),
+                    $this->serpResult('same-rejected.test'),
+                    $this->serpResult('other-rejected.test'),
+                    $this->serpResult('fresh.test'),
+                ],
+            ], 200),
+        ]);
+
+        $snapshot = $this->service->discover($criteria, $this->makeRun($criteria), 10);
+
+        $this->assertSame(['other-rejected.test', 'fresh.test'], array_column($snapshot, 'domain'));
+    }
+
+    public function test_live_discovery_stops_at_search_cap(): void
+    {
+        config([
+            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+        ]);
+
+        $count = 0;
+        Http::fake(function () use (&$count) {
+            $count++;
+
+            return Http::response(['organic_results' => []], 200);
+        });
+
+        $criteria = $this->makePersistedCriteria([
+            'ai_queries' => collect(range(1, 20))
+                ->map(fn ($i) => ['q' => "dry query {$i}", 'enabled' => true])
+                ->all(),
+        ]);
+
+        $snapshot = $this->service->discover($criteria, $this->makeRun($criteria), 1);
+
+        $this->assertSame([], $snapshot);
+        $this->assertSame(15, $count);
     }
 }

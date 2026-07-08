@@ -1,6 +1,7 @@
 {{--
     ProspectCriteria — Historique des découvertes.
-    Lists the 50 most recent discovery runs for the criterion (counts-only).
+    Lists the 50 most recent discovery launches for the criterion, including
+    SerpAPI search-call counters and throughput counts.
     Variable: $model (ProspectCriteria).
     Schema::hasTable guard keeps the page safe before the discovery_runs migration.
 --}}
@@ -13,14 +14,25 @@
     $runsTotal = $hasTable
         ? ($runs->count() < 50 ? $runs->count() : $model->discoveryRuns()->where('type', 'discovery')->count())
         : 0;
+    $hasSearchCounters = $hasTable
+        && Schema::hasColumn('discovery_runs', 'searches_reserved')
+        && Schema::hasColumn('discovery_runs', 'searches_consumed');
+    $searchesTotal = $runs->sum(fn ($run) => $hasSearchCounters
+        ? (int) ($run->searches_consumed ?? 0)
+        : (int) ($run->credits_reserved ?? 0));
 @endphp
 
 <div class="card">
     <div class="card-header border-0 pt-5">
-        <h3 class="card-title fw-bolder m-0">
-            <i class="bi bi-clock-history text-info fs-3 me-2"></i>
-            Historique des découvertes ({{ $runsTotal }})
-        </h3>
+        <div>
+            <h3 class="card-title fw-bolder m-0">
+                <i class="bi bi-clock-history text-info fs-3 me-2"></i>
+                Historique des lancements ({{ $runsTotal }})
+            </h3>
+            <div class="text-muted fs-7 mt-2">
+                {{ $runsTotal }} lancement(s) de découverte · {{ number_format($searchesTotal) }} recherche(s) SerpAPI consommée(s).
+            </div>
+        </div>
     </div>
     <div class="card-body border-top p-0">
         @if($runs->isEmpty())
@@ -35,6 +47,7 @@
                         <tr class="fw-bold text-muted bg-light">
                             <th class="ps-7">Démarrée le</th>
                             <th>Statut</th>
+                            <th>Recherches SerpAPI</th>
                             <th>Traitées</th>
                             <th>Nouvelles</th>
                             <th>Contacts</th>
@@ -62,6 +75,8 @@
                                 $duree = '—';
                             }
                             $startedDisplay = $run->started_at ?? $run->created_at;
+                            $searchesConsumed = $hasSearchCounters ? (int) ($run->searches_consumed ?? 0) : (int) ($run->credits_reserved ?? 0);
+                            $searchesReserved = $hasSearchCounters ? (int) ($run->searches_reserved ?? $run->credits_reserved ?? 0) : (int) ($run->credits_reserved ?? 0);
                         @endphp
                         <tr>
                             <td class="ps-7 fw-semibold">{{ $startedDisplay?->format('d/m/Y H:i') ?? '—' }}</td>
@@ -71,6 +86,10 @@
                                 @else
                                     <span class="text-muted">—</span>
                                 @endif
+                            </td>
+                            <td>
+                                <span class="fw-semibold">{{ number_format($searchesConsumed) }}</span>
+                                <span class="text-muted fs-8">/ {{ number_format($searchesReserved) }}</span>
                             </td>
                             <td>{{ number_format($run->companies_count) }}</td>
                             <td>{{ is_null($run->new_companies_count) ? '—' : number_format($run->new_companies_count) }}</td>

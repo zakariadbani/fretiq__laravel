@@ -13,13 +13,13 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
-// NOTE (finding #7): The quota badge renders "Découvertes :" (not "Entreprises :").
+// NOTE (finding #7): The quota badge renders "Recherches SerpAPI :" (not "Entreprises :").
 // Pre-existing tests test_index_shows_credits_badge_when_limited_package_assigned,
 // test_view_page_shows_credits_badge, and test_index_shows_one_unlimited_one_limited_badge
 // all assert 'Entreprises :' which does NOT match the blade output.
 // This is documented here for reference; those pre-existing test assertions reflect
 // the old label and will fail until updated. The new test cases below use the
-// correct "Découvertes :" label from the current blade.
+// correct "Recherches SerpAPI :" label from the current blade.
 
 /**
  * QuotaBadgeUiTest — HTTP render tests for the client-facing quota badge.
@@ -94,7 +94,7 @@ class QuotaBadgeUiTest extends TestCase
     // ── Test 1: limited package with credits remaining ────────────────────────
 
     /**
-     * With both meters limited, the index page renders "Découvertes :" and "Contacts :" badges.
+     * With both meters limited, the index page renders "Recherches SerpAPI :" and "Contacts :" badges.
      */
     public function test_index_shows_credits_badge_when_limited_package_assigned(): void
     {
@@ -114,7 +114,7 @@ class QuotaBadgeUiTest extends TestCase
             ->get('/admin/prospect_criteria');
 
         $response->assertStatus(200);
-        $response->assertSee('Découvertes :', false);
+        $response->assertSee('Recherches SerpAPI :', false);
         $response->assertSee('Contacts :', false);
     }
 
@@ -245,12 +245,12 @@ class QuotaBadgeUiTest extends TestCase
             ->get('/admin/prospect_criteria/' . $criteria->id);
 
         $response->assertStatus(200);
-        $response->assertSee('Découvertes :', false);
+        $response->assertSee('Recherches SerpAPI :', false);
         $response->assertSee('Contacts :', false);
     }
 
     /**
-     * Company limited + contact unlimited → "Découvertes :" badge AND "∞ Illimité" for contacts.
+     * Company limited + contact unlimited → "Recherches SerpAPI :" badge AND "∞ Illimité" for contacts.
      */
     public function test_index_shows_one_unlimited_one_limited_badge(): void
     {
@@ -270,8 +270,8 @@ class QuotaBadgeUiTest extends TestCase
             ->get('/admin/prospect_criteria');
 
         $response->assertStatus(200);
-        // Company meter is limited → shows "Découvertes :" span
-        $response->assertSee('Découvertes :', false);
+        // Company meter is limited → shows "Recherches SerpAPI :" span
+        $response->assertSee('Recherches SerpAPI :', false);
         // Contact meter is unlimited → shows "∞ Illimité" in the contacts span
         $response->assertSee('∞ Illimité', false);
     }
@@ -279,13 +279,13 @@ class QuotaBadgeUiTest extends TestCase
     // ── Test 5 (finding #7): Relabel + monthly figure + zero-cap no crash ────────
 
     /**
-     * Finding #7a: The badge renders "Découvertes :" (not "Entreprises :") for the
+     * Finding #7a: The badge renders "Recherches SerpAPI :" (not "Entreprises :") for the
      * company meter label. Assert the index page shows the current blade label.
      */
-    public function test_badge_shows_decouvertes_label_not_entreprises(): void
+    public function test_badge_shows_serpapi_searches_label_not_entreprises(): void
     {
         $package = Package::create([
-            'name'                  => 'Test Pack Découvertes Label',
+            'name'                  => 'Test Pack Recherches SerpAPI Label',
             'daily_credits'         => 10,
             'daily_contact_credits' => 5,
             'is_active'             => true,
@@ -300,8 +300,8 @@ class QuotaBadgeUiTest extends TestCase
             ->get('/admin/prospect_criteria');
 
         $response->assertStatus(200);
-        // Blade renders "Découvertes :" for the company meter — finding #7 relabel assertion.
-        $response->assertSee('Découvertes :', false);
+        // Blade renders "Recherches SerpAPI :" for the company meter — finding #7 relabel assertion.
+        $response->assertSee('Recherches SerpAPI :', false);
         // Contact meter still shows "Contacts :".
         $response->assertSee('Contacts :', false);
     }

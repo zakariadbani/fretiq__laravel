@@ -22,7 +22,7 @@ return new class extends Migration
             $table->json('company_sizes')->nullable();
             $table->json('target_positions')->nullable();
 
-            // daily_limit: max companies to discover per day per criteria set
+            // daily_limit: max SerpAPI searches per day per criteria set
             $table->integer('daily_limit')->default(20);
 
             $table->boolean('is_active')->default(true);

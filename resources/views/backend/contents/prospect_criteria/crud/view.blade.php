@@ -68,6 +68,8 @@
         @include('backend.contents.prospect_criteria.partials._results-tab', [
             'model'           => $model,
             'resultCompanies' => $resultCompanies,
+            'resultsSort'     => $resultsSort ?? 'score',
+            'resultsDir'      => $resultsDir ?? 'desc',
         ])
     </div>
     {{-- end Résultats --}}

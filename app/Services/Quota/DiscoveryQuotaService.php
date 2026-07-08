@@ -243,11 +243,14 @@ class DiscoveryQuotaService
             ->selectRaw(
                 "SUM(CASE
                     WHEN status IN ('completed', 'failed')
-                        THEN (consumed - COALESCE(excluded_count, 0))
+                        THEN CASE WHEN searches_reserved IS NULL
+                            THEN (consumed - COALESCE(excluded_count, 0))
+                            ELSE searches_consumed
+                        END
                     ELSE
-                        CASE WHEN credits_reserved > (consumed - COALESCE(excluded_count, 0))
+                        CASE WHEN credits_reserved > (CASE WHEN searches_reserved IS NULL THEN (consumed - COALESCE(excluded_count, 0)) ELSE searches_consumed END)
                             THEN credits_reserved
-                            ELSE (consumed - COALESCE(excluded_count, 0))
+                            ELSE (CASE WHEN searches_reserved IS NULL THEN (consumed - COALESCE(excluded_count, 0)) ELSE searches_consumed END)
                         END
                  END) as total_used"
             );
@@ -403,11 +406,14 @@ class DiscoveryQuotaService
             ->selectRaw(
                 "SUM(CASE
                     WHEN status IN ('completed', 'failed')
-                        THEN (consumed - COALESCE(excluded_count, 0))
+                        THEN CASE WHEN searches_reserved IS NULL
+                            THEN (consumed - COALESCE(excluded_count, 0))
+                            ELSE searches_consumed
+                        END
                     ELSE
-                        CASE WHEN credits_reserved > (consumed - COALESCE(excluded_count, 0))
+                        CASE WHEN credits_reserved > (CASE WHEN searches_reserved IS NULL THEN (consumed - COALESCE(excluded_count, 0)) ELSE searches_consumed END)
                             THEN credits_reserved
-                            ELSE (consumed - COALESCE(excluded_count, 0))
+                            ELSE (CASE WHEN searches_reserved IS NULL THEN (consumed - COALESCE(excluded_count, 0)) ELSE searches_consumed END)
                         END
                  END) as total_used"
             );
@@ -688,6 +694,8 @@ class DiscoveryQuotaService
                     'prospect_criteria_id'     => $criteria->id,
                     'status'                   => 'pending',
                     'credits_reserved'         => $batch,
+                    'searches_reserved'        => $batch,
+                    'searches_consumed'        => 0,
                     'consumed'                 => 0,
                     'contact_credits_reserved' => $contactReserved,
                     'contact_consumed'         => 0,

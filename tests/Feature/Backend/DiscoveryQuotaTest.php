@@ -274,7 +274,7 @@ class DiscoveryQuotaTest extends TestCase
     /**
      * When 4 credits are already consumed from a 10-credit package and the
      * criteria wants 20, the run should be created with credits_reserved = 6
-     * and the response must mention "6 entreprises possibles aujourd'hui".
+     * and the response must mention "6 recherches SerpAPI possibles aujourd'hui".
      */
     public function test_partial_cap_when_remaining_less_than_daily_limit(): void
     {
@@ -301,9 +301,9 @@ class DiscoveryQuotaTest extends TestCase
         $this->assertSame(6, $newRun->credits_reserved, 'credits_reserved must be 6 (remaining = 10 - 4)');
 
         $this->assertStringContainsString(
-            '6 entreprises possibles aujourd\'hui',
+            '6 recherches SerpAPI possibles aujourd\'hui',
             $response->json('text') ?? '',
-            'Success message must mention the partial batch count'
+            'Success message must mention the partial SerpAPI search count'
         );
     }
 

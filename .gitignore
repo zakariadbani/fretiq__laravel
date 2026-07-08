@@ -75,3 +75,6 @@ test-results/
 
 # Codex staging scratch
 .codex-staging/
+
+# AI planning scratch
+.hermes/

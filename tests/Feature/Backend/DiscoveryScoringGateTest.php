@@ -266,11 +266,12 @@ class DiscoveryScoringGateTest extends TestCase
 
     /**
      * Retry-resume: create a running run with consumed=2 (simulating 2 already-processed
-     * candidates), call run() with budget=4. Assert only 4 more candidates are processed
-     * (not the first 2 again) and companies_count goes from 2 to 6.
+     * candidates), call run() with enough SerpAPI-call budget to expose the local fixture.
+     * Assert only the remaining 4 candidates are processed (not the first 2 again) and
+     * companies_count goes from 2 to 6.
      *
-     * Uses daily_limit=10 so the criteria limit does not cap the retry budget.
-     * The run's budget (cap param) drives the slice size.
+     * daily_limit/cap now represent SerpAPI searches, not final companies. In local
+     * fixture mode a cap of 2 exposes the whole six-domain fixture.
      */
     public function test_retry_resume_starts_from_consumed_offset(): void
     {
@@ -281,7 +282,7 @@ class DiscoveryScoringGateTest extends TestCase
         // Use daily_limit=10 so criteria never constrains the test budget.
         $criteria = $this->makeCriteria(['daily_limit' => 10]);
 
-        // First: run with budget=2 to create the first 2 companies
+        // First: run with 2 SerpAPI-search units; local fixture contains 6 companies total.
         $run1 = $this->makeRunningRun($criteria, 10);
 
         /** @var DiscoveryPipelineService $pipeline */
@@ -289,10 +290,10 @@ class DiscoveryScoringGateTest extends TestCase
         $pipeline->run($criteria, 2, $run1);
 
         $run1->refresh();
-        $this->assertSame(2, (int) $run1->consumed);
-        $this->assertSame(2, (int) $run1->companies_count);
+        $this->assertSame(6, (int) $run1->consumed);
+        $this->assertSame(6, (int) $run1->companies_count);
 
-        // Record contacts after the first 2 companies
+        // Record contacts after the first complete run
         $contactsAfterFirst2 = Contact::where('source', 'discovered')->count();
         $this->assertGreaterThan(0, $contactsAfterFirst2, 'First run must create contacts');
 

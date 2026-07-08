@@ -104,12 +104,32 @@ class ProspectCriteriaController extends BackendController
 
         $auditMode = $this->currentRequest->boolean('audit');
 
+        $allowedResultSorts = [
+            'score'      => 'companies.ai_score',
+            'created_at' => 'companies.created_at',
+            'recent'     => 'companies.id',
+            'name'       => 'companies.name',
+            'sector'     => 'companies.sector',
+            'country'    => 'companies.country',
+            'size'       => 'companies.estimated_size',
+            'contacts'   => 'contacts_count',
+        ];
+        $resultsSort = (string) $this->currentRequest->query('results_sort', 'score');
+        if (! array_key_exists($resultsSort, $allowedResultSorts)) {
+            $resultsSort = 'score';
+        }
+        $resultsDir = strtolower((string) $this->currentRequest->query('results_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
+
+
         // Paginate discovered companies first so we can reuse ->total() in the
         // ViewConfig stat card — avoids a second COUNT query.
         $companiesQuery = $auditMode ? $model->companies()->withRejected() : $model->companies();
+        $sortColumn = $allowedResultSorts[$resultsSort];
         $resultCompanies = $companiesQuery
             ->with('contacts')
-            ->latest('id')
+            ->withCount('contacts')
+            ->orderBy($sortColumn, $resultsDir)
+            ->when($resultsSort !== 'recent', fn ($query) => $query->orderByDesc('companies.id'))
             ->paginate(25, ['*'], 'results_page');
 
         // Results grouped by the query that found them (§6) — trouvées/gardées/exclues per query.
@@ -136,6 +156,8 @@ class ProspectCriteriaController extends BackendController
              ->with('monthlyContactRemaining', $monthlyContactRemaining)
              ->with('activeDailyLimitSum', $activeDailyLimitSum)
              ->with('resultCompanies', $resultCompanies)
+             ->with('resultsSort', $resultsSort)
+             ->with('resultsDir', $resultsDir)
              ->with('queryGroups', $queryGroups)
              ->with('auditMode', $auditMode);
 
@@ -354,20 +376,56 @@ class ProspectCriteriaController extends BackendController
      * @param  CompanyDiscoveryService $discoveryService
      * @return \Illuminate\Http\JsonResponse
      */
-    public function previewQueries(ProspectCriteria $prospectCriteria, CompanyDiscoveryService $discoveryService)
+    public function previewQueries(
+        ProspectCriteria $prospectCriteria,
+        CompanyDiscoveryService $discoveryService,
+        DiscoveryQuotaService $quotaService
+    ) {
+        $queries = ! empty($prospectCriteria->ai_queries)
+            ? $prospectCriteria->ai_queries
+            : array_map(
+                fn (string $q) => ['q' => $q, 'enabled' => true],
+                $discoveryService->buildQueries($prospectCriteria)
+            );
+
+        return response()->json([
+            'queries'   => $queries,
+            'execution' => $this->queryPreviewExecutionMeta($prospectCriteria, $quotaService),
+        ]);
+    }
+
+    /**
+     * French query-preview UX metadata: the preview can show how many SerpAPI
+     * searches the next launch may execute without actually reserving or spending
+     * any credits. Null package caps are treated as unlimited; missing quota tables
+     * fall back to the criteria's daily SerpAPI search limit so the form still loads.
+     *
+     * @return array{daily_limit: int, search_budget: int}
+     */
+    private function queryPreviewExecutionMeta(ProspectCriteria $criteria, DiscoveryQuotaService $quotaService): array
     {
-        if (! empty($prospectCriteria->ai_queries)) {
-            return response()->json([
-                'queries' => $prospectCriteria->ai_queries,
-            ]);
+        $dailyLimit = (int) ($criteria->daily_limit ?: 20);
+        $caps = [$dailyLimit];
+
+        try {
+            $remainingToday = $quotaService->remainingTodayForDisplay();
+            if ($remainingToday !== null) {
+                $caps[] = $remainingToday;
+            }
+
+            $remainingMonth = $quotaService->monthlyRemainingForDisplay();
+            if ($remainingMonth !== null) {
+                $caps[] = $remainingMonth;
+            }
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Quota tables not migrated yet — the preview remains read-only and
+            // should not block form rendering. Keep daily_limit as the fallback.
         }
 
-        $queries = array_map(
-            fn (string $q) => ['q' => $q, 'enabled' => true],
-            $discoveryService->buildQueries($prospectCriteria)
-        );
-
-        return response()->json(['queries' => $queries]);
+        return [
+            'daily_limit'   => $dailyLimit,
+            'search_budget' => max(0, min($caps)),
+        ];
     }
 
     /**
@@ -488,16 +546,17 @@ class ProspectCriteriaController extends BackendController
             ], 500);
         }
 
-        // Partial-batch message: when limited and we got fewer credits than wanted
-        $wantedBatch = $criteria->daily_limit ?: 20;
-        $isPartial   = (! $quotaService->isUnlimited()) && ($run->credits_reserved < $wantedBatch);
+        // Partial search-budget message: when limited and we got fewer searches than requested
+        $wantedSearches = $criteria->daily_limit ?: 20;
+        $reservedSearches = (int) ($run->searches_reserved ?? $run->credits_reserved);
+        $isPartial   = (! $quotaService->isUnlimited()) && ($reservedSearches < $wantedSearches);
 
         $successText = $isPartial
-            ? "Découverte lancée — {$run->credits_reserved} entreprises possibles aujourd'hui"
+            ? "Découverte lancée — {$reservedSearches} recherches SerpAPI possibles aujourd'hui"
             : 'Découverte lancée en arrière-plan';
 
         // Append contact enrichment limit note when contact quota is capped —
-        // also covers a per-criteria contact_limit binding on an unlimited package.
+
         if ($run->contact_credits_reserved < $run->credits_reserved) {
             $successText .= " (enrichissement limité à {$run->contact_credits_reserved})";
         }

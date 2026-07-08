@@ -3,11 +3,14 @@
 namespace Tests\Feature\Backend;
 
 use App\Jobs\RunDiscoveryPipelineJob;
+use App\Models\Company;
+use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Models\User;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
@@ -376,6 +379,238 @@ class ProspectCriteriaTest extends TestCase
         $this->assertStringContainsString('Maroc', $paysRow['value'] ?? '');
     }
 
+    /**
+     * Résultats tab labels separate SerpAPI candidates, kept companies, and AI exclusions.
+     */
+    public function test_results_tab_distinguishes_candidates_kept_and_excluded(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name'        => 'Critère Résultats UX',
+            'daily_limit' => 4,
+            'is_active'   => true,
+        ]);
+
+        Company::create([
+            'criteria_id'          => $criteria->id,
+            'name'                 => 'Entreprise Gardée',
+            'domain'               => 'gardee.test',
+            'country'              => 'FR',
+            'qualification_status' => 'pending',
+            'discovery_query'      => 'requête test',
+            'ai_score'             => 80,
+        ]);
+
+        Company::create([
+            'criteria_id'          => $criteria->id,
+            'name'                 => 'Entreprise Exclue',
+            'domain'               => 'exclue.test',
+            'country'              => 'FR',
+            'qualification_status' => 'rejected',
+            'discovery_query'      => 'requête test',
+            'ai_score'             => 10,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/' . $criteria->id . '#criteria_resultats');
+
+        $response->assertStatus(200);
+        $response->assertSee('Résultats par requête SerpAPI', false);
+        $response->assertSee('2 candidat(s) trouvé(s) · 1 entreprise(s) gardée(s) · 1 exclue(s) par l\'IA.', false);
+        $response->assertSee('2 candidat(s)', false);
+        $response->assertSee('1 gardée(s)', false);
+        $response->assertSee('1 exclue(s)', false);
+        $response->assertSee('Détails', false);
+        $response->assertSee('Entreprises gardées (1)', false);
+        $response->assertSee('Voir les entreprises gardées', false);
+    }
+
+    /**
+     * Résultats tab table headers support ordering the kept companies table.
+     */
+    public function test_results_table_can_be_sorted_by_name(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name'        => 'Critère Résultats Tri',
+            'daily_limit' => 4,
+            'is_active'   => true,
+        ]);
+
+        Company::create([
+            'criteria_id'          => $criteria->id,
+            'name'                 => 'Zeta Tri Test',
+            'domain'               => 'zeta-tri.test',
+            'country'              => 'FR',
+            'qualification_status' => 'pending',
+            'discovery_query'      => 'requête tri',
+            'ai_score'             => 30,
+        ]);
+
+        Company::create([
+            'criteria_id'          => $criteria->id,
+            'name'                 => 'Alpha Tri Test',
+            'domain'               => 'alpha-tri.test',
+            'country'              => 'MA',
+            'qualification_status' => 'pending',
+            'discovery_query'      => 'requête tri',
+            'ai_score'             => 90,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/' . $criteria->id . '?results_sort=name&results_dir=asc#criteria_resultats');
+
+        $response->assertStatus(200);
+        $response->assertSee('Cliquez sur un en-tête pour trier la table.', false);
+        $response->assertSee('Créée le', false);
+        $response->assertSee('results_sort=created_at', false);
+        $response->assertSee('results_sort=name', false);
+        $response->assertSee('results_dir=desc', false);
+
+        $resultsTable = strstr($response->getContent(), 'Entreprises gardées (2)') ?: $response->getContent();
+        $alphaPosition = strpos($resultsTable, 'Alpha Tri Test');
+        $zetaPosition  = strpos($resultsTable, 'Zeta Tri Test');
+
+        $this->assertNotFalse($alphaPosition);
+        $this->assertNotFalse($zetaPosition);
+        $this->assertLessThan($zetaPosition, $alphaPosition);
+    }
+
+    /**
+     * Résultats tab can be sorted by creation date.
+     */
+    public function test_results_table_can_be_sorted_by_created_at(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name'        => 'Critère Résultats Date Création',
+            'daily_limit' => 4,
+            'is_active'   => true,
+        ]);
+
+        $old = Company::create([
+            'criteria_id'          => $criteria->id,
+            'name'                 => 'Ancienne Entreprise Test',
+            'domain'               => 'ancienne-entreprise.test',
+            'country'              => 'FR',
+            'qualification_status' => 'pending',
+            'discovery_query'      => 'requête date',
+            'ai_score'             => 50,
+        ]);
+        $old->forceFill(['created_at' => now()->subDays(2), 'updated_at' => now()->subDays(2)])->save();
+
+        $new = Company::create([
+            'criteria_id'          => $criteria->id,
+            'name'                 => 'Nouvelle Entreprise Test',
+            'domain'               => 'nouvelle-entreprise.test',
+            'country'              => 'MA',
+            'qualification_status' => 'pending',
+            'discovery_query'      => 'requête date',
+            'ai_score'             => 50,
+        ]);
+        $new->forceFill(['created_at' => now(), 'updated_at' => now()])->save();
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/' . $criteria->id . '?results_sort=created_at&results_dir=desc#criteria_resultats');
+
+        $response->assertStatus(200);
+        $response->assertSee('Créée le', false);
+        $response->assertSee('results_sort=created_at', false);
+        $response->assertSee('results_dir=asc', false);
+
+        $resultsTable = strstr($response->getContent(), 'Entreprises gardées (2)') ?: $response->getContent();
+        $newPosition = strpos($resultsTable, 'Nouvelle Entreprise Test');
+        $oldPosition = strpos($resultsTable, 'Ancienne Entreprise Test');
+
+        $this->assertNotFalse($newPosition);
+        $this->assertNotFalse($oldPosition);
+        $this->assertLessThan($oldPosition, $newPosition);
+    }
+
+    /**
+     * Résultats tab defaults to the strongest AI score first.
+     */
+    public function test_results_table_defaults_to_score_desc(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name'        => 'Critère Résultats Score Par Défaut',
+            'daily_limit' => 4,
+            'is_active'   => true,
+        ]);
+
+        Company::create([
+            'criteria_id'          => $criteria->id,
+            'name'                 => 'Score Faible Test',
+            'domain'               => 'score-faible.test',
+            'country'              => 'FR',
+            'qualification_status' => 'pending',
+            'discovery_query'      => 'requête score',
+            'ai_score'             => 20,
+        ]);
+
+        Company::create([
+            'criteria_id'          => $criteria->id,
+            'name'                 => 'Score Fort Test',
+            'domain'               => 'score-fort.test',
+            'country'              => 'MA',
+            'qualification_status' => 'pending',
+            'discovery_query'      => 'requête score',
+            'ai_score'             => 95,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/' . $criteria->id . '#criteria_resultats');
+
+        $response->assertStatus(200);
+        $response->assertSee('results_sort=score', false);
+        $response->assertSee('results_dir=asc', false);
+
+        $resultsTable = strstr($response->getContent(), 'Entreprises gardées (2)') ?: $response->getContent();
+        $strongPosition = strpos($resultsTable, 'Score Fort Test');
+        $weakPosition   = strpos($resultsTable, 'Score Faible Test');
+
+        $this->assertNotFalse($strongPosition);
+        $this->assertNotFalse($weakPosition);
+        $this->assertLessThan($weakPosition, $strongPosition);
+    }
+
+    /**
+     * Historique tab distinguishes discovery launches from SerpAPI searches.
+     */
+    public function test_view_history_shows_run_count_and_serpapi_search_count(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name'        => 'Critère Historique SerpAPI',
+            'daily_limit' => 4,
+            'is_active'   => true,
+        ]);
+
+        DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type'                 => 'discovery',
+            'status'               => 'completed',
+            'credits_reserved'     => 4,
+            'searches_reserved'    => 4,
+            'searches_consumed'    => 4,
+            'consumed'             => 20,
+            'companies_count'      => 16,
+            'new_companies_count'  => 16,
+            'contacts_count'       => 0,
+            'skipped_count'        => 0,
+            'low_score_count'      => 0,
+            'quota_date'           => now()->toDateString(),
+            'started_at'           => now()->subMinutes(3),
+            'finished_at'          => now(),
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/' . $criteria->id . '#criteria_historique');
+
+        $response->assertStatus(200);
+        $response->assertSee('Historique des lancements (1)', false);
+        $response->assertSee('1 lancement(s) de découverte · 4 recherche(s) SerpAPI consommée(s).', false);
+        $response->assertSee('Recherches SerpAPI', false);
+        $response->assertSee('>4</span>', false);
+        $response->assertSee('/ 4</span>', false);
+    }
+
     // ── TODO-PC-2: Dupliquer ──────────────────────────────────────────────────
 
     /**
@@ -510,11 +745,16 @@ class ProspectCriteriaTest extends TestCase
             ->get('/admin/prospect_criteria/' . $criteria->id . '/preview-queries');
 
         $response->assertStatus(200);
-        $response->assertJsonStructure(['queries']);
+        $response->assertJsonStructure([
+            'queries',
+            'execution' => ['daily_limit', 'search_budget'],
+        ]);
 
         $queries = $response->json('queries');
         $this->assertIsArray($queries);
         $this->assertNotEmpty($queries, 'buildQueries() must return ≥1 query for a criteria with sectors+countries');
+        $this->assertSame(20, $response->json('execution.daily_limit'));
+        $this->assertSame(20, $response->json('execution.search_budget'));
     }
 
     /**
@@ -540,6 +780,64 @@ class ProspectCriteriaTest extends TestCase
             ->get('/admin/prospect_criteria/' . $criteria->id . '/preview-queries');
 
         $response->assertStatus(403);
+    }
+
+    /**
+     * "Générer avec l'IA" uses the unsaved textarea payload and returns Gemini
+     * queries without persisting them; existing enabled flags are preserved.
+     */
+    public function test_generate_queries_returns_gemini_queries_for_unsaved_target(): void
+    {
+        config(['services.gemini.api_key' => 'test-gemini-key']);
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response([
+                'candidates' => [[
+                    'content' => [
+                        'parts' => [[
+                            'text' => '{"queries":["grossiste textile France -transporteur","importateur habillement Maroc -logistique"]}',
+                        ]],
+                    ],
+                    'finishReason' => 'STOP',
+                ]],
+            ], 200),
+        ]);
+
+        $criteria = ProspectCriteria::create([
+            'name'        => 'Critère Generate Test',
+            'ai_target'   => 'Ancienne cible stockée',
+            'daily_limit' => 10,
+            'is_active'   => true,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->post('/admin/prospect_criteria/' . $criteria->id . '/generate-queries', [
+                'ai_target'  => 'grossistes textile et importateurs habillement',
+                'ai_exclude' => 'transporteurs et logisticiens',
+                'queries'    => [[
+                    'q'       => 'grossiste textile France -transporteur',
+                    'enabled' => '0',
+                ]],
+            ]);
+
+        $response->assertStatus(200);
+        $response->assertExactJson([
+            'queries' => [
+                ['q' => 'grossiste textile France -transporteur', 'enabled' => false],
+                ['q' => 'importateur habillement Maroc -logistique', 'enabled' => true],
+            ],
+        ]);
+
+        $criteria->refresh();
+        $this->assertNull($criteria->ai_queries, 'Generate preview must not persist ai_queries before Enregistrer.');
+
+        Http::assertSent(function ($request) {
+            $prompt = data_get($request->data(), 'contents.0.parts.0.text', '');
+
+            return str_contains($prompt, 'grossistes textile et importateurs habillement')
+                && str_contains($prompt, 'transporteurs et logisticiens')
+                && ! str_contains($prompt, 'Ancienne cible stockée');
+        });
     }
 
     // ── Automation fields (auto_run/run_at_hour/contact_limit/min_score_enrich/auto_enrich) ──

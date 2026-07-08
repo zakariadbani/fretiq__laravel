@@ -282,9 +282,143 @@
                     {{-- Enrichment data (read-only key/value display) --}}
                     @if(isset($model) && $model->id)
                         <div class="separator my-6"></div>
-                        <h5 class="fw-bold fs-5 mb-5">Données brutes d'enrichissement</h5>
+                        <h5 class="fw-bold fs-5 mb-5">Données d'enrichissement</h5>
 
-                        @php $enrichData = $model->enrichment_data; @endphp
+                        @php
+                            $enrichData = $model->enrichment_data;
+
+                            $formatScalar = static function ($value): string {
+                                if (is_bool($value)) {
+                                    return $value
+                                        ? '<span class="badge badge-light-success">Oui</span>'
+                                        : '<span class="badge badge-light-secondary">Non</span>';
+                                }
+
+                                if ($value === null || $value === '') {
+                                    return '<span class="text-muted">—</span>';
+                                }
+
+                                return e((string) $value);
+                            };
+
+                            $renderSources = static function (array $sources): string {
+                                if ($sources === []) {
+                                    return '<span class="text-muted">Aucune source</span>';
+                                }
+
+                                $visibleSources = array_slice($sources, 0, 3);
+                                $sourceLinks = collect($visibleSources)->map(function ($source): string {
+                                    $uri = $source['uri'] ?? null;
+                                    $domain = $source['domain'] ?? parse_url((string) $uri, PHP_URL_HOST) ?: 'source';
+                                    $label = e($domain);
+
+                                    if (!$uri) {
+                                        return '<span class="badge badge-light">' . $label . '</span>';
+                                    }
+
+                                    return '<a href="' . e($uri) . '" target="_blank" rel="noopener" class="badge badge-light-primary text-hover-primary">'
+                                        . $label
+                                        . '</a>';
+                                })->implode(' ');
+
+                                $remainingCount = count($sources) - count($visibleSources);
+                                $remaining = $remainingCount > 0
+                                    ? ' <span class="badge badge-light">+' . $remainingCount . ' autres</span>'
+                                    : '';
+
+                                return '<div class="d-flex flex-wrap gap-2">' . $sourceLinks . $remaining . '</div>';
+                            };
+
+                            $renderValue = function ($value, string $key = '') use (&$renderValue, $formatScalar, $renderSources): \Illuminate\Support\HtmlString {
+                                if ($key === 'emails' && is_array($value)) {
+                                    if ($value === []) {
+                                        return new \Illuminate\Support\HtmlString('<span class="text-muted">Aucun email trouvé</span>');
+                                    }
+
+                                    $html = '<div class="d-flex flex-column gap-3">';
+
+                                    foreach ($value as $email) {
+                                        if (!is_array($email)) {
+                                            $html .= '<div>' . $formatScalar($email) . '</div>';
+                                            continue;
+                                        }
+
+                                        $address = $email['value'] ?? null;
+                                        $fullName = trim(($email['first_name'] ?? '') . ' ' . ($email['last_name'] ?? ''));
+                                        $type = $email['type'] ?? 'email';
+                                        $confidence = $email['confidence'] ?? null;
+                                        $sources = is_array($email['sources'] ?? null) ? $email['sources'] : [];
+                                        $sourceCount = count($sources);
+
+                                        $html .= '<div class="border rounded bg-light p-3">';
+                                        $html .= '<div class="d-flex flex-wrap align-items-center gap-2 mb-2">';
+                                        $html .= $address
+                                            ? '<a href="mailto:' . e($address) . '" class="fw-bold text-gray-900 text-hover-primary">' . e($address) . '</a>'
+                                            : '<span class="fw-bold text-muted">Email inconnu</span>';
+                                        $html .= '<span class="badge badge-light-info">' . e($type) . '</span>';
+
+                                        if ($confidence !== null) {
+                                            $html .= '<span class="badge badge-light-success">Confiance ' . e((string) $confidence) . '%</span>';
+                                        }
+
+                                        $html .= '<span class="badge badge-light">' . $sourceCount . ' source' . ($sourceCount > 1 ? 's' : '') . '</span>';
+                                        $html .= '</div>';
+
+                                        if ($fullName !== '') {
+                                            $html .= '<div class="text-muted fs-7 mb-2">Contact : ' . e($fullName) . '</div>';
+                                        }
+
+                                        $html .= $renderSources($sources);
+                                        $html .= '</div>';
+                                    }
+
+                                    $html .= '</div>';
+
+                                    return new \Illuminate\Support\HtmlString($html);
+                                }
+
+                                if (is_array($value)) {
+                                    if ($value === []) {
+                                        return new \Illuminate\Support\HtmlString('<span class="badge badge-light">Aucun élément</span>');
+                                    }
+
+                                    if (array_is_list($value)) {
+                                        $allScalar = collect($value)->every(fn ($item) => !is_array($item) && !is_object($item));
+
+                                        if ($allScalar) {
+                                            $html = collect($value)->map(fn ($item) => '<span class="badge badge-light me-1 mb-1">' . $formatScalar($item) . '</span>')->implode('');
+                                            return new \Illuminate\Support\HtmlString('<div class="d-flex flex-wrap gap-1">' . $html . '</div>');
+                                        }
+
+                                        $html = '<div class="d-flex flex-column gap-2">';
+                                        foreach ($value as $index => $item) {
+                                            $html .= '<div class="border rounded p-3 bg-light">';
+                                            $html .= '<div class="fw-semibold text-muted fs-8 mb-2">Élément ' . e((string) ($index + 1)) . '</div>';
+                                            $html .= $renderValue($item)->toHtml();
+                                            $html .= '</div>';
+                                        }
+                                        $html .= '</div>';
+
+                                        return new \Illuminate\Support\HtmlString($html);
+                                    }
+
+                                    $html = '<dl class="row mb-0 gy-2">';
+                                    foreach ($value as $nestedKey => $nestedValue) {
+                                        $html .= '<dt class="col-sm-4 text-muted fw-semibold">' . e((string) $nestedKey) . '</dt>';
+                                        $html .= '<dd class="col-sm-8 mb-0">' . $renderValue($nestedValue)->toHtml() . '</dd>';
+                                    }
+                                    $html .= '</dl>';
+
+                                    return new \Illuminate\Support\HtmlString($html);
+                                }
+
+                                if (is_object($value)) {
+                                    return $renderValue((array) $value);
+                                }
+
+                                return new \Illuminate\Support\HtmlString($formatScalar($value));
+                            };
+                        @endphp
                         @if(!empty($enrichData))
                             <div class="table-responsive">
                                 <table class="table table-row-bordered table-row-gray-200 align-middle gs-0 gy-3">
@@ -298,13 +432,7 @@
                                         @foreach($enrichData as $key => $value)
                                             <tr>
                                                 <td class="fw-semibold text-gray-700">{{ $key }}</td>
-                                                <td class="text-gray-800">
-                                                    @if(is_array($value) || is_object($value))
-                                                        <code class="fs-7">{{ json_encode($value) }}</code>
-                                                    @else
-                                                        {{ $value }}
-                                                    @endif
-                                                </td>
+                                                <td class="text-gray-800">{{ $renderValue($value, (string) $key) }}</td>
                                             </tr>
                                         @endforeach
                                     </tbody>

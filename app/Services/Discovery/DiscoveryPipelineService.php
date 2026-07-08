@@ -7,6 +7,7 @@ use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Models\Setting;
 use App\Services\Scoring\LeadScoringService;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -136,11 +137,12 @@ class DiscoveryPipelineService
      */
     public function run(ProspectCriteria $criteria, ?int $cap = null, ?DiscoveryRun $run = null, ?int $contactCap = null): array
     {
-        // When an external cap is provided, honour both the criteria daily_limit and the cap.
-        // $budget is now the KEPT-rows target — rejects are free and don't count against it.
-        $budget = $cap !== null
-            ? min($criteria->daily_limit ?: 20, $cap)
+        // $cap is a SerpAPI search-call budget, not a kept-company budget.
+        // One search returns up to CompanyDiscoveryService::PAGE_SIZE candidates.
+        $searchBudget = $cap !== null
+            ? max(0, $cap)
             : ($criteria->daily_limit ?: 20);
+        $candidateLimit = $searchBudget * CompanyDiscoveryService::PAGE_SIZE;
 
         // Contact budget: how many Hunter calls are allowed in this attempt.
         // PHP_INT_MAX means unlimited (no contactCap set).
@@ -157,19 +159,23 @@ class DiscoveryPipelineService
         // Resume cursor: $offset = number of candidates already processed (scanned, not just kept).
         $offset = ($run !== null) ? (int) $run->consumed : 0;
 
-        // Over-fetch so rejects (which don't count toward $budget) don't starve the kept
-        // target — bounded by a hard scan ceiling so a 100%-competitor intent can't scan
-        // the whole pool. See class docblock "Exclusion gate".
-        $scanTarget = min($budget * self::OVERSCAN_FACTOR, $budget + self::SCAN_EXTRA_CEILING);
+        // Only queued discovery runs use shared SerpAPI cursor/snapshot pagination.
+        $isDiscoveryRun = $run !== null && ($run->type ?? 'discovery') === 'discovery';
 
-        $allCandidates = $this->discovery->discover($criteria, $offset + $scanTarget);
-        $candidates    = array_slice($allCandidates, $offset);
+        if ($isDiscoveryRun) {
+            $allCandidates = $this->discovery->discoverForRun($criteria, $run, $searchBudget);
+        } else {
+            $allCandidates = $this->discovery->discover($criteria, $candidateLimit);
+        }
 
-        $completedThisAttempt = 0; // kept rows only — gates the $budget break condition
-        $scannedThisAttempt   = 0; // every processed candidate (kept + rejected) — gates the scan ceiling
+        $candidates = array_slice($allCandidates, $offset);
+
+        $completedThisAttempt = 0; // kept rows only — stats/logging only; not a budget gate anymore
+        $scannedThisAttempt   = 0; // every processed candidate (kept + rejected)
+        $scanTarget           = count($candidates);
 
         foreach ($candidates as $candidate) {
-            if ($completedThisAttempt >= $budget || $scannedThisAttempt >= $scanTarget) {
+            if ($scannedThisAttempt >= $scanTarget) {
                 break;
             }
 
@@ -316,6 +322,40 @@ class DiscoveryPipelineService
                     }
                 }
             } catch (\Throwable $e) {
+                if ($e instanceof QueryException && $this->isDuplicateCompanyDomainKey($e)) {
+                    Log::info('[DiscoveryPipelineService] Duplicate company domain race - advancing cursor only', [
+                        'domain'      => $domain,
+                        'criteria_id' => $criteria->id,
+                        'run_id'      => $run?->id,
+                    ]);
+
+                    if ($run !== null) {
+                        $update = [
+                            'consumed' => DB::raw('consumed + 1'),
+                        ];
+
+                        if ($hunterCalled) {
+                            $update['contact_consumed'] = DB::raw('contact_consumed + 1');
+                        }
+
+                        $advanced = DiscoveryRun::where('id', $run->id)
+                            ->where('status', 'running')
+                            ->where('consumed', $expected)
+                            ->update($update);
+
+                        if ($advanced === 0) {
+                            return $stats;
+                        }
+                    }
+
+                    if ($hunterCalled) {
+                        $stats['contacts_consumed']++;
+                    }
+
+                    $scannedThisAttempt++;
+                    continue;
+                }
+
                 Log::warning('[DiscoveryPipelineService] Domain processing failed — skipping', [
                     'domain'      => $domain,
                     'criteria_id' => $criteria->id,
@@ -352,6 +392,29 @@ class DiscoveryPipelineService
         }
 
         return $stats;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function candidateSnapshot(DiscoveryRun $run): array
+    {
+        if (! is_array($run->candidates_snapshot)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            $run->candidates_snapshot,
+            fn ($candidate) => is_array($candidate) && ! empty($candidate['domain'])
+        ));
+    }
+
+    private function isDuplicateCompanyDomainKey(QueryException $e): bool
+    {
+        $message = $e->getMessage();
+
+        return str_contains($message, 'companies.domain')
+            || str_contains($message, 'companies_domain_unique');
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

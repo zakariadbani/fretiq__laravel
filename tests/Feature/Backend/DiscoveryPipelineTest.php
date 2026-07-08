@@ -4,11 +4,15 @@ namespace Tests\Feature\Backend;
 
 use App\Models\Company;
 use App\Models\Contact;
+use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
+use App\Services\Discovery\ContactUpsertService;
 use App\Services\Discovery\DiscoveryPipelineService;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 /**
@@ -201,12 +205,16 @@ class DiscoveryPipelineTest extends TestCase
     }
 
     /**
-     * When daily_limit=1, the pipeline must create at most 1 discovered company.
-     * (If the fixture returns fewer results than the cap, the count is <= daily_limit.)
+     * daily_limit is a SerpAPI call budget, not a kept-company budget.
+     * In local fixture mode, one search-call unit exposes up to one SerpAPI page
+     * (10 candidates), so daily_limit=1 may create multiple companies.
      */
-    public function test_pipeline_respects_daily_limit(): void
+    public function test_pipeline_daily_limit_one_search_can_create_multiple_companies(): void
     {
-        $criteria = $this->makeCriteria(['daily_limit' => 1]);
+        $criteria = $this->makeCriteria([
+            'daily_limit' => 1,
+            'auto_enrich' => false,
+        ]);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -214,10 +222,180 @@ class DiscoveryPipelineTest extends TestCase
 
         $discoveredCount = Company::where('source', 'discovered')->count();
 
-        $this->assertLessThanOrEqual(
+        $this->assertGreaterThan(
             1,
             $discoveredCount,
-            'Pipeline must honour daily_limit=1 — at most 1 company may be created'
+            'daily_limit=1 means one SerpAPI search page, not one final company'
         );
+    }
+
+    public function test_pipeline_reuses_sufficient_candidates_snapshot_without_serpapi_http(): void
+    {
+        config([
+            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+            'services.hunter.driver'   => 'local',
+        ]);
+
+        Http::fake();
+
+        $criteria = $this->makeCriteria([
+            'daily_limit' => 10,
+            'auto_enrich' => false,
+        ]);
+
+        $snapshot = collect(range(0, 3))->map(fn ($i) => [
+            'domain'          => "snapshot-{$i}.test",
+            'title'           => "Snapshot {$i}",
+            'snippet'         => 'Snapshot candidate',
+            'url'             => "https://snapshot-{$i}.test",
+            'discovery_query' => 'snapshot query',
+        ])->all();
+
+        $run = DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type'                 => 'discovery',
+            'status'               => 'running',
+            'credits_reserved'     => 10,
+            'consumed'             => 1,
+            'companies_count'      => 0,
+            'candidates_snapshot'  => $snapshot,
+            'started_at'           => now(),
+        ]);
+
+        /** @var DiscoveryPipelineService $pipeline */
+        $pipeline = app(DiscoveryPipelineService::class);
+        $pipeline->run($criteria, 1, $run, 0);
+
+        Http::assertNothingSent();
+
+        $run->refresh();
+        $this->assertSame(4, (int) $run->consumed);
+        $this->assertSame(3, (int) $run->companies_count);
+        $this->assertTrue(Company::where('domain', 'snapshot-1.test')->exists());
+        $this->assertTrue(Company::where('domain', 'snapshot-3.test')->exists());
+    }
+
+    public function test_pipeline_extends_insufficient_candidates_snapshot_with_serpapi_page(): void
+    {
+        config([
+            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+            'services.hunter.driver'   => 'local',
+        ]);
+
+        Http::fake([
+            '*' => Http::response([
+                'organic_results' => [
+                    [
+                        'title'   => 'Fresh One',
+                        'link'    => 'https://fresh-one.test/about',
+                        'snippet' => 'Fresh candidate',
+                    ],
+                    [
+                        'title'   => 'Fresh Two',
+                        'link'    => 'https://fresh-two.test/about',
+                        'snippet' => 'Fresh candidate',
+                    ],
+                ],
+            ], 200),
+        ]);
+
+        $criteria = $this->makeCriteria([
+            'daily_limit' => 10,
+            'auto_enrich' => false,
+            'ai_queries'  => [['q' => 'snapshot query', 'enabled' => true]],
+        ]);
+
+        $run = DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type'                 => 'discovery',
+            'status'               => 'running',
+            'credits_reserved'     => 10,
+            'consumed'             => 1,
+            'companies_count'      => 0,
+            'candidates_snapshot'  => [[
+                'domain'          => 'snapshot-only.test',
+                'title'           => 'Snapshot Only',
+                'snippet'         => 'Existing candidate',
+                'url'             => 'https://snapshot-only.test',
+                'discovery_query' => 'snapshot query',
+            ]],
+            'started_at'           => now(),
+        ]);
+
+        /** @var DiscoveryPipelineService $pipeline */
+        $pipeline = app(DiscoveryPipelineService::class);
+        $pipeline->run($criteria, 1, $run, 0);
+
+        Http::assertSentCount(1);
+
+        $run->refresh();
+        $criteria->refresh();
+        $key = md5('snapshot query');
+
+        $this->assertCount(3, $run->candidates_snapshot);
+        $this->assertSame(10, (int) data_get($criteria->discovery_cursors, "{$key}.start"));
+        $this->assertTrue((bool) data_get($criteria->discovery_cursors, "{$key}.exhausted"));
+    }
+
+    public function test_duplicate_domain_query_exception_advances_cursor_without_aborting_run(): void
+    {
+        config([
+            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+            'services.hunter.driver'   => 'local',
+        ]);
+
+        Http::fake([
+            '*' => Http::response([
+                'organic_results' => [[
+                    'title'   => 'Race Domain',
+                    'link'    => 'https://race-domain.test/about',
+                    'snippet' => 'Fresh candidate',
+                ]],
+            ], 200),
+        ]);
+
+        $this->app->bind(ContactUpsertService::class, fn () => new class extends ContactUpsertService {
+            public function upsertFromHunter(Company $company, string $domain, array $emails): int
+            {
+                throw new QueryException(
+                    'mysql',
+                    'insert into `companies` (`domain`) values (?)',
+                    [$domain],
+                    new \Exception("SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry '{$domain}' for key 'companies_domain_unique'")
+                );
+            }
+        });
+
+        $criteria = $this->makeCriteria([
+            'daily_limit'       => 10,
+            'auto_enrich'       => true,
+            'min_score_enrich'  => 0,
+            'ai_queries'        => [['q' => 'duplicate query', 'enabled' => true]],
+        ]);
+
+        $run = DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type'                 => 'discovery',
+            'status'               => 'running',
+            'credits_reserved'     => 10,
+            'consumed'             => 0,
+            'companies_count'      => 0,
+            'contact_consumed'     => 0,
+            'started_at'           => now(),
+        ]);
+
+        /** @var DiscoveryPipelineService $pipeline */
+        $pipeline = app(DiscoveryPipelineService::class);
+        $stats = $pipeline->run($criteria, 1, $run, 1);
+
+        $run->refresh();
+        $this->assertSame('running', $run->status);
+        $this->assertSame(1, (int) $run->consumed);
+        $this->assertSame(1, (int) $run->contact_consumed);
+        $this->assertSame(0, (int) $run->companies_count);
+        $this->assertSame(1, $stats['contacts_consumed']);
     }
 }

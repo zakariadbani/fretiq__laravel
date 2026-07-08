@@ -23,6 +23,8 @@ class DiscoveryRun extends Model
         'skipped_count',
         'low_score_count',
         'credits_reserved',
+        'searches_reserved',
+        'searches_consumed',
         'consumed',
         'contact_credits_reserved',
         'contact_consumed',
@@ -32,6 +34,7 @@ class DiscoveryRun extends Model
         'started_at',
         'finished_at',
         'error',
+        'candidates_snapshot',
     ];
 
     /**
@@ -40,19 +43,22 @@ class DiscoveryRun extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'started_at'           => 'datetime',
-        'finished_at'          => 'datetime',
-        'companies_count'      => 'integer',
-        'new_companies_count'  => 'integer',
-        'contacts_count'       => 'integer',
-        'skipped_count'        => 'integer',
-        'low_score_count'      => 'integer',
+        'started_at'                => 'datetime',
+        'finished_at'               => 'datetime',
+        'companies_count'           => 'integer',
+        'new_companies_count'       => 'integer',
+        'contacts_count'            => 'integer',
+        'skipped_count'             => 'integer',
+        'low_score_count'           => 'integer',
         'credits_reserved'          => 'integer',
+        'searches_reserved'         => 'integer',
+        'searches_consumed'         => 'integer',
         'consumed'                  => 'integer',
         'contact_credits_reserved'  => 'integer',
         'contact_consumed'          => 'integer',
         'excluded_count'            => 'integer',
         'quota_date'                => 'date',
+        'candidates_snapshot'       => 'array',
     ];
 
     // ── Relationships ──────────────────────────────────────────────────────────

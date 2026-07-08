@@ -160,28 +160,8 @@ return [
         //---------------------------------------------------------------------------
         [
             'content' => 'Administration',
-            'permission' => ['view users', 'manage roles', 'manage permissions', 'view sender_identities', 'manage packages', 'view provider quota', 'view settings'],
+            'permission' => ['view users', 'manage roles', 'manage permissions', 'view sender_identities', 'view settings'],
             'classes' => ['content' => 'pt-8 pb-2'],
-        ],
-
-        [
-            'title' => 'Packs',
-            'permission' => 'manage packages',
-            'icon' => [
-                'svg' => 'abstract-26',
-                'font' => '<i class="bi bi-box-seam fs-2"></i>',
-            ],
-            'path' => 'admin/packages',
-        ],
-
-        [
-            'title' => 'Quota fournisseurs',
-            'permission' => 'view provider quota',
-            'icon' => [
-                'svg' => 'abstract-26',
-                'font' => '<i class="bi bi-speedometer2 fs-2"></i>',
-            ],
-            'path' => 'admin/provider-quota',
         ],
 
         [
@@ -252,6 +232,32 @@ return [
                 'font' => '<i class="bi bi-gear fs-2"></i>',
             ],
             'path' => 'admin/settings',
+        ],
+
+        [
+            'content' => 'Superadmin',
+            'permission' => ['manage packages', 'view provider quota'],
+            'classes' => ['content' => 'pt-8 pb-2'],
+        ],
+
+        [
+            'title' => 'Packs',
+            'permission' => 'manage packages',
+            'icon' => [
+                'svg' => 'abstract-26',
+                'font' => '<i class="bi bi-box-seam fs-2"></i>',
+            ],
+            'path' => 'admin/packages',
+        ],
+
+        [
+            'title' => 'Quota fournisseurs',
+            'permission' => 'view provider quota',
+            'icon' => [
+                'svg' => 'abstract-26',
+                'font' => '<i class="bi bi-speedometer2 fs-2"></i>',
+            ],
+            'path' => 'admin/provider-quota',
         ],
 
     ],
