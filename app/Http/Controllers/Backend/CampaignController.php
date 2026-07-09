@@ -717,8 +717,11 @@ class CampaignController extends BackendController
             }
         }
 
-        // ── One-shot / recurring branch (unchanged) ───────────────────────────
-        $run = app(CampaignService::class)->scheduleOneShot($campaign);
+        // ── One-shot / recurring branch ────────────────────────────────────────
+        // Manual sends must create a fresh run every click. Reusing the scheduled
+        // one-shot occurrence can target an already-finished run and make the UI
+        // appear to do nothing.
+        $run = app(CampaignService::class)->scheduleImmediate($campaign);
 
         SendCampaignJob::dispatch($run->id);
 

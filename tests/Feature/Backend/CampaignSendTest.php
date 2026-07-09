@@ -141,6 +141,30 @@ class CampaignSendTest extends TestCase
     }
 
     /**
+     * Manual "Envoyer maintenant" runs must always create a fresh occurrence.
+     * Reusing scheduleOneShot() can return an already-sent run when the campaign
+     * has a fixed scheduled_at timestamp, making the UI click appear to do nothing.
+     */
+    public function test_schedule_immediate_creates_fresh_run_when_scheduled_at_is_reused(): void
+    {
+        $segment  = Segment::create(['name' => 'Clients', 'scope' => 'client']);
+        $template = $this->makeTemplate();
+        $sender   = $this->makeSender();
+        $campaign = $this->makeCampaign($segment, $template, $sender);
+
+        $service = app(CampaignService::class);
+
+        $firstRun = $service->scheduleOneShot($campaign);
+        $firstRun->update(['status' => 'sent', 'finished_at' => now()]);
+
+        $immediateRun = $service->scheduleImmediate($campaign);
+
+        $this->assertNotSame($firstRun->id, $immediateRun->id);
+        $this->assertSame('scheduled', $immediateRun->status);
+        $this->assertStringStartsWith('manual-', $immediateRun->occurrence_key);
+    }
+
+    /**
      * Calling sendRun twice on the same run must NOT double-send.
      * The unique (campaign_run_id, contact_id) constraint on campaign_recipients
      * and the claim-commit guard on the run prevent reprocessing.

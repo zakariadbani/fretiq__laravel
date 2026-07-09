@@ -14,6 +14,7 @@ use App\Support\TrackingToken;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Str;
 
 /**
  * CampaignService — orchestrates scheduling and sending of campaigns.
@@ -64,6 +65,28 @@ class CampaignService
                 'status' => 'scheduled',
             ],
         );
+
+        $campaign->update(['is_active' => true]);
+
+        return $run;
+    }
+
+    /**
+     * Create a fresh manual run for an explicit « Envoyer maintenant » action.
+     *
+     * Unlike scheduleOneShot(), this must never reuse an existing occurrence:
+     * a recurring campaign can keep the same scheduled_at timestamp after an
+     * earlier manual run has completed, and firstOrCreate would make a new click
+     * silently target the already-sent run.
+     */
+    public function scheduleImmediate(Campaign $campaign): CampaignRun
+    {
+        $run = CampaignRun::create([
+            'campaign_id'    => $campaign->id,
+            'occurrence_key' => 'manual-' . now()->format('YmdHisv') . '-' . Str::lower(Str::random(6)),
+            'run_at'         => now(),
+            'status'         => 'scheduled',
+        ]);
 
         $campaign->update(['is_active' => true]);
 

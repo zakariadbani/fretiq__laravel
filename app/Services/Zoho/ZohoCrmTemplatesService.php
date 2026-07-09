@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
  * ZohoCrmTemplatesService — imports Zoho CRM email templates into campaign_templates.
  *
  * VERIFIED 2026-06-10 — live tinker STATUS 200 for:
+ *   GET /crm/v8/settings/modules                       → 200, array under "modules"
  *   GET /crm/v8/settings/email_templates?module=Contacts  → 200, array under "email_templates"
  *   GET /crm/v8/settings/email_templates?module=Leads     → 200, same shape
  *   GET /crm/v8/settings/email_templates/{id}             → 200, wrapped in PLURAL "email_templates"
@@ -25,6 +26,9 @@ use Illuminate\Support\Facades\Log;
  */
 class ZohoCrmTemplatesService
 {
+    /** Fallback modules used when settings/modules is unavailable. */
+    private const DEFAULT_TEMPLATE_MODULES = ['Contacts', 'Leads'];
+
     /** Safety cap: maximum pages fetched per module to prevent runaway. */
     private const MAX_PAGES = 10;
 
@@ -51,15 +55,24 @@ class ZohoCrmTemplatesService
     {
         $byId = [];
 
-        foreach (['Contacts', 'Leads'] as $module) {
+        foreach ($this->templateModules() as $module) {
             $page = 1;
 
             do {
-                $body = $this->httpGet('settings/email_templates', [
-                    'module'   => $module,
-                    'per_page' => 200,
-                    'page'     => $page,
-                ]);
+                try {
+                    $body = $this->httpGet('settings/email_templates', [
+                        'module'   => $module,
+                        'per_page' => 200,
+                        'page'     => $page,
+                    ]);
+                } catch (\RuntimeException $e) {
+                    if ($this->isInvalidEmailTemplateModule($e)) {
+                        Log::debug("[ZohoCrmTemplatesService] Module {$module} ignored — no email_templates support");
+                        break;
+                    }
+
+                    throw $e;
+                }
 
                 $items     = $body['email_templates'] ?? [];
                 $morePages = (bool) ($body['info']['more_records'] ?? false);
@@ -206,6 +219,62 @@ class ZohoCrmTemplatesService
     // ─────────────────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Discover CRM modules that can carry email templates.
+     *
+     * Zoho stores CRM email templates per module. Fetching only Contacts + Leads
+     * hides templates attached to Deals, Quotes, and custom modules. The modules
+     * endpoint is therefore used as the source of truth, with the historical
+     * Contacts/Leads pair kept first and as a safe fallback.
+     *
+     * @return array<int, string>
+     */
+    private function templateModules(): array
+    {
+        try {
+            $body = $this->httpGet('settings/modules', []);
+        } catch (\Throwable $e) {
+            Log::warning('[ZohoCrmTemplatesService] settings/modules unavailable — falling back to Contacts + Leads', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return self::DEFAULT_TEMPLATE_MODULES;
+        }
+
+        $modules = [];
+
+        foreach (($body['modules'] ?? []) as $module) {
+            $apiName = trim((string) ($module['api_name'] ?? ''));
+            if ($apiName === '') {
+                continue;
+            }
+
+            if (array_key_exists('api_supported', $module) && ! (bool) $module['api_supported']) {
+                continue;
+            }
+
+            $modules[] = $apiName;
+        }
+
+        return array_values(array_unique(array_merge(
+            self::DEFAULT_TEMPLATE_MODULES,
+            $modules ?: self::DEFAULT_TEMPLATE_MODULES,
+        )));
+    }
+
+    /**
+     * Some system/subform modules are listed by settings/modules but rejected by
+     * settings/email_templates. Skip only that exact Zoho module-validation case.
+     */
+    private function isInvalidEmailTemplateModule(\RuntimeException $e): bool
+    {
+        $message = $e->getMessage();
+
+        return str_contains($message, 'INVALID_DATA')
+            && str_contains($message, 'param_name')
+            && str_contains($message, 'module');
+    }
 
     /**
      * Authenticated GET against the Zoho CRM v8 API.

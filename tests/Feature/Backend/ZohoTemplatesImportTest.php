@@ -69,6 +69,14 @@ class ZohoTemplatesImportTest extends TestCase
                 'expires_in'   => 3600,
             ], 200),
 
+            // ── CRM modules discovery ─────────────────────────────────────────
+            'https://www.zohoapis.com/crm/v8/settings/modules' => Http::response([
+                'modules' => [
+                    ['api_name' => 'Contacts', 'api_supported' => true],
+                    ['api_name' => 'Leads',    'api_supported' => true],
+                ],
+            ], 200),
+
             // ── Template list — Contacts ──────────────────────────────────────
             'https://www.zohoapis.com/crm/v8/settings/email_templates?*module=Contacts*' => Http::response([
                 'email_templates' => [
@@ -183,6 +191,71 @@ class ZohoTemplatesImportTest extends TestCase
         // html_content must be populated
         $tpl = CampaignTemplate::where('zoho_template_id', self::ID_SHARED)->firstOrFail();
         $this->assertStringContainsString('<p>', $tpl->html_content);
+    }
+
+    public function test_import_discovers_templates_from_all_crm_modules(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            'https://accounts.zoho.com/oauth/v2/token' => Http::response([
+                'access_token' => 'fake-token-abc',
+                'expires_in'   => 3600,
+            ], 200),
+            'https://www.zohoapis.com/crm/v8/settings/modules' => Http::response([
+                'modules' => [
+                    ['api_name' => 'Contacts', 'api_supported' => true],
+                    ['api_name' => 'Leads',    'api_supported' => true],
+                    ['api_name' => 'Deals',    'api_supported' => true],
+                ],
+            ], 200),
+            'https://www.zohoapis.com/crm/v8/settings/email_templates?*module=Contacts*' => Http::response([
+                'email_templates' => [
+                    ['id' => 'ZT-CONTACT', 'name' => 'Template Contact', 'subject' => 'Sujet contact'],
+                ],
+                'info' => ['more_records' => false],
+            ], 200),
+            'https://www.zohoapis.com/crm/v8/settings/email_templates?*module=Leads*' => Http::response([
+                'email_templates' => [],
+                'info' => ['more_records' => false],
+            ], 200),
+            'https://www.zohoapis.com/crm/v8/settings/email_templates?*module=Deals*' => Http::response([
+                'email_templates' => [
+                    ['id' => 'ZT-DEAL', 'name' => 'Template Affaire', 'subject' => 'Sujet affaire'],
+                ],
+                'info' => ['more_records' => false],
+            ], 200),
+            'https://www.zohoapis.com/crm/v8/settings/email_templates/ZT-CONTACT' => Http::response([
+                'email_templates' => [[
+                    'id'      => 'ZT-CONTACT',
+                    'name'    => 'Template Contact',
+                    'subject' => 'Sujet contact',
+                    'content' => '<p>Contact</p>',
+                ]],
+            ], 200),
+            'https://www.zohoapis.com/crm/v8/settings/email_templates/ZT-DEAL' => Http::response([
+                'email_templates' => [[
+                    'id'      => 'ZT-DEAL',
+                    'name'    => 'Template Affaire',
+                    'subject' => 'Sujet affaire',
+                    'content' => '<p>Affaire</p>',
+                ]],
+            ], 200),
+        ]);
+
+        $admin = $this->makeAdmin();
+        $this->actingAs($admin)
+            ->post('/admin/campaign_templates/import-zoho')
+            ->assertRedirect(route('admin.campaign_templates.index'));
+
+        $this->assertSame(2, CampaignTemplate::count());
+        $this->assertDatabaseHas('campaign_templates', [
+            'zoho_template_id' => 'ZT-CONTACT',
+            'name'             => 'Template Contact',
+        ]);
+        $this->assertDatabaseHas('campaign_templates', [
+            'zoho_template_id' => 'ZT-DEAL',
+            'name'             => 'Template Affaire',
+        ]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
