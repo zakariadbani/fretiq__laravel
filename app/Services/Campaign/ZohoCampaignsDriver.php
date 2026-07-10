@@ -8,6 +8,7 @@ use App\Models\CampaignRun;
 use App\Services\Zoho\ZohoCampaignsClient;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\URL;
 
 /**
  * ZohoCampaignsDriver — CampaignsClient implementation backed by Zoho Campaigns API.
@@ -141,8 +142,10 @@ class ZohoCampaignsDriver implements CampaignsClient
         $template = $campaign->template ?? $campaign->load('template')->template;
         $sender   = $campaign->senderIdentity ?? $campaign->load('senderIdentity')->senderIdentity;
 
-        // ── 1. Build a deterministic list key for this run ─────────────────────
-        $listKey = 'fretiq-run-' . $run->id;
+        // ── 1. Resolve the Zoho mailing list key ───────────────────────────────
+        // Zoho Campaigns expects an existing list key; arbitrary per-run keys are
+        // not auto-created by the bulk-subscriber endpoint.
+        $listKey = config('services.zoho.campaigns.list_key') ?: 'fretiq-run-' . $run->id;
 
         // ── 2. Subscribe eligible contacts to the Zoho list ───────────────────
         $contactPayload = $contacts->map(function ($contact) {
@@ -166,9 +169,13 @@ class ZohoCampaignsDriver implements CampaignsClient
         // ── 3. Create the campaign in Zoho ─────────────────────────────────────
         // Translate local placeholders ({{contact.name}} etc.) to Zoho merge tags
         // before submitting to the API — recipients would otherwise see literal braces.
-        $subject     = self::translateMergeTags($campaign->subject ?: $template->subject);
-        $htmlContent = self::translateMergeTags($template->html_content);
-        $fromEmail   = $sender?->email ?? config('mail.from.address', 'noreply@fretiq.fr');
+        $subject    = self::translateMergeTags($campaign->subject ?: $template->subject);
+        $contentUrl = URL::temporarySignedRoute('campaigns.zoho-content', now()->addDays(7), ['run' => $run->id]);
+        // Zoho Campaigns rejects unverified sender emails. Prefer the verified
+        // account-level sender configured for Zoho, then fall back to the campaign
+        // sender identity and finally Laravel's mail.from address.
+        $fromEmail = config('services.zoho.default_from_email')
+            ?: ($sender?->email ?? config('mail.from.address', 'noreply@fretiq.fr'));
 
         Log::info('[ZohoCampaignsDriver] Création de la campagne Zoho.', [
             'run_id'    => $run->id,
@@ -182,13 +189,15 @@ class ZohoCampaignsDriver implements CampaignsClient
             subject:     $subject,
             fromEmail:   $fromEmail,
             listKey:     $listKey,
-            htmlContent: $htmlContent,
+            contentUrl:  $contentUrl,
         );
 
         // Extract the campaign key from Zoho's response.
         // UNVERIFIED — field name 'campaignkey' is per documentation; may differ in live response.
-        $campaignKey = $createResponse['campaignkey']
+        $campaignKey = $createResponse['campaignKey']
+            ?? $createResponse['campaignkey']
             ?? $createResponse['data']['campaignkey']
+            ?? $createResponse['data']['campaignKey']
             ?? null;
 
         if (! $campaignKey) {

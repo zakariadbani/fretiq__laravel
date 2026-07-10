@@ -45,12 +45,9 @@ class ZohoCampaignsClient
     /**
      * Add subscribers to a Zoho Campaigns mailing list in bulk.
      *
-     * UNVERIFIED — endpoint/params not live-tinker-confirmed (Zoho Campaigns OAuth
-     * not provisioned). Per the empirical-verification rule, run a live tinker
-     * POST + record STATUS 200 before relying on this in production.
-     *
-     * Documented endpoint: POST /json/listsubscriberinbulk
-     * Required params: resfmt=JSON, listkey, emailids (JSON-encoded array of email+merge fields).
+     * Live-verified endpoint: POST /addlistsubscribersinbulk.
+     * Required params: resfmt=JSON, listkey, emailids (comma-separated emails; max 10).
+     * Zoho returns HTTP 200 even for API-level errors, so callers must inspect code/status.
      *
      * @param  string  $listKey   The Zoho Campaigns list key (e.g. from createList or a pre-existing key).
      * @param  array   $contacts  Array of contact arrays; each must have 'Contact Email'; may include
@@ -64,22 +61,25 @@ class ZohoCampaignsClient
     {
         $accessToken = $this->authService->getAccessToken('campaigns');
 
-        // Zoho Campaigns bulk-subscribe expects emailids as a JSON string.
-        $emailIds = json_encode(array_map(function (array $contact) {
-            return [
-                'Contact Email' => $contact['Contact Email'] ?? $contact['email'] ?? '',
-                'First Name'    => $contact['First Name'] ?? $contact['first_name'] ?? '',
-                'Last Name'     => $contact['Last Name'] ?? $contact['last_name'] ?? '',
-                'Company'       => $contact['Company'] ?? $contact['company'] ?? '',
-            ];
-        }, $contacts));
+        // Zoho Campaigns bulk-subscribe expects emailids as a comma-separated
+        // email list (max 10 per request). It does not accept merge-field JSON
+        // on this endpoint; profile enrichment must be handled separately.
+        $emailIds = collect($contacts)
+            ->map(fn (array $contact) => trim((string) ($contact['Contact Email'] ?? $contact['email'] ?? '')))
+            ->filter()
+            ->unique(fn (string $email) => strtolower($email))
+            ->implode(',');
+
+        if ($emailIds === '') {
+            throw new \InvalidArgumentException('[ZohoCampaignsClient] Aucun email valide à ajouter à la liste Zoho.');
+        }
 
         $response = Http::withHeaders([
             'Authorization' => 'Zoho-oauthtoken ' . $accessToken,
         ])
             ->timeout(30)
             ->asForm()
-            ->post($this->apiUrl . '/json/listsubscriberinbulk', [
+            ->post($this->apiUrl . '/addlistsubscribersinbulk', [
                 'resfmt'   => 'JSON',
                 'listkey'  => $listKey,
                 'emailids' => $emailIds,
@@ -92,6 +92,12 @@ class ZohoCampaignsClient
         }
 
         $payload = $response->json() ?? [];
+
+        if (($payload['status'] ?? null) === 'error' || (string) ($payload['code'] ?? '0') !== '0') {
+            throw new \RuntimeException(
+                '[ZohoCampaignsClient] addListSubscribers erreur API Zoho : ' . $response->body()
+            );
+        }
 
         Log::info('[ZohoCampaignsClient] addListSubscribers', [
             'list_key' => $listKey,
@@ -109,14 +115,14 @@ class ZohoCampaignsClient
      * not provisioned). Per the empirical-verification rule, run a live tinker
      * POST + record STATUS 200 before relying on this in production.
      *
-     * Documented endpoint: POST /json/createcampaign
-     * Returns a campaign key in the response payload (field: 'campaignkey').
+     * Documented endpoint: POST /createCampaign
+     * Returns a campaign key in the response payload (field: 'campaignKey').
      *
      * @param  string  $name        Internal campaign name visible in Zoho UI.
      * @param  string  $subject     Email subject line.
      * @param  string  $fromEmail   Sender email address (must be verified in Zoho Campaigns).
      * @param  string  $listKey     Target mailing list key.
-     * @param  string  $htmlContent HTML body of the email.
+     * @param  string  $contentUrl  Public URL where Zoho can import the campaign HTML.
      * @return array               Decoded JSON response; typically contains 'campaignkey'.
      *
      * @throws \RuntimeException  If the HTTP request fails or Zoho returns a non-2xx status.
@@ -126,24 +132,29 @@ class ZohoCampaignsClient
         string $subject,
         string $fromEmail,
         string $listKey,
-        string $htmlContent,
+        string $contentUrl,
     ): array {
         $accessToken = $this->authService->getAccessToken('campaigns');
+
+        $payload = [
+            'resfmt'       => 'JSON',
+            'campaignname' => $name,
+            'subject'      => $subject,
+            'from_email'   => $fromEmail,
+            'list_details' => json_encode([$listKey => []]),
+            'content_url'  => $contentUrl,
+        ];
+
+        if ($topicId = config('services.zoho.campaigns.topic_id')) {
+            $payload['topicId'] = $topicId;
+        }
 
         $response = Http::withHeaders([
             'Authorization' => 'Zoho-oauthtoken ' . $accessToken,
         ])
             ->timeout(30)
             ->asForm()
-            ->post($this->apiUrl . '/json/createcampaign', [
-                'resfmt'       => 'JSON',
-                'campaignname' => $name,
-                'subject'      => $subject,
-                'fromEmail'    => $fromEmail,
-                'listkey'      => $listKey,
-                'htmlcontent'  => $htmlContent,
-                'campaigntype' => 'EmailCampaign',
-            ]);
+            ->post($this->apiUrl . '/createCampaign', $payload);
 
         if ($response->failed()) {
             throw new \RuntimeException(
@@ -157,7 +168,7 @@ class ZohoCampaignsClient
             'name'        => $name,
             'list_key'    => $listKey,
             'status'      => $response->status(),
-            'campaign_key' => $payload['campaignkey'] ?? 'inconnu',
+            'campaign_key' => $payload['campaignKey'] ?? $payload['campaignkey'] ?? 'inconnu',
         ]);
 
         return $payload;
@@ -170,7 +181,7 @@ class ZohoCampaignsClient
      * not provisioned). Per the empirical-verification rule, run a live tinker
      * POST + record STATUS 200 before relying on this in production.
      *
-     * Documented endpoint: POST /json/sendcampaign
+     * Documented endpoint: POST /sendcampaign
      * The campaign must already have been created via createCampaign().
      *
      * @param  string  $campaignKey  The campaign key returned by createCampaign().
@@ -187,7 +198,7 @@ class ZohoCampaignsClient
         ])
             ->timeout(30)
             ->asForm()
-            ->post($this->apiUrl . '/json/sendcampaign', [
+            ->post($this->apiUrl . '/sendcampaign', [
                 'resfmt'      => 'JSON',
                 'campaignkey' => $campaignKey,
             ]);
@@ -215,7 +226,7 @@ class ZohoCampaignsClient
      * not provisioned). Per the empirical-verification rule, run a live tinker
      * GET + record STATUS 200 before relying on this in production.
      *
-     * Documented endpoint: GET /json/getcampaigndetails
+     * Documented endpoint: GET /campaignreports
      * Returns stats including sent, opened, clicked, bounced counts.
      *
      * @param  string  $campaignKey  The campaign key to fetch stats for.
@@ -232,7 +243,7 @@ class ZohoCampaignsClient
             'Authorization' => 'Zoho-oauthtoken ' . $accessToken,
         ])
             ->timeout(20)
-            ->get($this->apiUrl . '/json/getcampaigndetails', [
+            ->get($this->apiUrl . '/campaignreports', [
                 'resfmt'      => 'JSON',
                 'campaignkey' => $campaignKey,
             ]);

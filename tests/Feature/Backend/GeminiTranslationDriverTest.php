@@ -438,4 +438,47 @@ class GeminiTranslationDriverTest extends TestCase
         $this->assertStringContainsString('{{contact.name}}', $result['html_content']);
         $this->assertStringContainsString('{{company.name}}', $result['html_content']);
     }
+
+    public function test_large_html_is_translated_in_run_chunks(): void
+    {
+        $html = implode('', array_map(
+            fn (int $i) => "<p>Bonjour ligne {$i}.</p>",
+            range(1, 45),
+        ));
+        $sentRunCounts = [];
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => function (\Illuminate\Http\Client\Request $request) use (&$sentRunCounts) {
+                $prompt = $request->data()['contents'][0]['parts'][0]['text'] ?? '';
+
+                $this->assertMatchesRegularExpression('/- runs: (\[.*\])\n\nThe "runs" field/s', $prompt);
+                preg_match('/- runs: (\[.*\])\n\nThe "runs" field/s', $prompt, $matches);
+                $runs = json_decode($matches[1], true, flags: JSON_THROW_ON_ERROR);
+
+                $sentRunCounts[] = count($runs);
+
+                $translatedRuns = array_map(
+                    fn (string $run) => str_replace('Bonjour', 'Hello', $run),
+                    $runs,
+                );
+
+                return Http::response($this->geminiResponseBody(
+                    $this->geminiJson($translatedRuns, 'EN large subject', 'EN large preview'),
+                ));
+            },
+        ]);
+        $this->setApiKey();
+
+        $result = $this->driver->translate('Sujet FR volumineux', 'Aperçu FR', $html, 'fr', 'en');
+
+        $this->assertNotNull($result);
+        $this->assertSame('EN large subject', $result['subject']);
+        $this->assertStringContainsString('Hello ligne 45.', $result['html_content']);
+        $this->assertGreaterThan(1, count($sentRunCounts), 'Large HTML must be split into multiple Gemini requests.');
+        $this->assertContainsOnly('int', $sentRunCounts);
+        $this->assertTrue(
+            collect($sentRunCounts)->every(fn (int $count) => $count <= 20),
+            'Each Gemini request should stay at or below the 20-run chunk size.',
+        );
+    }
 }

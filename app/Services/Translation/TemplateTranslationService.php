@@ -40,53 +40,139 @@ class TemplateTranslationService
         $baseLang = config('translation.base_language', 'fr');
         $targets  = $targets ?? config('translation.target_languages', ['en']);
 
-        // Reject the base language as a translation target
+        // Reject the base language as a translation target for legacy batch calls.
         $targets = array_values(array_filter($targets, fn ($l) => $l !== $baseLang));
 
         $translated = [];
         $failed     = [];
 
         foreach ($targets as $lang) {
-            $result = $this->driver->translate(
-                subject:    $t->subject,
-                preview:    $t->preview_text,
-                html:       $t->html_content,
-                sourceLang: $baseLang,
-                targetLang: $lang,
-            );
-
-            if ($result === null) {
-                // Driver failure — leave any existing row untouched
+            if ($this->translateOne($t, $baseLang, $lang)) {
+                $translated[] = $lang;
+            } else {
                 $failed[] = $lang;
-                continue;
             }
-
-            $hashes = $t->sourceHashes();
-
-            CampaignTemplateTranslation::updateOrCreate(
-                [
-                    'campaign_template_id' => $t->id,
-                    'language'             => $lang,
-                ],
-                [
-                    'subject'          => $result['subject'],
-                    'html_content'     => $result['html_content'],
-                    'preview_text'     => $result['preview_text'],
-                    'is_ai_generated'  => true,
-                    'reviewed_at'      => null,
-                    'src_subject_hash' => $hashes['subject'],
-                    'src_preview_hash' => $hashes['preview'],
-                    'src_body_hash'    => $hashes['body'],
-                ]
-            );
-
-            $translated[] = $lang;
         }
 
         return [
             'translated' => $translated,
             'failed'     => $failed,
         ];
+    }
+
+    /**
+     * Translate one explicit language direction.
+     *
+     * Supports the normal FR → EN path and the imported-Zoho EN → FR recovery
+     * path where the base French fields are empty and the English row already
+     * exists.
+     */
+    public function translateOne(CampaignTemplate $t, string $sourceLang, string $targetLang): bool
+    {
+        if ($sourceLang === $targetLang) {
+            return false;
+        }
+
+        $source = $this->fieldsForLanguage($t, $sourceLang);
+        if ($source === null || trim($source['subject']) === '' || trim($source['html_content']) === '') {
+            return false;
+        }
+
+        $result = $this->driver->translate(
+            subject:    $source['subject'],
+            preview:    $source['preview_text'],
+            html:       $source['html_content'],
+            sourceLang: $sourceLang,
+            targetLang: $targetLang,
+        );
+
+        if ($result === null) {
+            return false;
+        }
+
+        $baseLang = config('translation.base_language', 'fr');
+        if ($targetLang === $baseLang) {
+            $this->saveBaseFromTranslation($t, $result, $sourceLang);
+            return true;
+        }
+
+        $this->saveTranslatedRow($t, $targetLang, $result);
+        return true;
+    }
+
+    /**
+     * @return array{subject: string, html_content: string, preview_text: string|null}|null
+     */
+    private function fieldsForLanguage(CampaignTemplate $t, string $lang): ?array
+    {
+        $baseLang = config('translation.base_language', 'fr');
+
+        if ($lang === $baseLang) {
+            return [
+                'subject'      => (string) ($t->subject ?? ''),
+                'html_content' => (string) ($t->html_content ?? ''),
+                'preview_text' => $t->preview_text,
+            ];
+        }
+
+        $tr = $t->translationFor($lang);
+        if ($tr === null) {
+            return null;
+        }
+
+        return [
+            'subject'      => (string) ($tr->subject ?? ''),
+            'html_content' => (string) ($tr->html_content ?? ''),
+            'preview_text' => $tr->preview_text,
+        ];
+    }
+
+    /**
+     * @param array{subject: string, html_content: string, preview_text: string|null} $result
+     */
+    private function saveTranslatedRow(CampaignTemplate $t, string $lang, array $result): CampaignTemplateTranslation
+    {
+        $hashes = $t->sourceHashes();
+
+        /** @var CampaignTemplateTranslation */
+        return CampaignTemplateTranslation::updateOrCreate(
+            [
+                'campaign_template_id' => $t->id,
+                'language'             => $lang,
+            ],
+            [
+                'subject'          => $result['subject'],
+                'html_content'     => $result['html_content'],
+                'preview_text'     => $result['preview_text'],
+                'is_ai_generated'  => true,
+                'reviewed_at'      => null,
+                'src_subject_hash' => $hashes['subject'],
+                'src_preview_hash' => $hashes['preview'],
+                'src_body_hash'    => $hashes['body'],
+            ]
+        );
+    }
+
+    /**
+     * @param array{subject: string, html_content: string, preview_text: string|null} $result
+     */
+    private function saveBaseFromTranslation(CampaignTemplate $t, array $result, string $sourceLang): void
+    {
+        $t->subject = $result['subject'];
+        $t->preview_text = $result['preview_text'];
+        $t->html_content = $result['html_content'];
+        $t->save();
+        $t->refresh();
+
+        $sourceTranslation = $t->translationFor($sourceLang);
+        if ($sourceTranslation !== null) {
+            $hashes = $t->sourceHashes();
+            $sourceTranslation->fill([
+                'src_subject_hash' => $hashes['subject'],
+                'src_preview_hash' => $hashes['preview'],
+                'src_body_hash'    => $hashes['body'],
+            ])->save();
+        }
     }
 
     /**

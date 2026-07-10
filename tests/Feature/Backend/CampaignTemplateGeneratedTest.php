@@ -172,17 +172,59 @@ class CampaignTemplateGeneratedTest extends TestCase
         $response->assertStatus(200);
         $response->assertSee('id="traductions-pane-root"', false);
         $response->assertSee('tr-command-bar', false);
-        $response->assertSee('Aucune traduction anglaise enregistrée', false);
+        $response->assertSee('Aucune version anglaise enregistrée', false);
         $response->assertSee('id="tr-translate-btn"', false);
-        $response->assertSee('Versions du modèle', false);
-        $response->assertSee('Source française à gauche, traduction anglaise à droite.', false);
-        $response->assertSee('Version française source', false);
-        $response->assertSee('Version anglaise éditable', false);
+        $response->assertSee('Versions linguistiques du modèle', false);
+        $response->assertSee('Français et anglais sont gérés comme deux versions éditables.', false);
+        $response->assertSee('Version française', false);
+        $response->assertSee('Version anglaise', false);
+        $response->assertSee('data-source-language="fr"', false);
+        $response->assertSee('data-target-language="en"', false);
+        $response->assertSee('Générer EN depuis FR', false);
+        $response->assertSee('Sujet (FR)', false);
+        $response->assertSee('id="tr_fr_subject"', false);
+        $response->assertSee('Texte de prévisualisation (FR)', false);
+        $response->assertSee('id="tr_fr_preview"', false);
+        $response->assertSee('readonly', false);
+        $response->assertSee('data-template-open-tab="#template_general"', false);
         $response->assertSee('WYSIWYG français', false);
         $response->assertSee('data-tinymce-readonly', false);
         $response->assertSee('WYSIWYG anglais (EN)', false);
-        $response->assertSee('EN non créée', false);
+        $response->assertSee('EN manquante', false);
         $response->assertSee('data-crud-form-actions="sticky"', false);
+    }
+
+    public function test_edit_page_with_existing_en_and_missing_fr_offers_fr_generation(): void
+    {
+        $template = $this->makeTemplate([
+            'subject' => '',
+            'html_content' => '',
+            'preview_text' => null,
+        ]);
+
+        $template->translations()->create([
+            'language' => 'en',
+            'subject' => 'English source subject',
+            'html_content' => '<p>Hello {{contact.name}}</p>',
+            'preview_text' => 'English preview',
+            'is_ai_generated' => false,
+            'src_subject_hash' => md5(''),
+            'src_preview_hash' => md5(''),
+            'src_body_hash' => md5(''),
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/campaign_templates/' . $template->id . '/edit');
+
+        $response->assertStatus(200);
+        $response->assertSee('Versions linguistiques du modèle', false);
+        $response->assertSee('FR manquante', false);
+        $response->assertSee('EN créée', false);
+        $response->assertSee('Générer FR depuis EN', false);
+        $response->assertSee('data-source-language="en"', false);
+        $response->assertSee('data-target-language="fr"', false);
+        $response->assertDontSee('Traduction anglaise', false);
+        $response->assertDontSee('Version française source', false);
     }
 
     // ── Store happy-path ──────────────────────────────────────────────────────

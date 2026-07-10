@@ -62,12 +62,13 @@ class ZohoDriverSelectionTest extends TestCase
                 'expires_in'   => 3600,
             ], 200),
 
-            '*listsubscriberinbulk*' => Http::response([
+            '*addlistsubscribersinbulk*' => Http::response([
                 'status' => 'success',
+                'code'   => '0',
             ], 200),
 
-            '*createcampaign*' => Http::response([
-                'campaignkey' => $campaignKey,
+            '*createCampaign*' => Http::response([
+                'campaignKey' => $campaignKey,
                 'status'      => 'success',
             ], 200),
 
@@ -220,7 +221,7 @@ class ZohoDriverSelectionTest extends TestCase
 
     /**
      * CampaignService::sendRun() with Zoho driver:
-     *   - calls listsubscriberinbulk, createcampaign, sendcampaign
+     *   - calls addlistsubscribersinbulk, createCampaign, sendcampaign
      *   - sets run.status='sent', run.zoho_campaign_key=campaignKey
      *   - marks recipients as 'sent'
      *   - does NOT send any Mail
@@ -261,8 +262,8 @@ class ZohoDriverSelectionTest extends TestCase
         Mail::assertNothingSent();
 
         // HTTP assertions: all three API endpoints were called
-        Http::assertSent(fn ($req) => str_contains($req->url(), 'listsubscriberinbulk'));
-        Http::assertSent(fn ($req) => str_contains($req->url(), 'createcampaign'));
+        Http::assertSent(fn ($req) => str_contains($req->url(), 'addlistsubscribersinbulk'));
+        Http::assertSent(fn ($req) => str_contains($req->url(), 'createCampaign'));
         Http::assertSent(fn ($req) => str_contains($req->url(), 'sendcampaign'));
     }
 }

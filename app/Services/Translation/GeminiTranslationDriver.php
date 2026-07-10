@@ -18,10 +18,10 @@ use Illuminate\Support\Facades\Log;
  *   - Returns null + Log::warning on every failure; NEVER returns a partial result.
  *
  * Body translation strategy: HtmlTextSegmenter extracts an ordered array of
- * visible text runs; the LLM sees only those plain-text fragments plus subject
- * and preview_text. After response validation the translated runs are positionally
- * re-inserted back into the original token stream and reassembled — markup is
- * never touched by the LLM.
+ * visible text runs; Gemini receives those plain-text fragments in small chunks
+ * plus subject and preview_text. After response validation the translated runs
+ * are positionally re-inserted back into the original token stream and
+ * reassembled — markup is never touched by Gemini.
  *
  * Guards (any failure → null + Log::warning, previous EN row untouched):
  *   - Blank GEMINI_API_KEY
@@ -29,12 +29,19 @@ use Illuminate\Support\Facades\Log;
  *   - candidates.0.finishReason == 'MAX_TOKENS'
  *   - JSON decode failure
  *   - Missing 'subject' string or 'runs' array
- *   - runs array length !== input runs length
- *   - {{...}} multiset not preserved per run (or in subject / non-empty preview)
+ *   - runs array length !== input chunk length
+ *   - {{...}} merge tag order not preserved per run (or in subject / non-empty preview)
  *   - Final tag-multiset differs between translated and original HTML
  */
 class GeminiTranslationDriver
 {
+    /**
+     * Keep each Gemini request small enough that it does not merge/split runs on
+     * large imported Zoho HTML. The whole translation still fails if any chunk is
+     * structurally invalid, preserving the existing fail-safe behavior.
+     */
+    private const RUN_CHUNK_SIZE = 20;
+
     public function __construct(
         private readonly HtmlTextSegmenter $segmenter,
     ) {}
@@ -75,11 +82,83 @@ class GeminiTranslationDriver
         // Extract just the text values for the prompt (ordered array)
         $inputRuns = array_column($runObjects, 'value');
 
-        // ── 3. Build prompt ───────────────────────────────────────────────────
-        $model  = config('services.gemini.model', 'gemini-2.5-flash');
-        $prompt = $this->buildPrompt($subject, $preview, $inputRuns, $sourceLang, $targetLang);
+        // ── 3. Translate visible text in bounded chunks ────────────────────────
+        $chunks = $inputRuns === [] ? [[]] : array_chunk($inputRuns, self::RUN_CHUNK_SIZE);
 
-        // ── 4. Call Gemini ────────────────────────────────────────────────────
+        $translatedSubject = null;
+        $translatedPreview = null;
+        $translatedRuns    = [];
+
+        foreach ($chunks as $chunkIndex => $chunkRuns) {
+            $chunkResult = $this->translateChunk(
+                apiKey: $apiKey,
+                subject: $subject,
+                preview: $preview,
+                runs: $chunkRuns,
+                sourceLang: $sourceLang,
+                targetLang: $targetLang,
+                chunkIndex: $chunkIndex,
+            );
+
+            if ($chunkResult === null) {
+                return null;
+            }
+
+            $translatedSubject ??= $chunkResult['subject'];
+            $translatedPreview ??= $chunkResult['preview_text'];
+            array_push($translatedRuns, ...$chunkResult['runs']);
+        }
+
+        // ── 4. Re-insert translated runs into token stream ─────────────────────
+        if (count($translatedRuns) !== count($inputRuns)) {
+            Log::warning('[GeminiTranslationDriver] Longueur totale des runs incorrecte après découpage — attendu ' . count($inputRuns) . ', reçu ' . count($translatedRuns), [
+                'target_lang'    => $targetLang,
+                'expected_count' => count($inputRuns),
+                'received_count' => count($translatedRuns),
+            ]);
+            return null;
+        }
+
+        $mutatedTokens = $tokens; // shallow copy (scalar values)
+        foreach ($runObjects as $j => $runObj) {
+            $mutatedTokens[$runObj['index']]['value'] = $translatedRuns[$j];
+        }
+
+        $translatedHtml = $this->segmenter->reassemble($mutatedTokens);
+
+        // ── Final guard: HTML tag multiset must be identical ──────────────────
+        if (! $this->tagMultisetEqual($html, $translatedHtml)) {
+            Log::warning('[GeminiTranslationDriver] Multiset des balises HTML modifié après traduction — rejeté.', [
+                'target_lang' => $targetLang,
+            ]);
+            return null;
+        }
+
+        return [
+            'subject'      => trim((string) $translatedSubject),
+            'preview_text' => $translatedPreview !== null ? trim($translatedPreview) : null,
+            'html_content' => $translatedHtml,
+        ];
+    }
+
+    /**
+     * Translate one run chunk and return validated translated runs.
+     *
+     * @param  array<int, string> $runs
+     * @return array{subject: string, preview_text: string|null, runs: array<int, string>}|null
+     */
+    private function translateChunk(
+        string $apiKey,
+        string $subject,
+        ?string $preview,
+        array $runs,
+        string $sourceLang,
+        string $targetLang,
+        int $chunkIndex,
+    ): ?array {
+        $model  = config('services.gemini.model', 'gemini-2.5-flash');
+        $prompt = $this->buildPrompt($subject, $preview, $runs, $sourceLang, $targetLang);
+
         try {
             $response = Http::timeout(60)
                 ->withHeaders(['x-goog-api-key' => $apiKey])
@@ -104,44 +183,42 @@ class GeminiTranslationDriver
                 Log::warning('[GeminiTranslationDriver] Réponse HTTP échouée depuis Gemini.', [
                     'status'      => $response->status(),
                     'target_lang' => $targetLang,
+                    'chunk_index' => $chunkIndex,
                 ]);
                 return null;
             }
 
-            // ── 5. Check finishReason ─────────────────────────────────────────
             $finishReason = $response->json('candidates.0.finishReason');
             if ($finishReason === 'MAX_TOKENS') {
                 Log::warning('[GeminiTranslationDriver] Gemini a atteint MAX_TOKENS — traduction rejetée.', [
                     'target_lang' => $targetLang,
+                    'chunk_index' => $chunkIndex,
                 ]);
                 return null;
             }
 
-            // ── 6. Extract text ───────────────────────────────────────────────
             $text = $response->json('candidates.0.content.parts.0.text');
 
             if (! is_string($text) || $text === '') {
                 Log::warning('[GeminiTranslationDriver] Réponse Gemini vide ou structure inattendue.', [
                     'target_lang' => $targetLang,
+                    'chunk_index' => $chunkIndex,
                 ]);
                 return null;
             }
 
-            // ── 7. Parse + validate ───────────────────────────────────────────
-            return $this->parseAndAssemble(
-                $text,
-                $subject,
-                $preview,
-                $html,
-                $tokens,
-                $runObjects,
-                $inputRuns,
-                $targetLang,
+            return $this->parseChunkResponse(
+                text: $text,
+                originalSubject: $subject,
+                originalPreview: $preview,
+                inputRuns: $runs,
+                targetLang: $targetLang,
+                chunkIndex: $chunkIndex,
             );
-
         } catch (\Throwable $e) {
             Log::warning('[GeminiTranslationDriver] Exception lors de l\'appel Gemini — traduction ignorée.', [
                 'target_lang' => $targetLang,
+                'chunk_index' => $chunkIndex,
                 'error'       => $e->getMessage(),
             ]);
             return null;
@@ -183,21 +260,18 @@ PROMPT;
     }
 
     /**
-     * Parse the raw Gemini text, validate all guards, reassemble translated HTML.
+     * Parse one chunk response and validate all non-HTML guards.
      *
-     * @param  array<int, array{type: string, value: string}> $tokens
-     * @param  array<int, array{index: int, value: string}>   $runObjects
-     * @param  array<int, string>                             $inputRuns
+     * @param  array<int, string> $inputRuns
+     * @return array{subject: string, preview_text: string|null, runs: array<int, string>}|null
      */
-    private function parseAndAssemble(
-        string  $text,
-        string  $originalSubject,
+    private function parseChunkResponse(
+        string $text,
+        string $originalSubject,
         ?string $originalPreview,
-        string  $originalHtml,
-        array   $tokens,
-        array   $runObjects,
-        array   $inputRuns,
-        string  $targetLang,
+        array $inputRuns,
+        string $targetLang,
+        int $chunkIndex,
     ): ?array {
         // Strip markdown fences (```json … ```)
         $text = preg_replace('/^```(?:json)?\s*/m', '', $text);
@@ -209,6 +283,7 @@ PROMPT;
         if (! is_array($data)) {
             Log::warning('[GeminiTranslationDriver] JSON non décodable dans la réponse Gemini.', [
                 'target_lang' => $targetLang,
+                'chunk_index' => $chunkIndex,
                 'raw'         => mb_substr($text, 0, 500),
             ]);
             return null;
@@ -218,6 +293,7 @@ PROMPT;
         if (! isset($data['subject']) || ! is_string($data['subject']) || trim($data['subject']) === '') {
             Log::warning('[GeminiTranslationDriver] Champ "subject" manquant ou invalide.', [
                 'target_lang' => $targetLang,
+                'chunk_index' => $chunkIndex,
             ]);
             return null;
         }
@@ -226,6 +302,7 @@ PROMPT;
         if (! isset($data['runs']) || ! is_array($data['runs'])) {
             Log::warning('[GeminiTranslationDriver] Champ "runs" absent ou non-tableau.', [
                 'target_lang' => $targetLang,
+                'chunk_index' => $chunkIndex,
             ]);
             return null;
         }
@@ -233,6 +310,7 @@ PROMPT;
         if (count($data['runs']) !== count($inputRuns)) {
             Log::warning('[GeminiTranslationDriver] Longueur des runs incorrecte — attendu ' . count($inputRuns) . ', reçu ' . count($data['runs']), [
                 'target_lang'    => $targetLang,
+                'chunk_index'    => $chunkIndex,
                 'expected_count' => count($inputRuns),
                 'received_count' => count($data['runs']),
             ]);
@@ -246,16 +324,18 @@ PROMPT;
             if (! is_string($run)) {
                 Log::warning("[GeminiTranslationDriver] Run #{$i} n'est pas une chaîne.", [
                     'target_lang' => $targetLang,
+                    'chunk_index' => $chunkIndex,
                 ]);
                 return null;
             }
         }
 
-        // ── Guard: {{...}} multiset preserved per run ─────────────────────────
+        // ── Guard: {{...}} order preserved per run ────────────────────────────
         foreach ($inputRuns as $i => $inputRun) {
             if (! $this->mergeTagsOrderedEqual($inputRun, $translatedRuns[$i])) {
                 Log::warning("[GeminiTranslationDriver] Merge tags non préservés dans le run #{$i}.", [
                     'target_lang' => $targetLang,
+                    'chunk_index' => $chunkIndex,
                     'input'       => mb_substr($inputRun, 0, 200),
                     'translated'  => mb_substr($translatedRuns[$i], 0, 200),
                 ]);
@@ -263,15 +343,16 @@ PROMPT;
             }
         }
 
-        // ── Guard: {{...}} multiset preserved in subject ──────────────────────
+        // ── Guard: {{...}} order preserved in subject ─────────────────────────
         if (! $this->mergeTagsOrderedEqual($originalSubject, $data['subject'])) {
             Log::warning('[GeminiTranslationDriver] Merge tags non préservés dans le subject.', [
                 'target_lang' => $targetLang,
+                'chunk_index' => $chunkIndex,
             ]);
             return null;
         }
 
-        // ── Guard: {{...}} multiset preserved in preview (if non-empty) ───────
+        // ── Guard: {{...}} order preserved in preview (if non-empty) ──────────
         $translatedPreview = $data['preview_text'] ?? null;
         if (is_string($translatedPreview)) {
             $translatedPreview = $translatedPreview === '' ? null : $translatedPreview;
@@ -284,31 +365,16 @@ PROMPT;
             if (! $this->mergeTagsOrderedEqual($originalPreview, $checkPreview)) {
                 Log::warning('[GeminiTranslationDriver] Merge tags non préservés dans preview_text.', [
                     'target_lang' => $targetLang,
+                    'chunk_index' => $chunkIndex,
                 ]);
                 return null;
             }
         }
 
-        // ── Re-insert translated runs into token stream ───────────────────────
-        $mutatedTokens = $tokens; // shallow copy (scalar values)
-        foreach ($runObjects as $j => $runObj) {
-            $mutatedTokens[$runObj['index']]['value'] = $translatedRuns[$j];
-        }
-
-        $translatedHtml = $this->segmenter->reassemble($mutatedTokens);
-
-        // ── Final guard: HTML tag multiset must be identical ──────────────────
-        if (! $this->tagMultisetEqual($originalHtml, $translatedHtml)) {
-            Log::warning('[GeminiTranslationDriver] Multiset des balises HTML modifié après traduction — rejeté.', [
-                'target_lang' => $targetLang,
-            ]);
-            return null;
-        }
-
         return [
             'subject'      => trim($data['subject']),
-            'preview_text' => $translatedPreview !== null ? trim($translatedPreview) : $translatedPreview,
-            'html_content' => $translatedHtml,
+            'preview_text' => $translatedPreview,
+            'runs'         => $translatedRuns,
         ];
     }
 

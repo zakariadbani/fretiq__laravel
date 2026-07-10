@@ -7,7 +7,7 @@ use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
 use App\Models\CampaignTemplate;
 use App\Services\Translation\TemplateTranslationService;
-use App\Services\Zoho\ZohoCrmTemplatesService;
+use App\Services\Zoho\ZohoCampaignsTemplatesService;
 use Illuminate\Http\Request;
 
 class CampaignTemplateController extends BackendController
@@ -56,7 +56,7 @@ class CampaignTemplateController extends BackendController
     }
 
     /**
-     * Import email templates from Zoho CRM into campaign_templates.
+     * Import stored templates from Zoho Campaigns Email API into campaign_templates.
      *
      * Controller-side permission enforcement (belt + suspenders — Blade @can is
      * presentational only; the gate must be enforced here).
@@ -66,7 +66,7 @@ class CampaignTemplateController extends BackendController
         abort_unless($request->user()->can('create campaign_templates'), 403);
 
         try {
-            $result = app(ZohoCrmTemplatesService::class)->import();
+            $result = app(ZohoCampaignsTemplatesService::class)->import();
 
             session()->flash(
                 'success',
@@ -91,26 +91,45 @@ class CampaignTemplateController extends BackendController
 
         $template = CampaignTemplate::findOrFail($id);
 
+        $baseLang = config('translation.base_language', 'fr');
+        $sourceLang = $request->input('source_language', $baseLang);
+        $targetLang = $request->input('target_language', config('translation.target_languages')[0] ?? 'en');
+
+        $request->validate([
+            'source_language' => 'nullable|string|max:8',
+            'target_language' => 'nullable|string|max:8|different:source_language',
+            'overwrite'       => 'nullable|boolean',
+        ]);
+
         // ── Server-side overwrite guard against cross-tab clobber ─────────────
-        // If the first target language already has a manually-edited translation
-        // and the caller did not explicitly confirm, refuse with 409 so the client
-        // can prompt the user before retrying with overwrite=1.
-        $firstTargetLang = config('translation.target_languages')[0] ?? 'en';
-        $existing = $template->translationFor($firstTargetLang);
-        if ($existing && ! $existing->is_ai_generated && ! $request->boolean('overwrite')) {
+        // Manual non-base translations must not be overwritten silently.
+        if ($targetLang !== $baseLang) {
+            $existing = $template->translationFor($targetLang);
+            if ($existing && ! $existing->is_ai_generated && ! $request->boolean('overwrite')) {
+                return response()->json([
+                    'success'               => false,
+                    'requires_confirmation' => true,
+                    'message'               => 'Cette version a été modifiée manuellement. Confirmer le remplacement par une traduction IA ?',
+                ], 409);
+            }
+        }
+
+        // The base language has no translation row, so protect existing FR content
+        // explicitly when generating FR from EN.
+        if ($targetLang === $baseLang
+            && (filled($template->subject) || filled($template->html_content))
+            && ! $request->boolean('overwrite')) {
             return response()->json([
-                'success'              => false,
+                'success'               => false,
                 'requires_confirmation' => true,
-                'message'              => 'Cette traduction a été modifiée manuellement. Confirmer le remplacement par une traduction IA ?',
+                'message'               => 'La version française existe déjà. Confirmer son remplacement par une traduction IA ?',
             ], 409);
         }
 
-        $result = app(TemplateTranslationService::class)->translate($template);
+        $success = app(TemplateTranslationService::class)->translateOne($template, $sourceLang, $targetLang);
 
-        // Refresh the relation so translationPayload sees the newly-upserted rows.
-        $template->load('translations');
-
-        $success = ! empty($result['translated']);
+        // Refresh the relation so payloads see the newly-upserted rows/base fields.
+        $template->refresh()->load('translations');
 
         $translations = array_values(array_filter(
             array_map(
@@ -120,13 +139,16 @@ class CampaignTemplateController extends BackendController
         ));
 
         $message = $success
-            ? 'Traduction EN générée.'
-            : "Échec de la traduction : vérifiez la configuration de l'API Gemini.";
+            ? ($targetLang === $baseLang ? 'Version FR générée depuis EN.' : 'Version EN générée depuis FR.')
+            : "Échec de la traduction : vérifiez la version source et la configuration de l'API Gemini.";
 
         return response()->json([
-            'success'      => $success,
-            'message'      => $message,
-            'translations' => $translations,
+            'success'         => $success,
+            'message'         => $message,
+            'source_language' => $sourceLang,
+            'target_language' => $targetLang,
+            'base'            => $this->basePayload($template),
+            'translations'    => $translations,
         ]);
     }
 
@@ -198,6 +220,20 @@ class CampaignTemplateController extends BackendController
             'reviewed'    => $tr->reviewed_at !== null,
             'reviewed_at' => optional($tr->reviewed_at)->diffForHumans(),
         ]);
+    }
+
+    /**
+     * Serialize base FR fields to the JSON shape expected by the frontend.
+     */
+    private function basePayload(CampaignTemplate $template): array
+    {
+        return [
+            'language'     => config('translation.base_language', 'fr'),
+            'subject'      => $template->subject,
+            'preview_text' => $template->preview_text,
+            'html_content' => $template->html_content,
+            'updated_at'   => optional($template->updated_at)->diffForHumans(),
+        ];
     }
 
     /**

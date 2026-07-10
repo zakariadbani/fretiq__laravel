@@ -78,7 +78,7 @@ class ZohoCampaignsClientTest extends TestCase
      */
     public function test_add_list_subscribers_posts_expected_shape(): void
     {
-        $fakeResponse = ['status' => 'success', 'message' => 'Added'];
+        $fakeResponse = ['status' => 'success', 'code' => '0', 'message' => 'Added'];
 
         Http::fake([
             '*oauth/v2/token*' => Http::response([
@@ -86,7 +86,7 @@ class ZohoCampaignsClientTest extends TestCase
                 'expires_in'   => 3600,
             ], 200),
 
-            '*listsubscriberinbulk*' => Http::response($fakeResponse, 200),
+            '*addlistsubscribersinbulk*' => Http::response($fakeResponse, 200),
         ]);
 
         $contacts = [
@@ -105,20 +105,22 @@ class ZohoCampaignsClientTest extends TestCase
 
         // Assert a request was made to the bulk-subscribe endpoint
         Http::assertSent(function (\Illuminate\Http\Client\Request $request) {
-            return str_contains($request->url(), 'listsubscriberinbulk')
+            return $request->url() === $this->baseUrl . '/addlistsubscribersinbulk'
                 && str_contains($request->header('Authorization')[0] ?? '', 'Zoho-oauthtoken')
                 && $request['listkey'] === 'LK-001'
-                && $request['resfmt'] === 'JSON';
+                && $request['resfmt'] === 'JSON'
+                && $request['emailids'] === 'jean@acme.test';
         });
     }
 
     /**
-     * createCampaign posts to /json/createcampaign and returns the decoded body.
-     * sendCampaign posts to /json/sendcampaign and returns the decoded body.
+     * createCampaign posts to Zoho's documented /createCampaign endpoint and
+     * uses the live-verified parameter names from Zoho docs: from_email,
+     * list_details, and content_url. sendCampaign uses /sendcampaign.
      */
     public function test_create_and_send_campaign(): void
     {
-        $createResponse = ['campaignkey' => 'CK-001', 'status' => 'success'];
+        $createResponse = ['campaignKey' => 'CK-001', 'status' => 'success'];
         $sendResponse   = ['status' => 'success', 'message' => 'Sent'];
 
         Http::fake([
@@ -127,7 +129,7 @@ class ZohoCampaignsClientTest extends TestCase
                 'expires_in'   => 3600,
             ], 200),
 
-            '*createcampaign*' => Http::response($createResponse, 200),
+            '*createCampaign*' => Http::response($createResponse, 200),
             '*sendcampaign*'   => Http::response($sendResponse, 200),
         ]);
 
@@ -135,21 +137,23 @@ class ZohoCampaignsClientTest extends TestCase
 
         // createCampaign
         $createResult = $client->createCampaign(
-            name:        'Test Campaign',
-            subject:     'Hello Subject',
-            fromEmail:   'sender@fretiq.fr',
-            listKey:     'LK-001',
-            htmlContent: '<p>Hello</p>',
+            name:       'Test Campaign',
+            subject:    'Hello Subject',
+            fromEmail:  'sender@fretiq.fr',
+            listKey:    'LK-001',
+            contentUrl: 'https://fretiq.test/campaign-runs/1/zoho-content?signature=fake',
         );
 
-        $this->assertSame('CK-001', $createResult['campaignkey']);
+        $this->assertSame('CK-001', $createResult['campaignKey']);
         $this->assertSame('success', $createResult['status']);
 
         Http::assertSent(function (\Illuminate\Http\Client\Request $request) {
-            return str_contains($request->url(), 'createcampaign')
+            return $request->url() === $this->baseUrl . '/createCampaign'
                 && str_contains($request->header('Authorization')[0] ?? '', 'Zoho-oauthtoken')
                 && $request['campaignname'] === 'Test Campaign'
-                && $request['listkey'] === 'LK-001'
+                && $request['from_email'] === 'sender@fretiq.fr'
+                && $request['list_details'] === json_encode(['LK-001' => []])
+                && $request['content_url'] === 'https://fretiq.test/campaign-runs/1/zoho-content?signature=fake'
                 && $request['resfmt'] === 'JSON';
         });
 
@@ -159,14 +163,14 @@ class ZohoCampaignsClientTest extends TestCase
         $this->assertSame('success', $sendResult['status']);
 
         Http::assertSent(function (\Illuminate\Http\Client\Request $request) {
-            return str_contains($request->url(), 'sendcampaign')
+            return $request->url() === $this->baseUrl . '/sendcampaign'
                 && str_contains($request->header('Authorization')[0] ?? '', 'Zoho-oauthtoken')
                 && $request['campaignkey'] === 'CK-001';
         });
     }
 
     /**
-     * getCampaignReport calls GET /json/getcampaigndetails and returns the
+     * getCampaignReport calls GET /campaignreports and returns the
      * raw decoded payload (stats parsing happens in SyncCampaignStatsJob).
      */
     public function test_get_campaign_report_parses_stats(): void
@@ -184,7 +188,7 @@ class ZohoCampaignsClientTest extends TestCase
                 'expires_in'   => 3600,
             ], 200),
 
-            '*getcampaigndetails*' => Http::response($reportPayload, 200),
+            '*campaignreports*' => Http::response($reportPayload, 200),
         ]);
 
         $result = $this->makeClient()->getCampaignReport('CK-001');
@@ -197,7 +201,7 @@ class ZohoCampaignsClientTest extends TestCase
 
         // Verify GET request was sent to the right endpoint
         Http::assertSent(function (\Illuminate\Http\Client\Request $request) {
-            return str_contains($request->url(), 'getcampaigndetails')
+            return str_contains($request->url(), 'campaignreports')
                 && $request->method() === 'GET'
                 && str_contains($request->header('Authorization')[0] ?? '', 'Zoho-oauthtoken');
         });

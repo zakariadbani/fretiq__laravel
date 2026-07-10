@@ -4,6 +4,7 @@ namespace Tests\Feature\Backend;
 
 use App\Models\CampaignTemplate;
 use App\Models\User;
+use App\Services\Zoho\ZohoCrmTemplatesService;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -167,11 +168,7 @@ class ZohoTemplatesImportTest extends TestCase
     {
         $this->fakeHttp();
 
-        $admin = $this->makeAdmin();
-
-        $this->actingAs($admin)
-            ->post('/admin/campaign_templates/import-zoho')
-            ->assertRedirect(route('admin.campaign_templates.index'));
+        app(ZohoCrmTemplatesService::class)->import();
 
         // Cross-module dedup: ZT001 appears in both Contacts + Leads → only 1 row.
         $this->assertSame(2, CampaignTemplate::count(), 'Expected exactly 2 templates (dedup by id)');
@@ -242,10 +239,7 @@ class ZohoTemplatesImportTest extends TestCase
             ], 200),
         ]);
 
-        $admin = $this->makeAdmin();
-        $this->actingAs($admin)
-            ->post('/admin/campaign_templates/import-zoho')
-            ->assertRedirect(route('admin.campaign_templates.index'));
+        app(ZohoCrmTemplatesService::class)->import();
 
         $this->assertSame(2, CampaignTemplate::count());
         $this->assertDatabaseHas('campaign_templates', [
@@ -297,8 +291,7 @@ class ZohoTemplatesImportTest extends TestCase
             sharedContent: $updatedContent,
         );
 
-        $admin = $this->makeAdmin();
-        $this->actingAs($admin)->post('/admin/campaign_templates/import-zoho');
+        app(ZohoCrmTemplatesService::class)->import();
 
         // Row count unchanged — update path, not create path.
         $this->assertSame($countBefore, CampaignTemplate::count(), 'No new rows on reimport');
@@ -328,8 +321,7 @@ class ZohoTemplatesImportTest extends TestCase
         ]);
 
         $this->fakeHttp();
-        $admin = $this->makeAdmin();
-        $this->actingAs($admin)->post('/admin/campaign_templates/import-zoho');
+        app(ZohoCrmTemplatesService::class)->import();
 
         // Still 2 rows total (1 adopted + 1 created), not 3
         $this->assertSame(2, CampaignTemplate::count(), 'Adopted row must not create a duplicate');

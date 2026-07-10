@@ -4,6 +4,8 @@ use App\Http\Controllers\Auth\SocialiteController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\TrackingController;
 use App\Http\Controllers\UnsubscribeController;
+use App\Models\CampaignRun;
+use App\Services\Campaign\ZohoCampaignsDriver;
 use App\Helpers\Tools;
 use Illuminate\Support\Facades\Route;
 
@@ -61,6 +63,19 @@ Route::get('/track/open/{token}', [TrackingController::class, 'open'])
 Route::match(['get', 'post'], '/u/{contact}', [UnsubscribeController::class, 'show'])
     ->name('unsubscribe')
     ->middleware('signed');
+
+// Public, signed HTML import URL used by Zoho Campaigns createCampaign.
+Route::get('/campaign-runs/{run}/zoho-content', function (CampaignRun $run) {
+    $run->load('campaign.template');
+
+    abort_unless($run->campaign?->template, 404);
+
+    return response(
+        ZohoCampaignsDriver::translateMergeTags($run->campaign->template->html_content),
+        200,
+        ['Content-Type' => 'text/html; charset=UTF-8'],
+    );
+})->name('campaigns.zoho-content')->middleware('signed');
 
 Route::get('/auth/redirect/{provider}', [SocialiteController::class, 'redirect']);
 

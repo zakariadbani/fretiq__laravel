@@ -129,6 +129,63 @@ class TemplateTranslationRouteTest extends TestCase
         ]);
     }
 
+    public function test_translate_can_generate_fr_base_from_existing_en_translation(): void
+    {
+        $template = $this->makeTemplate([
+            'subject'      => '',
+            'html_content' => '',
+            'preview_text' => null,
+        ]);
+
+        CampaignTemplateTranslation::create([
+            'campaign_template_id' => $template->id,
+            'language'             => 'en',
+            'subject'              => 'Your Morocco freight solution',
+            'html_content'         => '<p>Hello {{contact.name}}, we operate weekly trailers.</p>',
+            'preview_text'         => 'Weekly trailers to Morocco',
+            'is_ai_generated'      => false,
+            'src_subject_hash'     => md5(''),
+            'src_preview_hash'     => md5(''),
+            'src_body_hash'        => md5(''),
+        ]);
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response(
+                $this->geminiResponse(
+                    ['Bonjour {{contact.name}}, nous opérons des remorques hebdomadaires.'],
+                    'Votre solution fret Maroc',
+                    'Remorques hebdomadaires vers le Maroc'
+                ),
+                200
+            ),
+        ]);
+
+        config(['services.gemini.api_key' => 'fake-key']);
+
+        $response = $this->actingAs($this->adminUser)
+            ->postJson("/admin/campaign_templates/{$template->id}/translate", [
+                'source_language' => 'en',
+                'target_language' => 'fr',
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('source_language', 'en')
+            ->assertJsonPath('target_language', 'fr')
+            ->assertJsonPath('base.subject', 'Votre solution fret Maroc');
+
+        $template->refresh();
+        $this->assertSame('Votre solution fret Maroc', $template->subject);
+        $this->assertSame('Remorques hebdomadaires vers le Maroc', $template->preview_text);
+        $this->assertStringContainsString('Bonjour {{contact.name}}', $template->html_content);
+
+        $translation = $template->translationFor('en');
+        $hashes = $template->sourceHashes();
+        $this->assertSame($hashes['subject'], $translation->src_subject_hash);
+        $this->assertSame($hashes['preview'], $translation->src_preview_hash);
+        $this->assertSame($hashes['body'], $translation->src_body_hash);
+    }
+
     public function test_translate_sets_sub_hashes_from_current_base(): void
     {
         $template = $this->makeTemplate();

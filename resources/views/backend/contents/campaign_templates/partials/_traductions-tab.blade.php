@@ -38,16 +38,6 @@
         'body'    => 'Contenu modifié',
     ];
 
-    $translationStateLabel = $tr
-        ? (count($stale) ? 'À mettre à jour' : 'Traduction prête')
-        : 'À traduire';
-    $translationStateBadge = $tr
-        ? (count($stale) ? 'badge-light-warning' : 'badge-light-success')
-        : 'badge-light-primary';
-    $nextActionLabel = $tr
-        ? (count($stale) ? 'Retraduire les champs modifiés' : 'Ajuster ou relire la version EN')
-        : 'Générer une première traduction anglaise';
-
     $frSubjectReady = filled($model->subject);
     $frBodyReady    = filled($model->html_content);
     $frReady        = $frSubjectReady && $frBodyReady;
@@ -56,6 +46,21 @@
     $enReady        = $enSubjectReady && $enBodyReady;
     $frUpdatedLabel = $model->updated_at ? $model->updated_at->format('d/m/Y H:i') : '—';
     $enUpdatedLabel = ($tr && $tr->updated_at) ? $tr->updated_at->format('d/m/Y H:i') : 'Non créée';
+
+    $directionSource = (!$frReady && $enReady) ? 'en' : 'fr';
+    $directionTarget = $directionSource === 'en' ? 'fr' : 'en';
+    $directionLabel  = $directionTarget === 'fr' ? 'Générer FR depuis EN' : ($tr ? 'Mettre à jour EN depuis FR' : 'Générer EN depuis FR');
+    $directionDisabled = !$hasKey || ($directionSource === 'fr' ? !$frBodyReady : !$enBodyReady);
+
+    $translationStateLabel = $frReady && $enReady
+        ? (count($stale) ? 'Versions à synchroniser' : 'Versions prêtes')
+        : 'Version à compléter';
+    $translationStateBadge = $frReady && $enReady
+        ? (count($stale) ? 'badge-light-warning' : 'badge-light-success')
+        : 'badge-light-primary';
+    $nextActionLabel = $directionTarget === 'fr'
+        ? 'Créer la version française depuis la version anglaise importée'
+        : ($enReady ? 'Mettre à jour la version anglaise depuis le français' : 'Créer la version anglaise depuis le français');
 @endphp
 
 {{-- ── Root card — JS reads data-* attrs ───────────────────────────────── --}}
@@ -67,17 +72,19 @@
      data-translate-url="{{ $translateUrl }}"
      data-save-url="{{ $saveUrl }}"
      data-review-url="{{ $reviewUrl }}"
-     data-lang="en">
+     data-lang="en"
+     data-source-language="{{ $directionSource }}"
+     data-target-language="{{ $directionTarget }}">
 
     {{-- ── Header / status row ──────────────────────────────────────────── --}}
     <div class="card-header border-0 pt-5">
         <h3 class="card-title align-items-start flex-column">
             <span class="card-label fw-bold fs-3 mb-1">
                 <i class="bi bi-translate text-primary me-2 fs-3"></i>
-                Traduction anglaise
+                Versions linguistiques
             </span>
             <span class="text-muted mt-1 fw-semibold fs-7">
-                Gérez la version EN du modèle sans quitter la fiche française.
+                Gérez les versions FR et EN du modèle selon la langue disponible.
             </span>
         </h3>
         <div class="card-toolbar d-flex align-items-center gap-2 flex-wrap">
@@ -153,7 +160,7 @@
                         </div>
                         @unless($tr)
                             <div class="badge badge-light-primary mt-3">
-                                Aucune traduction anglaise enregistrée pour l’instant.
+                                Aucune version anglaise enregistrée pour l’instant.
                             </div>
                         @endunless
                     </div>
@@ -164,10 +171,12 @@
                             class="btn btn-primary"
                             id="tr-translate-btn"
                             data-kt-indicator="off"
-                            @if($emptyBody || !$hasKey) disabled @endif>
+                            data-source-language="{{ $directionSource }}"
+                            data-target-language="{{ $directionTarget }}"
+                            @if($directionDisabled) disabled @endif>
                         <span class="indicator-label">
                             <i class="bi bi-magic me-1"></i>
-                            {{ $tr ? 'Mettre à jour la traduction' : 'Traduire avec l\'IA' }}
+                            {{ $directionLabel }}
                         </span>
                         <span class="indicator-progress">
                             Traduction en cours…
@@ -199,15 +208,15 @@
 
         <div class="d-flex align-items-center justify-content-between gap-3 flex-wrap mb-5">
             <div>
-                <div class="fw-bold text-gray-800">Versions du modèle</div>
-                <div class="text-muted fs-7">Source française à gauche, traduction anglaise à droite.</div>
+                <div class="fw-bold text-gray-800">Versions linguistiques du modèle</div>
+                <div class="text-muted fs-7">Français et anglais sont gérés comme deux versions éditables.</div>
             </div>
             <div class="d-flex gap-2 flex-wrap">
                 <span class="badge {{ $frReady ? 'badge-light-success' : 'badge-light-warning' }}">
-                    FR {{ $frReady ? 'créée' : 'incomplète' }}
+                    {{ $frReady ? 'FR créée' : 'FR manquante' }}
                 </span>
                 <span class="badge {{ $enReady ? 'badge-light-success' : 'badge-light-danger' }}">
-                    EN {{ $enReady ? 'créée' : 'non créée' }}
+                    {{ $enReady ? 'EN créée' : 'EN manquante' }}
                 </span>
                 @if($tr && count($stale))
                     <span class="badge badge-light-warning">EN obsolète</span>
@@ -225,7 +234,7 @@
                         <h5 class="card-title align-items-start flex-column m-0">
                             <span class="fw-bold text-gray-800">
                                 <span class="badge badge-light-secondary me-2">FR</span>
-                                Version française source
+                                Version française
                             </span>
                             <span class="text-muted fs-8 mt-1">Dernière mise à jour : {{ $frUpdatedLabel }}</span>
                         </h5>
@@ -236,19 +245,25 @@
                         </div>
                     </div>
                     <div class="card-body pt-0">
-                        <div class="row g-3 mb-5">
-                            <div class="col-sm-6">
-                                <div class="bg-light rounded p-3 h-100">
-                                    <div class="text-muted fs-8 mb-1">Objet FR</div>
-                                    <div class="fw-semibold text-gray-800 text-break">{{ $model->subject ?: '—' }}</div>
-                                </div>
-                            </div>
-                            <div class="col-sm-6">
-                                <div class="bg-light rounded p-3 h-100">
-                                    <div class="text-muted fs-8 mb-1">Prévisualisation FR</div>
-                                    <div class="fw-semibold text-gray-800 text-break">{{ $model->preview_text ?: '—' }}</div>
-                                </div>
-                            </div>
+                        <div class="fv-row mb-7">
+                            <label class="fw-semibold fs-6 mb-2" for="tr_fr_subject">Sujet (FR)</label>
+                            <input type="text"
+                                   id="tr_fr_subject"
+                                   class="form-control form-control-solid"
+                                   value="{{ $model->subject ?? '' }}"
+                                   placeholder="Sujet français…"
+                                   readonly />
+                        </div>
+
+                        <div class="fv-row mb-7">
+                            <label class="fw-semibold fs-6 mb-2" for="tr_fr_preview">Texte de prévisualisation (FR)</label>
+                            <input type="text"
+                                   id="tr_fr_preview"
+                                   class="form-control form-control-solid"
+                                   value="{{ $model->preview_text ?? '' }}"
+                                   placeholder="Aperçu français…"
+                                   maxlength="255"
+                                   readonly />
                         </div>
 
                         <div class="d-flex align-items-center justify-content-between mb-3">
@@ -256,7 +271,9 @@
                                 <div class="fw-bold text-gray-700">WYSIWYG français</div>
                                 <div class="text-muted fs-8">Lecture seule — éditez le FR depuis l’onglet Général.</div>
                             </div>
-                            <a href="#template_general" class="btn btn-sm btn-light" data-bs-toggle="tab">
+                            <a href="#template_general"
+                               class="btn btn-sm btn-light"
+                               data-template-open-tab="#template_general">
                                 Modifier le FR
                             </a>
                         </div>
@@ -284,7 +301,7 @@
                         <h5 class="card-title align-items-start flex-column m-0">
                             <span class="fw-bold text-gray-800">
                                 <span class="badge badge-light-info me-2">EN</span>
-                                Version anglaise éditable
+                                Version anglaise
                             </span>
                             <span class="text-muted fs-8 mt-1">Dernière mise à jour : {{ $enUpdatedLabel }}</span>
                         </h5>
