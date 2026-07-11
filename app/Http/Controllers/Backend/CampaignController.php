@@ -15,6 +15,7 @@ use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SenderIdentity;
 use App\Services\Campaign\CampaignService;
+use App\Services\Campaign\CampaignZohoListSyncService;
 use App\Services\Campaign\SegmentService;
 use App\Services\Demande\DemandeCaptureService;
 use App\Services\Translation\LanguageResolver;
@@ -46,7 +47,7 @@ class CampaignController extends BackendController
         $this->middleware('permission:create campaigns')->only(['create', 'store']);
         $this->middleware('permission:edit campaigns')->only(['edit', 'update', 'executeSwitch']);
         $this->middleware('permission:delete campaigns')->only(['delete']);
-        $this->middleware('permission:send campaigns')->only(['schedule', 'sendNow']);
+        $this->middleware('permission:send campaigns')->only(['schedule', 'sendNow', 'syncZohoList']);
         $this->middleware('permission:create demandes')->only(['markReplied']);
 
         $this->listTitle = 'Campagnes';
@@ -104,6 +105,9 @@ class CampaignController extends BackendController
 
         $latestRun = $campaign->runs->first();
         $stats     = $this->campaignStats($campaign);
+        $currentAudience = $campaign->segment
+            ? app(SegmentService::class)->resolve($campaign->segment)
+            : collect();
 
         // Rollup / run-scope recipients — see recipientFilters() + recipientScopeQuery().
         $recipientFilters = $this->recipientFilters($campaign);
@@ -129,7 +133,7 @@ class CampaignController extends BackendController
         $recipientsTotal = CampaignRecipient::whereIn('campaign_run_id', $campaign->runs->pluck('id'))
             ->distinct()->count('contact_id');
 
-        $viewConfig    = CampaignViewConfig::make($campaign, $stats, $recipientsTotal);
+        $viewConfig    = CampaignViewConfig::make($campaign, $stats, $recipientsTotal, $currentAudience->count());
         $enrolledCount = SequenceEnrollment::where('campaign_id', $campaign->id)->count();
 
         return $this->getView('backend.contents.campaigns.crud.view')
@@ -137,6 +141,7 @@ class CampaignController extends BackendController
             ->with('latestRun', $latestRun)
             ->with('runs', $campaign->runs)
             ->with('stats', $stats)
+            ->with('currentAudience', $currentAudience)
             ->with('recipients', $recipients)
             ->with('recipientsTotal', $recipientsTotal)
             ->with('recipientFilters', $recipientFilters)
@@ -672,6 +677,33 @@ class CampaignController extends BackendController
             'text'     => 'Campagne planifiée avec succès.',
             'redirect' => route('admin.campaigns.view', $id),
         ]);
+    }
+
+    /**
+     * Add a compliance-filtered run snapshot to its dedicated campaign-owned Zoho
+     * list, then verify all prepared emails are present. This endpoint never
+     * creates or sends a Zoho campaign and never removes existing list members.
+     */
+    public function syncZohoList($id)
+    {
+        $campaign = Campaign::with('segment')->findOrFail((int) $id);
+
+        try {
+            $summary = app(CampaignZohoListSyncService::class)->sync($campaign);
+
+            return response()->json([
+                'status' => $summary['status'],
+                'verified' => $summary['verified'],
+                'added' => $summary['added'],
+                'message' => "Liste Zoho dédiée : {$summary['added']} ajout(s) vérifié(s). Les contacts existants sont conservés. Aucune campagne Zoho n’a été créée ni envoyée.",
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => 'blocked',
+                'verified' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
     }
 
     /**

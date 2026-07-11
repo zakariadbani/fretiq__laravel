@@ -9,7 +9,8 @@
 --}}
 <div id="segment_preview_card"
      class="border border-dashed border-gray-300 rounded p-5 mb-5 bg-light-primary bg-opacity-25"
-     data-preview-url="{{ route('admin.segments.preview') }}">
+     data-preview-url="{{ route('admin.segments.preview') }}"
+     {{ !empty($isManual) ? 'hidden' : '' }}>
 
     <div class="d-flex align-items-center gap-5 flex-wrap">
 

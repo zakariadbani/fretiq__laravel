@@ -25,7 +25,7 @@
 {{--
     Campaign view — hero+tabbar UX (clic2loc parity).
     Hero card + shared tab strip via _header-with-tabs partial.
-    Tab pane IDs: campaign_apercu / campaign_historique / campaign_destinataires.
+    Tab pane IDs: campaign_apercu / campaign_historique / campaign_audience_actuelle / campaign_destinataires.
     campaign_general deep-links to the edit page (no native pane here).
     Aperçu is the default active pane (native on view page).
 
@@ -33,7 +33,8 @@
       1. Aperçu    — _apercu partial + sequence enrolled card + latest-run KPI cards
       2. Général   — cross-route link to edit page
       3. Historique — @include(_historique-tab)  full execution history table
-      4. Destinataires — @include(_destinataires-tab)  all recipients across all runs (paginated)
+      4. Audience actuelle — live segment audience (recomputed on render)
+      5. Destinataires — @include(_destinataires-tab)  all recipients across all runs (paginated)
 
     Schedule / SendNow / Planifier buttons: preserved verbatim in _header-actions (hero slot).
     All @can('send campaigns') gates are kept exactly as the original.
@@ -55,7 +56,7 @@
         {{-- Generic apercu: details table (left) + stat cards + charts (right) --}}
         @include('backend.partials.crud._apercu', [
             'model'  => $model,
-            'config' => \App\Crud\ViewConfigs\CampaignViewConfig::make($model, $stats ?? null, $recipientsTotal ?? null),
+            'config' => $viewConfig ?? \App\Crud\ViewConfigs\CampaignViewConfig::make($model, $stats ?? null, $recipientsTotal ?? null),
         ])
 
         {{-- ── Sequence stat: enrolled contacts ─────────────────────────── --}}
@@ -201,6 +202,56 @@
         @include('backend.contents.campaigns.partials._historique-tab')
     </div>
 
+    {{-- ── Tab: Audience actuelle (segment recalculé) ───────────────────────── --}}
+    <div class="tab-pane fade" id="campaign_audience_actuelle" role="tabpanel">
+        @php($audienceActuelle = $currentAudience ?? collect())
+
+        <div class="card">
+            <div class="card-header border-0 pt-5">
+                <h3 class="card-title fw-bolder m-0">
+                    <i class="bi bi-people text-primary fs-3 me-2"></i>
+                    Audience actuelle ({{ number_format($audienceActuelle->count()) }})
+                </h3>
+            </div>
+
+            <div class="card-body pt-0">
+                <div class="alert bg-light-primary d-flex align-items-start p-4 rounded">
+                    <i class="bi bi-info-circle text-primary fs-4 me-3 mt-1"></i>
+                    <div class="text-gray-700 fw-semibold">
+                        Cette audience est recalculée dynamiquement à partir du segment lié.
+                        Les envois passés restent dans l'onglet Destinataires.
+                    </div>
+                </div>
+
+                @if($audienceActuelle->isEmpty())
+                    <div class="text-center py-8 text-muted">
+                        <i class="bi bi-people fs-2x mb-3 d-block"></i>
+                        Aucun contact éligible dans l'audience actuelle.
+                    </div>
+                @else
+                    <div class="table-responsive">
+                        <table class="table table-row-dashed table-row-gray-300 align-middle gs-0 gy-4 mb-0">
+                            <thead>
+                                <tr class="fw-bold text-muted bg-light">
+                                    <th class="ps-7">Email</th>
+                                    <th>Société</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($audienceActuelle as $contact)
+                                <tr>
+                                    <td class="ps-7 fw-semibold">{{ $contact->email ?: '—' }}</td>
+                                    <td class="text-muted">{{ $contact->company?->name ?: '—' }}</td>
+                                </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                @endif
+            </div>
+        </div>
+    </div>
+
     {{-- ── Tab: Destinataires (tous les envois) ─────────────────────────── --}}
     <div class="tab-pane fade" id="campaign_destinataires" role="tabpanel">
         @include('backend.contents.campaigns.partials._destinataires-tab')
@@ -265,6 +316,57 @@
                         } else {
                             btnSchedule.disabled = false;
                         }
+                    });
+                });
+            }
+
+            // ── Zoho list additions + verification (never sends a campaign) ──
+            const btnSyncZohoList = document.getElementById('btn-sync-zoho-list');
+            if (btnSyncZohoList) {
+                btnSyncZohoList.addEventListener('click', function () {
+                    const self = this;
+                    self.disabled = true;
+
+                    Swal.fire({
+                        title: 'Ajouter et vérifier la liste Zoho ?',
+                        html: 'Les contacts conformes de la campagne seront ajoutés à sa liste Zoho dédiée, puis leur présence sera vérifiée.<br>Les contacts déjà présents seront conservés.<br><strong>Aucune campagne Zoho ne sera créée ni envoyée.</strong>',
+                        icon: 'question',
+                        showCancelButton: true,
+                        confirmButtonText: 'Ajouter et vérifier',
+                        cancelButtonText: 'Annuler',
+                        buttonsStyling: false,
+                        customClass: {
+                            confirmButton: 'btn btn-primary me-2',
+                            cancelButton: 'btn btn-light',
+                        },
+                    }).then((result) => {
+                        if (! result.isConfirmed) {
+                            self.disabled = false;
+                            return;
+                        }
+
+                        axios.post(self.dataset.url, { _token: '{{ csrf_token() }}' })
+                            .then(function (response) {
+                                Swal.fire({
+                                    icon: 'success',
+                                    title: 'Ajouts Zoho vérifiés',
+                                    text: response.data.message,
+                                    buttonsStyling: false,
+                                    confirmButtonText: 'OK',
+                                    customClass: { confirmButton: 'btn btn-primary' },
+                                }).then(() => window.location.reload());
+                            })
+                            .catch(function (error) {
+                                Swal.fire({
+                                    icon: 'warning',
+                                    title: 'Préparation bloquée',
+                                    text: error.response?.data?.message || 'Impossible de vérifier les ajouts à la liste Zoho. Aucun envoi n’a été créé.',
+                                    buttonsStyling: false,
+                                    confirmButtonText: 'OK',
+                                    customClass: { confirmButton: 'btn btn-primary' },
+                                });
+                            })
+                            .finally(function () { self.disabled = false; });
                     });
                 });
             }

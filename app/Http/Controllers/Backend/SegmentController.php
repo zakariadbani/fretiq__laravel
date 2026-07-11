@@ -299,7 +299,8 @@ class SegmentController extends BackendController
             $filter['status'] = $status;
         }
 
-        $attributes['filter'] = empty($filter) ? null : $filter;
+        $attributes['is_manual'] = $this->currentRequest->boolean('is_manual');
+        $attributes['filter'] = $attributes['is_manual'] || empty($filter) ? null : $filter;
 
         return $attributes;
     }
@@ -325,6 +326,7 @@ class SegmentController extends BackendController
             false,  // withSample: false — sample table removed (M2)
             $includeIds,
             $excludeIds,
+            $segment->is_manual,
         );
 
         return [
@@ -480,9 +482,9 @@ class SegmentController extends BackendController
         // injected at construction time (which may be stale in test scenarios — see pinContact).
         $currentRequest = request();
 
-        // If the request carries a non-empty scope, resolve the LIVE audience;
-        // else fall back to the saved audience exactly as before.
-        if (filled($currentRequest->input('scope'))) {
+        // Live filtering applies only to dynamic segments. A manual segment is an
+        // explicit saved selection, so its scope/filter must never widen the audience.
+        if (! $segment->is_manual && filled($currentRequest->input('scope'))) {
             ['scope' => $scope, 'filter' => $filter] = $this->validatedScopeFilter($currentRequest);
             $resolved = $service->resolveAudience($scope, $filter, $includeIds, $excludeIds);
             $counts   = [

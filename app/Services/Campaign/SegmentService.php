@@ -68,11 +68,12 @@ class SegmentService
      * @param  array     $filter      Normalized filter array (keys: sector, country, status)
      * @param  int[]     $includeIds  Contact IDs to force-include (pinned-in from saved segment)
      * @param  int[]     $excludeIds  Contact IDs to force-exclude (pinned-out from saved segment)
+     * @param  bool      $manualOnly  Resolve the include IDs as an explicit allow-list
      * @return Collection<int, Contact>
      */
-    public function resolveAudience(string $scope, array $filter, array $includeIds = [], array $excludeIds = []): Collection
+    public function resolveAudience(string $scope, array $filter, array $includeIds = [], array $excludeIds = [], bool $manualOnly = false): Collection
     {
-        $postDedup = $this->buildStage5HydratedCollection($scope, $filter, $includeIds);
+        $postDedup = $this->buildStage5HydratedCollection($scope, $filter, $includeIds, $manualOnly);
         return $postDedup
             ->reject(fn (Contact $c) => in_array($c->id, $excludeIds, true))
             ->values();
@@ -84,7 +85,14 @@ class SegmentService
      */
     public function previewCount(Segment $segment): int
     {
-        return $this->resolveWithStats($segment->scope, $segment->filter ?? [])['final'];
+        return $this->resolveWithStats(
+            $segment->scope,
+            $segment->filter ?? [],
+            false,
+            $segment->includedContactIds(),
+            $segment->excludedContactIds(),
+            $segment->is_manual,
+        )['final'];
     }
 
     /**
@@ -105,13 +113,15 @@ class SegmentService
      *   matched − suppressed − cold_excluded − personal_excluded − duplicates_excluded − manually_excluded === final
      *
      * Back-compat: existing callers pass ≤3 args ($scope, $filter, $withSample).
-     * New callers may pass $includeIds / $excludeIds (arrays of contact IDs).
+     * New callers may pass $includeIds / $excludeIds (arrays of contact IDs) and
+     * $manualOnly to resolve those includes as an explicit allow-list.
      *
      * @param  string  $scope
      * @param  array   $filter
      * @param  bool    $withSample
      * @param  array   $includeIds   Contact IDs to force-include (union with filter, before compliance)
      * @param  array   $excludeIds   Contact IDs to force-exclude (after dedup)
+     * @param  bool    $manualOnly   Resolve includes only; skip scope and JSON filter
      * @return array<string, mixed>
      */
     public function resolveWithStats(
@@ -120,9 +130,10 @@ class SegmentService
         bool $withSample = false,
         array $includeIds = [],
         array $excludeIds = [],
+        bool $manualOnly = false,
     ): array {
         // ── Count-only path (stages 1–6, no model hydration) ────────────────────
-        $q12 = $this->buildBaseQuery($scope, $filter, hydrating: false, includeIds: $includeIds);
+        $q12 = $this->buildBaseQuery($scope, $filter, hydrating: false, includeIds: $includeIds, manualOnly: $manualOnly);
 
         $q3 = (clone $q12);
         $this->applySuppressionStage($q3);
@@ -152,7 +163,7 @@ class SegmentService
         // (an exclude that lands on a duplicate would be double-counted otherwise).
         // For back-compat callers with no includeIds/excludeIds this path is cheap
         // (empty ids → resolveCollection result already correct).
-        $postDedup = $this->buildStage5HydratedCollection($scope, $filter, $includeIds);
+        $postDedup = $this->buildStage5HydratedCollection($scope, $filter, $includeIds, $manualOnly);
 
         // Apply excludes: reject any contact whose id is in excludeIds.
         $preExclude = $postDedup->reject(fn (Contact $c) => in_array($c->id, $excludeIds, true));
@@ -210,6 +221,7 @@ class SegmentService
             $segment->filter ?? [],
             $segment->includedContactIds(),
             $segment->excludedContactIds(),
+            $segment->is_manual,
         );
     }
 
@@ -223,9 +235,9 @@ class SegmentService
      * @param  array   $includeIds
      * @return Collection<int, Contact>
      */
-    private function buildStage5HydratedCollection(string $scope, array $filter, array $includeIds): Collection
+    private function buildStage5HydratedCollection(string $scope, array $filter, array $includeIds, bool $manualOnly = false): Collection
     {
-        $query = $this->buildBaseQuery($scope, $filter, hydrating: true, includeIds: $includeIds);
+        $query = $this->buildBaseQuery($scope, $filter, hydrating: true, includeIds: $includeIds, manualOnly: $manualOnly);
         $this->applySuppressionStage($query);
         $this->applyColdGateStage($query);
         $this->applyEmailKindStage($query);
@@ -267,9 +279,10 @@ class SegmentService
      * @param  array   $filter     Structured filter array
      * @param  bool    $hydrating  Whether the query will hydrate full models
      * @param  array   $includeIds Contact IDs to force-include (OR with scope+filter)
+     * @param  bool    $manualOnly Resolve include IDs only; skip dynamic scope/filter
      * @return Builder
      */
-    private function buildBaseQuery(string $scope, array $filter, bool $hydrating, array $includeIds = []): Builder
+    private function buildBaseQuery(string $scope, array $filter, bool $hydrating, array $includeIds = [], bool $manualOnly = false): Builder
     {
         $query = $hydrating
             ? Contact::with('company')->whereNotNull('email')
@@ -281,7 +294,11 @@ class SegmentService
         // All contacts must have an associated company (top-level AND).
         $query->whereHas('company');
 
-        if (! empty($includeIds)) {
+        if ($manualOnly) {
+            // A manual segment is an explicit allow-list: never union the dynamic
+            // scope/filter audience. An empty selection must resolve to nobody.
+            $query->whereIn('contacts.id', $includeIds ?: [0]);
+        } elseif (! empty($includeIds)) {
             // Wrap (scope+filter) OR includeIds in a nested where() so the union
             // is an OR within the top-level AND chain (email hygiene + company stay outside).
             $query->where(function (Builder $nested) use ($scope, $filter, $includeIds) {

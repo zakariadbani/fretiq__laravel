@@ -13,6 +13,7 @@ Route::controller(CampaignController::class)->prefix('admin')->name('admin.')->g
     Route::post('/campaigns/audience-language-split', 'audienceLanguageSplit')->name('campaigns.audienceLanguageSplit');
     Route::post('/campaigns/{id}/schedule', 'schedule')->name('campaigns.schedule');
     Route::post('/campaigns/{id}/send', 'sendNow')->name('campaigns.sendNow');
+    Route::post('/campaigns/{id}/sync-zoho-list', 'syncZohoList')->name('campaigns.syncZohoList');
     Route::post('/campaigns/{id}/recipients/{recipientId}/replied', 'markReplied')->name('campaigns.markReplied');
 
     Route::get('/campaigns/{id}', 'view')->name('campaigns.view');

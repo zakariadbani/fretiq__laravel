@@ -23,9 +23,10 @@ class CampaignViewConfig
      *
      * @param  Campaign|null  $model
      * @param  array|null     $stats            Optional pre-computed stats from CampaignController::campaignStats().
-     * @param  int|null       $recipientsTotal  Distinct contacts across all runs (null = unknown, badge omitted).
+     * @param  int|null       $recipientsTotal       Distinct contacts across all runs (null = unknown, badge omitted).
+     * @param  int|null       $currentAudienceTotal  Live segment audience count (null = unknown, badge omitted).
      */
-    public static function make(?Campaign $model, ?array $stats = null, ?int $recipientsTotal = null): array
+    public static function make(?Campaign $model, ?array $stats = null, ?int $recipientsTotal = null, ?int $currentAudienceTotal = null): array
     {
         $hasId = $model && $model->id;
 
@@ -108,6 +109,7 @@ class CampaignViewConfig
             ['key' => 'apercu',        'label' => 'Aperçu',        'icon' => 'bi-grid',          'mode' => 'view'],
             ['key' => 'general',       'label' => 'Général',       'icon' => 'bi-megaphone',     'mode' => 'edit'],
             ['key' => 'historique',    'label' => 'Historique',    'icon' => 'bi-clock-history', 'mode' => 'view', 'count' => $runsCount],
+            ['key' => 'audience_actuelle', 'label' => 'Audience actuelle', 'icon' => 'bi-people', 'mode' => 'view', 'count' => $currentAudienceTotal],
             ['key' => 'destinataires', 'label' => 'Destinataires', 'icon' => 'bi-envelope',      'mode' => 'view', 'count' => $recipientsTotal],
         ];
 

@@ -70,6 +70,9 @@ return [
             'api_url'       => env('ZOHO_CAMPAIGNS_API_URL', 'https://campaigns.zoho.com/api/v1.1'),
             'topic_id'      => env('ZOHO_CAMPAIGNS_TOPIC_ID'),
             'list_key'      => env('ZOHO_CAMPAIGNS_LIST_KEY'),
+            // Safety gate: keep false until each recipient-list endpoint is
+            // empirically verified against Zoho and its response shape recorded.
+            'recipient_list_live_verified' => false,
         ],
         'accounts_url'      => env('ZOHO_ACCOUNTS_URL', 'https://accounts.zoho.com'),
         'default_from_email' => env('ZOHO_DEFAULT_FROM_EMAIL', ''),

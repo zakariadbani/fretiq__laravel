@@ -25,6 +25,7 @@ class Segment extends Model
     protected $fillable = [
         'name',
         'scope',
+        'is_manual',
         'filter',
         'last_built_at',
     ];
@@ -36,6 +37,7 @@ class Segment extends Model
      */
     protected $casts = [
         'filter'        => 'array',
+        'is_manual'     => 'boolean',
         'last_built_at' => 'datetime',
     ];
 
@@ -57,7 +59,8 @@ class Segment extends Model
 
         return [
             'name'  => 'required|string|max:255',
-            'scope' => 'required|in:' . implode(',', array_keys(config('global.data.segment_scopes', []))),
+            'scope'     => 'required|in:' . implode(',', array_keys(config('global.data.segment_scopes', []))),
+            'is_manual' => 'nullable|boolean',
 
             // Top-level filter: optional array
             'filter'          => 'nullable|array',
@@ -148,7 +151,7 @@ class Segment extends Model
     {
         try {
             return app(\App\Services\Campaign\SegmentService::class)
-                ->resolveWithStats($this->scope, $this->filter ?? [], false, $this->includedContactIds(), $this->excludedContactIds())['final'];
+                ->resolveWithStats($this->scope, $this->filter ?? [], false, $this->includedContactIds(), $this->excludedContactIds(), $this->is_manual)['final'];
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('segments.contactsCount failed', ['segment_id' => $this->id, 'message' => $e->getMessage()]);
             return 0;

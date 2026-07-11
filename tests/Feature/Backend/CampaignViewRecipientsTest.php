@@ -104,6 +104,14 @@ class CampaignViewRecipientsTest extends TestCase
         ]);
     }
 
+    private function makeClientContact(string $email, string $companyName): Contact
+    {
+        $contact = $this->makeContact($email, $companyName);
+        $contact->company->update(['relationship' => 'client']);
+
+        return $contact->fresh('company');
+    }
+
     private function makeRun(Campaign $campaign, string $keySuffix = ''): CampaignRun
     {
         return CampaignRun::create([
@@ -135,6 +143,17 @@ class CampaignViewRecipientsTest extends TestCase
     }
 
     // ── Existing tests (a–d) — semantics adjusted to rollup ───────────────────
+
+    private function paneHtml(string $body, string $paneId): string
+    {
+        $start = strpos($body, 'id="' . $paneId . '"');
+
+        $this->assertNotFalse($start, "Missing pane #{$paneId}.");
+
+        $next = strpos($body, '<div class="tab-pane', $start + 1);
+
+        return $next === false ? substr($body, $start) : substr($body, $start, $next - $start);
+    }
 
     /**
      * (a) Rollup: the view page shows DISTINCT contacts across all runs.
@@ -208,6 +227,51 @@ class CampaignViewRecipientsTest extends TestCase
         // Empty-state text from _historique-tab and _destinataires-tab
         $response->assertSee('Aucune exécution pour cette campagne');
         $response->assertSee('Aucune exécution — aucun destinataire');
+    }
+
+    public function test_view_page_shows_current_live_audience_separate_from_historical_recipients(): void
+    {
+        $campaign = $this->makeCampaign('audience');
+
+        $this->makeClientContact('live-one@audience.test', 'Audience One SAS');
+        $this->makeClientContact('live-two@audience.test', 'Audience Two SARL');
+
+        $run = $this->makeRun($campaign, 'audience-history');
+        $historicContact = $this->makeContact('past-only@audience.test', 'Past Only Logistics');
+        $this->makeRecipient($run, $historicContact);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get("/admin/campaigns/{$campaign->id}");
+
+        $response->assertStatus(200);
+        $body = $response->getContent();
+
+        $audienceNavPos = strpos($body, 'href="#campaign_audience_actuelle"');
+        $destinatairesNavPos = strpos($body, 'href="#campaign_destinataires"');
+
+        $this->assertNotFalse($audienceNavPos, 'Missing Audience actuelle nav tab.');
+        $this->assertNotFalse($destinatairesNavPos, 'Missing Destinataires nav tab.');
+        $this->assertLessThan($destinatairesNavPos, $audienceNavPos, 'Audience actuelle must be before Destinataires.');
+        $this->assertMatchesRegularExpression(
+            '/href="#campaign_audience_actuelle"[^>]*>\s*<i[^>]*><\/i>\s*Audience actuelle\s*<span[^>]*data-count-for="audience_actuelle">2<\/span>/s',
+            $body
+        );
+
+        $audiencePane = $this->paneHtml($body, 'campaign_audience_actuelle');
+        $destinatairesPane = $this->paneHtml($body, 'campaign_destinataires');
+
+        $this->assertStringContainsString('dynamiquement', $audiencePane);
+        $this->assertStringContainsString(e('live-one@audience.test'), $audiencePane);
+        $this->assertStringContainsString(e('Audience One SAS'), $audiencePane);
+        $this->assertStringContainsString(e('live-two@audience.test'), $audiencePane);
+        $this->assertStringContainsString(e('Audience Two SARL'), $audiencePane);
+
+        $this->assertStringContainsString(e('past-only@audience.test'), $destinatairesPane);
+        $this->assertStringContainsString(e('Past Only Logistics'), $destinatairesPane);
+        $this->assertStringNotContainsString(e('past-only@audience.test'), $audiencePane);
+        $this->assertStringNotContainsString(e('Past Only Logistics'), $audiencePane);
+        $this->assertStringNotContainsString(e('live-one@audience.test'), $destinatairesPane);
+        $this->assertStringNotContainsString(e('live-two@audience.test'), $destinatairesPane);
     }
 
     /**

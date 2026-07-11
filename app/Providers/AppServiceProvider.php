@@ -38,6 +38,11 @@ class AppServiceProvider extends ServiceProvider
                 : new \App\Services\Campaign\LocalCampaignsDriver(),
         );
 
+        $this->app->singleton(
+            \App\Services\Zoho\ZohoRecipientListGateway::class,
+            \App\Services\Zoho\LiveZohoRecipientListGateway::class,
+        );
+
         // ── Sprint-3b: Automation engine bindings ─────────────────────────────
         // All Sprint-3b services are concrete classes with concrete constructor deps.
         // Laravel's reflection-based auto-wiring handles them, but we register them

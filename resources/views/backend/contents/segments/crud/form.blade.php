@@ -94,6 +94,10 @@
 
         {{-- ── Général (default active) ──────────────────────────────────── --}}
         <div class="tab-pane fade show active" id="segment_general" role="tabpanel">
+            @php
+                $isManual = (bool) old('is_manual', $model->is_manual ?? false);
+                $savedScope = old('scope', $model->scope ?? 'client');
+            @endphp
 
             {{-- CARD 1 — Informations du segment ─────────────────── --}}
             <div class="card mb-5">
@@ -106,7 +110,7 @@
                 <div class="card-body border-top p-9">
 
                     <p class="text-muted fs-7 mb-6">
-                        Un segment est une audience dynamique réutilisée par vos campagnes — les filtres sont réévalués à chaque envoi.
+                        Un segment peut être dynamique (portée et filtres) ou constitué uniquement des contacts sélectionnés.
                     </p>
 
                     {{-- Nom du segment --}}
@@ -120,14 +124,38 @@
                                required />
                     </div>
 
-                    {{-- Portée (scope) --}}
-                    <div class="fv-row mb-0">
+                    {{-- Mode d'audience --}}
+                    <div class="fv-row mb-7">
+                        <label class="fw-semibold fs-6 mb-3">Mode d'audience</label>
+                        <div class="d-flex flex-column gap-3">
+                            <label class="form-check form-check-custom form-check-solid">
+                                <input class="form-check-input" type="radio" name="is_manual" value="0"
+                                       {{ ! $isManual ? 'checked' : '' }} />
+                                <span class="form-check-label">
+                                    <span class="fw-semibold d-block">Audience dynamique</span>
+                                    <span class="text-muted fs-7">La portée et les filtres sont réévalués à chaque envoi.</span>
+                                </span>
+                            </label>
+                            <label class="form-check form-check-custom form-check-solid">
+                                <input class="form-check-input" type="radio" name="is_manual" value="1"
+                                       {{ $isManual ? 'checked' : '' }} />
+                                <span class="form-check-label">
+                                    <span class="fw-semibold d-block">Contacts sélectionnés uniquement</span>
+                                    <span class="text-muted fs-7">Seuls les contacts ajoutés ci-dessous sont retenus, après les règles de conformité.</span>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+
+                    {{-- Portée (scope): kept as an internal fallback for manual segments. --}}
+                    <input type="hidden" id="manual_scope_value" name="scope" value="{{ $savedScope }}" {{ ! $isManual ? 'disabled' : '' }} />
+                    <div class="fv-row mb-0" data-segment-dynamic-fields {{ $isManual ? 'hidden' : '' }}>
                         <label class="required fw-semibold fs-6 mb-2">Portée</label>
-                        <select name="scope" class="form-select form-select-solid" required>
+                        <select id="segment_scope" name="scope" class="form-select form-select-solid" required {{ $isManual ? 'disabled' : '' }}>
                             <option value="">Sélectionner une portée...</option>
                             @foreach($scopes as $key => $data)
                                 <option value="{{ $key }}"
-                                    {{ old('scope', $model->scope ?? '') === $key ? 'selected' : '' }}>
+                                    {{ $savedScope === $key ? 'selected' : '' }}>
                                     {{ $data['label'] }}
                                 </option>
                             @endforeach
@@ -163,7 +191,7 @@
                 }
             @endphp
 
-            <div class="card mb-5">
+            <div class="card mb-5" data-segment-dynamic-fields {{ $isManual ? 'hidden' : '' }}>
                 <div class="card-header border-0 pt-5">
                     <h3 class="card-title fw-bolder m-0">
                         <i class="bi bi-crosshair text-info fs-3 me-2"></i>

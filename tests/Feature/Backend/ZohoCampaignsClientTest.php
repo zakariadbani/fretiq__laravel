@@ -4,7 +4,6 @@ namespace Tests\Feature\Backend;
 
 use App\Services\Zoho\ZohoCampaignsClient;
 use App\Services\Zoho\ZohoAuthService;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -17,8 +16,6 @@ use Tests\TestCase;
  */
 class ZohoCampaignsClientTest extends TestCase
 {
-    use RefreshDatabase;
-
     /** Base URL used by the client (matches config default). */
     private string $baseUrl = 'https://campaigns.zoho.com/api/v1.1';
 
@@ -28,6 +25,8 @@ class ZohoCampaignsClientTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        Http::preventStrayRequests();
 
         // Wire fake Zoho Campaigns credentials so ZohoAuthService attempts a refresh
         // (which Http::fake will intercept — no live network call).
@@ -111,6 +110,73 @@ class ZohoCampaignsClientTest extends TestCase
                 && $request['resfmt'] === 'JSON'
                 && $request['emailids'] === 'jean@acme.test';
         });
+    }
+
+    public function test_create_recipient_list_with_seed_contacts_verifies_the_returned_list_key_without_campaign_calls(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*addlistandcontacts*' => Http::response(['code' => 0, 'listkey' => 'list-stable-1'], 200),
+            '*getmailinglists*' => Http::response([
+                'code' => 0,
+                'list_of_details' => [['listkey' => 'list-stable-1', 'listname' => 'Fretiq — Campagne #1']],
+            ], 200),
+        ]);
+
+        $listKey = $this->makeClient()->createRecipientList('Fretiq — Campagne #1', [
+            'jean@acme.test',
+            'marie@acme.test',
+        ]);
+
+        $this->assertSame('list-stable-1', $listKey);
+        Http::assertSent(fn (\Illuminate\Http\Client\Request $request) => $request->url() === $this->baseUrl . '/addlistandcontacts'
+            && $request['resfmt'] === 'JSON'
+            && $request['listname'] === 'Fretiq — Campagne #1'
+            && $request['signupform'] === 'private'
+            && $request['mode'] === 'newlist'
+            && $request['emailids'] === 'jean@acme.test,marie@acme.test');
+        Http::assertSent(fn (\Illuminate\Http\Client\Request $request) => str_starts_with($request->url(), $this->baseUrl . '/getmailinglists')
+            && $request->method() === 'GET');
+        Http::assertNotSent(fn (\Illuminate\Http\Client\Request $request) => str_contains($request->url(), '/createCampaign') || str_contains($request->url(), '/sendcampaign'));
+    }
+
+    public function test_list_recipient_emails_paginates_and_add_recipient_contacts_inspects_api_code_without_campaign_calls(): void
+    {
+        Http::preventStrayRequests();
+        $pageOne = array_map(
+            fn (int $index) => ['contact_email' => 'contact' . $index . '@acme.test'],
+            range(1, 200),
+        );
+        $subscriberPages = 0;
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*getlistsubscribers*' => function () use (&$subscriberPages, $pageOne) {
+                $subscriberPages++;
+
+                return Http::response($subscriberPages === 1
+                    ? ['code' => 0, 'list_of_details' => $pageOne]
+                    : ['code' => 0, 'list_of_details' => [['contact_email' => 'final@acme.test']]], 200);
+            },
+            '*addlistsubscribersinbulk*' => Http::response(['code' => 0, 'status' => 'success'], 200),
+        ]);
+
+        $client = $this->makeClient();
+        $emails = $client->listRecipientEmails('list-stable-1');
+        $this->assertCount(201, $emails);
+        $this->assertSame('contact1@acme.test', $emails[0]);
+        $this->assertSame('final@acme.test', $emails[200]);
+        $client->addRecipientContacts('list-stable-1', [['Contact Email' => 'sophie@acme.test']]);
+
+        Http::assertSent(fn (\Illuminate\Http\Client\Request $request) => str_starts_with($request->url(), $this->baseUrl . '/getlistsubscribers')
+            && $request['listkey'] === 'list-stable-1'
+            && $request['fromindex'] === 1
+            && $request['range'] === 200);
+        Http::assertSent(fn (\Illuminate\Http\Client\Request $request) => str_starts_with($request->url(), $this->baseUrl . '/getlistsubscribers')
+            && $request['fromindex'] === 201);
+        Http::assertSent(fn (\Illuminate\Http\Client\Request $request) => $request->url() === $this->baseUrl . '/addlistsubscribersinbulk'
+            && $request['emailids'] === 'sophie@acme.test');
+        Http::assertNotSent(fn (\Illuminate\Http\Client\Request $request) => str_contains($request->url(), '/createCampaign') || str_contains($request->url(), '/sendcampaign'));
     }
 
     /**

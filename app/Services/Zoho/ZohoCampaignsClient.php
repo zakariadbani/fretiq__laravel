@@ -109,6 +109,116 @@ class ZohoCampaignsClient
     }
 
     /**
+     * Create a private campaign-owned list with up to ten approved seed contacts
+     * and verify that its returned key is listed by Zoho before returning it.
+     *
+     * @param string[] $seedEmails
+     */
+    public function createRecipientList(string $listName, array $seedEmails): string
+    {
+        $emails = collect($seedEmails)
+            ->map(fn (mixed $email) => trim((string) $email))
+            ->filter()
+            ->unique(fn (string $email) => mb_strtolower($email))
+            ->take(10)
+            ->values();
+
+        if ($emails->isEmpty()) {
+            throw new \InvalidArgumentException('La préparation de liste Zoho nécessite au moins un destinataire approuvé pour créer la liste dédiée.');
+        }
+
+        $response = Http::withHeaders([
+            'Authorization' => 'Zoho-oauthtoken ' . $this->authService->getAccessToken('campaigns'),
+        ])->timeout(30)->asForm()->post($this->apiUrl . '/addlistandcontacts', [
+            'resfmt' => 'JSON',
+            'listname' => $listName,
+            'signupform' => 'private',
+            'mode' => 'newlist',
+            'emailids' => $emails->implode(','),
+        ]);
+
+        $payload = $this->assertRecipientListSuccess($response, 'createRecipientList');
+        $listKey = trim((string) ($payload['listkey'] ?? $payload['listKey'] ?? ''));
+        if ($listKey === '') {
+            throw new \RuntimeException('[ZohoCampaignsClient] createRecipientList erreur API Zoho : clé de liste absente.');
+        }
+
+        $listsResponse = Http::withHeaders([
+            'Authorization' => 'Zoho-oauthtoken ' . $this->authService->getAccessToken('campaigns'),
+        ])->timeout(30)->get($this->apiUrl . '/getmailinglists', ['resfmt' => 'JSON']);
+        $listsPayload = $this->assertRecipientListSuccess($listsResponse, 'getMailingLists');
+        $lists = $listsPayload['list_of_details'] ?? [];
+        $verified = collect(is_array($lists) ? $lists : [])->contains(
+            fn (mixed $list) => is_array($list) && trim((string) ($list['listkey'] ?? $list['listKey'] ?? '')) === $listKey
+        );
+        if (! $verified) {
+            throw new \RuntimeException('[ZohoCampaignsClient] La liste Zoho créée ne peut pas être vérifiée avant persistance.');
+        }
+
+        return $listKey;
+    }
+
+    /** @return string[] Complete current membership, fetched page by page. */
+    public function listRecipientEmails(string $listKey): array
+    {
+        $emails = [];
+        $fromIndex = 1;
+        $range = 200;
+
+        do {
+            $response = Http::withHeaders([
+                'Authorization' => 'Zoho-oauthtoken ' . $this->authService->getAccessToken('campaigns'),
+            ])->timeout(30)->get($this->apiUrl . '/getlistsubscribers', [
+                'resfmt' => 'JSON',
+                'listkey' => $listKey,
+                'fromindex' => $fromIndex,
+                'range' => $range,
+            ]);
+            $payload = $this->assertRecipientListSuccess($response, 'listRecipientEmails');
+            $details = $payload['list_of_details'] ?? [];
+            if (! is_array($details)) {
+                $details = [];
+            }
+
+            foreach ($details as $detail) {
+                $email = trim((string) (is_array($detail) ? ($detail['contact_email'] ?? $detail['Contact Email'] ?? '') : ''));
+                if ($email !== '') {
+                    $emails[mb_strtolower($email)] = $email;
+                }
+            }
+            $fromIndex += count($details);
+        } while (count($details) === $range);
+
+        return array_values($emails);
+    }
+
+    /** @param array<int, array<string, string>> $contacts */
+    public function addRecipientContacts(string $listKey, array $contacts): void
+    {
+        $this->addListSubscribers($listKey, $contacts);
+    }
+
+    /** @return string[] */
+    public function listSubscribers(string $listKey): array
+    {
+        return $this->listRecipientEmails($listKey);
+    }
+
+    private function assertRecipientListSuccess(\Illuminate\Http\Client\Response $response, string $operation): array
+    {
+        if ($response->failed()) {
+            throw new \RuntimeException('[ZohoCampaignsClient] ' . $operation . ' échoué (HTTP ' . $response->status() . ') : ' . $response->body());
+        }
+
+        $payload = $response->json() ?? [];
+        if (($payload['status'] ?? null) === 'error' || (string) ($payload['code'] ?? '0') !== '0') {
+            throw new \RuntimeException('[ZohoCampaignsClient] ' . $operation . ' erreur API Zoho : ' . $response->body());
+        }
+
+        return $payload;
+    }
+
+    /**
      * Create a new campaign in Zoho Campaigns.
      *
      * UNVERIFIED — endpoint/params not live-tinker-confirmed (Zoho Campaigns OAuth

@@ -26,6 +26,16 @@
     @endcan
 
     @can('send campaigns')
+        <button type="button"
+                class="btn btn-sm fw-bold btn-light-primary"
+                id="btn-sync-zoho-list"
+                data-url="{{ route('admin.campaigns.syncZohoList', $model->id) }}">
+            <i class="bi bi-people me-1"></i>
+            Ajouter et vérifier la liste Zoho
+        </button>
+    @endcan
+
+    @can('send campaigns')
         {{-- Planifier: hidden for sequence campaigns (drip cadence ignores scheduling) --}}
         @if($model->schedule_type !== 'sequence')
         <button type="button"

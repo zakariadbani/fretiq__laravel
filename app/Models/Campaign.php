@@ -39,6 +39,7 @@ class Campaign extends Model
         'send_window',
         'is_active',
         'driver',
+        'zoho_list_key',
     ];
 
     /**
