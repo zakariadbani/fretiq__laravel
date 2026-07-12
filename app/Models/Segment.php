@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Traits\Validator;
+use App\Support\ConfigEnum;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
@@ -59,7 +60,7 @@ class Segment extends Model
 
         return [
             'name'  => 'required|string|max:255',
-            'scope'     => 'required|in:' . implode(',', array_keys(config('global.data.segment_scopes', []))),
+            'scope'     => 'required|' . ConfigEnum::in('segment_scopes'),
             'is_manual' => 'nullable|boolean',
 
             // Top-level filter: optional array

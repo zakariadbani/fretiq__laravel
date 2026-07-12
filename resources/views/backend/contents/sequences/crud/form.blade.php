@@ -5,23 +5,7 @@
 @endsection
 
 @section('breadcrumbs')
-    <ul class="breadcrumb breadcrumb-separatorless fw-semibold fs-7 my-0 pt-1">
-        <li class="breadcrumb-item text-muted">
-            <a href="{{ route('admin.dashboard') }}" class="text-muted text-hover-primary">Accueil</a>
-        </li>
-        <li class="breadcrumb-item">
-            <span class="bullet bg-gray-500 w-5px h-2px"></span>
-        </li>
-        <li class="breadcrumb-item text-muted">
-            <a href="{{ route('admin.sequences.index') }}" class="text-muted text-hover-primary">Séquences</a>
-        </li>
-        <li class="breadcrumb-item">
-            <span class="bullet bg-gray-500 w-5px h-2px"></span>
-        </li>
-        <li class="breadcrumb-item text-muted">
-            {{ isset($model) && $model->id ? 'Modifier' : 'Nouvelle séquence' }}
-        </li>
-    </ul>
+    <x-crud.breadcrumb :items="[['label' => 'Séquences', 'route' => 'admin.sequences.index'], ['label' => isset($model) && $model->id ? 'Modifier' : 'Nouvelle séquence']]" />
 @endsection
 
 @section('toolbar_actions')

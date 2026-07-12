@@ -14,12 +14,13 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Discovery driver
+    | Compliance prerequisites (cold-send gate — CampaignsReadinessService)
     |--------------------------------------------------------------------------
-    | local  → stub / no external calls (default in dev)
-    | live   → SerpAPI + Hunter real API calls
+    | Flip to true only once each prerequisite is actually confirmed for the
+    | sending domain. Read by App\Services\Zoho\CampaignsReadinessService.
     */
-    'discovery_driver'  => env('DISCOVERY_DRIVER', 'local'),
+    'spf_dkim_dmarc_configured'  => env('SPF_DKIM_DMARC_CONFIGURED', false),
+    'bounce_handling_configured' => env('BOUNCE_HANDLING_CONFIGURED', false),
 
     /*
     |--------------------------------------------------------------------------

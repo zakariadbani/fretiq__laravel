@@ -2,7 +2,7 @@
 
 namespace App\Services\Translation;
 
-use Illuminate\Support\Facades\Http;
+use App\Services\Gemini\GeminiClient;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -44,6 +44,7 @@ class GeminiTranslationDriver
 
     public function __construct(
         private readonly HtmlTextSegmenter $segmenter,
+        private readonly GeminiClient $gemini = new GeminiClient(),
     ) {}
 
     /**
@@ -66,9 +67,7 @@ class GeminiTranslationDriver
         string  $targetLang,
     ): ?array {
         // ── 1. API key guard ───────────────────────────────────────────────────
-        $apiKey = config('services.gemini.api_key');
-
-        if (! $apiKey) {
+        if (! $this->gemini->hasApiKey()) {
             Log::warning('[GeminiTranslationDriver] Clé API Gemini non configurée — traduction ignorée.', [
                 'target_lang' => $targetLang,
             ]);
@@ -91,7 +90,6 @@ class GeminiTranslationDriver
 
         foreach ($chunks as $chunkIndex => $chunkRuns) {
             $chunkResult = $this->translateChunk(
-                apiKey: $apiKey,
                 subject: $subject,
                 preview: $preview,
                 runs: $chunkRuns,
@@ -148,7 +146,6 @@ class GeminiTranslationDriver
      * @return array{subject: string, preview_text: string|null, runs: array<int, string>}|null
      */
     private function translateChunk(
-        string $apiKey,
         string $subject,
         ?string $preview,
         array $runs,
@@ -156,28 +153,13 @@ class GeminiTranslationDriver
         string $targetLang,
         int $chunkIndex,
     ): ?array {
-        $model  = config('services.gemini.model', 'gemini-2.5-flash');
         $prompt = $this->buildPrompt($subject, $preview, $runs, $sourceLang, $targetLang);
 
         try {
-            $response = Http::timeout(60)
-                ->withHeaders(['x-goog-api-key' => $apiKey])
-                ->post(
-                    "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent",
-                    [
-                        'contents' => [
-                            [
-                                'parts' => [
-                                    ['text' => $prompt],
-                                ],
-                            ],
-                        ],
-                        'generationConfig' => [
-                            'response_mime_type' => 'application/json',
-                            'maxOutputTokens'    => 8192,
-                        ],
-                    ]
-                );
+            $response = $this->gemini->request($prompt, 60, [
+                'response_mime_type' => 'application/json',
+                'maxOutputTokens'    => 8192,
+            ]);
 
             if ($response->failed()) {
                 Log::warning('[GeminiTranslationDriver] Réponse HTTP échouée depuis Gemini.', [
@@ -197,9 +179,9 @@ class GeminiTranslationDriver
                 return null;
             }
 
-            $text = $response->json('candidates.0.content.parts.0.text');
+            $text = $this->gemini->extractText($response);
 
-            if (! is_string($text) || $text === '') {
+            if ($text === null) {
                 Log::warning('[GeminiTranslationDriver] Réponse Gemini vide ou structure inattendue.', [
                     'target_lang' => $targetLang,
                     'chunk_index' => $chunkIndex,
@@ -273,18 +255,13 @@ PROMPT;
         string $targetLang,
         int $chunkIndex,
     ): ?array {
-        // Strip markdown fences (```json … ```)
-        $text = preg_replace('/^```(?:json)?\s*/m', '', $text);
-        $text = preg_replace('/\s*```$/m', '', $text);
-        $text = trim($text);
+        $data = $this->gemini->decodeJson($text);
 
-        $data = json_decode($text, true);
-
-        if (! is_array($data)) {
+        if ($data === null) {
             Log::warning('[GeminiTranslationDriver] JSON non décodable dans la réponse Gemini.', [
                 'target_lang' => $targetLang,
                 'chunk_index' => $chunkIndex,
-                'raw'         => mb_substr($text, 0, 500),
+                'raw'         => mb_substr($this->gemini->stripFences($text), 0, 500),
             ]);
             return null;
         }

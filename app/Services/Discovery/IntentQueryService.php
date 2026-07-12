@@ -3,7 +3,7 @@
 namespace App\Services\Discovery;
 
 use App\Models\ProspectCriteria;
-use Illuminate\Support\Facades\Http;
+use App\Services\Gemini\GeminiClient;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -25,6 +25,10 @@ class IntentQueryService
 {
     private const MAX_QUERIES = 25;
 
+    public function __construct(
+        private readonly GeminiClient $gemini = new GeminiClient(),
+    ) {}
+
     /**
      * Expand a criteria's Cible/Exclure description into Google search query strings.
      *
@@ -39,37 +43,20 @@ class IntentQueryService
             return [];
         }
 
-        $apiKey = config('services.gemini.api_key');
-
-        if (! $apiKey) {
+        if (! $this->gemini->hasApiKey()) {
             Log::warning('[IntentQueryService] Clé API Gemini non configurée — génération de requêtes ignorée.', [
                 'criteria_id' => $criteria->id ?? null,
             ]);
             return [];
         }
 
-        $model  = config('services.gemini.model', 'gemini-2.5-flash');
         $prompt = $this->buildPrompt($criteria, $target, $exclude);
 
         try {
-            $response = Http::timeout(60)
-                ->withHeaders(['x-goog-api-key' => $apiKey])
-                ->post(
-                    "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent",
-                    [
-                        'contents' => [
-                            [
-                                'parts' => [
-                                    ['text' => $prompt],
-                                ],
-                            ],
-                        ],
-                        'generationConfig' => [
-                            'response_mime_type' => 'application/json',
-                            'maxOutputTokens'    => 8192,
-                        ],
-                    ]
-                );
+            $response = $this->gemini->request($prompt, 60, [
+                'response_mime_type' => 'application/json',
+                'maxOutputTokens'    => 8192,
+            ]);
 
             if ($response->failed()) {
                 Log::warning('[IntentQueryService] Réponse HTTP échouée depuis Gemini.', [
@@ -79,9 +66,9 @@ class IntentQueryService
                 return [];
             }
 
-            $text = $response->json('candidates.0.content.parts.0.text');
+            $text = $this->gemini->extractText($response);
 
-            if (! is_string($text) || $text === '') {
+            if ($text === null) {
                 Log::warning('[IntentQueryService] Réponse Gemini vide ou structure inattendue.', [
                     'criteria_id' => $criteria->id ?? null,
                 ]);
@@ -145,17 +132,12 @@ PROMPT;
      */
     private function parseResult(string $text, ProspectCriteria $criteria): array
     {
-        // Strip potential markdown code fences (```json ... ```)
-        $text = preg_replace('/^```(?:json)?\s*/m', '', $text);
-        $text = preg_replace('/\s*```$/m', '', $text);
-        $text = trim($text);
+        $data = $this->gemini->decodeJson($text);
 
-        $data = json_decode($text, true);
-
-        if (! is_array($data)) {
+        if ($data === null) {
             Log::warning('[IntentQueryService] JSON non décodable dans la réponse Gemini.', [
                 'criteria_id' => $criteria->id ?? null,
-                'raw'         => mb_substr($text, 0, 200),
+                'raw'         => mb_substr($this->gemini->stripFences($text), 0, 200),
             ]);
             return [];
         }

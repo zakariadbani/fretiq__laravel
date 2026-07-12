@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Traits\Validator;
+use App\Support\ConfigEnum;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -69,8 +70,8 @@ class Suppression extends Model
         return [
             'email'      => 'required|email|max:191|unique:suppressions,email,' . $this->id,
             'contact_id' => 'nullable|integer|exists:contacts,id',
-            'reason'     => 'nullable|in:' . implode(',', array_keys(config('global.data.suppression_reasons', []))),
-            'source'     => 'nullable|in:' . implode(',', array_keys(config('global.data.suppression_sources', []))),
+            'reason'     => 'nullable|' . ConfigEnum::in('suppression_reasons'),
+            'source'     => 'nullable|' . ConfigEnum::in('suppression_sources'),
         ];
     }
 

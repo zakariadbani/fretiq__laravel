@@ -84,7 +84,7 @@ class CompanyController extends BackendController
     {
         $model = $this->currentModel->with('contacts')->find($id);
 
-        if ($model == null) {
+        if ($model === null) {
             session()->flash('error', trans('app.not_found'));
             return redirect(route('admin.companies.index'));
         }
@@ -203,7 +203,7 @@ class CompanyController extends BackendController
     {
         $model = $this->currentModel->with('contacts')->find($id);
 
-        if ($model == null) {
+        if ($model === null) {
             session()->flash('error', trans('app.not_found'));
             return redirect(route('admin.companies.index'));
         }

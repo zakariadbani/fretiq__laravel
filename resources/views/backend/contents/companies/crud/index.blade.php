@@ -5,15 +5,7 @@
 @endsection
 
 @section('breadcrumbs')
-    <ul class="breadcrumb breadcrumb-separatorless fw-semibold fs-7 my-0 pt-1">
-        <li class="breadcrumb-item text-muted">
-            <a href="{{ route('admin.dashboard') }}" class="text-muted text-hover-primary">Accueil</a>
-        </li>
-        <li class="breadcrumb-item">
-            <span class="bullet bg-gray-500 w-5px h-2px"></span>
-        </li>
-        <li class="breadcrumb-item text-muted">Entreprises</li>
-    </ul>
+    <x-crud.breadcrumb :items="[['label' => 'Entreprises']]" />
 @endsection
 
 <div class="card">
@@ -87,12 +79,11 @@
     </div>
 </div>
 
+<x-crud.datatable-init :data-table="$dataTable" :data-table-config="$dataTableConfig" />
+
 @push('scripts')
-    {{ $dataTable->scripts() }}
     <script>
         document.addEventListener('DOMContentLoaded', function () {
-            DataTableUtils.initializeIndex(@json($dataTableConfig));
-
             // ── Delegated enrich button handler ──────────────────────────────
             // Mirrors the delete-btn wiring pattern: click delegated on the table body.
             var tableId = @json($dataTableConfig['tableId'] ?? 'company');

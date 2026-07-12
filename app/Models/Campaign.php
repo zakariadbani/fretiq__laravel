@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Traits\Validator;
+use App\Support\ConfigEnum;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -146,7 +147,7 @@ class Campaign extends Model
             // sequence_id required when schedule_type is 'sequence'.
             'sequence_id'        => 'nullable|required_if:schedule_type,sequence|integer|exists:sequences,id',
             'subject'            => 'nullable|string|max:255',
-            'schedule_type'      => 'nullable|in:' . implode(',', array_keys(config('global.data.schedule_types', []))),
+            'schedule_type'      => 'nullable|' . ConfigEnum::in('schedule_types'),
             'scheduled_at'       => 'nullable|date',
             'recurrence'         => 'nullable|array',
             'next_run_at'        => [

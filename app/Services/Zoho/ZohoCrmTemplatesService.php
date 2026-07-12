@@ -4,7 +4,6 @@ namespace App\Services\Zoho;
 
 use App\Models\CampaignTemplate;
 use App\Models\ZohoSyncLog;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -26,6 +25,8 @@ use Illuminate\Support\Facades\Log;
  */
 class ZohoCrmTemplatesService
 {
+    use ZohoGetWithRetry;
+
     /** Fallback modules used when settings/modules is unavailable. */
     private const DEFAULT_TEMPLATE_MODULES = ['Contacts', 'Leads'];
 
@@ -290,29 +291,9 @@ class ZohoCrmTemplatesService
      */
     private function httpGet(string $path, array $query): array
     {
-        $url     = self::API_BASE . '/' . ltrim($path, '/');
-        $token   = $this->auth->getAccessToken('crm');
-        $headers = ['Authorization' => 'Zoho-oauthtoken ' . $token];
+        $url = self::API_BASE . '/' . ltrim($path, '/');
 
-        $response = Http::withHeaders($headers)->timeout(30)->get($url, $query);
-
-        // ── 401 → refresh once and retry ─────────────────────────────────────
-        if ($response->status() === 401) {
-            Log::info("[ZohoCrmTemplatesService] 401 on {$path} — refreshing token and retrying");
-            $this->auth->invalidate('crm');
-            $token    = $this->auth->getAccessToken('crm');
-            $headers  = ['Authorization' => 'Zoho-oauthtoken ' . $token];
-            $response = Http::withHeaders($headers)->timeout(30)->get($url, $query);
-        }
-
-        // ── 429 → Retry-After sleep + single retry ────────────────────────────
-        if ($response->status() === 429) {
-            $retryAfter = (int) ($response->header('Retry-After') ?? 2);
-            $sleep      = min($retryAfter, 5);
-            Log::warning("[ZohoCrmTemplatesService] 429 on {$path} — sleeping {$sleep}s then retry");
-            sleep($sleep);
-            $response = Http::withHeaders($headers)->timeout(30)->get($url, $query);
-        }
+        $response = $this->zohoGetWithRetry($this->auth, $url, $query, $path, 30);
 
         // ── No-content — treat as empty ───────────────────────────────────────
         if (in_array($response->status(), [204, 304], true)) {

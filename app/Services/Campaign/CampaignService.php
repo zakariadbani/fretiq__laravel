@@ -313,136 +313,9 @@ class CampaignService
         $driver = app(CampaignsClient::class);
 
         if ($driver instanceof ZohoCampaignsDriver) {
-            // ── Zoho path: list/campaign-based dispatch ────────────────────────
-            // Insert recipient rows (queued) first for tracking provenance, then
-            // hand off delivery to Zoho's API in a single run-level call.
-            //
-            // UNVERIFIED — the Zoho path has not been live-tinker-confirmed.
-            // It is gated behind config('services.zoho.driver') === 'zoho' and
-            // will throw RuntimeException('Refresh token Zoho manquant…') when
-            // Campaigns OAuth is not provisioned — which is the correct behavior.
-
-            Log::info('[CampaignService] Driver zoho détecté — envoi via dispatchRun().', [
-                'run_id'   => $run->id,
-                'contacts' => $contacts->count(),
-            ]);
-
-            try {
-                $summary = $driver->dispatchRun($run, $contacts);
-
-                // Mark all queued recipients as 'sent' (Zoho handles actual delivery).
-                CampaignRecipient::where('campaign_run_id', $run->id)
-                    ->where('status', 'queued')
-                    ->update([
-                        'status'              => 'sent',
-                        'provider_message_id' => 'zoho-' . ($summary['campaign_key'] ?? $run->id),
-                        'sent_at'             => now(),
-                    ]);
-
-                $sentCount = CampaignRecipient::where('campaign_run_id', $run->id)
-                    ->where('status', 'sent')
-                    ->count();
-
-                $run->update([
-                    'stats_sent'  => $sentCount,
-                    'status'      => 'sent',
-                    'finished_at' => now(),
-                ]);
-
-                Log::info('[CampaignService] Run Zoho complété.', [
-                    'run_id'       => $run->id,
-                    'campaign_key' => $summary['campaign_key'] ?? null,
-                    'list_key'     => $summary['list_key'] ?? null,
-                    'stats_sent'   => $sentCount,
-                ]);
-            } catch (\Throwable $e) {
-                Log::error('[CampaignService] Échec du dispatchRun Zoho.', [
-                    'run_id' => $run->id,
-                    'error'  => $e->getMessage(),
-                ]);
-                $run->update(['status' => 'failed', 'finished_at' => now()]);
-                // Rethrow so the job retry mechanism handles it.
-                throw $e;
-            }
+            $this->sendViaZoho($run, $contacts);
         } else {
-            // ── Local path: per-recipient SMTP/Mailpit send (unchanged) ───────
-            $recipients = CampaignRecipient::where('campaign_run_id', $run->id)
-                ->where('status', 'queued')
-                ->whereNull('provider_message_id')
-                ->with('contact.company')
-                ->get();
-
-            foreach ($recipients as $recipient) {
-                $contact = $recipient->contact;
-
-                // ── 4a. Send-time suppression re-check ───────────────────────────
-                if (Suppression::isSuppressed($contact->email)) {
-                    $recipient->update([
-                        'status'      => 'skipped',
-                        'skip_reason' => 'suppressed',
-                    ]);
-                    continue;
-                }
-
-                // ── 4b. Generate tracking token and create EmailTrackingEvent ─────
-                $token = $this->generateTrackingToken($run, $contact);
-
-                EmailTrackingEvent::firstOrCreate(
-                    ['token' => $token],
-                    [
-                        'trackable_type'     => CampaignRecipient::class,
-                        'trackable_id'       => $recipient->id,
-                        'event'              => 'sent',
-                        'human_open_count'   => 0,
-                        'machine_open_count' => 0,
-                    ],
-                );
-
-                // ── 4c. Build signed unsubscribe URL ─────────────────────────────
-                $unsubscribeUrl = URL::signedRoute('unsubscribe', ['contact' => $contact->id]);
-
-                // ── 4d. Driver send — OUTSIDE any DB transaction ──────────────────
-                try {
-                    $pmid = $driver->send(
-                        $recipient,
-                        $run->campaign,
-                        $run,
-                        $token,
-                        $unsubscribeUrl,
-                    );
-
-                    // ── 4e. Record provider_message_id + sent status ───────────────
-                    $recipient->update([
-                        'status'              => 'sent',
-                        'provider_message_id' => $pmid,
-                        'sent_at'             => now(),
-                    ]);
-                } catch (\Throwable $e) {
-                    // Leave recipient in 'queued' state — next job retry will re-send.
-                    Log::error('[CampaignService] Failed to send to recipient.', [
-                        'run_id'       => $run->id,
-                        'recipient_id' => $recipient->id,
-                        'contact_id'   => $contact->id,
-                        'error'        => $e->getMessage(),
-                    ]);
-                }
-            }
-
-            // ── Step 5 (local): Recompute run stats and mark complete ──────────
-            $sentCount = CampaignRecipient::where('campaign_run_id', $run->id)
-                ->where('status', 'sent')
-                ->count();
-
-            $run->update([
-                'stats_sent'  => $sentCount,
-                'status'      => 'sent',
-                'finished_at' => now(),
-            ]);
-
-            Log::info('[CampaignService] Run complété (local).', [
-                'run_id'     => $run->id,
-                'stats_sent' => $sentCount,
-            ]);
+            $this->sendViaLocal($run);
         }
 
         // ── One-shot auto-done (branch-agnostic) ──────────────────────────────
@@ -464,16 +337,155 @@ class CampaignService
         }
     }
 
-    // ── Private helpers ────────────────────────────────────────────────────────
+    /**
+     * Zoho path: list/campaign-based dispatch.
+     *
+     * Insert recipient rows (queued) first for tracking provenance, then
+     * hand off delivery to Zoho's API in a single run-level call.
+     *
+     * UNVERIFIED — the Zoho path has not been live-tinker-confirmed.
+     * It is gated behind config('services.zoho.driver') === 'zoho' and
+     * will throw RuntimeException('Refresh token Zoho manquant…') when
+     * Campaigns OAuth is not provisioned — which is the correct behavior.
+     *
+     * Rethrows on failure — the job retry mechanism handles it.
+     */
+    private function sendViaZoho(CampaignRun $run, \Illuminate\Support\Collection $contacts): void
+    {
+        /** @var CampaignsClient $driver */
+        $driver = app(CampaignsClient::class);
+
+        Log::info('[CampaignService] Driver zoho détecté — envoi via dispatchRun().', [
+            'run_id'   => $run->id,
+            'contacts' => $contacts->count(),
+        ]);
+
+        try {
+            $summary = $driver->dispatchRun($run, $contacts);
+
+            $sentCount = 0;
+
+            DB::transaction(function () use ($run, $summary, &$sentCount) {
+                // Mark all queued recipients as 'sent' (Zoho handles actual delivery).
+                CampaignRecipient::where('campaign_run_id', $run->id)
+                    ->where('status', 'queued')
+                    ->update([
+                        'status'              => 'sent',
+                        'provider_message_id' => 'zoho-' . ($summary['campaign_key'] ?? $run->id),
+                        'sent_at'             => now(),
+                    ]);
+
+                $sentCount = CampaignRecipient::where('campaign_run_id', $run->id)
+                    ->where('status', 'sent')
+                    ->count();
+
+                $run->update([
+                    'stats_sent'  => $sentCount,
+                    'status'      => 'sent',
+                    'finished_at' => now(),
+                ]);
+            });
+
+            Log::info('[CampaignService] Run Zoho complété.', [
+                'run_id'       => $run->id,
+                'campaign_key' => $summary['campaign_key'] ?? null,
+                'list_key'     => $summary['list_key'] ?? null,
+                'stats_sent'   => $sentCount,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('[CampaignService] Échec du dispatchRun Zoho.', [
+                'run_id' => $run->id,
+                'error'  => $e->getMessage(),
+            ]);
+            $run->update(['status' => 'failed', 'finished_at' => now()]);
+            // Rethrow so the job retry mechanism handles it.
+            throw $e;
+        }
+    }
 
     /**
-     * Generate a 64-char lowercase hex tracking token.
+     * Local path: per-recipient SMTP/Mailpit send (unchanged).
      *
-     * The token is derived from a SHA-256 of the run id, contact id, and a random
-     * 32-char nonce so it is effectively unique even on retry.
+     * Re-queries recipients from the DB (does not reuse the caller's $contacts
+     * collection). Per-recipient failures are logged and skipped — this path
+     * does NOT rethrow, unlike sendViaZoho().
      */
-    private function generateTrackingToken(CampaignRun $run, \App\Models\Contact $contact): string
+    private function sendViaLocal(CampaignRun $run): void
     {
-        return TrackingToken::generate($run->id, $contact->id);
+        /** @var CampaignsClient $driver */
+        $driver = app(CampaignsClient::class);
+
+        $recipients = CampaignRecipient::where('campaign_run_id', $run->id)
+            ->where('status', 'queued')
+            ->whereNull('provider_message_id')
+            ->with('contact.company')
+            ->get();
+
+        // Prefetch the suppression list once instead of one query per recipient
+        // (isSuppressed() is a plain normalized-equality lookup — see Suppression::isSuppressed()).
+        $suppressed = Suppression::pluck('email')->map(fn ($e) => strtolower(trim($e)))->flip();
+
+        foreach ($recipients as $recipient) {
+            $contact = $recipient->contact;
+
+            // ── 4a. Send-time suppression re-check ───────────────────────────
+            if (isset($suppressed[strtolower(trim($contact->email))])) {
+                $recipient->update([
+                    'status'      => 'skipped',
+                    'skip_reason' => 'suppressed',
+                ]);
+                continue;
+            }
+
+            // ── 4b. Generate tracking token and create EmailTrackingEvent ─────
+            $token = TrackingToken::generate($run->id, $contact->id);
+
+            EmailTrackingEvent::createForSend($recipient, $token);
+
+            // ── 4c. Build signed unsubscribe URL ─────────────────────────────
+            $unsubscribeUrl = URL::signedRoute('unsubscribe', ['contact' => $contact->id]);
+
+            // ── 4d. Driver send — OUTSIDE any DB transaction ──────────────────
+            try {
+                $pmid = $driver->send(
+                    $recipient,
+                    $run->campaign,
+                    $run,
+                    $token,
+                    $unsubscribeUrl,
+                );
+
+                // ── 4e. Record provider_message_id + sent status ───────────────
+                $recipient->update([
+                    'status'              => 'sent',
+                    'provider_message_id' => $pmid,
+                    'sent_at'             => now(),
+                ]);
+            } catch (\Throwable $e) {
+                // Leave recipient in 'queued' state — next job retry will re-send.
+                Log::error('[CampaignService] Failed to send to recipient.', [
+                    'run_id'       => $run->id,
+                    'recipient_id' => $recipient->id,
+                    'contact_id'   => $contact->id,
+                    'error'        => $e->getMessage(),
+                ]);
+            }
+        }
+
+        // ── Step 5 (local): Recompute run stats and mark complete ──────────
+        $sentCount = CampaignRecipient::where('campaign_run_id', $run->id)
+            ->where('status', 'sent')
+            ->count();
+
+        $run->update([
+            'stats_sent'  => $sentCount,
+            'status'      => 'sent',
+            'finished_at' => now(),
+        ]);
+
+        Log::info('[CampaignService] Run complété (local).', [
+            'run_id'     => $run->id,
+            'stats_sent' => $sentCount,
+        ]);
     }
 }

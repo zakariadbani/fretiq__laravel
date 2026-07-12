@@ -69,16 +69,24 @@ class ContactController extends BackendController
      */
     private function contactStats(Contact $contact): array
     {
-        // Q1 — All recipient rows for this contact
-        $recipients = CampaignRecipient::where('contact_id', $contact->id)->get();
+        // Q1 — Aggregate counts for this contact's recipient rows (single query, no hydration)
+        $counts = CampaignRecipient::where('contact_id', $contact->id)
+            ->selectRaw('
+                COUNT(CASE WHEN sent_at IS NOT NULL THEN 1 END) AS emails_sent,
+                COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) AS emails_opened,
+                COUNT(CASE WHEN clicked_at IS NOT NULL THEN 1 END) AS emails_clicked,
+                COUNT(CASE WHEN replied_at IS NOT NULL THEN 1 END) AS emails_replied,
+                COUNT(CASE WHEN status IN (\'delivered\', \'opened\', \'clicked\', \'replied\') THEN 1 END) AS emails_delivered
+            ')
+            ->first();
 
-        $emailsSent    = $recipients->filter(fn ($r) => !is_null($r->sent_at))->count();
-        $emailsOpened  = $recipients->filter(fn ($r) => !is_null($r->opened_at))->count();
-        $emailsClicked = $recipients->filter(fn ($r) => !is_null($r->clicked_at))->count();
-        $emailsReplied = $recipients->filter(fn ($r) => !is_null($r->replied_at))->count();
+        $emailsSent      = (int) $counts->emails_sent;
+        $emailsOpened    = (int) $counts->emails_opened;
+        $emailsClicked   = (int) $counts->emails_clicked;
+        $emailsReplied   = (int) $counts->emails_replied;
 
         // Délivrés — status-based fallback (no delivered_at column)
-        $emailsDelivered = $recipients->whereIn('status', ['delivered', 'opened', 'clicked', 'replied'])->count();
+        $emailsDelivered = (int) $counts->emails_delivered;
 
         // Q2 — Demande count
         $demandesTotal = Demande::where('contact_id', $contact->id)->count();

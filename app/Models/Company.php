@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Traits\Validator;
+use App\Support\ConfigEnum;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -128,9 +129,9 @@ class Company extends Model
             'country'              => 'nullable|string|size:2',
             'estimated_size'       => 'nullable|string|max:20',
             'phone'                => 'nullable|string|max:50',
-            'relationship'         => 'nullable|in:' . implode(',', array_keys(config('global.data.company_relationships', []))),
-            'source'               => 'nullable|in:' . implode(',', array_keys(config('global.data.company_sources', []))),
-            'qualification_status' => 'nullable|in:' . implode(',', array_keys(config('global.data.company_qualification_statuses', []))),
+            'relationship'         => 'nullable|' . ConfigEnum::in('company_relationships'),
+            'source'               => 'nullable|' . ConfigEnum::in('company_sources'),
+            'qualification_status' => 'nullable|' . ConfigEnum::in('company_qualification_statuses'),
             'is_active'            => 'nullable|boolean',
             'ai_score'             => 'nullable|integer|between:0,100',
             'zoho_account_id'      => 'nullable|string|max:100',

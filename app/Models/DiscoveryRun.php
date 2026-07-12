@@ -89,14 +89,6 @@ class DiscoveryRun extends Model
     // ── State helpers ──────────────────────────────────────────────────────────
 
     /**
-     * Whether the run is in a terminal state (no further transitions expected).
-     */
-    public function isTerminal(): bool
-    {
-        return in_array($this->status, ['completed', 'failed'], true);
-    }
-
-    /**
      * Whether the run appears stale (in-flight but no heartbeat for too long).
      *
      * Two thresholds, matched to the job lifecycle:

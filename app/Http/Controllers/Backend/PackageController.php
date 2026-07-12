@@ -29,12 +29,10 @@ class PackageController extends BackendController
         // Assigned at runtime to avoid a trait+class property default conflict.
         $this->viewConfigClass = PackageViewConfig::class;
 
-        // ONE permission gates all four blocks — superadmin only.
-        $this->middleware('permission:manage packages')->only(['index', 'view']);
-        $this->middleware('permission:manage packages')->only(['create', 'store']);
-        $this->middleware('permission:manage packages')->only(['edit', 'update', 'executeSwitch']);
-        $this->middleware('permission:manage packages')->only(['delete']);
-        $this->middleware('permission:manage packages')->only(['assign']);
+        // ONE permission gates all actions — superadmin only.
+        $this->middleware('permission:manage packages')->only([
+            'index', 'view', 'create', 'store', 'edit', 'update', 'executeSwitch', 'delete', 'assign',
+        ]);
 
         $this->listTitle = 'Packs';
         $this->title     = 'name';
@@ -183,14 +181,6 @@ class PackageController extends BackendController
         return redirect()->back();
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // View vars — no dropdowns needed for the create/edit form
-    // ─────────────────────────────────────────────────────────────────────────
-
-    protected function getViewVars(): array
-    {
-        return [];
-    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Stats — for ViewConfig apercu

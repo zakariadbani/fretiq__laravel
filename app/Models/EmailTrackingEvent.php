@@ -44,6 +44,29 @@ class EmailTrackingEvent extends Model
         'last_human_open_at'  => 'datetime',
     ];
 
+    // ── Factories ──────────────────────────────────────────────────────────────
+
+    /**
+     * Create (or retrieve) the sent-event row for a tracking token.
+     *
+     * Shared by CampaignService and SequenceService — trackable_type/id derive
+     * from $trackable (CampaignRecipient or SequenceStepSend); default payload
+     * (event='sent', zero counters) matches both prior inline firstOrCreate() calls.
+     */
+    public static function createForSend(Model $trackable, string $token): self
+    {
+        return static::firstOrCreate(
+            ['token' => $token],
+            [
+                'trackable_type'     => get_class($trackable),
+                'trackable_id'       => $trackable->id,
+                'event'              => 'sent',
+                'human_open_count'   => 0,
+                'machine_open_count' => 0,
+            ],
+        );
+    }
+
     // ── Relationships ──────────────────────────────────────────────────────────
 
     /**

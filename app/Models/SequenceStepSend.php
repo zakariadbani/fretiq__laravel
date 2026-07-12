@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Traits\Validator;
+use App\Support\ConfigEnum;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -64,7 +65,7 @@ class SequenceStepSend extends Model
             'enrollment_id'       => 'required|integer|exists:sequence_enrollments,id',
             'step_no'             => 'required|integer|min:1',
             'provider_message_id' => 'nullable|string|max:191',
-            'status'              => 'nullable|in:' . implode(',', array_keys(config('global.data.sequence_step_statuses', []))),
+            'status'              => 'nullable|' . ConfigEnum::in('sequence_step_statuses'),
             'sent_at'             => 'nullable|date',
             'opened_at'           => 'nullable|date',
         ];

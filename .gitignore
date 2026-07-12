@@ -78,3 +78,4 @@ test-results/
 
 # AI planning scratch
 .hermes/
+AGENTS.md

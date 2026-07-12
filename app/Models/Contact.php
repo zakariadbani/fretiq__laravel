@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Traits\Validator;
+use App\Support\ConfigEnum;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -114,10 +115,10 @@ class Contact extends Model
             'name'                     => 'required|string|max:255',
             'position'                 => 'nullable|string|max:120',
             'phone'                    => 'nullable|string|max:50',
-            'source'                   => 'nullable|in:' . implode(',', array_keys(config('global.data.contact_sources', []))),
-            'status'                   => 'nullable|in:' . implode(',', array_keys(config('global.data.contact_statuses', []))),
-            'legal_basis'              => 'nullable|in:' . implode(',', array_keys(config('global.data.contact_legal_bases', []))),
-            'email_kind'               => 'nullable|in:' . implode(',', array_keys(config('global.data.contact_email_kinds', []))),
+            'source'                   => 'nullable|' . ConfigEnum::in('contact_sources'),
+            'status'                   => 'nullable|' . ConfigEnum::in('contact_statuses'),
+            'legal_basis'              => 'nullable|' . ConfigEnum::in('contact_legal_bases'),
+            'email_kind'               => 'nullable|' . ConfigEnum::in('contact_email_kinds'),
             'consent_at'               => 'nullable|date',
             'source_url'               => 'nullable|string|max:500',
             'source_captured_at'       => 'nullable|date',

@@ -149,23 +149,10 @@ class AnalyticsService
             $labels[] = now()->startOfWeek()->subWeeks($weeks - 1 - $i)->format('o-\WW');
         }
 
-        // Aggregate opens per ISO week
-        $opensRaw = CampaignRecipient::where('opened_at', '>=', $since)
-            ->selectRaw("DATE_FORMAT(opened_at, '%x-W%v') AS iso_week, COUNT(*) AS cnt")
-            ->groupBy('iso_week')
-            ->pluck('cnt', 'iso_week');
-
-        // Aggregate clicks per ISO week
-        $clicksRaw = CampaignRecipient::where('clicked_at', '>=', $since)
-            ->selectRaw("DATE_FORMAT(clicked_at, '%x-W%v') AS iso_week, COUNT(*) AS cnt")
-            ->groupBy('iso_week')
-            ->pluck('cnt', 'iso_week');
-
-        // Aggregate replies per ISO week
-        $repliesRaw = CampaignRecipient::where('replied_at', '>=', $since)
-            ->selectRaw("DATE_FORMAT(replied_at, '%x-W%v') AS iso_week, COUNT(*) AS cnt")
-            ->groupBy('iso_week')
-            ->pluck('cnt', 'iso_week');
+        // Aggregate opens/clicks/replies per ISO week
+        $opensRaw   = $this->aggregateByWeek('opened_at', $since);
+        $clicksRaw  = $this->aggregateByWeek('clicked_at', $since);
+        $repliesRaw = $this->aggregateByWeek('replied_at', $since);
 
         // Map to label-indexed arrays, filling 0 for missing weeks
         $opens   = array_map(fn($l) => (int) ($opensRaw[$l]   ?? 0), $labels);
@@ -180,6 +167,21 @@ class AnalyticsService
                 'replies' => $replies,
             ],
         ];
+    }
+
+    /**
+     * Aggregate CampaignRecipient rows by ISO week for a single timestamp column.
+     *
+     * Shared by engagementOverTime()'s three identical opens/clicks/replies queries.
+     *
+     * @return \Illuminate\Support\Collection<string, int>  cnt indexed by iso_week label
+     */
+    private function aggregateByWeek(string $column, $since)
+    {
+        return CampaignRecipient::where($column, '>=', $since)
+            ->selectRaw("DATE_FORMAT({$column}, '%x-W%v') AS iso_week, COUNT(*) AS cnt")
+            ->groupBy('iso_week')
+            ->pluck('cnt', 'iso_week');
     }
 
     // ── Top campaigns ───────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Traits\Validator;
+use App\Support\ConfigEnum;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -106,7 +107,7 @@ class Demande extends Model
             'campaign_run_id' => 'nullable|integer|exists:campaign_runs,id',
             'sequence_id'     => 'nullable|integer|exists:sequences,id',
             'kind'            => 'nullable|string|max:32',
-            'status'          => 'nullable|in:' . implode(',', array_keys(config('global.data.demande_statuses', []))),
+            'status'          => 'nullable|' . ConfigEnum::in('demande_statuses'),
             'notes'           => 'nullable|string',
             'captured_at'     => 'required|date',
         ];

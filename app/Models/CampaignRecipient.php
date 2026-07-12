@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Traits\Validator;
+use App\Support\ConfigEnum;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -79,7 +80,7 @@ class CampaignRecipient extends Model
         return [
             'campaign_run_id'     => 'required|integer|exists:campaign_runs,id',
             'contact_id'          => 'required|integer|exists:contacts,id',
-            'status'              => 'nullable|in:' . implode(',', array_keys(config('global.data.campaign_recipient_statuses', []))),
+            'status'              => 'nullable|' . ConfigEnum::in('campaign_recipient_statuses'),
             'skip_reason'         => 'nullable|string|max:100',
             'provider_message_id' => 'nullable|string|max:191',
             'bounce_reason'       => 'nullable|string|max:255',

@@ -3,7 +3,7 @@
 namespace App\Services\Scoring;
 
 use App\Models\ProspectCriteria;
-use Illuminate\Support\Facades\Http;
+use App\Services\Gemini\GeminiClient;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -20,38 +20,25 @@ use Illuminate\Support\Facades\Log;
  */
 class GeminiScoringDriver implements ScoringDriverInterface
 {
+    public function __construct(
+        private readonly GeminiClient $gemini = new GeminiClient(),
+    ) {}
+
     public function score(array $candidate, ProspectCriteria $criteria): ?array
     {
-        $apiKey = config('services.gemini.api_key');
-
-        if (! $apiKey) {
+        if (! $this->gemini->hasApiKey()) {
             Log::warning('[GeminiScoringDriver] Clé API Gemini non configurée — scoring Gemini ignoré.', [
                 'domain' => $candidate['domain'] ?? ($candidate['url'] ?? $candidate['link'] ?? ''),
             ]);
             return null;
         }
 
-        $model  = config('services.gemini.model', 'gemini-2.5-flash');
         $prompt = $this->buildPrompt($candidate, $criteria);
 
         try {
-            $response = Http::timeout(20)
-                ->withHeaders(['x-goog-api-key' => $apiKey])
-                ->post(
-                    "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent",
-                    [
-                        'contents' => [
-                            [
-                                'parts' => [
-                                    ['text' => $prompt],
-                                ],
-                            ],
-                        ],
-                        'generationConfig' => [
-                            'response_mime_type' => 'application/json',
-                        ],
-                    ]
-                );
+            $response = $this->gemini->request($prompt, 20, [
+                'response_mime_type' => 'application/json',
+            ]);
 
             if ($response->failed()) {
                 Log::warning('[GeminiScoringDriver] Réponse HTTP échouée depuis Gemini.', [
@@ -61,9 +48,9 @@ class GeminiScoringDriver implements ScoringDriverInterface
                 return null;
             }
 
-            $text = $response->json('candidates.0.content.parts.0.text');
+            $text = $this->gemini->extractText($response);
 
-            if (! is_string($text) || $text === '') {
+            if ($text === null) {
                 Log::warning('[GeminiScoringDriver] Réponse Gemini vide ou structure inattendue.', [
                     'domain' => $candidate['domain'] ?? '',
                 ]);
@@ -136,17 +123,12 @@ PROMPT;
      */
     private function parseResult(string $text, array $candidate): ?array
     {
-        // Strip potential markdown code fences (```json ... ```)
-        $text = preg_replace('/^```(?:json)?\s*/m', '', $text);
-        $text = preg_replace('/\s*```$/m', '', $text);
-        $text = trim($text);
+        $data = $this->gemini->decodeJson($text);
 
-        $data = json_decode($text, true);
-
-        if (! is_array($data)) {
+        if ($data === null) {
             Log::warning('[GeminiScoringDriver] JSON non décodable dans la réponse Gemini.', [
                 'domain' => $candidate['domain'] ?? '',
-                'raw'    => mb_substr($text, 0, 200),
+                'raw'    => mb_substr($this->gemini->stripFences($text), 0, 200),
             ]);
             return null;
         }

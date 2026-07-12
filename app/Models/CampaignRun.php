@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Traits\Validator;
+use App\Support\ConfigEnum;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -85,7 +86,7 @@ class CampaignRun extends Model
             'campaign_id'    => 'required|integer|exists:campaigns,id',
             'occurrence_key' => 'required|string|max:64',
             'run_at'         => 'required|date',
-            'status'         => 'nullable|in:' . implode(',', array_keys(config('global.data.campaign_run_statuses', []))),
+            'status'         => 'nullable|' . ConfigEnum::in('campaign_run_statuses'),
             'stats_sent'         => 'nullable|integer|min:0',
             'stats_delivered'    => 'nullable|integer|min:0',
             'stats_opened'       => 'nullable|integer|min:0',

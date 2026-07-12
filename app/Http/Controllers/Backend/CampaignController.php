@@ -21,6 +21,7 @@ use App\Services\Demande\DemandeCaptureService;
 use App\Services\Translation\LanguageResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CampaignController extends BackendController
 {
@@ -520,6 +521,11 @@ class CampaignController extends BackendController
                 }
             }
         } catch (\Throwable $e) {
+            Log::warning('[CampaignController] audienceLanguageSplit failed', [
+                'segment_id' => $segment->id,
+                'error'      => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'error'   => true,
                 'message' => 'Impossible de résoudre le segment.',

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Traits\Validator;
+use App\Support\ConfigEnum;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -92,7 +93,7 @@ class SequenceEnrollment extends Model
             'contact_id'     => 'required|integer|exists:contacts,id',
             'campaign_id'    => 'nullable|integer|exists:campaigns,id',
             'current_step'   => 'nullable|integer|min:0',
-            'status'         => 'nullable|in:' . implode(',', array_keys(config('global.data.sequence_enrollment_statuses', []))),
+            'status'         => 'nullable|' . ConfigEnum::in('sequence_enrollment_statuses'),
             'next_send_at'   => 'nullable|date',
             'last_sent_at'   => 'nullable|date',
             'stopped_reason' => 'nullable|string|max:100',

@@ -223,18 +223,9 @@ class SequenceService
         }
 
         // ── 6. Build tracking token + EmailTrackingEvent ──────────────────────
-        $token = $this->generateTrackingToken($e, $stepNo);
+        $token = TrackingToken::generate($e->id, $stepNo);
 
-        EmailTrackingEvent::firstOrCreate(
-            ['token' => $token],
-            [
-                'trackable_type'     => SequenceStepSend::class,
-                'trackable_id'       => $stepSend->id,
-                'event'              => 'sent',
-                'human_open_count'   => 0,
-                'machine_open_count' => 0,
-            ],
-        );
+        EmailTrackingEvent::createForSend($stepSend, $token);
 
         // ── 7. Build signed unsubscribe URL ───────────────────────────────────
         $unsubscribeUrl = URL::signedRoute('unsubscribe', ['contact' => $contact->id]);
@@ -375,15 +366,5 @@ class SequenceService
                 'final_step_no' => $stepNo,
             ]);
         }
-    }
-
-    /**
-     * Generate a 64-char lowercase hex tracking token for a sequence step send.
-     *
-     * Derived from a SHA-256 of enrollment_id, step_no, and a random 32-char nonce.
-     */
-    private function generateTrackingToken(SequenceEnrollment $e, int $stepNo): string
-    {
-        return TrackingToken::generate($e->id, $stepNo);
     }
 }

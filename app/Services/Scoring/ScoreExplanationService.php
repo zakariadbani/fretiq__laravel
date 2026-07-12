@@ -3,7 +3,7 @@
 namespace App\Services\Scoring;
 
 use App\Models\Company;
-use Illuminate\Support\Facades\Http;
+use App\Services\Gemini\GeminiClient;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -16,6 +16,10 @@ use Illuminate\Support\Facades\Log;
  */
 class ScoreExplanationService
 {
+    public function __construct(
+        private readonly GeminiClient $gemini = new GeminiClient(),
+    ) {}
+
     /**
      * Generate a French explanation for a company's current ai_score.
      * Returns '' when ai_score is null (nothing to explain).
@@ -49,16 +53,11 @@ class ScoreExplanationService
         return $this->fallback($profile);
     }
 
-    // ponytail: inline Gemini call mirrors GeminiScoringDriver; no shared GeminiClient refactor (would touch 2 working files).
     private function viaGemini(array $profile): ?string
     {
-        $apiKey = config('services.gemini.api_key');
-
-        if (! $apiKey) {
+        if (! $this->gemini->hasApiKey()) {
             return null;
         }
-
-        $model = config('services.gemini.model', 'gemini-2.5-flash');
 
         $score   = $profile['ai_score'];
         $name    = $profile['name']    ?? '';
@@ -93,23 +92,9 @@ Réponds UNIQUEMENT avec un objet JSON strict (sans markdown, sans commentaire) 
 PROMPT;
 
         try {
-            $response = Http::timeout(20)
-                ->withHeaders(['x-goog-api-key' => $apiKey])
-                ->post(
-                    "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent",
-                    [
-                        'contents' => [
-                            [
-                                'parts' => [
-                                    ['text' => $prompt],
-                                ],
-                            ],
-                        ],
-                        'generationConfig' => [
-                            'response_mime_type' => 'application/json',
-                        ],
-                    ]
-                );
+            $response = $this->gemini->request($prompt, 20, [
+                'response_mime_type' => 'application/json',
+            ]);
 
             if ($response->failed()) {
                 Log::warning('[ScoreExplanationService] Réponse HTTP échouée depuis Gemini.', [
@@ -119,23 +104,18 @@ PROMPT;
                 return null;
             }
 
-            $text = $response->json('candidates.0.content.parts.0.text');
+            $text = $this->gemini->extractText($response);
 
-            if (! is_string($text) || $text === '') {
+            if ($text === null) {
                 Log::warning('[ScoreExplanationService] Réponse Gemini vide ou structure inattendue.', [
                     'company' => $profile['name'] ?? '',
                 ]);
                 return null;
             }
 
-            // Strip potential markdown fences
-            $text = preg_replace('/^```(?:json)?\s*/m', '', $text);
-            $text = preg_replace('/\s*```$/m', '', $text);
-            $text = trim($text);
+            $data = $this->gemini->decodeJson($text);
 
-            $data = json_decode($text, true);
-
-            if (! is_array($data)) {
+            if ($data === null) {
                 return null;
             }
 

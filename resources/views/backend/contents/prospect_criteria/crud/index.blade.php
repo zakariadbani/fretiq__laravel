@@ -5,15 +5,7 @@
 @endsection
 
 @section('breadcrumbs')
-    <ul class="breadcrumb breadcrumb-separatorless fw-semibold fs-7 my-0 pt-1">
-        <li class="breadcrumb-item text-muted">
-            <a href="{{ route('admin.dashboard') }}" class="text-muted text-hover-primary">Accueil</a>
-        </li>
-        <li class="breadcrumb-item">
-            <span class="bullet bg-gray-500 w-5px h-2px"></span>
-        </li>
-        <li class="breadcrumb-item text-muted">Critères de découverte</li>
-    </ul>
+    <x-crud.breadcrumb :items="[['label' => 'Critères de découverte']]" />
 @endsection
 
 <div class="card">
@@ -94,13 +86,10 @@
     </div>
 </div>
 
-@push('scripts')
-    {{ $dataTable->scripts() }}
-    <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            DataTableUtils.initializeIndex(@json($dataTableConfig));
-        });
+<x-crud.datatable-init :data-table="$dataTable" :data-table-config="$dataTableConfig" />
 
+@push('scripts')
+    <script>
         /**
          * Generic helper: submit a hidden POST form to the given URL with a CSRF token.
          * Used by the "Dupliquer" row action button.

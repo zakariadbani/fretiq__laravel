@@ -48,7 +48,7 @@ class SegmentController extends BackendController
     {
         $model = $this->currentModel->find($id);
 
-        if ($model == null) {
+        if ($model === null) {
             session()->flash('error', trans('app.not_found'));
             return redirect(route('admin.segments.index'));
         }
@@ -78,7 +78,7 @@ class SegmentController extends BackendController
     {
         $model = $this->currentModel->find($id);
 
-        if ($model == null) {
+        if ($model === null) {
             session()->flash('error', trans('app.not_found'));
             return redirect(route('admin.segments.index'));
         }
