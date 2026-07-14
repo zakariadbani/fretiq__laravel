@@ -33,6 +33,15 @@
     'currentPage' => 'view',
 ])
 
+@if($model->isOverdue())
+    <div class="alert alert-danger d-flex align-items-center mb-6">
+        <i class="bi bi-exclamation-triangle-fill fs-4 me-3 text-danger"></i>
+        <div>Cette campagne est en retard. Vérifiez sa planification et le planificateur.</div>
+    </div>
+@endif
+
+@include('backend.contents.campaigns.partials._scheduler-health', ['schedulerHealth' => $schedulerHealth ?? []])
+
 {{-- Tab content --}}
 <div class="tab-content">
 
@@ -40,6 +49,9 @@
     <div class="tab-pane fade show active" id="campaign_apercu" role="tabpanel">
 
         {{-- Generic apercu: details table (left) + stat cards + charts (right) --}}
+        <div class="text-muted fs-7 fw-semibold mb-2">
+            Vue cumulee - duree de vie de la campagne, executions envoyees uniquement.
+        </div>
         @include('backend.partials.crud._apercu', [
             'model'  => $model,
             'config' => $viewConfig ?? \App\Crud\ViewConfigs\CampaignViewConfig::make($model, $stats ?? null, $recipientsTotal ?? null),
@@ -75,6 +87,10 @@
 
         {{-- ── Preserved: KPIs from latest run ──────────────────────────── --}}
         @if($latestRun)
+        @php($latestKpis = $latestRun->kpis())
+        <div class="text-muted fs-7 fw-semibold mt-6 mb-2">
+            Derniere execution envoyee - statistiques de ce run uniquement.
+        </div>
         <div class="row g-4 mt-2">
 
             {{-- Envoyés --}}
@@ -82,7 +98,7 @@
                 <div class="card card-flush h-lg-100">
                     <div class="card-header pt-5">
                         <div class="card-title d-flex flex-column">
-                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ number_format($latestRun->stats_sent ?? 0) }}</span>
+                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ number_format($latestKpis['sent'] ?? 0) }}</span>
                             <span class="text-gray-500 pt-1 fw-semibold fs-6">Envoyés</span>
                         </div>
                     </div>
@@ -99,12 +115,18 @@
                 <div class="card card-flush h-lg-100">
                     <div class="card-header pt-5">
                         <div class="card-title d-flex flex-column">
-                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ $latestRun->openRate() }}%</span>
+                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ \App\Models\CampaignRun::rateLabel($latestKpis['open_rate'] ?? null) }}</span>
                             <span class="text-gray-500 pt-1 fw-semibold fs-6">Taux d'ouverture</span>
                         </div>
                     </div>
                     <div class="card-body pt-0">
-                        <span class="text-muted fs-8">{{ number_format($latestRun->stats_opened ?? 0) }} ouverts / {{ number_format($latestRun->stats_delivered ?? 0) }} délivrés</span>
+                        <span class="text-muted fs-8">
+                            @if(($latestKpis['denominator'] ?? null) !== null)
+                                {{ number_format($latestKpis['opened'] ?? 0) }} ouverts / {{ number_format($latestKpis['denominator']) }} {{ ($latestKpis['delivered'] ?? 0) > 0 ? 'délivrés' : 'envoyés' }}
+                            @else
+                                —
+                            @endif
+                        </span>
                     </div>
                 </div>
             </div>
@@ -114,12 +136,12 @@
                 <div class="card card-flush h-lg-100">
                     <div class="card-header pt-5">
                         <div class="card-title d-flex flex-column">
-                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ $latestRun->clickRate() }}%</span>
+                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ \App\Models\CampaignRun::rateLabel($latestKpis['click_rate'] ?? null) }}</span>
                             <span class="text-gray-500 pt-1 fw-semibold fs-6">Taux de clic</span>
                         </div>
                     </div>
                     <div class="card-body pt-0">
-                        <span class="text-muted fs-8">{{ number_format($latestRun->stats_clicked ?? 0) }} clics</span>
+                        <span class="text-muted fs-8">{{ number_format($latestKpis['clicked'] ?? 0) }} clics</span>
                     </div>
                 </div>
             </div>
@@ -129,7 +151,7 @@
                 <div class="card card-flush h-lg-100">
                     <div class="card-header pt-5">
                         <div class="card-title d-flex flex-column">
-                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ number_format($latestRun->stats_replied ?? 0) }}</span>
+                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ number_format($latestKpis['replied'] ?? 0) }}</span>
                             <span class="text-gray-500 pt-1 fw-semibold fs-6">Réponses</span>
                         </div>
                     </div>
@@ -144,12 +166,12 @@
                 <div class="card card-flush h-lg-100">
                     <div class="card-header pt-5">
                         <div class="card-title d-flex flex-column">
-                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ $latestRun->conversionRate() }}%</span>
+                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ \App\Models\CampaignRun::rateLabel($latestKpis['conversion_rate'] ?? null) }}</span>
                             <span class="text-gray-500 pt-1 fw-semibold fs-6">Conversion</span>
                         </div>
                     </div>
                     <div class="card-body pt-0">
-                        <span class="text-muted fs-8">{{ number_format($latestRun->conversion_count ?? 0) }} conversion(s)</span>
+                        <span class="text-muted fs-8">{{ number_format($latestKpis['conversions'] ?? 0) }} conversion(s)</span>
                     </div>
                 </div>
             </div>
@@ -159,7 +181,7 @@
                 <div class="card card-flush h-lg-100">
                     <div class="card-header pt-5">
                         <div class="card-title d-flex flex-column">
-                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ number_format($latestRun->stats_bounced ?? 0) }}</span>
+                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ number_format($latestKpis['bounced'] ?? 0) }}</span>
                             <span class="text-gray-500 pt-1 fw-semibold fs-6">Rebonds</span>
                         </div>
                     </div>
@@ -258,55 +280,68 @@
         document.addEventListener('DOMContentLoaded', function () {
 
             // ── Schedule button ──────────────────────────────────────────────
+            const previewDispatch = function (button) {
+                return axios.get(button.dataset.previewUrl).then(function (response) {
+                    return response.data;
+                }).catch(function (error) {
+                    const data = error.response?.data || {};
+                    throw new Error(data.text || data.message || (data.messages || []).join(' ') || 'Impossible de vérifier l’audience finale.');
+                });
+            };
+
+            const postCampaignAction = function (button) {
+                return axios.post(button.dataset.url, { _token: '{{ csrf_token() }}' })
+                    .then(function (r) {
+                        if (r.data.redirect) {
+                            window.location.replace(r.data.redirect);
+                        } else {
+                            window.location.reload();
+                        }
+                    });
+            };
+
+            const showBlocked = function (message) {
+                return Swal.fire({
+                    icon: 'error',
+                    title: 'Envoi bloqué',
+                    text: message,
+                    buttonsStyling: false,
+                    confirmButtonText: 'OK',
+                    customClass: { confirmButton: 'btn btn-primary' },
+                });
+            };
+
             const btnSchedule = document.getElementById('btn-schedule');
             if (btnSchedule) {
                 btnSchedule.addEventListener('click', function () {
-                    const url = this.dataset.url;
-                    this.disabled = true;
+                    const self = this;
+                    self.disabled = true;
 
-                    Swal.fire({
-                        title: 'Planifier la campagne ?',
-                        text: 'La campagne sera placée en file d\'attente pour l\'envoi à la date planifiée.',
-                        icon: 'question',
-                        showCancelButton: true,
-                        confirmButtonText: 'Planifier',
-                        cancelButtonText: 'Annuler',
-                        buttonsStyling: false,
-                        customClass: {
-                            confirmButton: 'btn btn-info me-2',
-                            cancelButton: 'btn btn-light',
-                        },
-                    }).then((result) => {
-                        if (result.isConfirmed) {
-                            axios.post(url, { _token: '{{ csrf_token() }}' })
-                                .then(function (r) {
-                                    if (r.data.redirect) {
-                                        window.location.replace(r.data.redirect);
-                                    } else {
-                                        window.location.reload();
-                                    }
-                                })
-                                .catch(function (err) {
-                                    Swal.fire({
-                                        icon: 'error',
-                                        title: 'Erreur',
-                                        text: err.response?.data?.message || 'Une erreur est survenue.',
-                                        buttonsStyling: false,
-                                        confirmButtonText: 'OK',
-                                        customClass: { confirmButton: 'btn btn-primary' },
-                                    });
-                                })
-                                .finally(function () {
-                                    btnSchedule.disabled = false;
-                                });
-                        } else {
-                            btnSchedule.disabled = false;
-                        }
-                    });
+                    previewDispatch(self)
+                        .then(function (preview) {
+                            return Swal.fire({
+                                title: 'Planifier la campagne ?',
+                                html: 'Audience vérifiée : <strong>' + preview.count + '</strong> destinataire(s) éligible(s).<br>La campagne sera placée en file d’attente pour l’envoi à la date planifiée.',
+                                icon: 'question',
+                                showCancelButton: true,
+                                confirmButtonText: 'Planifier',
+                                cancelButtonText: 'Annuler',
+                                buttonsStyling: false,
+                                customClass: {
+                                    confirmButton: 'btn btn-info me-2',
+                                    cancelButton: 'btn btn-light',
+                                },
+                            });
+                        })
+                        .then(function (result) {
+                            if (result && result.isConfirmed) {
+                                return postCampaignAction(self);
+                            }
+                        })
+                        .catch(function (error) { showBlocked(error.message); })
+                        .finally(function () { self.disabled = false; });
                 });
             }
-
-            // ── Zoho list additions + verification (never sends a campaign) ──
             const btnSyncZohoList = document.getElementById('btn-sync-zoho-list');
             if (btnSyncZohoList) {
                 btnSyncZohoList.addEventListener('click', function () {
@@ -361,183 +396,37 @@
             const btnSendNow = document.getElementById('btn-send-now');
             if (btnSendNow) {
                 btnSendNow.addEventListener('click', function () {
-                    const url          = this.dataset.url;
-                    const scheduleType = this.dataset.scheduleType || '';
-                    const self         = this;
+                    const self = this;
+                    const scheduleType = self.dataset.scheduleType || '';
+                    const isSequence = scheduleType === 'sequence';
                     self.disabled = true;
 
-                    if (scheduleType === 'sequence') {
-                        // ── Sequence branch: fetch eligible count then confirm ────
-                        @if($model->segment_id)
-                        axios.get('{{ route("admin.campaigns.segmentCount", $model->segment_id) }}')
-                            .then(function (r) {
-                                const eligibleCount = r.data.count || 0;
-                                Swal.fire({
-                                    title: 'Démarrer la séquence ?',
-                                    html: 'Démarrer la séquence pour ~<strong>' + eligibleCount + '</strong> contact(s) éligible(s).<br>'
-                                        + '<span class="text-muted fs-7">Les contacts déjà inscrits seront ignorés.</span>',
-                                    icon: 'question',
-                                    showCancelButton: true,
-                                    confirmButtonText: 'Démarrer',
-                                    cancelButtonText: 'Annuler',
-                                    buttonsStyling: false,
-                                    customClass: {
-                                        confirmButton: 'btn btn-success me-2',
-                                        cancelButton: 'btn btn-light',
-                                    },
-                                }).then((result) => {
-                                    if (result.isConfirmed) {
-                                        axios.post(url, { _token: '{{ csrf_token() }}' })
-                                            .then(function (r) {
-                                                if (r.data.redirect) {
-                                                    window.location.replace(r.data.redirect);
-                                                } else {
-                                                    window.location.reload();
-                                                }
-                                            })
-                                            .catch(function (err) {
-                                                Swal.fire({
-                                                    icon: 'error',
-                                                    title: 'Erreur',
-                                                    text: err.response?.data?.text || err.response?.data?.message || 'Une erreur est survenue.',
-                                                    buttonsStyling: false,
-                                                    confirmButtonText: 'OK',
-                                                    customClass: { confirmButton: 'btn btn-primary' },
-                                                });
-                                            })
-                                            .finally(function () {
-                                                self.disabled = false;
-                                            });
-                                    } else {
-                                        self.disabled = false;
-                                    }
-                                });
-                            })
-                            .catch(function () {
-                                // If count fetch fails, show confirm without count
-                                Swal.fire({
-                                    title: 'Démarrer la séquence ?',
-                                    text: 'Les contacts éligibles du segment seront inscrits dans la séquence.',
-                                    icon: 'question',
-                                    showCancelButton: true,
-                                    confirmButtonText: 'Démarrer',
-                                    cancelButtonText: 'Annuler',
-                                    buttonsStyling: false,
-                                    customClass: {
-                                        confirmButton: 'btn btn-success me-2',
-                                        cancelButton: 'btn btn-light',
-                                    },
-                                }).then((result) => {
-                                    if (result.isConfirmed) {
-                                        axios.post(url, { _token: '{{ csrf_token() }}' })
-                                            .then(function (r) {
-                                                if (r.data.redirect) {
-                                                    window.location.replace(r.data.redirect);
-                                                } else {
-                                                    window.location.reload();
-                                                }
-                                            })
-                                            .catch(function (err) {
-                                                Swal.fire({
-                                                    icon: 'error',
-                                                    title: 'Erreur',
-                                                    text: err.response?.data?.text || err.response?.data?.message || 'Une erreur est survenue.',
-                                                    buttonsStyling: false,
-                                                    confirmButtonText: 'OK',
-                                                    customClass: { confirmButton: 'btn btn-primary' },
-                                                });
-                                            })
-                                            .finally(function () { self.disabled = false; });
-                                    } else {
-                                        self.disabled = false;
-                                    }
-                                });
+                    previewDispatch(self)
+                        .then(function (preview) {
+                            return Swal.fire({
+                                title: isSequence ? 'Démarrer la séquence ?' : 'Envoyer maintenant ?',
+                                html: 'Audience vérifiée : <strong>' + preview.count + '</strong> destinataire(s) éligible(s).<br>'
+                                    + (isSequence ? 'Les contacts déjà inscrits seront ignorés.' : 'La campagne sera envoyée immédiatement. Cette action ne peut pas être annulée.'),
+                                icon: isSequence ? 'question' : 'warning',
+                                showCancelButton: true,
+                                confirmButtonText: isSequence ? 'Démarrer' : 'Envoyer',
+                                cancelButtonText: 'Annuler',
+                                buttonsStyling: false,
+                                customClass: {
+                                    confirmButton: 'btn btn-success me-2',
+                                    cancelButton: 'btn btn-light',
+                                },
                             });
-                        @else
-                        // No segment attached — show simple confirm
-                        Swal.fire({
-                            title: 'Démarrer la séquence ?',
-                            text: 'Les contacts éligibles du segment seront inscrits dans la séquence.',
-                            icon: 'question',
-                            showCancelButton: true,
-                            confirmButtonText: 'Démarrer',
-                            cancelButtonText: 'Annuler',
-                            buttonsStyling: false,
-                            customClass: {
-                                confirmButton: 'btn btn-success me-2',
-                                cancelButton: 'btn btn-light',
-                            },
-                        }).then((result) => {
-                            if (result.isConfirmed) {
-                                axios.post(url, { _token: '{{ csrf_token() }}' })
-                                    .then(function (r) {
-                                        if (r.data.redirect) {
-                                            window.location.replace(r.data.redirect);
-                                        } else {
-                                            window.location.reload();
-                                        }
-                                    })
-                                    .catch(function (err) {
-                                        Swal.fire({
-                                            icon: 'error',
-                                            title: 'Erreur',
-                                            text: err.response?.data?.text || err.response?.data?.message || 'Une erreur est survenue.',
-                                            buttonsStyling: false,
-                                            confirmButtonText: 'OK',
-                                            customClass: { confirmButton: 'btn btn-primary' },
-                                        });
-                                    })
-                                    .finally(function () { self.disabled = false; });
-                            } else {
-                                self.disabled = false;
+                        })
+                        .then(function (result) {
+                            if (result && result.isConfirmed) {
+                                return postCampaignAction(self);
                             }
-                        });
-                        @endif
-                    } else {
-                        // ── One-shot / recurring branch (original behavior) ──────
-                        Swal.fire({
-                            title: 'Envoyer maintenant ?',
-                            html: 'La campagne sera envoyée <strong>immédiatement</strong> aux contacts du segment.<br>Cette action ne peut pas être annulée.',
-                            icon: 'warning',
-                            showCancelButton: true,
-                            confirmButtonText: 'Envoyer',
-                            cancelButtonText: 'Annuler',
-                            buttonsStyling: false,
-                            customClass: {
-                                confirmButton: 'btn btn-success me-2',
-                                cancelButton: 'btn btn-light',
-                            },
-                        }).then((result) => {
-                            if (result.isConfirmed) {
-                                axios.post(url, { _token: '{{ csrf_token() }}' })
-                                    .then(function (r) {
-                                        if (r.data.redirect) {
-                                            window.location.replace(r.data.redirect);
-                                        } else {
-                                            window.location.reload();
-                                        }
-                                    })
-                                    .catch(function (err) {
-                                        Swal.fire({
-                                            icon: 'error',
-                                            title: 'Erreur',
-                                            text: err.response?.data?.message || 'Une erreur est survenue.',
-                                            buttonsStyling: false,
-                                            confirmButtonText: 'OK',
-                                            customClass: { confirmButton: 'btn btn-primary' },
-                                        });
-                                    })
-                                    .finally(function () {
-                                        self.disabled = false;
-                                    });
-                            } else {
-                                self.disabled = false;
-                            }
-                        });
-                    }
+                        })
+                        .catch(function (error) { showBlocked(error.message); })
+                        .finally(function () { self.disabled = false; });
                 });
-            }
-        });
+            }        });
     </script>
 @endpush
 

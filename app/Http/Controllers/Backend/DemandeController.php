@@ -8,6 +8,7 @@ use App\Http\Controllers\Traits\Datatableable;
 use App\Models\Contact;
 use App\Models\Demande;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class DemandeController extends BackendController
 {
@@ -30,6 +31,7 @@ class DemandeController extends BackendController
         $this->viewConfigClass = \App\Crud\ViewConfigs\DemandeViewConfig::class;
 
         $this->middleware('permission:view demandes')->only(['index', 'view']);
+        $this->middleware('permission:view contacts')->only(['contactsSearch']);
         $this->middleware('permission:create demandes')->only(['create', 'store']);
         $this->middleware('permission:edit demandes')->only(['edit', 'update', 'executeSwitch']);
         $this->middleware('permission:delete demandes')->only(['delete']);
@@ -108,10 +110,68 @@ class DemandeController extends BackendController
      */
     protected function getViewVars(): array
     {
+        $selectedContactId = old('contact_id', $this->currentRequest->query('contact_id'));
+
+        if ($this->currentRequest->route('id') !== null) {
+            $selectedContactId = old('contact_id', optional($this->currentModel->find($this->currentRequest->route('id')))->contact_id);
+        }
+
+        $selectedContact = $this->currentRequest->user()?->can('view contacts') && $selectedContactId
+            ? Contact::with('company')->find((int) $selectedContactId)
+            : null;
+
         return [
             'statuses' => config('global.data.demande_statuses', []),
-            'contacts' => Contact::orderBy('name')->limit(500)->get(['id', 'name', 'email']),
+            'selectedContact' => $selectedContact,
         ];
+    }
+
+    public function contactsSearch(Request $request)
+    {
+        abort_unless($request->user()->can('view contacts'), 403);
+
+        $term = Str::limit(trim((string) $request->query('q', '')), 100, '');
+        $page = max((int) $request->query('page', 1), 1);
+        $perPage = 20;
+
+        $query = Contact::query()
+            ->with('company')
+            ->select(['id', 'company_id', 'name', 'email'])
+            ->orderBy('name')
+            ->orderBy('email');
+
+        if ($term !== '') {
+            $like = '%' . addcslashes($term, '\\%_') . '%';
+            $query->where(function ($q) use ($like) {
+                $q->where('name', 'like', $like)
+                    ->orWhere('email', 'like', $like)
+                    ->orWhereHas('company', function ($companyQuery) use ($like) {
+                        $companyQuery->where('name', 'like', $like);
+                    });
+            });
+        }
+
+        $contacts = $query->paginate($perPage, ['*'], 'page', $page);
+
+        return response()->json([
+            'results' => $contacts->getCollection()->map(fn (Contact $contact) => [
+                'id' => $contact->id,
+                'text' => $this->contactLabel($contact),
+                'company' => $contact->company?->name,
+            ])->values(),
+            'pagination' => [
+                'more' => $contacts->hasMorePages(),
+            ],
+        ]);
+    }
+
+    protected function contactLabel(Contact $contact): string
+    {
+        return trim(collect([
+            $contact->name ?: 'Contact #' . $contact->id,
+            $contact->email ? '<' . $contact->email . '>' : null,
+            $contact->company?->name ? '- ' . $contact->company->name : null,
+        ])->filter()->implode(' '));
     }
 
     /**
@@ -127,6 +187,10 @@ class DemandeController extends BackendController
         // On create (no $id), default captured_at to now
         if ($id === null && empty($attributes['captured_at'])) {
             $attributes['captured_at'] = now()->toDateTimeString();
+        }
+
+        if (array_key_exists('contact_id', $attributes) && !$this->currentRequest->user()?->can('view contacts')) {
+            $attributes['contact_id'] = null;
         }
 
         return $attributes;

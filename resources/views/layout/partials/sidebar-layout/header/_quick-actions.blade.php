@@ -1,13 +1,15 @@
 <!--begin::Quick actions-->
 @canany(['create companies', 'create contacts', 'create campaigns', 'create segments', 'create demandes', 'create sequences', 'create prospect_criteria'])
 <div class="app-navbar-item ms-1 ms-md-3">
-	<div class="btn btn-icon btn-custom btn-icon-muted btn-active-light btn-active-color-primary w-35px h-35px"
+	<button type="button"
+		 class="btn btn-icon btn-custom btn-icon-muted btn-active-light btn-active-color-primary w-35px h-35px"
 		 data-kt-menu-trigger="{default: 'click', lg: 'hover'}"
 		 data-kt-menu-attach="parent"
 		 data-kt-menu-placement="bottom-start"
+		 aria-label="Ouvrir les actions rapides"
 		 title="Actions rapides">
 		{!! getIcon('flash-circle', 'fs-1') !!}
-	</div>
+	</button>
 	<!--begin::Quick actions menu-->
 	<div class="menu menu-sub menu-sub-dropdown menu-column menu-rounded menu-gray-800 menu-state-bg menu-state-color fw-semibold py-4 fs-6 w-275px" data-kt-menu="true">
 		<div class="menu-item px-3">

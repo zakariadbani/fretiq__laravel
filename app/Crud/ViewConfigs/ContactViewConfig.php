@@ -150,7 +150,7 @@ class ContactViewConfig
                 'icon'       => 'bi-plus-circle',
                 'color'      => 'light-success',
                 'permission' => 'create demandes',
-                'href'       => route('admin.demandes.create'),
+                'href'       => route('admin.demandes.create', ['contact_id' => $model->id]),
             ];
         }
 

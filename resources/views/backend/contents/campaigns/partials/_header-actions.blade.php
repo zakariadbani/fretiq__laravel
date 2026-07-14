@@ -42,7 +42,8 @@
                 class="btn btn-sm fw-bold btn-info"
                 id="btn-schedule"
                 data-campaign-id="{{ $model->id }}"
-                data-url="{{ route('admin.campaigns.schedule', $model->id) }}">
+                data-url="{{ route('admin.campaigns.schedule', $model->id) }}"
+                data-preview-url="{{ route('admin.campaigns.dispatchPreview', $model->id) }}">
             <i class="bi bi-calendar-check me-1"></i>
             Planifier
         </button>
@@ -53,7 +54,8 @@
                 id="btn-send-now"
                 data-campaign-id="{{ $model->id }}"
                 data-schedule-type="{{ $model->schedule_type }}"
-                data-url="{{ route('admin.campaigns.sendNow', $model->id) }}">
+                data-url="{{ route('admin.campaigns.sendNow', $model->id) }}"
+                data-preview-url="{{ route('admin.campaigns.dispatchPreview', $model->id) }}">
             @if($model->schedule_type === 'sequence')
                 <i class="bi bi-play-circle me-1"></i>
                 Démarrer la séquence

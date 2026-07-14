@@ -1,4 +1,5 @@
 const mix = require('laravel-mix');
+const fs = require('fs');
 const glob = require('glob');
 const path = require('path');
 const ReplaceInFileWebpackPlugin = require('replace-in-file-webpack-plugin');
@@ -23,6 +24,16 @@ const args = getParameters();
 let demo = getDemos()[0];
 
 const dir = 'resources/_keenthemes/src';
+const requiredCustomBackendAssets = [
+    'js/custom/backend/campaign-template-translations.js',
+    'js/custom/backend/crud-charts.js',
+    'js/custom/backend/crud-form-handler.js',
+    'js/custom/backend/crud-tabs.js',
+    'js/custom/backend/quill-html-field.js',
+    'js/custom/backend/segment-contacts.js',
+    'js/custom/backend/segment-form.js',
+    'js/custom/backend/tinymce-html-field.js',
+];
 
 mix.options({
     cssNano: {
@@ -61,9 +72,29 @@ mix.sass(`${dir}/sass/style.scss`, `public/assets/css/style.bundle.css`, {sassOp
 mix.copyDirectory('node_modules/tinymce/skins', 'public/assets/plugins/custom/tinymce/skins');
 
 // JS pages (single page use)
+const missingCustomBackendSources = requiredCustomBackendAssets.filter(asset => !fs.existsSync(path.resolve(dir, asset)));
+if (missingCustomBackendSources.length) {
+    throw new Error(
+        `Missing required custom backend sources: ${missingCustomBackendSources.join(', ')}. Add tracked sources under ${dir}/js/custom/backend and rerun npm run dev.`
+    );
+}
+
 (glob.sync(`${dir}/js/custom/**/*.js`) || []).forEach(file => {
-    var output = `public/assets/${file.replace(path.normalize(dir), '')}`;
+    var output = `public/assets/${path.relative(dir, file).split(path.sep).join('/')}`;
     mix.scripts(file, output);
+});
+
+mix.after(stats => {
+    if (stats.hasErrors()) {
+        return;
+    }
+
+    const missingAssets = requiredCustomBackendAssets.filter(asset => !fs.existsSync(path.resolve('public/assets', asset)));
+    if (missingAssets.length) {
+        throw new Error(
+            `Missing required custom backend assets: ${missingAssets.join(', ')}. Add tracked sources under ${dir}/js/custom/backend and rerun npm run dev.`
+        );
+    }
 });
 
 // Build media

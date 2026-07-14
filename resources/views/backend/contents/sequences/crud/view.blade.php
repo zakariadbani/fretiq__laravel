@@ -99,7 +99,12 @@
                                           onsubmit="return confirm('Supprimer cette étape ?');">
                                         @csrf
                                         @method('DELETE')
-                                        <button type="submit" class="btn btn-sm btn-icon btn-light-danger">
+                                        <button type="submit"
+                                                class="btn btn-sm btn-icon btn-light-danger"
+                                                title="Supprimer l'étape"
+                                                data-bs-toggle="tooltip"
+                                                data-bs-title="Supprimer l'étape"
+                                                aria-label="Supprimer l'étape">
                                             <i class="bi bi-trash fs-5"></i>
                                         </button>
                                     </form>

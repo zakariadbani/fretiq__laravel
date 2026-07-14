@@ -7,7 +7,7 @@
 	@if(Auth::user())
 	<div class="app-navbar-item ms-1 ms-md-4" id="kt_header_user_menu_toggle">
 		<!--begin::Menu wrapper-->
-		<div class="cursor-pointer symbol symbol-35px" data-kt-menu-trigger="{default: 'click', lg: 'hover'}" data-kt-menu-attach="parent" data-kt-menu-placement="bottom-end">
+		<button type="button" class="btn p-0 border-0 bg-transparent symbol symbol-35px" data-kt-menu-trigger="{default: 'click', lg: 'hover'}" data-kt-menu-attach="parent" data-kt-menu-placement="bottom-end" aria-label="Ouvrir le menu du compte">
 			@if(Auth::user()->profile_photo_url)
 			<img src="{{ \Auth::user()->profile_photo_url }}" class="rounded-3" alt="user" />
 			@else
@@ -15,7 +15,7 @@
 				{{ substr(Auth::user()->name ?? 'User', 0, 1) }}
 			</div>
 			@endif
-		</div>
+		</button>
 		@include('partials/menus/_user-account-menu')
 		<!--end::Menu wrapper-->
 	</div>

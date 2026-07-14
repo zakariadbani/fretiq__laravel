@@ -15,7 +15,6 @@ class PasswordResetLinkController extends Controller
      */
     public function create()
     {
-        addJavascriptFile('assets/js/custom/authentication/reset-password/reset-password.js');
 
         return view('pages/auth.forgot-password');
     }

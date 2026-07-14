@@ -2,7 +2,7 @@
 
 namespace Tests\Feature\Auth;
 
-use App\Providers\RouteServiceProvider;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -10,14 +10,16 @@ class RegistrationTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_registration_screen_can_be_rendered()
+    public function test_registration_screen_explains_signup_is_disabled()
     {
         $response = $this->get('/register');
 
         $response->assertStatus(200);
+        $response->assertSee('Inscription désactivée');
+        $response->assertSee('Contacter l’administrateur');
     }
 
-    public function test_new_users_can_register()
+    public function test_public_registration_post_is_disabled()
     {
         $response = $this->post('/register', [
             'name' => 'Test User',
@@ -26,7 +28,8 @@ class RegistrationTest extends TestCase
             'password_confirmation' => 'password',
         ]);
 
-        $this->assertAuthenticated();
-        $response->assertRedirect(RouteServiceProvider::HOME);
+        $this->assertGuest();
+        $response->assertStatus(405);
+        $this->assertSame(0, User::count());
     }
 }

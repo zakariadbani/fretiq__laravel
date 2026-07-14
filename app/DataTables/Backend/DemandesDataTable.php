@@ -12,18 +12,18 @@ class DemandesDataTable extends BackendDataTable
         'contact' => [
             'title'      => 'Contact',
             'orderable'  => false,
-            'searchable' => false,
+            'searchable' => true,
             'raw'        => true,
         ],
         'company' => [
             'title'      => 'Entreprise',
             'orderable'  => false,
-            'searchable' => false,
+            'searchable' => true,
         ],
         'source' => [
             'title'      => 'Source',
             'orderable'  => false,
-            'searchable' => false,
+            'searchable' => true,
         ],
         'kind' => [
             'title'      => 'Type',
@@ -69,6 +69,30 @@ class DemandesDataTable extends BackendDataTable
     protected function createEditColumns(): void
     {
         $demandeStatuses = config('global.data.demande_statuses', []);
+
+        $this->datatables->filterColumn('contact', function ($query, $keyword) {
+            $kw = '%' . mb_strtolower($keyword) . '%';
+            $query->whereHas('contact', function ($q) use ($kw) {
+                $q->whereRaw('LOWER(contacts.email) LIKE ?', [$kw])
+                  ->orWhereRaw('LOWER(contacts.name) LIKE ?', [$kw]);
+            });
+        });
+
+        $this->datatables->filterColumn('company', function ($query, $keyword) {
+            $kw = '%' . mb_strtolower($keyword) . '%';
+            $query->whereHas('contact.company', function ($q) use ($kw) {
+                $q->whereRaw('LOWER(companies.name) LIKE ?', [$kw])
+                  ->orWhereRaw('LOWER(companies.domain) LIKE ?', [$kw]);
+            });
+        });
+
+        $this->datatables->filterColumn('source', function ($query, $keyword) {
+            $kw = '%' . mb_strtolower($keyword) . '%';
+            $query->where(function ($q) use ($kw) {
+                $q->whereHas('campaign', fn ($campaign) => $campaign->whereRaw('LOWER(campaigns.name) LIKE ?', [$kw]))
+                  ->orWhereHas('sequence', fn ($sequence) => $sequence->whereRaw('LOWER(sequences.name) LIKE ?', [$kw]));
+            });
+        });
 
         $this->datatables->editColumn('contact', function (Demande $row) {
             if (!$row->contact) {

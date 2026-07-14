@@ -116,7 +116,7 @@ class CampaignTemplateViewConfig
                 'icon'       => 'bi-rocket',
                 'color'      => 'light-primary',
                 'permission' => 'create campaigns',
-                'href'       => route('admin.campaigns.create'),
+                'href'       => route('admin.campaigns.create', ['template_id' => $model->id]),
             ];
         }
 

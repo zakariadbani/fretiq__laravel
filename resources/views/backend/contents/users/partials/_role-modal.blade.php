@@ -142,7 +142,7 @@
                                                                type="checkbox"
                                                                name="permissions[]"
                                                                value="{{ $permission->name }}" />
-                                                        <span class="form-check-label">{{ ucwords($permission->name) }}</span>
+                                                        <span class="form-check-label">{{ permission_label($permission->name) }}</span>
                                                     </label>
                                                 </td>
                                             @endforeach

@@ -72,6 +72,7 @@ class AppServiceProvider extends ServiceProvider
                 segmentService:   $app->make(\App\Services\Campaign\SegmentService::class),
                 sendWindowGuard:  $app->make(\App\Services\Campaign\SendWindowGuard::class),
                 sequenceService:  $app->make(\App\Services\Campaign\SequenceService::class),
+                readinessService: $app->make(\App\Services\Zoho\CampaignsReadinessService::class),
             ),
         );
 

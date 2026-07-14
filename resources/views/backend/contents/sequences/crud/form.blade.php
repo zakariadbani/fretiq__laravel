@@ -104,6 +104,7 @@
                                 {{-- is_active --}}
                                 <div class="d-flex align-items-center mb-4">
                                     <div class="form-check form-switch form-check-custom form-check-solid me-4">
+                                        <input type="hidden" name="is_active" value="0" />
                                         <input class="form-check-input"
                                                type="checkbox"
                                                name="is_active"
@@ -119,6 +120,7 @@
                                 {{-- stop_on_reply --}}
                                 <div class="d-flex align-items-center">
                                     <div class="form-check form-switch form-check-custom form-check-solid me-4">
+                                        <input type="hidden" name="stop_on_reply" value="0" />
                                         <input class="form-check-input"
                                                type="checkbox"
                                                name="stop_on_reply"
@@ -218,32 +220,36 @@
                                 <td class="text-end pe-7">
                                     <div class="d-flex gap-1 justify-content-end">
                                         @if($step->id !== $firstStepId)
-                                            <form method="POST"
-                                                  action="{{ route('admin.sequences.moveStepUp', [$model->id, $step->id]) }}">
-                                                @csrf
-                                                <button type="submit" class="btn btn-sm btn-light" title="Monter">
-                                                    <i class="bi bi-arrow-up fs-6"></i>
-                                                </button>
-                                            </form>
+                                            <button type="submit"
+                                                    form="sequence_step_move_up_{{ $step->id }}"
+                                                    class="btn btn-sm btn-light"
+                                                    title="Monter l'étape"
+                                                    data-bs-toggle="tooltip"
+                                                    data-bs-title="Monter l'étape"
+                                                    aria-label="Monter l'étape">
+                                                <i class="bi bi-arrow-up fs-6"></i>
+                                            </button>
                                         @endif
                                         @if($step->id !== $lastStepId)
-                                            <form method="POST"
-                                                  action="{{ route('admin.sequences.moveStepDown', [$model->id, $step->id]) }}">
-                                                @csrf
-                                                <button type="submit" class="btn btn-sm btn-light" title="Descendre">
-                                                    <i class="bi bi-arrow-down fs-6"></i>
-                                                </button>
-                                            </form>
-                                        @endif
-                                        <form method="POST"
-                                              action="{{ route('admin.sequences.deleteStep', [$model->id, $step->id]) }}"
-                                              onsubmit="return confirm('Supprimer cette étape ?');">
-                                            @csrf
-                                            @method('DELETE')
-                                            <button type="submit" class="btn btn-sm btn-icon btn-light-danger">
-                                                <i class="bi bi-trash fs-5"></i>
+                                            <button type="submit"
+                                                    form="sequence_step_move_down_{{ $step->id }}"
+                                                    class="btn btn-sm btn-light"
+                                                    title="Descendre l'étape"
+                                                    data-bs-toggle="tooltip"
+                                                    data-bs-title="Descendre l'étape"
+                                                    aria-label="Descendre l'étape">
+                                                <i class="bi bi-arrow-down fs-6"></i>
                                             </button>
-                                        </form>
+                                        @endif
+                                        <button type="submit"
+                                                form="sequence_step_delete_{{ $step->id }}"
+                                                class="btn btn-sm btn-icon btn-light-danger"
+                                                title="Supprimer l'étape"
+                                                data-bs-toggle="tooltip"
+                                                data-bs-title="Supprimer l'étape"
+                                                aria-label="Supprimer l'étape">
+                                            <i class="bi bi-trash fs-5"></i>
+                                        </button>
                                     </div>
                                 </td>
                                 @endcan
@@ -435,6 +441,35 @@
 
     </div>
     {{-- end out-of-form Étapes --}}
+
+    @can('edit sequences')
+        @foreach($stepsOrdered ?? collect() as $step)
+            @if($step->id !== ($firstStepId ?? null))
+                <form id="sequence_step_move_up_{{ $step->id }}"
+                      method="POST"
+                      action="{{ route('admin.sequences.moveStepUp', [$model->id, $step->id]) }}"
+                      class="d-none">
+                    @csrf
+                </form>
+            @endif
+            @if($step->id !== ($lastStepId ?? null))
+                <form id="sequence_step_move_down_{{ $step->id }}"
+                      method="POST"
+                      action="{{ route('admin.sequences.moveStepDown', [$model->id, $step->id]) }}"
+                      class="d-none">
+                    @csrf
+                </form>
+            @endif
+            <form id="sequence_step_delete_{{ $step->id }}"
+                  method="POST"
+                  action="{{ route('admin.sequences.deleteStep', [$model->id, $step->id]) }}"
+                  onsubmit="return confirm('Supprimer cette étape ?');"
+                  class="d-none">
+                @csrf
+                @method('DELETE')
+            </form>
+        @endforeach
+    @endcan
 
 @endif
 

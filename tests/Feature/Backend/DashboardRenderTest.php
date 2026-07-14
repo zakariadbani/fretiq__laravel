@@ -56,4 +56,53 @@ class DashboardRenderTest extends TestCase
         $this->get('/admin/dashboard')
             ->assertRedirect();
     }
+
+    public function test_legacy_dashboard_redirects_to_admin_dashboard_for_backend_users(): void
+    {
+        $this->actingAs($this->superadmin)
+            ->get('/dashboard')
+            ->assertRedirect('/admin/dashboard');
+    }
+
+    public function test_roleless_user_cannot_access_legacy_dashboard(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'is_active'         => true,
+        ]);
+
+        $this->actingAs($user)
+            ->get('/dashboard')
+            ->assertForbidden()
+            ->assertSee('Votre compte n’a pas les droits nécessaires');
+    }
+
+    public function test_unverified_user_cannot_access_admin_dashboard(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => null,
+            'is_active'         => true,
+        ]);
+
+        $this->actingAs($user)
+            ->get('/admin/dashboard')
+            ->assertRedirect(route('verification.notice'))
+            ->assertDontSee('Campagnes actives')
+            ->assertDontSee('Taux d\'ouverture');
+    }
+
+    public function test_roleless_user_cannot_access_admin_dashboard(): void
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'is_active'         => true,
+        ]);
+
+        $this->actingAs($user)
+            ->get('/admin/dashboard')
+            ->assertForbidden()
+            ->assertSee('Votre compte n’a pas les droits nécessaires')
+            ->assertDontSee('Campagnes actives')
+            ->assertDontSee('Taux d\'ouverture');
+    }
 }

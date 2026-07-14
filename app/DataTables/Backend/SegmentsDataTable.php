@@ -88,18 +88,15 @@ class SegmentsDataTable extends BackendDataTable
     }
 
     /**
-     * Override html() to inject a French emptyTable message.
-     * The language.emptyTable key is the DataTables option that replaces
-     * "No data available in table" when the server returns zero rows.
-     * parent::html() already sets scrollX / drawCallback / buttons via parameters();
-     * this call merges 'language' on top of those.
+     * Keep the segment-specific first-empty-state guidance on top of the
+     * shared French DataTables language options.
      */
     public function html()
     {
         return parent::html()->parameters([
-            'language' => [
+            'language' => array_replace($this->dataTableLanguage(), [
                 'emptyTable' => 'Aucun segment — créez votre premier segment pour cibler vos campagnes.',
-            ],
+            ]),
         ]);
     }
 

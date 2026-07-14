@@ -96,6 +96,23 @@
                 </div>
             </div>
         </div>
+        @if($selectedCompany || $selectedSegment || $selectedTemplate)
+            <div class="alert alert-primary d-flex align-items-center p-5 mb-6">
+                <i class="bi bi-link-45deg fs-2hx text-primary me-4"></i>
+                <div>
+                    <div class="fw-bold">Contexte source conserve</div>
+                    <div class="text-gray-700">
+                        @if($selectedCompany)
+                            Entreprise : {{ $selectedCompany->name }}
+                        @elseif($selectedSegment)
+                            Segment : {{ $selectedSegment->name }}
+                        @elseif($selectedTemplate)
+                            Modele : {{ $selectedTemplate->name }}
+                        @endif
+                    </div>
+                </div>
+            </div>
+        @endif
     @endif
 
     {{-- ── Tab pane wrapper (edit mode: Général tab; create mode: bare content) ── --}}
@@ -178,7 +195,7 @@
                                     <option value="">Sélectionner un segment...</option>
                                     @foreach($segments as $segment)
                                         <option value="{{ $segment->id }}"
-                                            {{ old('segment_id', $model->segment_id ?? '') == $segment->id ? 'selected' : '' }}>
+                                            {{ old('segment_id', $model->segment_id ?? $selectedSegment?->id ?? '') == $segment->id ? 'selected' : '' }}>
                                             {{ $segment->name }}
                                         </option>
                                     @endforeach
@@ -222,7 +239,7 @@
                                     @foreach($templates as $template)
                                         <option value="{{ $template->id }}"
                                                 data-subject="{{ $template->subject }}"
-                                            {{ old('template_id', $model->template_id ?? '') == $template->id ? 'selected' : '' }}>
+                                            {{ old('template_id', $model->template_id ?? $selectedTemplate?->id ?? '') == $template->id ? 'selected' : '' }}>
                                             {{ $template->name }}
                                         </option>
                                     @endforeach
@@ -304,7 +321,7 @@
                                        id="scheduled_at"
                                        class="form-control form-control-solid"
                                        placeholder="Sélectionner une date..."
-                                       value="{{ old('scheduled_at', isset($model) && $model->scheduled_at ? $model->scheduled_at->format('Y-m-d H:i') : '') }}"
+                                        value="{{ old('scheduled_at', isset($model) && $model->scheduled_at ? $model->scheduled_at->copy()->setTimezone($model->scheduleTimezone())->format('Y-m-d H:i') : '') }}"
                                        autocomplete="off" />
                             </div>
                         </div>
@@ -346,7 +363,7 @@
                                        id="next_run_at"
                                        class="form-control form-control-solid"
                                        placeholder="Date du premier envoi..."
-                                       value="{{ old('next_run_at', isset($model) && $model->next_run_at ? $model->next_run_at->format('Y-m-d H:i') : '') }}"
+                                        value="{{ old('next_run_at', isset($model) && $model->next_run_at ? $model->next_run_at->copy()->setTimezone($model->scheduleTimezone())->format('Y-m-d H:i') : '') }}"
                                        autocomplete="off" />
                                 <div class="form-text text-muted mt-1 fs-7">
                                     Obligatoire pour activer une campagne récurrente.

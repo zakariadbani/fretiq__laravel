@@ -103,6 +103,10 @@ class CompaniesDataTable extends BackendDataTable
     public function __construct(Company $model, Request $request)
     {
         parent::__construct($model, $request);
+
+        if ($request->routeIs('admin.companies.archive')) {
+            unset($this->columns['is_active'], $this->table_filters['qualification_status']);
+        }
     }
 
     /**
@@ -111,6 +115,10 @@ class CompaniesDataTable extends BackendDataTable
     public function query()
     {
         $query = $this->currentModel->newQuery()->withCount('contacts');
+
+        if ($this->currentRequest->routeIs('admin.companies.archive')) {
+            $query->rejected();
+        }
 
         // Filter by criteria_id when present — validate as a strict positive integer
         // so 0, null, blank, and non-numeric values are silently ignored (not a silent
@@ -163,6 +171,15 @@ class CompaniesDataTable extends BackendDataTable
         // GlobalDataTable::dataTable() already ran addColumn('action', fn=>''). We
         // use editColumn to replace that empty string with our companies-specific
         // partial that includes the enrich (bi-person-plus) button.
+        $this->datatables->filterColumn('name', function ($query, $keyword) {
+            $kw = '%' . mb_strtolower($keyword) . '%';
+            $query->where(function ($q) use ($kw) {
+                $q->whereRaw('LOWER(companies.name) LIKE ?', [$kw])
+                  ->orWhereRaw('LOWER(companies.domain) LIKE ?', [$kw])
+                  ->orWhereRaw('LOWER(companies.sector) LIKE ?', [$kw]);
+            });
+        });
+
         $this->datatables->editColumn('action', function (Company $row) {
             return view(
                 'backend.contents.companies.partials._row-actions',

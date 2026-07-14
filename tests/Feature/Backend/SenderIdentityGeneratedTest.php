@@ -234,6 +234,75 @@ class SenderIdentityGeneratedTest extends TestCase
         ]);
     }
 
+    // SCR-52 boolean form regression coverage.
+    public function test_update_persists_unchecked_boolean_fields(): void
+    {
+        $identity = $this->makeIdentity([
+            'is_default' => true,
+            'is_active'  => true,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->put('/admin/sender_identities/' . $identity->id, [
+                'name'       => $identity->name,
+                'email'      => $identity->email,
+                'is_default' => '0',
+                'is_active'  => '0',
+            ]);
+
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('sender_identities', [
+            'id'         => $identity->id,
+            'is_default' => 0,
+            'is_active'  => 0,
+        ]);
+    }
+
+    public function test_update_keeps_checked_boolean_fields_true(): void
+    {
+        $identity = $this->makeIdentity([
+            'is_default' => false,
+            'is_active'  => false,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->put('/admin/sender_identities/' . $identity->id, [
+                'name'       => $identity->name,
+                'email'      => $identity->email,
+                'is_default' => '1',
+                'is_active'  => '1',
+            ]);
+
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('sender_identities', [
+            'id'         => $identity->id,
+            'is_default' => 1,
+            'is_active'  => 1,
+        ]);
+    }
+
+    public function test_edit_form_places_hidden_boolean_inputs_before_checkboxes(): void
+    {
+        $identity = $this->makeIdentity();
+
+        $html = $this->actingAs($this->superadmin)
+            ->get('/admin/sender_identities/' . $identity->id . '/edit')
+            ->assertStatus(200)
+            ->getContent();
+
+        $isDefaultHidden = strpos($html, 'type="hidden" name="is_default" value="0"');
+        $isDefaultCheckbox = strpos($html, 'name="is_default"', $isDefaultHidden + 1);
+        $isActiveHidden = strpos($html, 'type="hidden" name="is_active" value="0"');
+        $isActiveCheckbox = strpos($html, 'name="is_active"', $isActiveHidden + 1);
+
+        $this->assertNotFalse($isDefaultHidden);
+        $this->assertNotFalse($isDefaultCheckbox);
+        $this->assertLessThan($isDefaultCheckbox, $isDefaultHidden);
+        $this->assertNotFalse($isActiveHidden);
+        $this->assertNotFalse($isActiveCheckbox);
+        $this->assertLessThan($isActiveCheckbox, $isActiveHidden);
+    }
+
     // ── Delete ────────────────────────────────────────────────────────────────
 
     /**

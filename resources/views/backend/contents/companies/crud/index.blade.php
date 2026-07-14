@@ -1,12 +1,25 @@
 <x-default-layout>
 
+@php
+    $isArchive = $isArchive ?? false;
+@endphp
+
 @section('title')
-    Entreprises
+    {{ $isArchive ? 'Rejetées / Archives' : 'Entreprises' }}
 @endsection
 
 @section('breadcrumbs')
-    <x-crud.breadcrumb :items="[['label' => 'Entreprises']]" />
+    <x-crud.breadcrumb :items="$isArchive
+        ? [['label' => 'Entreprises', 'route' => 'admin.companies.index'], ['label' => 'Rejetées / Archives']]
+        : [['label' => 'Entreprises']]" />
 @endsection
+
+@if($isArchive)
+    <div class="alert alert-warning d-flex align-items-center mb-6" role="alert">
+        <i class="bi bi-archive-fill fs-2 me-3"></i>
+        <div>Rejetées / Archives — ces entreprises restent exclues de la prospection active.</div>
+    </div>
+@endif
 
 <div class="card">
     {{-- Card header --}}
@@ -61,6 +74,21 @@
                     </div>
                 </div>
 
+                @can('view companies')
+                    @if($isArchive)
+                        <a href="{{ route('admin.companies.index') }}" class="btn btn-light-danger me-3">
+                            <i class="bi bi-arrow-left fs-4"></i>
+                            Entreprises actives
+                        </a>
+                    @else
+                        <a href="{{ route('admin.companies.archive') }}" class="btn btn-light-danger me-3">
+                            <i class="bi bi-archive fs-4"></i>
+                            Rejetées / Archives
+                            <span id="rejected-companies-count" class="badge badge-light-danger ms-1">{{ $rejectedCount ?? 0 }}</span>
+                        </a>
+                    @endif
+                @endcan
+
                 @can('create companies')
                 <a href="{{ route('admin.companies.create') }}" class="btn btn-primary">
                     <i class="bi bi-plus-lg fs-2"></i>
@@ -68,6 +96,14 @@
                 </a>
                 @endcan
             </div>
+        </div>
+    </div>
+
+    <div id="active-filters-bar" class="d-none px-9 pt-3">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <span class="fw-semibold text-gray-700">Filtres actifs :</span>
+            <div id="active-filters-badges" class="d-flex flex-wrap gap-2" aria-live="polite"></div>
+            <button type="button" id="clear-all-filters" class="btn btn-sm btn-light-primary d-none">Tout effacer</button>
         </div>
     </div>
 

@@ -7,6 +7,7 @@ use App\Models\Package;
 use App\Models\PackageAssignment;
 use App\Models\ProspectCriteria;
 use App\Models\User;
+use App\Services\Quota\DiscoveryQuotaService;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -41,6 +42,8 @@ class QuotaBadgeUiTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        Carbon::setTestNow(app(DiscoveryQuotaService::class)->today()->setTime(12, 0));
 
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
@@ -272,8 +275,8 @@ class QuotaBadgeUiTest extends TestCase
         $response->assertStatus(200);
         // Company meter is limited → shows "Recherches SerpAPI :" span
         $response->assertSee('Recherches SerpAPI :', false);
-        // Contact meter is unlimited → shows "∞ Illimité" in the contacts span
-        $response->assertSee('∞ Illimité', false);
+        // Contact meter is unlimited and now labels the numerator semantics.
+        $response->assertSee('Utilisé + réservé : Illimité', false);
     }
 
     // ── Test 5 (finding #7): Relabel + monthly figure + zero-cap no crash ────────
@@ -332,7 +335,7 @@ class QuotaBadgeUiTest extends TestCase
 
         $response->assertStatus(200);
         // The monthly suffix "ce mois" must appear when monthly_credits is set.
-        $response->assertSee('ce mois', false);
+        $response->assertSee('Ce mois', false);
     }
 
     /**
@@ -365,7 +368,7 @@ class QuotaBadgeUiTest extends TestCase
         $response->assertStatus(200);
         // Badge renders in danger state (0/0 cap) — page must still return valid HTML.
         // "ce mois" confirms the monthly suffix rendered (even at 0/0).
-        $response->assertSee('ce mois', false);
+        $response->assertSee('Ce mois', false);
     }
 
     // ── Test 6 (UX consistency): monthly exhausted, daily remaining ─────────────
@@ -492,7 +495,7 @@ class QuotaBadgeUiTest extends TestCase
             ->get('/admin/prospect_criteria');
 
         $response->assertStatus(200);
-        $response->assertSee('Quota sur-réservé', false);
+        $response->assertSee('Sur-reservation priorisee', false);
     }
 
     /**
@@ -517,7 +520,7 @@ class QuotaBadgeUiTest extends TestCase
             ->get('/admin/prospect_criteria');
 
         $response->assertStatus(200);
-        $response->assertDontSee('Quota sur-réservé', false);
+        $response->assertDontSee('Sur-reservation priorisee', false);
     }
 
     /**
@@ -539,6 +542,6 @@ class QuotaBadgeUiTest extends TestCase
             ->get('/admin/prospect_criteria');
 
         $response->assertStatus(200);
-        $response->assertDontSee('Quota sur-réservé', false);
+        $response->assertDontSee('Sur-reservation priorisee', false);
     }
 }

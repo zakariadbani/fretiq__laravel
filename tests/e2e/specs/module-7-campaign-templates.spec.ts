@@ -357,6 +357,96 @@ test.describe('Campaign Templates module', () => {
     });
   });
 
+  test('edit: scoped saves, local tabs, route dirty guard, success and validation failure', async ({ page }) => {
+    const templates = new CampaignTemplatePage(page);
+    const name = uniqueName('E2E Scoped Template');
+    const subject = `E2E scoped subject ${Date.now()}`;
+    const enSubject = `E2E EN scoped subject ${Date.now()}`;
+
+    await templates.gotoCreate();
+    await expect(page.locator('#form_crud input[name="name"]')).toBeVisible({ timeout: 10000 });
+    await templates.fillAndSubmit({ name, subject, htmlContent: FIXTURE_HTML });
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
+
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.search(name);
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.clickRowAction(0, 'edit');
+    await page.waitForURL((u) => /\/campaign_templates\/\d+\/edit$/.test(u.pathname), { timeout: 15000 });
+
+    const idMatch = page.url().match(/\/campaign_templates\/(\d+)\/edit/);
+    if (!idMatch) throw new Error(`Could not extract template id from edit URL: ${page.url()}`);
+    const templateId = idMatch[1];
+
+    let dialogCount = 0;
+    page.on('dialog', async (dialog) => {
+      dialogCount++;
+      if (dialogCount !== 2) {
+        await dialog.accept();
+      } else {
+        await dialog.dismiss();
+      }
+    });
+
+    await templates.subjectInput.fill(`${subject} dirty`);
+    await templates.openTraductionsTab();
+    await expect(page.locator('#template_traductions')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('#form_crud #campaign_template_translation_form')).toHaveCount(0);
+    expect(dialogCount).toBe(1);
+    await expect(templates.stickyFormActions).toHaveClass(/d-none/);
+    await expect(templates.translationForm).toBeVisible();
+
+    const editUrl = page.url();
+    await templates.routeLinks.first().click();
+    expect(dialogCount).toBe(2);
+    expect(page.url()).toBe(editUrl);
+
+    let mainSaveRequests = 0;
+    page.on('request', (request) => {
+      const url = request.url();
+      if (
+        request.method() === 'POST' &&
+        url.includes(`/admin/campaign_templates/${templateId}`) &&
+        !url.endsWith('/translation')
+      ) {
+        mainSaveRequests++;
+      }
+    });
+
+    await templates.fillTranslation({
+      subject: enSubject,
+      previewText: 'E2E EN scoped preview',
+      htmlContent: '<p>E2E EN scoped content.</p>',
+    });
+
+    const translationResponse = page.waitForResponse((response) =>
+      response.url().endsWith(`/admin/campaign_templates/${templateId}/translation`) &&
+      response.request().method() === 'POST' &&
+      response.ok()
+    );
+    await templates.saveTranslation();
+    await translationResponse;
+    await expect(page.locator('.toastr, #toast-container, .toast')).toContainText(/Traduction enregistrée|enregistrée/i, { timeout: 10000 });
+    expect(mainSaveRequests).toBe(0);
+
+    await templates.translationSubjectInput.fill('');
+    await templates.saveTranslation();
+    await expect(page.locator('.toastr-error')).toContainText('Le sujet anglais est requis.', { timeout: 10000 });
+
+    await templates.translationSubjectInput.fill(enSubject);
+    await templates.openGeneralTab();
+    await templates.subjectInput.fill(subject);
+
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.deleteAllByName(name, {
+      search: (q) => templates.search(q),
+      waitForDataTable,
+      confirmDelete,
+    });
+  });
+
 });
 
 // <<<

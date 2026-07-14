@@ -9,16 +9,22 @@ use App\Http\Controllers\Traits\Datatableable;
 use App\Jobs\SendCampaignJob;
 use App\Models\Campaign;
 use App\Models\CampaignRecipient;
+use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
+use App\Models\Company;
 use App\Models\Segment;
 use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SenderIdentity;
+use App\Models\Setting;
 use App\Services\Campaign\CampaignService;
 use App\Services\Campaign\CampaignZohoListSyncService;
 use App\Services\Campaign\SegmentService;
 use App\Services\Demande\DemandeCaptureService;
+use App\Services\Onboarding\FirstUseChecklistService;
 use App\Services\Translation\LanguageResolver;
+use Carbon\Carbon;
+use DateTimeZone;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -48,7 +54,7 @@ class CampaignController extends BackendController
         $this->middleware('permission:create campaigns')->only(['create', 'store']);
         $this->middleware('permission:edit campaigns')->only(['edit', 'update', 'executeSwitch']);
         $this->middleware('permission:delete campaigns')->only(['delete']);
-        $this->middleware('permission:send campaigns')->only(['schedule', 'sendNow', 'syncZohoList']);
+        $this->middleware('permission:send campaigns')->only(['dispatchPreview', 'schedule', 'sendNow', 'syncZohoList']);
         $this->middleware('permission:create demandes')->only(['markReplied']);
 
         $this->listTitle = 'Campagnes';
@@ -74,6 +80,8 @@ class CampaignController extends BackendController
             [
                 'listTitle'       => $this->listTitle,
                 'dataTableConfig' => $this->currentDataTable->getIndexConfig(),
+                'schedulerHealth' => $this->schedulerHealth(),
+                'firstUseChecklist' => app(FirstUseChecklistService::class)->checklist(),
             ]
         );
     }
@@ -104,17 +112,22 @@ class CampaignController extends BackendController
             return redirect(route('admin.campaigns.index'));
         }
 
-        $latestRun = $campaign->runs->first();
-        $stats     = $this->campaignStats($campaign);
+        $executedRuns = $campaign->runs
+            ->filter(fn (CampaignRun $run) => $run->isExecuted())
+            ->values();
+        $executedRunIds = $executedRuns->pluck('id');
+
+        $latestRun = $executedRuns->first();
+        $stats     = $this->campaignStats($executedRuns);
         $currentAudience = $campaign->segment
             ? app(SegmentService::class)->resolve($campaign->segment)
             : collect();
 
         // Rollup / run-scope recipients — see recipientFilters() + recipientScopeQuery().
-        $recipientFilters = $this->recipientFilters($campaign);
+        $recipientFilters = $this->recipientFilters($executedRuns);
         $isRunScope       = $recipientFilters['run'] !== null;
 
-        $scopeQuery = $this->recipientScopeQuery($campaign, $recipientFilters);
+        $scopeQuery = $this->recipientScopeQuery($executedRunIds, $recipientFilters);
         $chipCounts = $this->recipientChipCounts($scopeQuery, $isRunScope);
 
         $pageQuery = clone $scopeQuery;
@@ -131,16 +144,16 @@ class CampaignController extends BackendController
             ]));
 
         // Tab badge = distinct contacts across all runs (structural, filter-independent).
-        $recipientsTotal = CampaignRecipient::whereIn('campaign_run_id', $campaign->runs->pluck('id'))
+        $recipientsTotal = CampaignRecipient::whereIn('campaign_run_id', $executedRunIds)
             ->distinct()->count('contact_id');
 
-        $viewConfig    = CampaignViewConfig::make($campaign, $stats, $recipientsTotal, $currentAudience->count());
+        $viewConfig    = CampaignViewConfig::make($campaign, $stats, $recipientsTotal, $currentAudience->count(), $executedRuns->count());
         $enrolledCount = SequenceEnrollment::where('campaign_id', $campaign->id)->count();
 
         return $this->getView('backend.contents.campaigns.crud.view')
             ->with('model', $campaign)
             ->with('latestRun', $latestRun)
-            ->with('runs', $campaign->runs)
+            ->with('runs', $executedRuns)
             ->with('stats', $stats)
             ->with('currentAudience', $currentAudience)
             ->with('recipients', $recipients)
@@ -148,61 +161,78 @@ class CampaignController extends BackendController
             ->with('recipientFilters', $recipientFilters)
             ->with('chipCounts', $chipCounts)
             ->with('viewConfig', $viewConfig)
-            ->with('enrolledCount', $enrolledCount);
+            ->with('enrolledCount', $enrolledCount)
+            ->with('schedulerHealth', $this->schedulerHealth());
+    }
+
+    private function schedulerHealth(): array
+    {
+        $requiredCommands = [
+            'generate_runs' => [
+                'label' => 'campaigns:generate-runs',
+                'key' => 'campaign_scheduler.commands.generate_runs.last_success_at',
+            ],
+            'dispatch_due' => [
+                'label' => 'campaigns:dispatch-due',
+                'key' => 'campaign_scheduler.commands.dispatch_due.last_success_at',
+            ],
+        ];
+
+        $commands = [];
+
+        foreach ($requiredCommands as $name => $command) {
+            $value = Setting::get($command['key']);
+            $lastSuccessAt = null;
+
+            if (is_string($value) && trim($value) !== '') {
+                try {
+                    $lastSuccessAt = Carbon::parse($value, 'UTC')->utc();
+                } catch (\Throwable) {
+                    $lastSuccessAt = null;
+                }
+            }
+
+            $commands[$name] = [
+                'label' => $command['label'],
+                'status' => $lastSuccessAt === null
+                    ? 'missing'
+                    : ($lastSuccessAt->lt(Carbon::now('UTC')->subMinutes(2)) ? 'stale' : 'healthy'),
+                'last_success_at' => $lastSuccessAt,
+            ];
+        }
+
+        $statuses = collect($commands)->pluck('status');
+
+        return [
+            'status' => $statuses->contains('missing')
+                ? 'missing'
+                : ($statuses->contains('stale') ? 'stale' : 'healthy'),
+            'commands' => $commands,
+        ];
     }
 
     /**
-     * Compute aggregate KPI stats for a campaign from its runs (stats_* columns).
+     * Compute aggregate KPI stats from executed runs.
      * Uses only run-level stats columns — no recipient rows needed.
      *
-     * @param Campaign $campaign  Must already have runs eager-loaded.
+     * @param iterable<CampaignRun> $runs
      * @return array
      */
-    protected function campaignStats(Campaign $campaign): array
+    protected function campaignStats(iterable $runs): array
     {
-        $runs = $campaign->runs ?? collect();
-
-        $totalSent      = $runs->sum('stats_sent');
-        $totalDelivered = $runs->sum('stats_delivered');
-        $totalOpened    = $runs->sum('stats_opened');
-        $totalClicked   = $runs->sum('stats_clicked');
-        $totalReplied   = $runs->sum('stats_replied');
-        $totalBounced   = $runs->sum('stats_bounced');
-        $totalConversions = $runs->sum('conversion_count');
-
-        $openRate = $totalDelivered > 0
-            ? round(($totalOpened / $totalDelivered) * 100, 1)
-            : 0;
-
-        $clickRate = $totalDelivered > 0
-            ? round(($totalClicked / $totalDelivered) * 100, 1)
-            : 0;
-
-        $conversionRate = $totalDelivered > 0
-            ? round(($totalConversions / $totalDelivered) * 100, 1)
-            : 0;
+        $runs = collect($runs);
 
         // Opens over time: one data-point per run (ordered oldest-first)
         $runsAsc  = $runs->sortBy('run_at');
         $otLabels = $runsAsc->map(fn ($r) => $r->run_at ? $r->run_at->format('d/m') : '—')->values()->toArray();
-        $otSeries = $runsAsc->map(fn ($r) => (int) ($r->stats_opened ?? 0))->values()->toArray();
+        $otSeries = $runsAsc->map(fn (CampaignRun $run) => $run->kpis()['opened'])->values()->toArray();
 
-        return [
-            'total_sent'       => $totalSent,
-            'total_delivered'  => $totalDelivered,
-            'total_opened'     => $totalOpened,
-            'total_clicked'    => $totalClicked,
-            'total_replied'    => $totalReplied,
-            'total_bounced'    => $totalBounced,
-            'total_conversions'=> $totalConversions,
-            'open_rate'        => $openRate,
-            'click_rate'       => $clickRate,
-            'conversion_rate'  => $conversionRate,
+        return array_merge(CampaignRun::aggregateKpis($runs), [
             'opens_over_time'  => [
                 'series' => $otSeries,
                 'labels' => $otLabels,
             ],
-        ];
+        ]);
     }
 
     // ── Recipients helpers ─────────────────────────────────────────────────────
@@ -213,13 +243,13 @@ class CampaignController extends BackendController
      * q    — trimmed search string (max 100 chars)
      * statut — whitelisted status slug|null
      *
-     * @param  Campaign $campaign  Must have runs eager-loaded.
+     * @param  \Illuminate\Support\Collection<int, CampaignRun> $executedRuns
      * @return array{run: \App\Models\CampaignRun|null, q: string, statut: string|null}
      */
-    private function recipientFilters(Campaign $campaign): array
+    private function recipientFilters($executedRuns): array
     {
         $runId = (int) request()->query('run_id', 0);
-        $run   = $runId > 0 ? $campaign->runs->firstWhere('id', $runId) : null;
+        $run   = $runId > 0 ? $executedRuns->firstWhere('id', $runId) : null;
 
         $q = mb_substr(trim((string) request()->query('q', '')), 0, 100);
 
@@ -241,11 +271,11 @@ class CampaignController extends BackendController
      * CRITICAL window spec: only ROW_NUMBER carries ORDER BY id DESC.
      * Aggregate windows (COUNT/MAX) are PARTITION BY only — no ORDER BY.
      *
-     * @param  Campaign $campaign
+     * @param  \Illuminate\Support\Collection<int, int> $runIds
      * @param  array    $filters   From recipientFilters().
      * @return \Illuminate\Database\Eloquent\Builder
      */
-    private function recipientScopeQuery(Campaign $campaign, array $filters)
+    private function recipientScopeQuery($runIds, array $filters)
     {
         $run = $filters['run'];
         $q   = $filters['q'];
@@ -255,8 +285,6 @@ class CampaignController extends BackendController
             $query = CampaignRecipient::where('campaign_run_id', $run->id);
         } else {
             // Rollup scope: one row per contact = latest recipient row + per-contact aggregates.
-            $runIds = $campaign->runs->pluck('id');
-
             $sub = CampaignRecipient::query()
                 ->whereIn('campaign_run_id', $runIds)
                 ->select('campaign_recipients.*')
@@ -384,6 +412,10 @@ class CampaignController extends BackendController
      */
     protected function getViewVars(): array
     {
+        $selectedSegment = $this->resolveSourceModel('segment_id', Segment::class, 'view segments');
+        $selectedTemplate = $this->resolveSourceModel('template_id', CampaignTemplate::class, 'view campaign_templates');
+        $selectedCompany = $this->resolveSourceModel('company_id', Company::class, 'view companies');
+
         $sequences = Sequence::where('is_active', true)
             ->with(['steps' => fn ($q) => $q->with('template')->orderBy('step_no')])
             ->orderBy('name')
@@ -396,7 +428,24 @@ class CampaignController extends BackendController
             'scheduleTypes'        => config('global.data.schedule_types', []),
             'recurrenceFrequencies'=> config('global.data.recurrence_frequencies', []),
             'sequences'            => $sequences,
+            'selectedSegment'       => $selectedSegment,
+            'selectedTemplate'      => $selectedTemplate,
+            'selectedCompany'       => $selectedCompany,
         ];
+    }
+
+    private function resolveSourceModel(string $queryKey, string $modelClass, string $permission): ?object
+    {
+        if (! $this->currentRequest->user()?->can($permission)) {
+            return null;
+        }
+
+        $id = $this->currentRequest->query($queryKey);
+        if (! is_numeric($id) || (int) $id < 1) {
+            return null;
+        }
+
+        return $modelClass::find((int) $id);
     }
 
     /**
@@ -443,6 +492,31 @@ class CampaignController extends BackendController
         // above for symmetry; prevents a stale template_id from a prior one_shot edit.
         if ($scheduleType === 'sequence') {
             $attributes['template_id'] = null;
+        }
+
+        $timezone = $attributes['timezone'] ?? 'Europe/Paris';
+        if ($timezone === '') {
+            $timezone = 'Europe/Paris';
+        }
+
+        try {
+            $timezone = (new DateTimeZone($timezone))->getName();
+        } catch (\Throwable) {
+            return $attributes;
+        }
+
+        foreach (['scheduled_at', 'next_run_at'] as $field) {
+            if (empty($attributes[$field])) {
+                continue;
+            }
+
+            try {
+                $attributes[$field] = Carbon::parse($attributes[$field], $timezone)
+                    ->utc()
+                    ->format('Y-m-d H:i:s');
+            } catch (\Throwable) {
+                // Leave invalid date input for the model validator.
+            }
         }
 
         return $attributes;
@@ -625,6 +699,31 @@ class CampaignController extends BackendController
         return response()->json(['success' => true]);
     }
 
+
+    public function dispatchPreview($id)
+    {
+        $campaign = Campaign::findOrFail((int) $id);
+        $preflight = app(CampaignService::class)->dispatchPreflight($campaign);
+
+        return response()->json([
+            'ok' => $preflight['ok'],
+            'count' => $preflight['count'],
+            'messages' => $preflight['messages'],
+            'message' => $preflight['ok']
+                ? "Audience vérifiée : {$preflight['count']} destinataire(s) éligible(s)."
+                : implode(' ', $preflight['messages']),
+        ], $preflight['ok'] ? 200 : 422);
+    }
+
+    private function blockedPreflightResponse(Campaign $campaign, array $preflight)
+    {
+        return response()->json([
+            'message' => 'error',
+            'text' => implode(' ', $preflight['messages']),
+            'count' => $preflight['count'],
+            'redirect' => route('admin.campaigns.view', $campaign->id),
+        ], 422);
+    }
     /**
      * Schedule a campaign run.
      *
@@ -652,6 +751,10 @@ class CampaignController extends BackendController
             ], 422);
         }
 
+        $preflight = app(CampaignService::class)->dispatchPreflight($campaign);
+        if (! $preflight['ok']) {
+            return $this->blockedPreflightResponse($campaign, $preflight);
+        }
         // Recurring branch — activate the recurrence; do NOT create an immediate run.
         if ($campaign->schedule_type === 'recurring') {
             if ($campaign->next_run_at === null) {
@@ -663,24 +766,26 @@ class CampaignController extends BackendController
             $campaign->update(['is_active' => true]);
 
             $next = $campaign->next_run_at->copy()->setTimezone($campaign->timezone ?? 'UTC')->format('d/m/Y H:i');
+            $successText = "Campagne récurrente planifiée pour {$preflight['count']} destinataire(s) éligible(s) vérifié(s) — prochaine occurrence le {$next}.";
 
-            session()->flash('success', "Campagne récurrente planifiée — prochaine occurrence le {$next}.");
+            session()->flash('success', $successText);
 
             return response()->json([
                 'message'  => 'success',
-                'text'     => "Campagne récurrente planifiée — prochaine occurrence le {$next}.",
+                'text'     => $successText,
                 'redirect' => route('admin.campaigns.view', $id),
             ]);
         }
 
         // One-shot branch (default).
         app(CampaignService::class)->scheduleOneShot($campaign);
+        $successText = "Campagne planifiée avec succès pour {$preflight['count']} destinataire(s) éligible(s) vérifié(s).";
 
-        session()->flash('success', 'Campagne planifiée avec succès.');
+        session()->flash('success', $successText);
 
         return response()->json([
             'message'  => 'success',
-            'text'     => 'Campagne planifiée avec succès.',
+            'text'     => $successText,
             'redirect' => route('admin.campaigns.view', $id),
         ]);
     }
@@ -725,25 +830,30 @@ class CampaignController extends BackendController
         $campaign = Campaign::with('sequence')->findOrFail((int) $id);
 
         // ── Sequence-type branch ───────────────────────────────────────────────
+        $preflight = app(CampaignService::class)->dispatchPreflight($campaign);
+        if (! $preflight['ok']) {
+            return $this->blockedPreflightResponse($campaign, $preflight);
+        }
         if ($campaign->schedule_type === 'sequence') {
             try {
                 $result   = app(CampaignService::class)->launchSequence($campaign);
                 $enrolled = $result['enrolled'];
                 $skipped  = $result['skipped'];
+                $successText = "Séquence démarrée — {$enrolled} contact(s) ajouté(s) sur {$preflight['count']} destinataire(s) éligible(s) vérifié(s) ({$skipped} déjà suivis).";
 
                 if ($enrolled === 0 && $skipped === 0) {
                     // Empty segment
-                    session()->flash('warning', 'Aucun contact éligible dans ce segment.');
+                    session()->flash('warning', $successText);
                 } elseif ($enrolled === 0) {
                     // All contacts already enrolled
-                    session()->flash('warning', "Aucun contact éligible. ({$skipped} déjà suivis ignorés)");
+                    session()->flash('warning', $successText);
                 } else {
-                    session()->flash('success', "Séquence démarrée — {$enrolled} contact(s) ajouté(s) ({$skipped} déjà suivis).");
+                    session()->flash('success', $successText);
                 }
 
                 return response()->json([
                     'message'  => 'success',
-                    'text'     => "Séquence démarrée — {$enrolled} contact(s) ajouté(s) ({$skipped} déjà suivis).",
+                    'text'     => $successText,
                     'redirect' => route('admin.campaigns.view', $id),
                 ]);
             } catch (\InvalidArgumentException $e) {
@@ -763,11 +873,13 @@ class CampaignController extends BackendController
 
         SendCampaignJob::dispatch($run->id);
 
-        session()->flash('success', "Envoi lancé — la campagne est en file d'attente.");
+        $successText = "Envoi lancé pour {$preflight['count']} destinataire(s) éligible(s) vérifié(s) — la campagne est en file d'attente.";
+
+        session()->flash('success', $successText);
 
         return response()->json([
             'message'  => 'success',
-            'text'     => "Envoi lancé — la campagne est en file d'attente.",
+            'text'     => $successText,
             'redirect' => route('admin.campaigns.view', $id),
         ]);
     }

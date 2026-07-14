@@ -8,12 +8,20 @@
     <x-crud.breadcrumb :items="[['label' => 'Administration'], ['label' => 'Zoho']]" />
 @endsection
 
+@php
+    $driverLabels = [
+        'local' => 'Mode local',
+        'zoho' => 'Zoho actif',
+    ];
+    $unknownDriverLabel = 'Source inconnue';
+@endphp
+
 {{-- Action buttons (top of content, permission-gated) --}}
-<div class="d-flex justify-content-end gap-3 mb-5">
+<div class="d-flex flex-column flex-sm-row flex-wrap justify-content-sm-end gap-2 gap-md-3 mb-5" data-zoho-action-bar>
     @can('sync zoho')
-        <form method="POST" action="{{ route('admin.zoho.sync') }}" class="d-inline">
+        <form method="POST" action="{{ route('admin.zoho.sync') }}" class="d-inline-flex">
             @csrf
-            <button type="submit" class="btn btn-sm fw-bold btn-primary">
+            <button type="submit" class="btn btn-sm fw-bold btn-primary w-100">
                 <i class="bi bi-arrow-repeat fs-4"></i>
                 Synchroniser maintenant
             </button>
@@ -21,34 +29,15 @@
     @endcan
 
     @can('create campaign_templates')
-        <form method="POST" action="{{ route('admin.zoho.sync_templates') }}" class="d-inline">
+        <form method="POST" action="{{ route('admin.zoho.sync_templates') }}" class="d-inline-flex">
             @csrf
-            <button type="submit" class="btn btn-sm fw-bold btn-light-info">
+            <button type="submit" class="btn btn-sm fw-bold btn-light-info w-100">
                 <i class="bi bi-cloud-download fs-4"></i>
                 Importer les modèles d'email
             </button>
         </form>
     @endcan
 </div>
-
-{{-- Flash messages --}}
-@if (session('success'))
-    <div class="alert alert-success d-flex align-items-center mb-6 p-5">
-        <i class="bi bi-shield-check fs-2hx text-success me-4"></i>
-        <div class="d-flex flex-column">
-            <span class="fw-semibold fs-6">{{ session('success') }}</span>
-        </div>
-    </div>
-@endif
-
-@if (session('error'))
-    <div class="alert alert-danger d-flex align-items-center mb-6 p-5">
-        <i class="bi bi-info-circle fs-2hx text-danger me-4"></i>
-        <div class="d-flex flex-column">
-            <span class="fw-semibold fs-6">{{ session('error') }}</span>
-        </div>
-    </div>
-@endif
 
 {{-- On-demand notice --}}
 <div class="notice d-flex bg-light-info rounded border-info border border-dashed mb-6 p-6">
@@ -80,7 +69,7 @@
                 @php
                     $crmBadge = $crmDriver === 'zoho' ? 'success' : 'secondary';
                 @endphp
-                <span class="badge badge-light-{{ $crmBadge }} fs-7 fw-bold">{{ $crmDriver }}</span>
+                <span class="badge badge-light-{{ $crmBadge }} fs-7 fw-bold">{{ $driverLabels[$crmDriver] ?? $unknownDriverLabel }}</span>
             </div>
         </div>
     </div>
@@ -99,7 +88,7 @@
                 @php
                     $campBadge = $campaignsDriver === 'zoho' ? 'success' : 'secondary';
                 @endphp
-                <span class="badge badge-light-{{ $campBadge }} fs-7 fw-bold">{{ $campaignsDriver }}</span>
+                <span class="badge badge-light-{{ $campBadge }} fs-7 fw-bold">{{ $driverLabels[$campaignsDriver] ?? $unknownDriverLabel }}</span>
             </div>
         </div>
     </div>

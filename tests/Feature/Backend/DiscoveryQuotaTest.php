@@ -45,6 +45,8 @@ class DiscoveryQuotaTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        Carbon::setTestNow(app(DiscoveryQuotaService::class)->today()->setTime(12, 0));
+
 
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
@@ -120,6 +122,65 @@ class DiscoveryQuotaTest extends TestCase
     /**
      * Create a Package with both company and contact meters and assign it as active.
      */
+    public function test_display_summaries_separate_used_reserved_total_and_remaining(): void
+    {
+        $package = Package::create([
+            'name'                    => 'Pack affichage',
+            'daily_credits'           => 10,
+            'monthly_credits'         => 20,
+            'daily_contact_credits'   => 5,
+            'monthly_contact_credits' => 12,
+            'quota_anchor_date'       => Carbon::today()->toDateString(),
+            'is_active'               => true,
+            'sort_order'              => 0,
+        ]);
+        PackageAssignment::create([
+            'package_id'  => $package->id,
+            'assigned_by' => null,
+        ]);
+
+        $criteria = $this->makeCriteria();
+        /** @var DiscoveryQuotaService $service */
+        $service = app(DiscoveryQuotaService::class);
+        $today = $service->today();
+
+        DiscoveryRun::create([
+            'prospect_criteria_id'     => $criteria->id,
+            'status'                   => 'completed',
+            'credits_reserved'         => 3,
+            'consumed'                 => 3,
+            'contact_credits_reserved' => 1,
+            'contact_consumed'         => 1,
+            'quota_date'               => $today->toDateString(),
+        ]);
+
+        DiscoveryRun::create([
+            'prospect_criteria_id'     => $criteria->id,
+            'status'                   => 'pending',
+            'credits_reserved'         => 4,
+            'consumed'                 => 0,
+            'contact_credits_reserved' => 2,
+            'contact_consumed'         => 0,
+            'quota_date'               => $today->toDateString(),
+        ]);
+
+        $daily = $service->dailyDisplaySummary();
+        $monthly = $service->monthlyDisplaySummary($today);
+
+        $this->assertSame([
+            'unlimited' => false,
+            'used_reserved' => 7,
+            'total' => 10,
+            'remaining' => 3,
+        ], $daily['company']);
+        $this->assertSame(3, $daily['contacts']['used_reserved']);
+        $this->assertSame(2, $daily['contacts']['remaining']);
+        $this->assertSame(7, $monthly['company']['used_reserved']);
+        $this->assertSame(13, $monthly['company']['remaining']);
+        $this->assertSame(3, $monthly['contacts']['used_reserved']);
+        $this->assertSame(9, $monthly['contacts']['remaining']);
+    }
+
     private function assignPackageWith(int $companyCredits, ?int $contactCredits): Package
     {
         $package = Package::create([

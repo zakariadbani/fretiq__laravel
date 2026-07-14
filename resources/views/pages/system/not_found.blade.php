@@ -17,13 +17,13 @@
 
         <!--begin::Title-->
         <h1 class="fw-bolder fs-2hx text-gray-900 mb-4">
-            Oops!
+            Page introuvable
         </h1>
         <!--end::Title-->
 
         <!--begin::Text-->
         <div class="fw-semibold fs-6 text-gray-500 mb-7">
-            We can't find that page.
+            La page que vous recherchez est introuvable.
         </div>
         <!--end::Text-->
 
@@ -36,7 +36,7 @@
 
         <!--begin::Link-->
         <div class="mb-0">
-            <a href="{{ route('dashboard') }}" class="btn btn-sm btn-primary">Return Home</a>
+            <a href="{{ route('dashboard') }}" class="btn btn-sm btn-primary">Retour à l’accueil</a>
         </div>
         <!--end::Link-->
 

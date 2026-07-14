@@ -19,4 +19,13 @@
             Modifier
         </a>
     @endcan
+
+    @can('create demandes')
+        @if(Route::has('admin.demandes.create'))
+            <a href="{{ route('admin.demandes.create', ['contact_id' => $model->id]) }}" class="btn btn-sm btn-light btn-active-light-success">
+                <i class="bi bi-plus-circle me-1"></i>
+                Creer une demande
+            </a>
+        @endif
+    @endcan
 @endif

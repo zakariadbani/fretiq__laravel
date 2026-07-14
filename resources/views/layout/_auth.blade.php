@@ -12,6 +12,7 @@
                 <div class="d-flex flex-center flex-column flex-lg-row-fluid">
                     <!--begin::Wrapper-->
                     <div class="w-lg-500px p-10">
+                        @include('components.feedback.alerts')
                         <!--begin::Page-->
                         {{ $slot }}
                         <!--end::Page-->
@@ -24,10 +25,6 @@
                 <div class="d-flex flex-center flex-wrap px-5">
                     <!--begin::Links-->
                     <div class="d-flex fw-semibold text-primary fs-base gap-5">
-                        <a href="#" class="px-5" target="_blank">CGU</a>
-
-                        <a href="#" class="px-5" target="_blank">Confidentialité</a>
-
                         <a href="mailto:admin@fretiq.com" class="px-5">Contact</a>
                     </div>
                     <!--end::Links-->

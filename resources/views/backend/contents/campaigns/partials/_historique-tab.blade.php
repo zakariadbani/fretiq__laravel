@@ -34,6 +34,7 @@
                     @foreach($runs as $run)
                     @php
                         $runStatusCfg = config('global.data.campaign_run_statuses.' . $run->status);
+                        $kpis = $run->kpis();
                     @endphp
                     <tr>
                         <td class="ps-7 fw-semibold">{{ $run->run_at?->format('d/m/Y H:i') ?? '—' }}</td>
@@ -44,10 +45,10 @@
                                 <span class="text-muted">—</span>
                             @endif
                         </td>
-                        <td>{{ number_format($run->stats_sent ?? 0) }}</td>
-                        <td>{{ number_format($run->stats_opened ?? 0) }} <span class="text-muted fs-8">({{ $run->openRate() }}%)</span></td>
-                        <td>{{ number_format($run->stats_clicked ?? 0) }} <span class="text-muted fs-8">({{ $run->clickRate() }}%)</span></td>
-                        <td>{{ number_format($run->stats_bounced ?? 0) }}</td>
+                        <td>{{ number_format($kpis['sent'] ?? 0) }}</td>
+                        <td>{{ number_format($kpis['opened'] ?? 0) }} <span class="text-muted fs-8">({{ \App\Models\CampaignRun::rateLabel($kpis['open_rate'] ?? null) }})</span></td>
+                        <td>{{ number_format($kpis['clicked'] ?? 0) }} <span class="text-muted fs-8">({{ \App\Models\CampaignRun::rateLabel($kpis['click_rate'] ?? null) }})</span></td>
+                        <td>{{ number_format($kpis['bounced'] ?? 0) }}</td>
                         <td>{{ $run->finished_at?->format('d/m/Y H:i') ?? '—' }}</td>
                         <td class="text-end pe-7">
                             <a href="{{ route('admin.campaigns.view', $model->id) }}?run_id={{ $run->id }}#campaign_destinataires"

@@ -28,6 +28,8 @@
         'monthlyRemaining'        => $monthlyRemaining        ?? null,
         'monthlyContactRemaining' => $monthlyContactRemaining ?? null,
         'activeDailyLimitSum'     => $activeDailyLimitSum     ?? null,
+        'dailyQuotaSummary'       => $dailyQuotaSummary       ?? [],
+        'monthlyQuotaSummary'     => $monthlyQuotaSummary     ?? [],
     ])
 
     @can('run discovery')

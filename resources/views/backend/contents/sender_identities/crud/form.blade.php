@@ -126,6 +126,7 @@
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-3">Par défaut</label>
                                 <div class="form-check form-switch form-check-custom form-check-solid">
+                                    <input type="hidden" name="is_default" value="0" />
                                     <input class="form-check-input"
                                            type="checkbox"
                                            name="is_default"
@@ -145,6 +146,7 @@
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-3">Statut</label>
                                 <div class="form-check form-switch form-check-custom form-check-solid">
+                                    <input type="hidden" name="is_active" value="0" />
                                     <input class="form-check-input"
                                            type="checkbox"
                                            name="is_active"

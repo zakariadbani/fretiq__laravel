@@ -41,12 +41,12 @@ use Tests\TestCase;
  *   - index guest redirect (302)
  *   - edit 200 for existing campaign
  *   - update happy-path: name mutated, JSON 200 {message:success}
- *   - store validation failure: missing `name` → 406 JSON with errors.name
- *   - store validation failure: missing `template_id` on one_shot → 406 JSON
+ *   - store validation failure: missing `name` -> 406 JSON with errors.name
+ *   - store validation failure: missing `template_id` on one_shot -> 406 JSON
  *   - delete happy-path: JSON {success:true} + row gone
  *   - delete 403 for commercial role
  *   - executeSwitch sets_active (state='1'): DB updated to 1
- *   - executeSwitch rejects unlisted field → 403
+ *   - executeSwitch rejects unlisted field -> 403
  *   - segmentCount: GET returns JSON {count: N}
  *   - segmentCount: unknown segment returns JSON {count: 0}
  *   - audienceLanguageSplit: returns JSON shape with required keys
@@ -68,6 +68,10 @@ class CampaignGeneratedTest extends TestCase
     {
         parent::setUp();
 
+        config([
+            'services.zoho.driver' => 'local',
+            'prospecting.cold_send_enabled' => false,
+        ]);
         // RefreshDatabase does NOT run seeders; seed ACL manually.
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
@@ -83,8 +87,7 @@ class CampaignGeneratedTest extends TestCase
         ]);
         $this->commercial->assignRole('commercial');
     }
-
-    // ── Fixtures ───────────────────────────────────────────────────────────────
+    // Fixtures
 
     /**
      * Build a minimal one_shot Campaign without going through the controller.
@@ -196,8 +199,7 @@ class CampaignGeneratedTest extends TestCase
             'email_kind'  => 'role',
         ]);
     }
-
-    // ── Access control ─────────────────────────────────────────────────────────
+    // Access control
 
     /**
      * Unauthenticated request to campaigns index must redirect (302 to login).
@@ -226,8 +228,7 @@ class CampaignGeneratedTest extends TestCase
 
         $response->assertStatus(403);
     }
-
-    // ── Edit (form page) ───────────────────────────────────────────────────────
+    // Edit (form page)
 
     /**
      * GET /admin/campaigns/{id}/edit returns 200 for superadmin and renders the campaign name.
@@ -243,8 +244,7 @@ class CampaignGeneratedTest extends TestCase
         // The edit form must render the campaign name so the user can see what they're editing.
         $response->assertSee($campaign->name);
     }
-
-    // ── Update happy-path ──────────────────────────────────────────────────────
+    // Update happy-path
 
     /**
      * PUT /admin/campaigns/{id} with valid data mutates the row.
@@ -273,8 +273,7 @@ class CampaignGeneratedTest extends TestCase
             'name' => 'Nom Modifié',
         ]);
     }
-
-    // ── Store validation (406) ─────────────────────────────────────────────────
+    // Store validation (406)
 
     /**
      * Store must return 406 when `name` is missing (required rule).
@@ -333,8 +332,7 @@ class CampaignGeneratedTest extends TestCase
         $response->assertStatus(406);
         $this->assertArrayHasKey('template_id', $response->json('errors'));
     }
-
-    // ── Delete ─────────────────────────────────────────────────────────────────
+    // Delete
 
     /**
      * DELETE /admin/campaigns/{id} removes the row and returns JSON {success:true}.
@@ -366,8 +364,7 @@ class CampaignGeneratedTest extends TestCase
         // The row must still exist.
         $this->assertDatabaseHas('campaigns', ['id' => $campaign->id]);
     }
-
-    // ── executeSwitch ──────────────────────────────────────────────────────────
+    // executeSwitch
 
     /**
      * PUT /admin/campaigns/executeSwitch/{id} with field=is_active, state='1' sets active.
@@ -409,14 +406,13 @@ class CampaignGeneratedTest extends TestCase
 
         $response->assertStatus(403);
     }
-
-    // ── segmentCount ──────────────────────────────────────────────────────────
+    // segmentCount
 
     /**
      * GET /admin/campaigns/segment-count/{id} returns JSON {count: N} for a known segment.
      *
      * Seed two client Contacts; SegmentService::previewCount(scope=client) resolves both
-     * → count must equal exactly 2.
+     * -> count must equal exactly 2.
      * The controller is gated by `view campaigns` (enforced via middleware).
      */
     public function test_segment_count_returns_count_for_known_segment(): void
@@ -424,7 +420,7 @@ class CampaignGeneratedTest extends TestCase
         // Seed exactly 2 client contacts with non-empty emails — the service pipeline
         // filters by company.relationship='client', excludes suppressions, applies cold gate.
         // With cold_send_enabled=false (test default), prospects are excluded but clients
-        // are always eligible. Two distinct emails → previewCount must return 2.
+        // are always eligible. Two distinct emails -> previewCount must return 2.
         $this->makeClientContact();
         $this->makeClientContact();
 
@@ -459,22 +455,21 @@ class CampaignGeneratedTest extends TestCase
         $response->assertStatus(200);
         $response->assertJson(['count' => 0]);
     }
-
-    // ── audienceLanguageSplit ──────────────────────────────────────────────────
+    // audienceLanguageSplit
 
     /**
      * POST /admin/campaigns/audience-language-split returns the expected JSON shape
      * and correct per-bucket counts for a seeded audience.
      *
      * Language bucketing in CampaignController::audienceLanguageSplit():
-     *   - blank company.country                     → unknown
-     *   - country in francophone_countries (FR,BE…) → fr
-     *   - any other non-empty country code           → en
+     *   - blank company.country                     -> unknown
+     *   - country in francophone_countries (FR,BE...) -> fr
+     *   - any other non-empty country code           -> en
      *
      * We seed:
-     *   2 client contacts with country='FR'  → fr bucket  (francophone)
-     *   1 client contact  with country='DE'  → en bucket  (non-francophone)
-     *   1 client contact  with country=null  → unknown bucket
+     *   2 client contacts with country='FR'  -> fr bucket  (francophone)
+     *   1 client contact  with country='DE'  -> en bucket  (non-francophone)
+     *   1 client contact  with country=null  -> unknown bucket
      *
      * Segment scope='client' matches all four. With cold_send_enabled=false
      * all four pass the cold gate (clients are never excluded by it).
@@ -502,15 +497,15 @@ class CampaignGeneratedTest extends TestCase
             ]);
         };
 
-        // 2 FR contacts → francophone → fr bucket
+        // 2 FR contacts -> francophone -> fr bucket
         $makeContact('FR');
         $makeContact('FR');
-        // 1 DE contact → non-francophone → en bucket
+        // 1 DE contact -> non-francophone -> en bucket
         $makeContact('DE');
-        // 1 contact with no country → unknown bucket
+        // 1 contact with no country -> unknown bucket
         $makeContact(null);
 
-        // scope='client' + no filter → SegmentService resolves all 4 contacts.
+        // scope='client' + no filter -> SegmentService resolves all 4 contacts.
         $segment = Segment::create(['name' => 'Split Seg ' . uniqid(), 'scope' => 'client']);
 
         $response = $this->actingAs($this->superadmin)
@@ -580,7 +575,7 @@ class CampaignGeneratedTest extends TestCase
     /**
      * audienceLanguageSplit returns 422 when segment_id is missing.
      *
-     * Uses $request->validate() (not Crudable trait) → Laravel returns 422 on failure,
+     * Uses $request->validate() (not Crudable trait) -> Laravel returns 422 on failure,
      * NOT 406. This is the custom-action 422 pattern described in the task spec.
      */
     public function test_audience_language_split_422_when_segment_id_missing(): void
@@ -593,8 +588,7 @@ class CampaignGeneratedTest extends TestCase
         $response->assertStatus(422);
         $response->assertJsonValidationErrors(['segment_id']);
     }
-
-    // ── sendNow ────────────────────────────────────────────────────────────────
+    // sendNow
 
     /**
      * POST /admin/campaigns/{id}/send dispatches SendCampaignJob when called by a
@@ -620,7 +614,7 @@ class CampaignGeneratedTest extends TestCase
         config(['prospecting.cold_send_enabled' => false]);
 
         // A client contact ensures the segment is non-empty (SegmentService::previewCount >= 1).
-        // scheduleOneShot creates the run regardless; SendCampaignJob is dispatched before
+    // schedule
         // the job actually sends, so an empty segment is also fine here — but a contact
         // prevents the controller returning an unexpected response.
         $this->makeClientContact();
@@ -633,8 +627,7 @@ class CampaignGeneratedTest extends TestCase
         // Controller returns JSON 200 {message:'success', text:'...', redirect:'...'}
         $response->assertStatus(200);
         $response->assertJson(['message' => 'success']);
-
-        // Fetch the CampaignRun created by scheduleOneShot — the controller dispatches
+    // schedule
         // SendCampaignJob with the run's id. We verify the dispatched job carries that
         // exact run id so the assertion is non-vacuous (wrong run id would be a real bug).
         $run = \App\Models\CampaignRun::where('campaign_id', $campaign->id)->latest('id')->firstOrFail();
@@ -673,19 +666,19 @@ class CampaignGeneratedTest extends TestCase
         // No job must have been dispatched.
         Bus::assertNothingDispatched();
     }
-
-    // ── schedule ───────────────────────────────────────────────────────────────
+    // schedule
 
     /**
      * POST /admin/campaigns/{id}/schedule on a recurring campaign sets is_active=true
      * and returns JSON 200 {message:'success'}.
      *
      * Recurring branch in the controller:
-     *   if ($campaign->next_run_at === null) → 422
+     *   if ($campaign->next_run_at === null) -> 422
      *   else $campaign->update(['is_active' => true]); return JSON 200
      */
     public function test_schedule_recurring_campaign_sets_status_active(): void
     {
+        $this->makeClientContact();
         $campaign = $this->makeRecurringCampaign();
 
         // Precondition: campaign starts inactive (is_active=true default, but we verify the DB flip).

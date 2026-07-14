@@ -76,6 +76,33 @@ test.describe('Zoho module', () => {
     }
   });
 
+  test('action buttons fit desktop and mobile viewports without clicking', async ({ page }) => {
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+
+      const zoho = new ZohoPage(page);
+      await zoho.goto();
+
+      await expect(zoho.actionBar).toBeVisible({ timeout: 10000 });
+
+      const count = await zoho.actionButtons.count();
+      expect(count).toBeGreaterThan(0);
+
+      for (let index = 0; index < count; index++) {
+        const button = zoho.actionButtons.nth(index);
+        await expect(button).toBeVisible({ timeout: 10000 });
+
+        const box = await button.boundingBox();
+        expect(box).not.toBeNull();
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
+      }
+    }
+  });
+
 });
 
 // <<<

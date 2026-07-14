@@ -46,6 +46,13 @@ export class ZohoPage {
   readonly syncTemplatesButton: Locator;
 
   /**
+   * Compact, wrapping action bar. Buttons are asserted read-only in specs.
+   */
+  readonly actionBar: Locator;
+
+  readonly actionButtons: Locator;
+
+  /**
    * Driver CRM badge cell — always rendered.
    */
   readonly crmDriverCard: Locator;
@@ -68,6 +75,8 @@ export class ZohoPage {
     this.syncTemplatesButton = page.locator(
       'form[action*="zoho/sync_templates"] button[type="submit"]',
     ).first();
+    this.actionBar = page.locator('[data-zoho-action-bar]').first();
+    this.actionButtons = this.actionBar.locator('button[type="submit"]');
 
     this.crmDriverCard = page.locator('.fw-bold.text-gray-800', { hasText: 'Driver CRM' }).first();
   }

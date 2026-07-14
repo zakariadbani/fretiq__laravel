@@ -23,6 +23,11 @@
         if ($cap === null || $cap <= 0) return 0;
         return (int) min(100, round(($used / $cap) * 100));
     };
+
+    $dailyCompanySummary = $dailyQuotaSummary['company'] ?? [];
+    $dailyContactSummary = $dailyQuotaSummary['contacts'] ?? [];
+    $monthlyCompanySummary = $monthlyQuotaSummary['company'] ?? [];
+    $monthlyContactSummary = $monthlyQuotaSummary['contacts'] ?? [];
 @endphp
 
 {{-- ── Card : Pack actif ────────────────────────────────────────────────── --}}
@@ -78,9 +83,12 @@
                     @if($isUnlimited)
                         <span class="badge badge-light-success">Illimité</span>
                     @else
-                        <span class="fw-bold text-gray-800">{{ $usedToday }} / {{ $dailyCap }}</span>
+                        <span class="fw-bold text-gray-800">Utilisé + réservé : {{ $dailyCompanySummary['used_reserved'] ?? $usedToday }} / {{ $dailyCap }}</span>
                     @endif
                 </div>
+                @unless($isUnlimited)
+                    <div class="text-muted fs-8 mb-2 text-end">Restant : {{ $dailyCompanySummary['remaining'] ?? max(0, $dailyCap - $usedToday) }}</div>
+                @endunless
                 @unless($isUnlimited)
                     <div class="progress h-8px mb-6">
                         <div class="progress-bar {{ $barClass($usedToday, $dailyCap) }}" style="width: {{ $pct($usedToday, $dailyCap) }}%"></div>
@@ -95,9 +103,12 @@
                     @if($contactIsUnlimited)
                         <span class="badge badge-light-success">Illimité</span>
                     @else
-                        <span class="fw-bold text-gray-800">{{ $contactUsedToday }} / {{ $dailyContactCap }}</span>
+                        <span class="fw-bold text-gray-800">Utilisé + réservé : {{ $dailyContactSummary['used_reserved'] ?? $contactUsedToday }} / {{ $dailyContactCap }}</span>
                     @endif
                 </div>
+                @unless($contactIsUnlimited)
+                    <div class="text-muted fs-8 mb-2 text-end">Restant : {{ $dailyContactSummary['remaining'] ?? max(0, $dailyContactCap - $contactUsedToday) }}</div>
+                @endunless
                 @unless($contactIsUnlimited)
                     <div class="progress h-8px">
                         <div class="progress-bar {{ $barClass($contactUsedToday, $dailyContactCap) }}" style="width: {{ $pct($contactUsedToday, $dailyContactCap) }}%"></div>
@@ -124,9 +135,12 @@
                     @if($monthlyIsUnlimited)
                         <span class="badge badge-light-success">Illimité</span>
                     @else
-                        <span class="fw-bold text-gray-800">{{ $usedThisMonth }} / {{ $monthlyCap }}</span>
+                        <span class="fw-bold text-gray-800">Utilisé + réservé : {{ $monthlyCompanySummary['used_reserved'] ?? $usedThisMonth }} / {{ $monthlyCap }}</span>
                     @endif
                 </div>
+                @unless($monthlyIsUnlimited)
+                    <div class="text-muted fs-8 mb-2 text-end">Restant : {{ $monthlyCompanySummary['remaining'] ?? max(0, $monthlyCap - $usedThisMonth) }}</div>
+                @endunless
                 @unless($monthlyIsUnlimited)
                     <div class="progress h-8px mb-6">
                         <div class="progress-bar {{ $barClass($usedThisMonth, $monthlyCap) }}" style="width: {{ $pct($usedThisMonth, $monthlyCap) }}%"></div>
@@ -141,9 +155,12 @@
                     @if($monthlyContactIsUnlimited)
                         <span class="badge badge-light-success">Illimité</span>
                     @else
-                        <span class="fw-bold text-gray-800">{{ $contactUsedThisMonth }} / {{ $monthlyContactCap }}</span>
+                        <span class="fw-bold text-gray-800">Utilisé + réservé : {{ $monthlyContactSummary['used_reserved'] ?? $contactUsedThisMonth }} / {{ $monthlyContactCap }}</span>
                     @endif
                 </div>
+                @unless($monthlyContactIsUnlimited)
+                    <div class="text-muted fs-8 mb-2 text-end">Restant : {{ $monthlyContactSummary['remaining'] ?? max(0, $monthlyContactCap - $contactUsedThisMonth) }}</div>
+                @endunless
                 @unless($monthlyContactIsUnlimited)
                     <div class="progress h-8px">
                         <div class="progress-bar {{ $barClass($contactUsedThisMonth, $monthlyContactCap) }}" style="width: {{ $pct($contactUsedThisMonth, $monthlyContactCap) }}%"></div>

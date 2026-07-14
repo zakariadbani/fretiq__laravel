@@ -19,7 +19,7 @@ class CampaignsDataTable extends BackendDataTable
         'schedule_type' => [
             'title'      => 'Type',
             'orderable'  => true,
-            'searchable' => false,
+            'searchable' => true,
             'raw'        => true,
         ],
         'is_active' => [
@@ -33,19 +33,19 @@ class CampaignsDataTable extends BackendDataTable
         'segment_id' => [
             'title'      => 'Segment',
             'orderable'  => false,
-            'searchable' => false,
+            'searchable' => true,
             'raw'        => true,
         ],
         'template_id' => [
             'title'      => 'Modèle',
             'orderable'  => false,
-            'searchable' => false,
+            'searchable' => true,
             'raw'        => true,
         ],
         'sender_identity_id' => [
             'title'      => 'Expéditeur',
             'orderable'  => false,
-            'searchable' => false,
+            'searchable' => true,
             'raw'        => true,
         ],
         'next_run_at' => [
@@ -103,6 +103,27 @@ class CampaignsDataTable extends BackendDataTable
     {
         $scheduleTypes     = config('global.data.schedule_types', []);
 
+        $this->datatables->filterColumn('segment_id', function ($query, $keyword) {
+            $kw = '%' . mb_strtolower($keyword) . '%';
+            $query->whereHas('segment', fn ($q) => $q->whereRaw('LOWER(segments.name) LIKE ?', [$kw]));
+        });
+
+        $this->datatables->filterColumn('template_id', function ($query, $keyword) {
+            $kw = '%' . mb_strtolower($keyword) . '%';
+            $query->whereHas('template', function ($q) use ($kw) {
+                $q->whereRaw('LOWER(campaign_templates.name) LIKE ?', [$kw])
+                  ->orWhereRaw('LOWER(campaign_templates.subject) LIKE ?', [$kw]);
+            });
+        });
+
+        $this->datatables->filterColumn('sender_identity_id', function ($query, $keyword) {
+            $kw = '%' . mb_strtolower($keyword) . '%';
+            $query->whereHas('senderIdentity', function ($q) use ($kw) {
+                $q->whereRaw('LOWER(sender_identities.name) LIKE ?', [$kw])
+                  ->orWhereRaw('LOWER(sender_identities.email) LIKE ?', [$kw]);
+            });
+        });
+
         $this->datatables->editColumn('schedule_type', function (Campaign $row) use ($scheduleTypes) {
             if (empty($row->schedule_type)) {
                 return '<span class="text-muted">—</span>';
@@ -140,13 +161,15 @@ class CampaignsDataTable extends BackendDataTable
         });
 
         $this->datatables->editColumn('next_run_at', function (Campaign $row) {
-            if ($row->next_run_at instanceof \Carbon\Carbon) {
-                return $row->next_run_at->format('d/m/Y H:i');
+            if (!$row->effectiveScheduledAt() || !($scheduledAt = $row->scheduledAtLocal())) {
+                return '<span class="text-muted">—</span>';
             }
-            if ($row->scheduled_at instanceof \Carbon\Carbon) {
-                return $row->scheduled_at->format('d/m/Y H:i');
-            }
-            return '—';
+
+            $display = e($scheduledAt->format('d/m/Y H:i') . ' ' . $row->scheduleTimezone());
+
+            return $display . ($row->isOverdue()
+                ? ' <span class="badge badge-light-danger">En retard</span>'
+                : '');
         });
 
         $this->datatables->editColumn('runs_count', function (Campaign $row) {

@@ -57,7 +57,6 @@ class GlobalDataTable extends DataTable
         $this->initJoins();
         $this->initLeftJoins();
         $this->initConditions();
-        $this->applyFilters();
 
         // Only mark columns that actually render HTML as raw; plain text columns stay escaped.
         $rawCols = ['action'];
@@ -69,6 +68,10 @@ class GlobalDataTable extends DataTable
 
         $this->datatables = datatables()
             ->eloquent($this->currentQuery);
+        $this->datatables->filter(function ($query) {
+            $this->currentQuery = $query;
+            $this->applyFilters();
+        }, true);
 
         $this->datatables = $this->datatables->rawColumns($rawCols);
 
@@ -123,6 +126,9 @@ class GlobalDataTable extends DataTable
      */
     public function html()
     {
+        addVendors(['datatables']);
+        addJavascriptFile('assets/js/custom/datatables-utils.js');
+
         return $this->builder()
             ->setTableId($this->currentModel->getName() . '-table')
             ->columns($this->getColumns())
@@ -132,10 +138,20 @@ class GlobalDataTable extends DataTable
             ->autoWidth(false)
             ->parameters([
                 'scrollX' => true,
-                'drawCallback' => 'function() { KTMenu.createInstances(); }',
+                'searchDelay' => 350,
+                'drawCallback' => 'function() { KTMenu.createInstances(); if (window.DataTableUtils) { DataTableUtils.fixAccessibility(this.api().table().container()); } }',
+                'initComplete' => 'function() { if (window.DataTableUtils) { DataTableUtils.fixAccessibility(this.api().table().container()); } }',
                 'buttons' => $this->buttons,
+                'language' => $this->dataTableLanguage(),
             ])
             ->addTableClass('align-middle table-row-dashed fs-6 gy-3');
+    }
+
+    protected function dataTableLanguage(): array
+    {
+        $language = trans('datatables');
+
+        return is_array($language) ? $language : [];
     }
 
     /**

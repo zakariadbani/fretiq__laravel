@@ -179,6 +179,7 @@
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Actif</label>
                                 <div class="form-check form-switch form-check-custom form-check-solid">
+                                    <input type="hidden" name="is_active" value="0" />
                                     <input class="form-check-input"
                                            type="checkbox"
                                            name="is_active"

@@ -431,3 +431,50 @@ if (!function_exists('getIcon')) {
         return theme()->getIcon($name, $class, $type, $tag);
     }
 }
+
+if (!function_exists('permission_label')) {
+    function permission_label(string $permission): string
+    {
+        if ($permission === 'backend.access') {
+            return 'Accès au back-office';
+        }
+
+        $labels = [
+            'view' => 'Voir',
+            'create' => 'Créer',
+            'edit' => 'Modifier',
+            'delete' => 'Supprimer',
+            'send' => 'Envoyer',
+            'manage' => 'Gérer',
+            'sync' => 'Synchroniser',
+            'run' => 'Lancer',
+            'enrich' => 'Enrichir',
+        ];
+
+        $entities = [
+            'campaign_templates' => 'modèles de campagne',
+            'prospect_criteria' => 'critères de prospection',
+            'sender_identities' => 'identités expéditeur',
+            'companies' => 'entreprises',
+            'contacts' => 'contacts',
+            'segments' => 'segments',
+            'campaigns' => 'campagnes',
+            'sequences' => 'séquences',
+            'demandes' => 'demandes',
+            'suppressions' => 'suppressions',
+            'users' => 'utilisateurs',
+            'roles' => 'rôles',
+            'permissions' => 'permissions',
+            'zoho' => 'Zoho',
+            'discovery' => 'la découverte',
+            'packages' => 'forfaits',
+            'settings' => 'paramètres',
+            'consumption' => 'consommation',
+            'provider quota' => 'quotas fournisseurs',
+        ];
+
+        [$action, $entity] = array_pad(explode(' ', $permission, 2), 2, '');
+
+        return trim(($labels[$action] ?? ucfirst($action)) . ' ' . ($entities[$entity] ?? str_replace('_', ' ', $entity)));
+    }
+}

@@ -71,6 +71,14 @@
         </div>
     </div>
 
+    <div id="active-filters-bar" class="d-none px-9 pt-3">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <span class="fw-semibold text-gray-700">Filtres actifs :</span>
+            <div id="active-filters-badges" class="d-flex flex-wrap gap-2" aria-live="polite"></div>
+            <button type="button" id="clear-all-filters" class="btn btn-sm btn-light-primary d-none">Tout effacer</button>
+        </div>
+    </div>
+
     {{-- Card body — datatable --}}
     <div class="card-body py-4">
         <div class="table-responsive">

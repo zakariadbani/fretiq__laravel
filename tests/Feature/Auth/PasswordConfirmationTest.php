@@ -10,35 +10,43 @@ class PasswordConfirmationTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_confirm_password_screen_can_be_rendered()
+    public function test_confirm_password_screen_has_a_native_form(): void
     {
         $user = User::factory()->create();
 
-        $response = $this->actingAs($user)->get('/confirm-password');
+        $response = $this->actingAs($user)->get(route('password.confirm'));
 
-        $response->assertStatus(200);
+        $response->assertOk()
+            ->assertSee('action="'.route('password.confirm').'"', false)
+            ->assertSee('method="POST"', false)
+            ->assertSee('name="password"', false)
+            ->assertSee('type="submit"', false)
+            ->assertSee('Confirmez votre mot de passe')
+            ->assertSee('Cette zone est sécurisée. Confirmez votre mot de passe pour continuer.');
     }
 
-    public function test_password_can_be_confirmed()
+    public function test_password_can_be_confirmed(): void
     {
         $user = User::factory()->create();
 
-        $response = $this->actingAs($user)->post('/confirm-password', [
-            'password' => 'password',
-        ]);
+        $response = $this->actingAs($user)
+            ->withSession(['url.intended' => route('dashboard')])
+            ->post(route('password.confirm'), ['password' => 'password']);
 
-        $response->assertRedirect();
-        $response->assertSessionHasNoErrors();
+        $response->assertRedirect(route('dashboard'))
+            ->assertSessionHasNoErrors()
+            ->assertSessionHas('auth.password_confirmed_at');
     }
 
-    public function test_password_is_not_confirmed_with_invalid_password()
+    public function test_password_is_not_confirmed_with_an_invalid_password(): void
     {
         $user = User::factory()->create();
 
-        $response = $this->actingAs($user)->post('/confirm-password', [
-            'password' => 'wrong-password',
+        $response = $this->actingAs($user)->post(route('password.confirm'), [
+            'password' => 'invalid-password',
         ]);
 
-        $response->assertSessionHasErrors();
+        $response->assertSessionHasErrors(['password' => __('auth.password')])
+            ->assertSessionMissing('auth.password_confirmed_at');
     }
 }

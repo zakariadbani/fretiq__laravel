@@ -220,6 +220,10 @@
                                         </option>
                                     @endforeach
                                 </select>
+                                <div class="form-text text-warning mt-2">
+                                    <i class="bi bi-archive me-1"></i>
+                                    À l'enregistrement, une entreprise rejetée quitte la liste active et apparaît dans Rejetées / Archives.
+                                </div>
                             </div>
 
                             {{-- Score IA --}}

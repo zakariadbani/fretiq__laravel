@@ -29,6 +29,40 @@ class CompaniesTest extends TestCase
         $this->superadmin->assignRole('superadmin');
     }
 
+    private function makeCompany(array $overrides = []): Company
+    {
+        return Company::create(array_merge([
+            'name'                 => 'Company ' . uniqid(),
+            'relationship'         => 'prospect',
+            'source'               => 'manual',
+            'qualification_status' => 'pending',
+            'is_active'            => true,
+        ], $overrides));
+    }
+
+    private function dataTableParams(array $params = []): array
+    {
+        return array_replace_recursive([
+            'draw'    => 1,
+            'start'   => 0,
+            'length'  => 10,
+            'columns' => [
+                ['data' => 'id', 'name' => 'id', 'searchable' => 'true', 'orderable' => 'true'],
+                ['data' => 'name', 'name' => 'name', 'searchable' => 'true', 'orderable' => 'true'],
+            ],
+            'order'   => [['column' => 0, 'dir' => 'asc']],
+        ], $params);
+    }
+
+    private function getDataTableJson(string $path = '/admin/companies', array $params = [])
+    {
+        return $this->actingAs($this->superadmin)
+            ->call('GET', $path, $this->dataTableParams($params), [], [], [
+                'HTTP_X_REQUESTED_WITH' => 'XMLHttpRequest',
+                'HTTP_ACCEPT'           => 'application/json',
+            ]);
+    }
+
     /**
      * Companies index page renders for an authenticated superadmin.
      */
@@ -119,5 +153,89 @@ class CompaniesTest extends TestCase
 
         $response->assertStatus(200);
         $this->assertDatabaseHas('companies', ['name' => 'ACME SARL']);
+    }
+
+    public function test_rejecting_a_company_hides_it_from_the_default_datatable(): void
+    {
+        $company = $this->makeCompany();
+
+        $response = $this->actingAs($this->superadmin)
+            ->put('/admin/companies/' . $company->id, [
+                'name'                 => $company->name,
+                'relationship'         => 'prospect',
+                'source'               => 'manual',
+                'qualification_status' => 'rejected',
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('redirect', route('admin.companies.archive'));
+        $this->assertDatabaseHas('companies', ['id' => $company->id, 'qualification_status' => 'rejected']);
+        $this->assertNull(Company::find($company->id));
+
+        $this->getDataTableJson()
+            ->assertOk()
+            ->assertJsonStructure(['draw', 'recordsTotal', 'recordsFiltered', 'data'])
+            ->assertJsonCount(0, 'data');
+    }
+
+    public function test_archive_datatable_lists_and_filters_rejected_companies(): void
+    {
+        $matching = $this->makeCompany([
+            'name'                 => 'Archive manual match',
+            'source'               => 'manual',
+            'qualification_status' => 'rejected',
+        ]);
+        $other = $this->makeCompany([
+            'name'                 => 'Archive discovered other',
+            'source'               => 'discovered',
+            'qualification_status' => 'rejected',
+        ]);
+        $this->makeCompany(['name' => 'Active manual company']);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/companies/archive')
+            ->assertOk()
+            ->assertSee('Rejetées / Archives');
+
+        $response = $this->getDataTableJson('/admin/companies/archive', ['source' => 'manual']);
+
+        $response->assertOk()
+            ->assertJsonStructure(['draw', 'recordsTotal', 'recordsFiltered', 'data'])
+            ->assertJsonPath('recordsTotal', 2)
+            ->assertJsonPath('recordsFiltered', 1)
+            ->assertJsonCount(1, 'data')
+            ->assertSee($matching->name)
+            ->assertDontSee($other->name);
+    }
+
+    public function test_archive_datatable_searches_rejected_companies(): void
+    {
+        $matching = $this->makeCompany([
+            'name'                 => 'Archive search target',
+            'qualification_status' => 'rejected',
+        ]);
+        $other = $this->makeCompany([
+            'name'                 => 'Archive search other',
+            'qualification_status' => 'rejected',
+        ]);
+
+        $response = $this->getDataTableJson('/admin/companies/archive', ['search' => ['value' => 'target']]);
+
+        $response->assertOk()
+            ->assertJsonStructure(['draw', 'recordsTotal', 'recordsFiltered', 'data'])
+            ->assertJsonCount(1, 'data')
+            ->assertSee($matching->name)
+            ->assertDontSee($other->name);
+    }
+
+    public function test_edit_form_explains_that_rejected_companies_move_to_archive(): void
+    {
+        $company = $this->makeCompany();
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/companies/' . $company->id . '/edit')
+            ->assertOk()
+            ->assertSee('une entreprise rejetée quitte la liste active', false)
+            ->assertSee('Rejetées / Archives', false);
     }
 }

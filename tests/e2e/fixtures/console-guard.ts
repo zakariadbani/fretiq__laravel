@@ -18,6 +18,9 @@ export const CONSOLE_ALLOWLIST: string[] = [
   // removal, NOT a fretiq feature bug. Do not broaden these entries.
   'stepperObj.on is not a function',
   'searchObject.on is not a function',
+  // srcdoc previews are intentionally sandboxed without script permission.
+  'Blocked script execution in \'about:srcdoc\' because the document\'s frame is sandboxed',
+
 ];
 
 function isAllowlisted(text: string): boolean {

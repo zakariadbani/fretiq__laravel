@@ -3,9 +3,8 @@
 
     Required: $model (CampaignTemplate, already loaded, id set).
 
-    This pane is relocated INTO #template_tab_content by crud-tabs.js so it participates
-    in Bootstrap tab toggling. CRITICAL: all EN inputs carry NO `name` attribute — they
-    would pollute the base-template save FormData if they did.
+    This pane stays outside #form_crud. Bootstrap toggles it by id, while the EN
+    inputs belong only to #campaign_template_translation_form.
 
     JS controller: public/assets/js/custom/backend/campaign-template-translations.js
 --}}
@@ -184,9 +183,10 @@
                         </span>
                     </button>
 
-                    <button type="button"
+                    <button type="submit"
                             class="btn btn-success"
-                            id="tr-save-btn">
+                            id="tr-save-btn"
+                            form="campaign_template_translation_form">
                         <span class="indicator-label">
                             <i class="bi bi-check-circle me-1"></i>
                             Enregistrer la traduction
@@ -296,6 +296,13 @@
 
             {{-- Right: EN editable --}}
             <div class="col-12 col-lg-6 tr-en-col">
+                <form id="campaign_template_translation_form"
+                      class="h-100"
+                      action="{{ $saveUrl }}"
+                      method="POST"
+                      novalidate>
+                    @csrf
+                    <input type="hidden" name="language" value="en" />
                 <div class="card border border-primary border-dashed h-100">
                     <div class="card-header border-0 pt-5">
                         <h5 class="card-title align-items-start flex-column m-0">
@@ -330,9 +337,11 @@
                             <label class="fw-semibold fs-6 mb-2" for="tr_en_subject">Sujet (EN)</label>
                             <input type="text"
                                    id="tr_en_subject"
+                                   name="subject"
                                    class="form-control form-control-solid"
                                    value="{{ $tr->subject ?? '' }}"
-                                   placeholder="Subject line in English…" />
+                                   placeholder="Subject line in English…"
+                                   required />
                         </div>
 
                         {{-- EN preview_text — NO name attr --}}
@@ -340,6 +349,7 @@
                             <label class="fw-semibold fs-6 mb-2" for="tr_en_preview">Texte de prévisualisation (EN)</label>
                             <input type="text"
                                    id="tr_en_preview"
+                                   name="preview_text"
                                    class="form-control form-control-solid"
                                    value="{{ $tr->preview_text ?? '' }}"
                                    placeholder="Preview text in English…"
@@ -353,12 +363,15 @@
                                 <div class="text-muted fs-8">Éditable — enregistrez avec le bouton vert en haut.</div>
                             </div>
                             <textarea id="tr_en_html"
+                                      name="html_content"
                                       class="form-control form-control-solid font-monospace"
                                       rows="18"
-                                      data-tinymce-html-field>{{ $tr->html_content ?? '' }}</textarea>
+                                      data-tinymce-html-field
+                                      required>{{ $tr->html_content ?? '' }}</textarea>
                         </div>
                     </div>
                 </div>
+                </form>
             </div>
         </div>
         {{-- end editing surface --}}

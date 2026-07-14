@@ -93,6 +93,8 @@ class ConsumptionPageTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertSee($package->name);
+        $response->assertSee('Utilisé + réservé', false);
+        $response->assertSee('Restant', false);
     }
 
     public function test_user_without_permission_gets_403(): void

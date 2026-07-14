@@ -145,7 +145,10 @@ class ZohoCampaignsDriver implements CampaignsClient
         // ── 1. Resolve the Zoho mailing list key ───────────────────────────────
         // Zoho Campaigns expects an existing list key; arbitrary per-run keys are
         // not auto-created by the bulk-subscriber endpoint.
-        $listKey = config('services.zoho.campaigns.list_key') ?: 'fretiq-run-' . $run->id;
+        $listKey = trim((string) ($campaign->zoho_list_key ?: config('services.zoho.campaigns.list_key')));
+        if ($listKey === '') {
+            throw new \RuntimeException('Préparation Zoho incomplète : aucune liste Zoho vérifiée n’est associée à cette campagne.');
+        }
 
         // ── 2. Subscribe eligible contacts to the Zoho list ───────────────────
         $contactPayload = $contacts->map(function ($contact) {

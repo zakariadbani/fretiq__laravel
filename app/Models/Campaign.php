@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Traits\Validator;
 use App\Support\ConfigEnum;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -106,6 +107,31 @@ class Campaign extends Model
         return $this->hasMany(SequenceEnrollment::class);
     }
 
+    public function scheduleTimezone(): string
+    {
+        return $this->timezone ?: 'Europe/Paris';
+    }
+
+    public function effectiveScheduledAt(): ?Carbon
+    {
+        return $this->next_run_at ?? $this->scheduled_at;
+    }
+
+    public function scheduledAtLocal(): ?Carbon
+    {
+        return $this->effectiveScheduledAt()?->copy()->setTimezone($this->scheduleTimezone());
+    }
+
+    public function isOverdue(?Carbon $now = null): bool
+    {
+        $scheduledAt = $this->effectiveScheduledAt();
+
+        return $this->is_active
+            && $this->schedule_type !== 'sequence'
+            && $scheduledAt !== null
+            && $scheduledAt->lessThan($now ?? now());
+    }
+
     // ── Lifecycle hooks ────────────────────────────────────────────────────────
 
     /**
@@ -155,7 +181,7 @@ class Campaign extends Model
                 Rule::requiredIf(fn () => $this->schedule_type === 'recurring' && $isActive),
                 'date',
             ],
-            'timezone'           => 'nullable|string|max:64',
+            'timezone'           => 'nullable|timezone',
             'send_window'        => 'nullable|array',
             'is_active'          => 'nullable|boolean',
             'driver'             => 'nullable|in:local,zoho',

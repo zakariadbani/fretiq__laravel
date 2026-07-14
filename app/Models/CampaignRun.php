@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Traits\Validator;
 use App\Support\ConfigEnum;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -100,39 +101,142 @@ class CampaignRun extends Model
 
     // ── Computed metrics ───────────────────────────────────────────────────────
 
-    /**
-     * Open rate as a percentage (0–100). Guards against division by zero.
-     */
-    public function openRate(): float
+    /** A run counts toward campaign KPIs only once its send completed. */
+    public function isExecuted(): bool
     {
-        if ((int) $this->stats_delivered === 0) {
-            return 0.0;
+        return $this->status === 'sent';
+    }
+
+    /** @param Builder<CampaignRun> $query */
+    public function scopeExecuted(Builder $query): Builder
+    {
+        return $query->where('status', 'sent');
+    }
+
+    /** Normalize a stored/provider count without letting malformed legacy data leak into KPIs. */
+    public static function normalizeKpi(mixed $value): int
+    {
+        if (! is_numeric($value)) {
+            return 0;
         }
 
-        return round(($this->stats_opened / $this->stats_delivered) * 100, 2);
+        $value = (float) $value;
+
+        return is_finite($value) && $value >= 0 ? (int) $value : 0;
     }
 
     /**
-     * Click rate as a percentage (0–100). Guards against division by zero.
+     * Shared per-run presentation values. Rates use delivered where it exists,
+     * otherwise sent; no denominator is represented as null rather than 0%.
+     *
+     * @return array<string, int|float|null>
      */
-    public function clickRate(): float
+    public function kpis(): array
     {
-        if ((int) $this->stats_delivered === 0) {
-            return 0.0;
-        }
-
-        return round(($this->stats_clicked / $this->stats_delivered) * 100, 2);
+        return self::kpisFromCounts([
+            'sent'         => $this->stats_sent,
+            'delivered'    => $this->stats_delivered,
+            'opened'       => $this->stats_opened,
+            'clicked'      => $this->stats_clicked,
+            'replied'      => $this->stats_replied,
+            'bounced'      => $this->stats_bounced,
+            'unsubscribed' => $this->stats_unsubscribed,
+            'conversions'  => $this->conversion_count,
+        ]);
     }
 
     /**
-     * Conversion rate as a percentage (0–100). Guards against division by zero.
+     * Aggregate only completed runs so callers cannot accidentally include
+     * prepared/scheduled snapshots in campaign totals.
+     *
+     * @param iterable<CampaignRun> $runs
+     * @return array<string, int|float|null>
      */
-    public function conversionRate(): float
+    public static function aggregateKpis(iterable $runs): array
     {
-        if ((int) $this->stats_delivered === 0) {
-            return 0.0;
+        $totals = array_fill_keys([
+            'sent', 'delivered', 'opened', 'clicked', 'replied', 'bounced', 'unsubscribed', 'conversions',
+        ], 0);
+
+        foreach ($runs as $run) {
+            if (! $run instanceof self || ! $run->isExecuted()) {
+                continue;
+            }
+
+            $runKpis = $run->kpis();
+
+            foreach ($totals as $key => $total) {
+                $totals[$key] = $total + $runKpis[$key];
+            }
         }
 
-        return round(($this->conversion_count / $this->stats_delivered) * 100, 2);
+        $kpis = self::kpisFromCounts($totals);
+
+        foreach ($totals as $key => $total) {
+            $kpis['total_' . $key] = $total;
+        }
+
+        return $kpis;
+    }
+
+    /** Return a UI-safe one-decimal percentage label. */
+    public static function rateLabel(?float $rate): string
+    {
+        return $rate === null ? '—' : number_format($rate, 1, '.', '') . '%';
+    }
+
+    /** Open rate as a percentage, or null when no honest denominator exists. */
+    public function openRate(): ?float
+    {
+        return $this->kpis()['open_rate'];
+    }
+
+    /** Click rate as a percentage, or null when no honest denominator exists. */
+    public function clickRate(): ?float
+    {
+        return $this->kpis()['click_rate'];
+    }
+
+    /** Conversion rate as a percentage, or null when no honest denominator exists. */
+    public function conversionRate(): ?float
+    {
+        return $this->kpis()['conversion_rate'];
+    }
+
+    /**
+     * @param array<string, mixed> $counts
+     * @return array<string, int|float|null>
+     */
+    private static function kpisFromCounts(array $counts): array
+    {
+        $sent         = self::normalizeKpi($counts['sent'] ?? null);
+        $delivered    = self::normalizeKpi($counts['delivered'] ?? null);
+        $opened       = self::normalizeKpi($counts['opened'] ?? null);
+        $clicked      = self::normalizeKpi($counts['clicked'] ?? null);
+        $replied      = self::normalizeKpi($counts['replied'] ?? null);
+        $bounced      = self::normalizeKpi($counts['bounced'] ?? null);
+        $unsubscribed = self::normalizeKpi($counts['unsubscribed'] ?? null);
+        $conversions  = self::normalizeKpi($counts['conversions'] ?? null);
+        $denominator  = $delivered > 0 ? $delivered : ($sent > 0 ? $sent : null);
+
+        return [
+            'sent'         => $sent,
+            'delivered'    => $delivered,
+            'opened'       => $opened,
+            'clicked'      => $clicked,
+            'replied'      => $replied,
+            'bounced'      => $bounced,
+            'unsubscribed' => $unsubscribed,
+            'conversions'  => $conversions,
+            'denominator'  => $denominator,
+            'open_rate'    => self::rate($opened, $denominator),
+            'click_rate'   => self::rate($clicked, $denominator),
+            'conversion_rate' => self::rate($conversions, $denominator),
+        ];
+    }
+
+    private static function rate(int $numerator, ?int $denominator): ?float
+    {
+        return $denominator === null ? null : round(($numerator / $denominator) * 100, 2);
     }
 }

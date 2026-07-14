@@ -48,6 +48,11 @@ class UsersAssignedRoleDataTable extends DataTable
      */
     public function html(): HtmlBuilder
     {
+        $language = trans('datatables');
+        addVendors(['datatables']);
+        addJavascriptFile('assets/js/custom/datatables-utils.js');
+
+
         return $this->builder()
             ->setTableId('usersassingedrole-table')
             ->columns($this->getColumns())
@@ -56,6 +61,7 @@ class UsersAssignedRoleDataTable extends DataTable
             ->addTableClass('table align-middle table-row-dashed fs-6 gy-5 dataTable no-footer text-gray-600 fw-semibold')
             ->setTableHeadClass('text-start text-muted fw-bold fs-7 text-uppercase gs-0')
             ->orderBy(1)
+            ->parameters(['language' => is_array($language) ? $language : []])
             ->drawCallback("function() { KTMenu.init(); }");
     }
 

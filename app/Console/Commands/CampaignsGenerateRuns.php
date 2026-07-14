@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Models\Setting;
 use App\Services\Campaign\CampaignSchedulerService;
 use Illuminate\Console\Command;
 
@@ -38,6 +39,8 @@ class CampaignsGenerateRuns extends Command
     public function handle(): int
     {
         $count = app(CampaignSchedulerService::class)->generateDueRuns();
+
+        Setting::set('campaign_scheduler.commands.generate_runs.last_success_at', now()->utc()->toIso8601String());
 
         $this->info("{$count} exécution(s) de campagne récurrente générée(s).");
 

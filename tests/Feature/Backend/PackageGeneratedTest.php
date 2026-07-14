@@ -309,6 +309,64 @@ class PackageGeneratedTest extends TestCase
         ]);
     }
 
+    // SCR-52 boolean form regression coverage.
+    public function test_update_persists_unchecked_boolean_fields(): void
+    {
+        $package = $this->makePackage(['is_active' => true]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->put('/admin/packages/' . $package->id, [
+                'name'          => $package->name,
+                'daily_credits' => $package->daily_credits,
+                'price_monthly' => $package->price_monthly,
+                'is_active'     => '0',
+                'sort_order'    => $package->sort_order,
+            ]);
+
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('packages', [
+            'id'        => $package->id,
+            'is_active' => 0,
+        ]);
+    }
+
+    public function test_update_keeps_checked_boolean_fields_true(): void
+    {
+        $package = $this->makePackage(['is_active' => false]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->put('/admin/packages/' . $package->id, [
+                'name'          => $package->name,
+                'daily_credits' => $package->daily_credits,
+                'price_monthly' => $package->price_monthly,
+                'is_active'     => '1',
+                'sort_order'    => $package->sort_order,
+            ]);
+
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('packages', [
+            'id'        => $package->id,
+            'is_active' => 1,
+        ]);
+    }
+
+    public function test_edit_form_places_hidden_boolean_inputs_before_checkboxes(): void
+    {
+        $package = $this->makePackage();
+
+        $html = $this->actingAs($this->superadmin)
+            ->get('/admin/packages/' . $package->id . '/edit')
+            ->assertStatus(200)
+            ->getContent();
+
+        $isActiveHidden = strpos($html, 'type="hidden" name="is_active" value="0"');
+        $isActiveCheckbox = strpos($html, 'name="is_active"', $isActiveHidden + 1);
+
+        $this->assertNotFalse($isActiveHidden);
+        $this->assertNotFalse($isActiveCheckbox);
+        $this->assertLessThan($isActiveCheckbox, $isActiveHidden);
+    }
+
     /**
      * PUT /admin/packages/{id} persists a change to `monthly_credits` from null to a
      * specific integer value.

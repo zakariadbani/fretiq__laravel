@@ -555,7 +555,7 @@ class DiscoveryQuotaService
     // ── Batch sizing ───────────────────────────────────────────────────────────
 
     /**
-     * Effective batch size for a dispatch preview.
+     * Display summaries are read-only and do not affect reservation.
      *
      * Computes min(wantedBatch, <all active company caps>) so UI/preview callers
      * get the correct (smaller) batch even when daily is unlimited but monthly is
@@ -572,6 +572,120 @@ class DiscoveryQuotaService
      * NOTE: NOT called inside reserveRun() — the remaining value is re-computed
      * inside the lock-protected transaction. External callers (display, preview) only.
      */
+    /**
+     * Read-only display summary for today's quota meters.
+     *
+     * `used_reserved` uses the same conservative accounting as enforcement:
+     * completed/failed runs count actual consumption, in-flight runs count the
+     * larger of reserved vs consumed.
+     *
+     * @return array{company: array{unlimited: bool, used_reserved: int, total: ?int, remaining: ?int}, contacts: array{unlimited: bool, used_reserved: int, total: ?int, remaining: ?int}}
+     */
+    public function dailyDisplaySummary(): array
+    {
+        $today = $this->today();
+        $package = $this->activePackage();
+
+        return [
+            'company' => $this->displayMeterSummary(
+                $this->isUnlimited(),
+                $this->usedOn($today),
+                $package?->daily_credits
+            ),
+            'contacts' => $this->displayMeterSummary(
+                $this->contactIsUnlimited(),
+                $this->contactUsedOn($today),
+                $package?->daily_contact_credits
+            ),
+        ];
+    }
+
+    /**
+     * Current provider reservations held by in-flight runs for today's quota day.
+     *
+     * @return array{serpapi_searches: int, hunter_searches: int, hunter_verifications: null}
+     */
+    public function providerReservationsToday(): array
+    {
+        $today = $this->today()->toDateString();
+
+        $row = DiscoveryRun::query()
+            ->where('quota_date', $today)
+            ->whereIn('status', ['pending', 'running'])
+            ->selectRaw(
+                "SUM(CASE
+                    WHEN (CASE WHEN searches_reserved IS NULL THEN credits_reserved ELSE searches_reserved END) >
+                         (CASE WHEN searches_reserved IS NULL THEN (consumed - COALESCE(excluded_count, 0)) ELSE searches_consumed END)
+                    THEN (CASE WHEN searches_reserved IS NULL THEN credits_reserved ELSE searches_reserved END) -
+                         (CASE WHEN searches_reserved IS NULL THEN (consumed - COALESCE(excluded_count, 0)) ELSE searches_consumed END)
+                    ELSE 0
+                END) as serpapi_searches_reserved,
+                SUM(CASE
+                    WHEN contact_credits_reserved > contact_consumed
+                    THEN contact_credits_reserved - contact_consumed
+                    ELSE 0
+                END) as hunter_searches_reserved"
+            )
+            ->first();
+
+        return [
+            'serpapi_searches' => (int) ($row?->serpapi_searches_reserved ?? 0),
+            'hunter_searches' => (int) ($row?->hunter_searches_reserved ?? 0),
+            'hunter_verifications' => null,
+        ];
+    }
+
+    /**
+     * Read-only display summary for the current monthly quota meters.
+     *
+     * @return array{company: array{unlimited: bool, used_reserved: int, total: ?int, remaining: ?int}, contacts: array{unlimited: bool, used_reserved: int, total: ?int, remaining: ?int}, period_start: string, period_end: string}
+     */
+    public function monthlyDisplaySummary(?CarbonInterface $on = null): array
+    {
+        $on = $on ?? $this->today();
+        [$start, $end] = $this->currentPeriod($on);
+        $package = $this->activePackage();
+
+        return [
+            'company' => $this->displayMeterSummary(
+                $this->monthlyIsUnlimited(),
+                $this->usedInPeriod($start, $end),
+                $package?->monthly_credits
+            ),
+            'contacts' => $this->displayMeterSummary(
+                $this->monthlyContactIsUnlimited(),
+                $this->contactUsedInPeriod($start, $end),
+                $package?->monthly_contact_credits
+            ),
+            'period_start' => $start->toDateString(),
+            'period_end' => $end->toDateString(),
+        ];
+    }
+
+    /**
+     * @return array{unlimited: bool, used_reserved: int, total: ?int, remaining: ?int}
+     */
+    private function displayMeterSummary(bool $unlimited, int $usedReserved, ?int $total): array
+    {
+        if ($unlimited) {
+            return [
+                'unlimited' => true,
+                'used_reserved' => $usedReserved,
+                'total' => null,
+                'remaining' => null,
+            ];
+        }
+
+        $total = (int) $total;
+
+        return [
+            'unlimited' => false,
+            'used_reserved' => $usedReserved,
+            'total' => $total,
+            'remaining' => max(0, $total - $usedReserved),
+        ];
+    }
+
     public function effectiveBatchFor(ProspectCriteria $criteria): int
     {
         $wantedBatch = $criteria->daily_limit ?: 20;

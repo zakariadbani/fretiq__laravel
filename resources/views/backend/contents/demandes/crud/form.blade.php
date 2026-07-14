@@ -88,18 +88,25 @@
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Contact</label>
                                 <select name="contact_id"
+                                        id="contact_select"
                                         class="form-select form-select-solid"
                                         data-control="select2"
+                                        data-allow-clear="true"
                                         data-placeholder="Sélectionner un contact...">
                                     <option value="">Sélectionner un contact...</option>
-                                    @foreach($contacts as $contact)
-                                        <option value="{{ $contact->id }}"
-                                            {{ old('contact_id', $model->contact_id ?? '') == $contact->id ? 'selected' : '' }}>
-                                            {{ $contact->name }}
-                                            @if($contact->email) &lt;{{ $contact->email }}&gt; @endif
+                                    @if($selectedContact)
+                                        <option value="{{ $selectedContact->id }}" selected>
+                                            {{ $selectedContact->name ?: 'Contact #' . $selectedContact->id }}
+                                            @if($selectedContact->email) &lt;{{ $selectedContact->email }}&gt; @endif
+                                            @if($selectedContact->company) - {{ $selectedContact->company->name }} @endif
                                         </option>
-                                    @endforeach
+                                    @endif
                                 </select>
+                                @if($selectedContact && $selectedContact->company)
+                                    <div class="form-text text-muted mt-2">
+                                        Entreprise associee : {{ $selectedContact->company->name }}
+                                    </div>
+                                @endif
                             </div>
                         </div>
 
@@ -175,6 +182,30 @@
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const contactSelect = $('#contact_select');
+            if (!contactSelect.length || !$.fn.select2) return;
+
+            contactSelect.select2({
+                allowClear: true,
+                placeholder: contactSelect.data('placeholder'),
+                ajax: {
+                    url: '{{ route('admin.demandes.contacts.search') }}',
+                    dataType: 'json',
+                    delay: 250,
+                    data: function (params) {
+                        return {
+                            q: params.term || '',
+                            page: params.page || 1,
+                        };
+                    },
+                },
+                minimumInputLength: 0,
+                width: '100%',
+            });
+        });
+    </script>
 @endpush
 
 </x-default-layout>

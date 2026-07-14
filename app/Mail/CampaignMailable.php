@@ -11,6 +11,7 @@ use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Mail\Mailables\Headers;
+use Illuminate\Support\Facades\URL;
 
 /**
  * CampaignMailable — the ONLY way to send campaign emails in fretiq.
@@ -71,7 +72,7 @@ class CampaignMailable extends Mailable
     {
         return new Headers(
             text: [
-                'List-Unsubscribe'      => '<' . $this->unsubscribeUrl . '>',
+                'List-Unsubscribe'      => '<' . URL::signedRoute('unsubscribe.one-click', ['contact' => $this->contact->id]) . '>',
                 'List-Unsubscribe-Post' => 'List-Unsubscribe=One-Click',
             ],
         );

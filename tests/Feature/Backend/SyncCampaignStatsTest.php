@@ -87,9 +87,12 @@ class SyncCampaignStatsTest extends TestCase
             'run_at'         => now()->subHour(),
             'status'         => 'sent',
             'stats_sent'     => 0,
+            'stats_delivered'=> 0,
             'stats_opened'   => 0,
             'stats_clicked'  => 0,
             'stats_bounced'  => 0,
+            'stats_unsubscribed' => 0,
+            'stats_replied'  => 0,
         ], $runAttributes));
     }
 
@@ -139,10 +142,38 @@ class SyncCampaignStatsTest extends TestCase
         $this->assertSame(2, (int) $run->stats_opened, 'stats_opened must equal 2 (2 with opened_at)');
     }
 
-    /**
-     * campaign:sync-stats command dispatches SyncCampaignStatsJob for sent runs
-     * and the local sync recomputes stats correctly.
-     */
+    /** A completed local run writes every cached recipient KPI. */
+    public function test_completed_local_run_recomputes_all_counters(): void
+    {
+        $run = $this->makeSentRun(['finished_at' => now()->subMinute()]);
+        $sentAt = now()->subMinutes(30);
+
+        foreach ([
+            ['all-events@acme.test', 'replied', ['sent_at' => $sentAt, 'opened_at' => now()->subMinutes(20), 'clicked_at' => now()->subMinutes(15), 'replied_at' => now()->subMinutes(10)]],
+            ['bounce@acme.test', 'bounced', ['sent_at' => $sentAt, 'bounced_at' => now()->subMinutes(8)]],
+            ['unsubscribe@acme.test', 'unsubscribed', ['sent_at' => $sentAt]],
+            ['delivered@acme.test', 'delivered', ['sent_at' => $sentAt]],
+        ] as [$email, $status, $timestamps]) {
+            CampaignRecipient::create(array_merge([
+                'campaign_run_id' => $run->id,
+                'contact_id' => $this->makeContact($email)->id,
+                'status' => $status,
+            ], $timestamps));
+        }
+
+        SyncCampaignStatsJob::dispatch($run->id);
+
+        $run->refresh();
+
+        $this->assertSame(4, (int) $run->stats_sent);
+        $this->assertSame(2, (int) $run->stats_delivered);
+        $this->assertSame(1, (int) $run->stats_opened);
+        $this->assertSame(1, (int) $run->stats_clicked);
+        $this->assertSame(1, (int) $run->stats_replied);
+        $this->assertSame(1, (int) $run->stats_bounced);
+        $this->assertSame(1, (int) $run->stats_unsubscribed);
+    }
+
     public function test_sync_stats_command_dispatches_and_recomputes_local(): void
     {
         $contact = $this->makeContact('cmd@acme.test');
@@ -184,7 +215,7 @@ class SyncCampaignStatsTest extends TestCase
                 'expires_in'   => 3600,
             ], 200),
 
-            '*getcampaigndetails*' => Http::response([
+            '*campaignreports*' => Http::response([
                 'sent_count'    => 50,
                 'opened_count'  => 20,
                 'clicked_count' => 8,
@@ -209,6 +240,6 @@ class SyncCampaignStatsTest extends TestCase
         $this->assertSame(2,  (int) $run->stats_bounced, 'stats_bounced from Zoho report');
 
         // Verify the request was sent to the Zoho endpoint
-        Http::assertSent(fn ($req) => str_contains($req->url(), 'getcampaigndetails'));
+        Http::assertSent(fn ($req) => str_contains($req->url(), 'campaignreports'));
     }
 }

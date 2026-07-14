@@ -342,6 +342,68 @@ class CompanyGeneratedTest extends TestCase
 
         $response->assertStatus(403);
     }
+    public function test_rejected_company_direct_view_is_available_and_marked_archived(): void
+    {
+        $company = $this->makeCompany(['qualification_status' => 'rejected']);
+
+        $this->assertNull(Company::find($company->id));
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/companies/' . $company->id);
+
+        $response->assertOk()
+            ->assertSee($company->name)
+            ->assertSee('Cette entreprise est archivée', false)
+            ->assertSee('Restaurer', false);
+    }
+
+    public function test_rejected_company_direct_view_requires_view_permission(): void
+    {
+        $company = $this->makeCompany(['qualification_status' => 'rejected']);
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'is_active'         => true,
+        ]);
+        $user->givePermissionTo('backend.access');
+
+        $this->actingAs($user)
+            ->get('/admin/companies/' . $company->id)
+            ->assertStatus(403);
+    }
+
+    public function test_commercial_can_restore_a_rejected_company_to_pending(): void
+    {
+        $company = $this->makeCompany(['qualification_status' => 'rejected']);
+
+        $this->actingAs($this->commercial)
+            ->post('/admin/companies/' . $company->id . '/restore')
+            ->assertRedirect('/admin/companies/' . $company->id);
+
+        $this->assertDatabaseHas('companies', [
+            'id'                     => $company->id,
+            'qualification_status'   => 'pending',
+        ]);
+        $this->assertNotNull(Company::find($company->id));
+    }
+
+    public function test_restore_requires_edit_companies_permission(): void
+    {
+        $company = $this->makeCompany(['qualification_status' => 'rejected']);
+        $user = User::factory()->create([
+            'email_verified_at' => now(),
+            'is_active'         => true,
+        ]);
+        $user->givePermissionTo('backend.access');
+
+        $this->actingAs($user)
+            ->post('/admin/companies/' . $company->id . '/restore')
+            ->assertStatus(403);
+
+        $this->assertDatabaseHas('companies', [
+            'id'                     => $company->id,
+            'qualification_status'   => 'rejected',
+        ]);
+    }
 }
 
 // <<<

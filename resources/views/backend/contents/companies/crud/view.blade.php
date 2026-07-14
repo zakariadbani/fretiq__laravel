@@ -22,6 +22,13 @@
     'currentPage' => 'view',
 ])
 
+@if($model->qualification_status === 'rejected')
+    <div class="alert alert-warning d-flex align-items-center mb-6" role="alert">
+        <i class="bi bi-archive-fill fs-2 me-3"></i>
+        <div>Cette entreprise est archivée et exclue de la prospection active.</div>
+    </div>
+@endif
+
 {{-- Tab content --}}
 <div class="tab-content">
 

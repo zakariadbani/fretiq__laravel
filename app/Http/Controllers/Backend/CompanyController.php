@@ -38,7 +38,7 @@ class CompanyController extends BackendController
 
         $this->middleware('permission:view companies')->only(['index', 'view']);
         $this->middleware('permission:create companies')->only(['create', 'store']);
-        $this->middleware('permission:edit companies')->only(['edit', 'update', 'executeSwitch', 'explainScore']);
+        $this->middleware('permission:edit companies')->only(['edit', 'update', 'executeSwitch', 'explainScore', 'restore']);
         $this->middleware('permission:delete companies')->only(['delete']);
         $this->middleware('permission:enrich companies')->only(['enrich']);
 
@@ -82,7 +82,7 @@ class CompanyController extends BackendController
      */
     public function view($id)
     {
-        $model = $this->currentModel->with('contacts')->find($id);
+        $model = $this->currentModel->withRejected()->with('contacts')->find($id);
 
         if ($model === null) {
             session()->flash('error', trans('app.not_found'));
@@ -201,11 +201,17 @@ class CompanyController extends BackendController
      */
     public function edit($id)
     {
-        $model = $this->currentModel->with('contacts')->find($id);
+        $model = $this->currentModel->withRejected()->with('contacts')->find($id);
 
         if ($model === null) {
             session()->flash('error', trans('app.not_found'));
             return redirect(route('admin.companies.index'));
+        }
+
+        if ($model->qualification_status === 'rejected') {
+            session()->flash('warning', 'Cette entreprise est archivée. Restaurez-la avant de la modifier.');
+
+            return redirect(route('admin.companies.view', $model->id));
         }
 
         $view = $this->getView('backend.contents.companies.crud.form');
@@ -224,13 +230,47 @@ class CompanyController extends BackendController
      */
     public function index()
     {
+        $this->currentRequest = request();
+        $this->currentDataTable = app(CompaniesDataTable::class);
+
+        if ($this->currentRequest->ajax() && $this->currentRequest->wantsJson()) {
+            return $this->currentDataTable->ajax();
+        }
+
+        $isArchive = $this->currentRequest->routeIs('admin.companies.archive');
+
         return $this->currentDataTable->render(
             'backend.contents.companies.crud.index',
             [
-                'listTitle'       => $this->listTitle,
+                'listTitle'       => $isArchive ? 'Rejetées / Archives' : $this->listTitle,
                 'dataTableConfig' => $this->currentDataTable->getIndexConfig(),
+                'isArchive'       => $isArchive,
+                'rejectedCount'   => Company::rejected()->count(),
             ]
         );
+    }
+
+    public function restore($id)
+    {
+        $model = Company::rejected()->find($id);
+
+        abort_if($model === null, 404);
+
+        $model->update(['qualification_status' => 'pending']);
+
+        return redirect(route('admin.companies.view', $model->id))
+            ->with('success', 'Entreprise restaurée dans la liste active.');
+    }
+
+    protected function afterSave(array $attributes, $model)
+    {
+        if ($model instanceof Company && $model->qualification_status === 'rejected') {
+            return response()->json([
+                'message'  => 'success',
+                'model'    => $model,
+                'redirect' => route('admin.companies.archive'),
+            ]);
+        }
     }
 
     /**

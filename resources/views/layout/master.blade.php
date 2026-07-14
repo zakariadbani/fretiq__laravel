@@ -3,13 +3,17 @@
 <!--begin::Head-->
 <head>
     <base href=""/>
-    <title>{{ config('app.name', 'Laravel') }}</title>
+    @php
+        $pageTitle = trim(html_entity_decode($__env->yieldContent('title'), ENT_QUOTES | ENT_HTML5 | ENT_SUBSTITUTE, 'UTF-8'));
+        $appName = config('app.name', 'fretiq');
+    @endphp
+    <title>{{ $pageTitle !== '' ? $pageTitle . ' | ' . $appName : $appName }}</title>
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta charset="utf-8"/>
     <meta name="description" content=""/>
     <meta name="keywords" content=""/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <meta property="og:locale" content="en_US"/>
+    <meta property="og:locale" content="{{ app()->getLocale() === 'fr' ? 'fr_FR' : str_replace('-', '_', app()->getLocale()) }}"/>
     <meta property="og:type" content="article"/>
     <meta property="og:title" content=""/>
     <link rel="canonical" href="{{ url()->current() }}"/>
@@ -86,7 +90,7 @@
                 icon = 'success';
             }
             if (typeof confirmButtonText === 'undefined') {
-                confirmButtonText = 'Ok, got it!';
+                confirmButtonText = 'D’accord';
             }
             Swal.fire({
                 text: message,

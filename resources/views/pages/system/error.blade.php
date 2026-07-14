@@ -17,13 +17,13 @@
 
         <!--begin::Title-->
         <h1 class="fw-bolder fs-2qx text-gray-900 mb-4">
-            System Error
+            Erreur système
         </h1>
         <!--end::Title-->
 
         <!--begin::Text-->
         <div class="fw-semibold fs-6 text-gray-500 mb-7">
-            Something went wrong! Please try again later.
+            Une erreur est survenue. Veuillez réessayer plus tard.
         </div>
         <!--end::Text-->
 
@@ -36,7 +36,7 @@
 
         <!--begin::Link-->
         <div class="mb-0">
-            <a href="{{ route('dashboard') }}" class="btn btn-sm btn-primary">Return Home</a>
+            <a href="{{ route('dashboard') }}" class="btn btn-sm btn-primary">Retour à l’accueil</a>
         </div>
         <!--end::Link-->
 
@@ -44,5 +44,4 @@
     <!--end::Card body-->
 </div>
 <!--end::Card-->
-
 

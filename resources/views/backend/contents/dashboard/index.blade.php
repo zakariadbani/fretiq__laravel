@@ -8,6 +8,8 @@
     <x-crud.breadcrumb :items="[['label' => 'Tableau de bord']]" />
 @endsection
 
+@include('backend.partials._first-use-checklist', ['checklist' => $firstUseChecklist ?? null])
+
 {{-- ====================================================================== --}}
 {{-- KPI Cards Row (8 cartes)                                                --}}
 {{-- ====================================================================== --}}
@@ -133,7 +135,7 @@
         <i class="bi bi-rocket fs-3x text-muted mb-5 d-block"></i>
         <div class="text-gray-700 fw-semibold fs-5 mb-2">Aucune donnée — lancez votre première campagne</div>
         <div class="text-muted fs-7">
-            Les indicateurs de campagnes (emails, taux d'ouverture, demandes) seront affichés ici dès qu'une campagne est active.
+            Commencez par l’expéditeur, le segment, le modèle et les prérequis d’envoi. Les indicateurs seront affichés dès que la première campagne tournera.
         </div>
         <a href="{{ route('admin.campaigns.create') }}" class="btn btn-primary mt-5">
             <i class="bi bi-plus-lg fs-4"></i>

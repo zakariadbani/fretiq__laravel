@@ -29,9 +29,14 @@
 
                 {{-- Daily quota badge (solde) --}}
                 @include('backend.contents.prospect_criteria.partials._quota-badge', [
-                    'quotaRemaining'      => $quotaRemaining ?? null,
-                    'quotaPackage'        => $quotaPackage ?? null,
-                    'activeDailyLimitSum' => $activeDailyLimitSum ?? null,
+                    'quotaRemaining'          => $quotaRemaining ?? null,
+                    'quotaPackage'            => $quotaPackage ?? null,
+                    'contactRemaining'        => $contactRemaining ?? null,
+                    'monthlyRemaining'        => $monthlyRemaining ?? null,
+                    'monthlyContactRemaining' => $monthlyContactRemaining ?? null,
+                    'activeDailyLimitSum'     => $activeDailyLimitSum ?? null,
+                    'dailyQuotaSummary'       => $dailyQuotaSummary ?? [],
+                    'monthlyQuotaSummary'     => $monthlyQuotaSummary ?? [],
                 ])
 
                 {{-- Filter button --}}

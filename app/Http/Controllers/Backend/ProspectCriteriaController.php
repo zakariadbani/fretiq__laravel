@@ -63,7 +63,7 @@ class ProspectCriteriaController extends BackendController
      */
     public function index(DiscoveryQuotaService $quotaService)
     {
-        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining, $activeDailyLimitSum] = $this->resolveQuotaVars($quotaService);
+        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining, $activeDailyLimitSum, $dailyQuotaSummary, $monthlyQuotaSummary] = $this->resolveQuotaVars($quotaService);
 
         return $this->currentDataTable->render(
             'backend.contents.prospect_criteria.crud.index',
@@ -76,6 +76,8 @@ class ProspectCriteriaController extends BackendController
                 'monthlyRemaining'        => $monthlyRemaining,
                 'monthlyContactRemaining' => $monthlyContactRemaining,
                 'activeDailyLimitSum'     => $activeDailyLimitSum,
+                'dailyQuotaSummary'       => $dailyQuotaSummary,
+                'monthlyQuotaSummary'     => $monthlyQuotaSummary,
             ]
         );
     }
@@ -148,13 +150,15 @@ class ProspectCriteriaController extends BackendController
         );
         $view->with('viewConfig', $viewConfig);
 
-        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining, $activeDailyLimitSum] = $this->resolveQuotaVars($quotaService);
+        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining, $activeDailyLimitSum, $dailyQuotaSummary, $monthlyQuotaSummary] = $this->resolveQuotaVars($quotaService);
         $view->with('quotaRemaining', $quotaRemaining)
              ->with('quotaPackage', $quotaPackage)
              ->with('contactRemaining', $contactRemaining)
              ->with('monthlyRemaining', $monthlyRemaining)
              ->with('monthlyContactRemaining', $monthlyContactRemaining)
              ->with('activeDailyLimitSum', $activeDailyLimitSum)
+             ->with('dailyQuotaSummary', $dailyQuotaSummary)
+             ->with('monthlyQuotaSummary', $monthlyQuotaSummary)
              ->with('resultCompanies', $resultCompanies)
              ->with('resultsSort', $resultsSort)
              ->with('resultsDir', $resultsDir)
@@ -211,6 +215,9 @@ class ProspectCriteriaController extends BackendController
     private function resolveQuotaVars(DiscoveryQuotaService $quotaService): array
     {
         try {
+            $dailyQuotaSummary = $quotaService->dailyDisplaySummary();
+            $monthlyQuotaSummary = $quotaService->monthlyDisplaySummary();
+
             return [
                 $quotaService->remainingTodayForDisplay(),
                 $quotaService->activePackage(),
@@ -220,10 +227,12 @@ class ProspectCriteriaController extends BackendController
                 (int) ProspectCriteria::where('is_active', true)
                     ->selectRaw('COALESCE(SUM(COALESCE(daily_limit, 20)), 0) AS s')
                     ->value('s'),
+                $dailyQuotaSummary,
+                $monthlyQuotaSummary,
             ];
         } catch (\Illuminate\Database\QueryException $e) {
             // Quota tables not yet migrated — treat as unlimited.
-            return [null, null, null, null, null, null];
+            return [null, null, null, null, null, null, [], []];
         }
     }
 

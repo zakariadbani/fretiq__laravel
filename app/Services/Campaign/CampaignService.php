@@ -10,10 +10,12 @@ use App\Models\EmailTrackingEvent;
 use App\Models\SequenceEnrollment;
 use App\Models\Suppression;
 use App\Services\Campaign\ZohoCampaignsDriver;
+use App\Services\Zoho\CampaignsReadinessService;
 use App\Support\TrackingToken;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 /**
@@ -40,6 +42,7 @@ class CampaignService
         private readonly SegmentService   $segmentService,
         private readonly SendWindowGuard  $sendWindowGuard,
         private readonly SequenceService  $sequenceService,
+        private readonly CampaignsReadinessService $readinessService,
     ) {}
 
     // ── Scheduling ─────────────────────────────────────────────────────────────
@@ -93,6 +96,77 @@ class CampaignService
         return $run;
     }
 
+
+    /**
+     * Authoritative send preflight used by preview, controller actions, scheduler, and jobs.
+     *
+     * @return array{ok: bool, count: int, contacts: \Illuminate\Support\Collection, messages: array<int, string>}
+     */
+    public function dispatchPreflight(Campaign $campaign): array
+    {
+        $campaign->loadMissing(['segment', 'template', 'senderIdentity', 'sequence']);
+
+        $messages = [];
+
+        if ($campaign->segment === null) {
+            $messages[] = 'Sélectionnez un segment avant de lancer la campagne.';
+        }
+
+        if ($campaign->senderIdentity === null) {
+            $messages[] = 'Sélectionnez un expéditeur avant de lancer la campagne.';
+        }
+
+        if ($campaign->schedule_type === 'sequence') {
+            if ($campaign->sequence === null) {
+                $messages[] = 'Sélectionnez une séquence avant de lancer la campagne.';
+            }
+        } elseif ($campaign->template === null) {
+            $messages[] = 'Sélectionnez un modèle email avant de lancer la campagne.';
+        }
+
+        $contacts = collect();
+        if ($campaign->segment !== null) {
+            try {
+                $contacts = $this->segmentService->resolve($campaign->segment);
+                if ($contacts->isEmpty()) {
+                    $messages[] = 'Aucun destinataire éligible après exclusions, suppressions et règles de conformité.';
+                }
+            } catch (\Throwable $e) {
+                $messages[] = 'Impossible de vérifier l’audience finale : corrigez le segment avant de lancer la campagne.';
+            }
+        }
+
+        if ($this->usesZohoDriver($campaign)) {
+            $listKey = trim((string) ($campaign->zoho_list_key ?: config('services.zoho.campaigns.list_key')));
+            if ($listKey === '') {
+                $messages[] = 'Préparation Zoho incomplète : ajoutez et vérifiez la liste Zoho dédiée avant de lancer l’envoi.';
+            }
+
+            if ($listKey !== '') {
+                $readiness = $this->readinessService->dispatchCheck();
+                if (! $readiness['ready']) {
+                    $messages = array_merge($messages, $readiness['messages']);
+                }
+            }
+        }
+
+        return [
+            'ok' => $messages === [],
+            'count' => $contacts->count(),
+            'contacts' => $contacts,
+            'messages' => array_values(array_unique($messages)),
+        ];
+    }
+
+    private function usesZohoDriver(Campaign $campaign): bool
+    {
+        return config('services.zoho.driver', 'local') === 'zoho' || $campaign->driver === 'zoho';
+    }
+
+    private function preflightMessage(array $preflight): string
+    {
+        return implode(' ', $preflight['messages'] ?: ['Campagne bloquée : vérification d’envoi incomplète.']);
+    }
     // ── Sequence launch ────────────────────────────────────────────────────────
 
     /**
@@ -213,6 +287,25 @@ class CampaignService
                 continue;
             }
 
+            $preflight = $this->dispatchPreflight($run->campaign);
+            if (! $preflight['ok']) {
+                $run->update(['status' => 'failed', 'finished_at' => now()]);
+                Log::warning('[CampaignService] dispatchDue: run blocked by dispatch preflight.', [
+                    'run_id' => $run->id,
+                    'campaign_id' => $run->campaign_id,
+                    'message' => $this->preflightMessage($preflight),
+                ]);
+                continue;
+            }
+
+            $claimed = CampaignRun::whereKey($run->id)
+                ->where('status', 'scheduled')
+                ->update(['status' => 'sending', 'started_at' => now()]);
+
+            if ($claimed !== 1) {
+                continue;
+            }
+
             SendCampaignJob::dispatch($run->id);
             $dispatched++;
         }
@@ -293,7 +386,19 @@ class CampaignService
         }
 
         // ── Step 2: Resolve eligible contacts (outside TX) ────────────────────
-        $contacts = $this->segmentService->resolve($run->campaign->segment);
+        // Dispatch preflight is repeated inside the job so queued/stale work fails closed.
+        $preflight = $this->dispatchPreflight($run->campaign);
+        if (! $preflight['ok']) {
+            $run->update(['status' => 'failed', 'stats_sent' => 0, 'finished_at' => now()]);
+            Log::warning('[CampaignService] Send blocked by dispatch preflight.', [
+                'run_id' => $run->id,
+                'campaign_id' => $run->campaign_id,
+                'message' => $this->preflightMessage($preflight),
+            ]);
+            return;
+        }
+
+        $contacts = $preflight['contacts'];
 
         // ── Step 3: Insert recipient rows (idempotent via unique key) ─────────
         foreach ($contacts as $contact) {

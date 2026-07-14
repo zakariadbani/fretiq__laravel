@@ -23,6 +23,28 @@ class EmailVerificationTest extends TestCase
         $response = $this->actingAs($user)->get('/verify-email');
 
         $response->assertStatus(200);
+        $response->assertSee('Vérifier votre adresse e-mail');
+        $response->assertSee('Merci pour votre inscription.');
+        $response->assertSee('Renvoyer l&#039;e-mail de vérification', false);
+        $response->assertSee('Se déconnecter');
+        $response->assertDontSee('Verify Email');
+        $response->assertDontSee('Resend Verification Email');
+        $response->assertDontSee('Log out');
+    }
+
+    public function test_email_verification_screen_displays_french_resent_feedback()
+    {
+        $user = User::factory()->create([
+            'email_verified_at' => null,
+        ]);
+
+        $response = $this->actingAs($user)
+            ->withSession(['status' => 'verification-link-sent'])
+            ->get('/verify-email');
+
+        $response->assertStatus(200);
+        $response->assertSee('Un nouveau lien de vérification a été envoyé');
+        $response->assertDontSee('A new verification link has been sent');
     }
 
     public function test_email_can_be_verified()

@@ -4,7 +4,9 @@
 
 namespace Tests\Feature\Generated;
 
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Tests\TestCase;
 
 /**
@@ -14,7 +16,7 @@ use Tests\TestCase;
  * - /register GET         → 200 (guest form)
  * - /forgot-password GET  → 200 (guest form)
  * - /reset-password/{tok} GET → 200 (guest form)
- * - / GET                 → 302 (auth redirect for guest)
+ * - / GET                 → 200 (public landing for guest)
  * - /track/open/{token}   → 200 (always returns 1×1 GIF)
  * - /u/{contact} GET      → 403 (signed URL rejected without signature)
  */
@@ -46,11 +48,31 @@ class PublicRoutesTest extends TestCase
         $response->assertStatus(200);
     }
 
-    public function test_root_redirects_unauthenticated_guest(): void
+    public function test_root_shows_public_landing_for_guest(): void
     {
         $response = $this->get('/');
-        // Unauthenticated: redirected to /login (302). Accept 200 in edge configs.
-        $this->assertContains($response->status(), [200, 302]);
+        $landing = file_get_contents(resource_path('landing/index.html'));
+
+        $response->assertStatus(200);
+
+        $this->assertInstanceOf(BinaryFileResponse::class, $response->baseResponse);
+        $this->assertSame(realpath(resource_path('landing/index.html')), $response->baseResponse->getFile()->getRealPath());
+        $this->assertIsString($landing);
+        $this->assertStringContainsString('href="/login"', $landing);
+        $this->assertStringContainsString('subject=Acc%C3%A8s%20fretiq', $landing);
+        $this->assertStringContainsString('subject=D%C3%A9mo%20fretiq', $landing);
+        $this->assertStringContainsString('RGPD', $landing);
+        $this->assertStringContainsString('aucun envoi', $landing);
+        $this->assertStringNotContainsString('href="#"', $landing);
+    }
+
+    public function test_root_redirects_authenticated_user_to_dashboard(): void
+    {
+        $user = User::factory()->create();
+
+        $this->actingAs($user)
+            ->get('/')
+            ->assertRedirect('/dashboard');
     }
 
     public function test_tracking_pixel_returns_gif_for_any_token(): void

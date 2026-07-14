@@ -226,6 +226,7 @@ h1 .glow {
   transition: border-color 220ms ease, background 220ms ease;
 }
 .btn-ghost:hover { border-color: var(--lilac-soft); background: rgba(159,212,255,0.08); }
+.btn-note { display: block; margin-top: 8px; color: var(--muted-2); font-size: 0.78rem; }
 .hero-trust {
   margin-top: 38px; display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center;
   color: var(--muted-2); font-size: 0.72rem; letter-spacing: 0.04em;
@@ -467,16 +468,23 @@ blockquote .hl {
 }
 @media (max-width: 768px) {
   .shell { width: min(680px, calc(100% - 36px)); }
+  .site-header { position: fixed; padding: 12px 0; background: rgba(7,11,22,0.86); backdrop-filter: blur(10px); border-bottom: 1px solid var(--hair); }
   .nav { grid-template-columns: 1fr auto; }
   .nav-mid { display: none; }
-  .hero { padding: 116px 0 48px; }
-  .hero-grid { grid-template-columns: 1fr; gap: 40px; }
-  .hero-chamber { order: -1; aspect-ratio: 1 / 0.92; min-height: 360px; }
-  section.band { padding: 84px 0; }
+  .nav-cta { padding: 8px 12px; font-size: 0.78rem; }
+  .hero { min-height: auto; padding: 88px 0 34px; }
+  .hero-grid { grid-template-columns: 1fr; gap: 24px; }
+  h1 { font-size: 2.45rem; max-width: 12ch; }
+  .hero-lede { margin-top: 18px; font-size: 0.98rem; }
+  .hero-actions { position: sticky; bottom: 12px; z-index: 20; margin-top: 22px; padding: 10px; background: rgba(7,11,22,0.82); border: 1px solid var(--hair); border-radius: 18px; backdrop-filter: blur(10px); }
+  .hero-trust { margin-top: 20px; }
+  .hero-chamber { order: -1; aspect-ratio: 1 / 0.68; min-height: 230px; }
+  .ticker, #pipeline, #capabilities { display: none; }
+  section.band { padding: 56px 0; }
   .dossier-wrap { grid-template-columns: 1fr; }
   .dossier-aside { border-right: 0; border-bottom: 1px solid var(--hair); }
   .funnel-wrap { grid-template-columns: 1fr; gap: 30px; }
-  .quote-chamber, .close-chamber { padding: 42px 30px; }
+  .quote-chamber, .close-chamber { padding: 34px 24px; }
   .footer-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 390px) {
@@ -520,7 +528,7 @@ blockquote .hl {
         <span>fretiq <i>hologramme</i></span>
       </a>
       <span class="nav-mid">Reconstitution volumétrique de prospects</span>
-      <a class="nav-cta" href="/login">Demander un accès <span aria-hidden="true">→</span></a>
+      <a class="nav-cta" href="/login">Connexion <span aria-hidden="true">→</span></a>
     </nav>
   </header>
 
@@ -538,9 +546,10 @@ blockquote .hl {
             comblant visiblement les lacunes par inférence avant même que votre premier e-mail ne soit rédigé.
           </p>
           <div class="hero-actions">
-            <a class="btn-primary" href="/login">Projeter un prospect d'exemple <span aria-hidden="true">→</span></a>
-            <a class="btn-ghost" href="#completeness">Voir ce qui est comblé</a>
+            <a class="btn-primary" href="/login">Se connecter <span aria-hidden="true">→</span></a>
+            <a class="btn-ghost" href="mailto:contact@digaevo.com?subject=Acc%C3%A8s%20fretiq">Demander un accès</a>
           </div>
+          <span class="btn-note">Démo disponible sur demande, après cadrage du segment fret.</span>
           <div class="hero-trust">
             <span><b>IA assistive</b> — chaque inférence est étiquetée</span>
             <span>·</span>
@@ -753,11 +762,11 @@ blockquote .hl {
       <div class="shell">
         <div class="chamber close-chamber reveal">
           <span class="chamber-eyebrow" style="justify-content:center;">Allumez le projecteur</span>
-          <h2>Apportez un vrai segment. Regardez-le se reconstituer.</h2>
-          <p>Nous lancerons une tranche de découverte sur l'un de vos marchés fret cibles et projetterons les dossiers reconstitués — champs inférés étiquetés — afin que vous jugiez la complétude par vous-même.</p>
+          <h2>Préparez un segment fret. Nous montrons le résultat.</h2>
+          <p>La démo se fait sur demande avec un segment cible réel. Aucun compte public, aucun envoi automatique.</p>
           <div class="close-actions">
-            <a class="btn-primary" href="/login">Projeter un exemple <span aria-hidden="true">→</span></a>
-            <a class="btn-ghost" href="#completeness">Relire le dossier</a>
+            <a class="btn-primary" href="mailto:contact@digaevo.com?subject=D%C3%A9mo%20fretiq">Demander une démo <span aria-hidden="true">→</span></a>
+            <a class="btn-ghost" href="/login">Connexion client</a>
           </div>
           <p class="close-fine mono">La prospection à froid reste verrouillée et respectueuse du RGPD · aucun envoi n'est déclenché sans validation humaine explicite</p>
         </div>
@@ -795,7 +804,9 @@ blockquote .hl {
         </div>
         <div class="footer-col">
           <strong>Accès</strong>
-          <a href="/login">Demander un accès</a>
+          <a href="/login">Connexion client</a>
+          <a href="mailto:contact@digaevo.com?subject=Acc%C3%A8s%20fretiq">Demander un accès</a>
+          <a href="mailto:contact@digaevo.com?subject=D%C3%A9mo%20fretiq">Demander une démo</a>
           <a href="#top">Retour à la chambre</a>
         </div>
       </div>

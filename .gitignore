@@ -79,3 +79,6 @@ test-results/
 # AI planning scratch
 .hermes/
 AGENTS.md
+
+# Codex agent hooks (local tooling)
+.codex/

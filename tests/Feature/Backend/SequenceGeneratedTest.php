@@ -256,6 +256,94 @@ class SequenceGeneratedTest extends TestCase
         ]);
     }
 
+    // SCR-52 boolean form regression coverage.
+    public function test_update_persists_unchecked_boolean_fields(): void
+    {
+        $sequence = $this->makeSequence([
+            'is_active'     => true,
+            'stop_on_reply' => true,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->put('/admin/sequences/' . $sequence->id, [
+                'name'          => $sequence->name,
+                'is_active'     => '0',
+                'stop_on_reply' => '0',
+            ]);
+
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('sequences', [
+            'id'            => $sequence->id,
+            'is_active'     => 0,
+            'stop_on_reply' => 0,
+        ]);
+    }
+
+    public function test_update_keeps_checked_boolean_fields_true(): void
+    {
+        $sequence = $this->makeSequence([
+            'is_active'     => false,
+            'stop_on_reply' => false,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->put('/admin/sequences/' . $sequence->id, [
+                'name'          => $sequence->name,
+                'is_active'     => '1',
+                'stop_on_reply' => '1',
+            ]);
+
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('sequences', [
+            'id'            => $sequence->id,
+            'is_active'     => 1,
+            'stop_on_reply' => 1,
+        ]);
+    }
+
+    public function test_edit_form_places_hidden_boolean_inputs_before_checkboxes(): void
+    {
+        $sequence = $this->makeSequence();
+
+        $html = $this->actingAs($this->superadmin)
+            ->get('/admin/sequences/' . $sequence->id . '/edit')
+            ->assertStatus(200)
+            ->getContent();
+
+        $isActiveHidden = strpos($html, 'type="hidden" name="is_active" value="0"');
+        $isActiveCheckbox = strpos($html, 'name="is_active"', $isActiveHidden + 1);
+        $stopOnReplyHidden = strpos($html, 'type="hidden" name="stop_on_reply" value="0"');
+        $stopOnReplyCheckbox = strpos($html, 'name="stop_on_reply"', $stopOnReplyHidden + 1);
+
+        $this->assertNotFalse($isActiveHidden);
+        $this->assertNotFalse($isActiveCheckbox);
+        $this->assertLessThan($isActiveCheckbox, $isActiveHidden);
+        $this->assertNotFalse($stopOnReplyHidden);
+        $this->assertNotFalse($stopOnReplyCheckbox);
+        $this->assertLessThan($stopOnReplyCheckbox, $stopOnReplyHidden);
+    }
+
+    public function test_edit_form_uses_external_step_action_forms(): void
+    {
+        $sequence = $this->makeSequence();
+        $step1 = $this->makeStep($sequence, 1);
+        $step2 = $this->makeStep($sequence, 2);
+
+        $html = $this->actingAs($this->superadmin)
+            ->get('/admin/sequences/' . $sequence->id . '/edit')
+            ->assertStatus(200)
+            ->getContent();
+
+        $this->assertMatchesRegularExpression('/<button[^>]+form="sequence_step_move_down_' . $step1->id . '"/s', $html);
+        $this->assertMatchesRegularExpression('/<form[^>]+id="sequence_step_move_down_' . $step1->id . '"[^>]+action="' . preg_quote(route('admin.sequences.moveStepDown', [$sequence->id, $step1->id]), '/') . '"/s', $html);
+
+        $this->assertMatchesRegularExpression('/<button[^>]+form="sequence_step_move_up_' . $step2->id . '"/s', $html);
+        $this->assertMatchesRegularExpression('/<form[^>]+id="sequence_step_move_up_' . $step2->id . '"[^>]+action="' . preg_quote(route('admin.sequences.moveStepUp', [$sequence->id, $step2->id]), '/') . '"/s', $html);
+
+        $this->assertMatchesRegularExpression('/<button[^>]+form="sequence_step_delete_' . $step1->id . '"/s', $html);
+        $this->assertMatchesRegularExpression('/<form[^>]+id="sequence_step_delete_' . $step1->id . '"[^>]+action="' . preg_quote(route('admin.sequences.deleteStep', [$sequence->id, $step1->id]), '/') . '"/s', $html);
+    }
+
     /**
      * PUT /admin/sequences/{id} with missing name must return 406.
      *

@@ -3,8 +3,8 @@
 	<!--begin::Header container-->
 	<div class="app-container container-fluid d-flex align-items-stretch justify-content-between" id="kt_app_header_container">
 		<!--begin::Sidebar mobile toggle-->
-		<div class="d-flex align-items-center d-lg-none ms-n3 me-1 me-md-2" title="Show sidebar menu">
-			<div class="btn btn-icon btn-active-color-primary w-35px h-35px" id="kt_app_sidebar_mobile_toggle">{!! getIcon('abstract-14', 'fs-2 fs-md-1') !!}</div>
+		<div class="d-flex align-items-center d-lg-none ms-n3 me-1 me-md-2">
+			<button type="button" class="btn btn-icon btn-active-color-primary w-35px h-35px" id="kt_app_sidebar_mobile_toggle" aria-label="Ouvrir le menu latéral">{!! getIcon('abstract-14', 'fs-2 fs-md-1') !!}</button>
 		</div>
 		<!--end::Sidebar mobile toggle-->
 		<!--begin::Mobile logo-->

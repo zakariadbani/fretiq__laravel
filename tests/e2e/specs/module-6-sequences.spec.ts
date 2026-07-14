@@ -383,6 +383,43 @@ test.describe('Sequences module', () => {
     expect(stepsAfterDelete).toBe(stepsBefore);
   });
 
+  test('steps: icon-only actions expose French accessible names and tooltips', async ({ page }) => {
+    const sequences = new SequencePage(page);
+
+    await sequences.goto();
+    await waitForDataTable(page, 'sequence-table');
+    await sequences.search('E2E_FIXTURE Sequence');
+    await waitForDataTable(page, 'sequence-table');
+
+    const fixtureRows = sequences.table.locator('tbody tr:has-text("E2E_FIXTURE Sequence")');
+    if ((await fixtureRows.count()) === 0) {
+      test.skip(true, 'E2E_FIXTURE Sequence not found. Run fretiq:e2e-seed before the suite.');
+      return;
+    }
+
+    await sequences.clickRowAction(0, 'view');
+    await page.waitForLoadState('networkidle');
+    await sequences.clickStepsTab();
+
+    if ((await sequences.stepDeleteButtons.count()) === 0) {
+      test.skip(true, 'Fixture sequence has no rendered step action buttons.');
+      return;
+    }
+
+    const deleteButton = sequences.stepDeleteButtons.first();
+    await expect(deleteButton).toHaveAttribute('aria-label', "Supprimer l'étape");
+    const deleteTooltip = await deleteButton.getAttribute('data-bs-title') ?? await deleteButton.getAttribute('data-bs-original-title');
+    expect(deleteTooltip).toBe("Supprimer l'étape");
+
+    const unnamedButtons = await page.locator('#sequence_steps button.btn-icon, #sequence_steps button:has(.bi-arrow-up), #sequence_steps button:has(.bi-arrow-down)').evaluateAll((buttons) =>
+      buttons.filter((button) => {
+        const tooltip = button.getAttribute('data-bs-title') || button.getAttribute('data-bs-original-title');
+        return !button.getAttribute('aria-label') || !tooltip;
+      }).length
+    );
+    expect(unnamedButtons).toBe(0);
+  });
+
   // ── 9. Enrollment control: pauseEnrollment / resumeEnrollment ─────────────
 
   test('pauseEnrollment / resumeEnrollment: toggle status badge via inline form buttons', async ({ page }) => {

@@ -27,7 +27,7 @@ class ContactsDataTable extends BackendDataTable
         'company' => [
             'title'      => 'Entreprise',
             'orderable'  => false,
-            'searchable' => false,
+            'searchable' => true,
             'raw'        => true,
         ],
         'status' => [
@@ -90,6 +90,14 @@ class ContactsDataTable extends BackendDataTable
     {
         $statuses    = config('global.data.contact_statuses', []);
         $legalBases  = config('global.data.contact_legal_bases', []);
+
+        $this->datatables->filterColumn('company', function ($query, $keyword) {
+            $kw = '%' . mb_strtolower($keyword) . '%';
+            $query->whereHas('company', function ($q) use ($kw) {
+                $q->whereRaw('LOWER(companies.name) LIKE ?', [$kw])
+                  ->orWhereRaw('LOWER(companies.domain) LIKE ?', [$kw]);
+            });
+        });
 
         $this->datatables->editColumn('company', function (Contact $row) {
             if (empty($row->company_id) || $row->company === null) {

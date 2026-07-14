@@ -19,4 +19,13 @@
             Modifier
         </a>
     @endcan
+
+    @can('create campaigns')
+        @if(Route::has('admin.campaigns.create'))
+            <a href="{{ route('admin.campaigns.create', ['template_id' => $model->id]) }}" class="btn btn-sm btn-light btn-active-light-primary">
+                <i class="bi bi-rocket me-1"></i>
+                Creer une campagne
+            </a>
+        @endif
+    @endcan
 @endif

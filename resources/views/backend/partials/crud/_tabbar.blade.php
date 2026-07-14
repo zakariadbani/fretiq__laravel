@@ -88,7 +88,7 @@
     @endisset
 
     {{-- Tab nav --}}
-    <ul class="nav nav-stretch nav-line-tabs nav-line-tabs-2x border-transparent fs-5 fw-bold">
+    <ul class="nav nav-line-tabs nav-line-tabs-2x border-transparent fs-6 fw-bold flex-wrap gap-2 gap-md-0">
 
         @foreach($tabs as $tab)
             @php
@@ -121,10 +121,14 @@
             @endphp
 
             @if(!$skip)
-                <li class="nav-item mt-2">
+                <li class="nav-item mt-1">
                     @if($native)
-                        <a class="nav-link text-active-primary ms-0 me-10 py-5{{ $isActive ? ' active' : '' }}"
-                           data-bs-toggle="tab" href="#{{ $paneId }}">
+                        <a class="nav-link text-active-primary ms-0 me-4 me-md-8 py-3 py-md-4 px-1{{ $isActive ? ' active' : '' }}"
+                           data-bs-toggle="tab"
+                           role="tab"
+                           aria-controls="{{ $paneId }}"
+                           aria-selected="{{ $isActive ? 'true' : 'false' }}"
+                           href="#{{ $paneId }}">
                             <i class="bi {{ $icon }} me-1"></i>
                             {{ $label }}
                             @if(!is_null($count) && $hasId)
@@ -133,7 +137,9 @@
                             @endif
                         </a>
                     @else
-                        <a class="nav-link text-active-primary ms-0 me-10 py-5"
+                        <a class="nav-link crud-route-link text-gray-700 text-hover-primary ms-0 me-4 me-md-8 py-3 py-md-4 px-1"
+                           data-crud-route-link="true"
+                           aria-label="Ouvrir {{ $label }} sur une autre page"
                            href="{{ $linkRoute }}">
                             <i class="bi {{ $icon }} me-1"></i>
                             {{ $label }}
@@ -151,3 +157,13 @@
     </ul>
 
 </x-crud.hero>
+
+@once
+    @push('styles')
+        <style>
+            .crud-route-link {
+                border-bottom-style: dotted !important;
+            }
+        </style>
+    @endpush
+@endonce

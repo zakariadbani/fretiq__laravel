@@ -1,7 +1,6 @@
 <?php
 
 use App\Http\Controllers\Auth\SocialiteController;
-use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\TrackingController;
 use App\Http\Controllers\UnsubscribeController;
 use App\Models\CampaignRun;
@@ -30,7 +29,9 @@ Route::get('/', function () {
 
 Route::middleware(['auth', 'verified'])->group(function () {
 
-    Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('/dashboard', fn () => redirect()->route('admin.dashboard'))
+        ->middleware('permission:backend.access')
+        ->name('dashboard');
 
 });
 
@@ -59,9 +60,15 @@ Route::get('/error', function () {
 Route::get('/track/open/{token}', [TrackingController::class, 'open'])
     ->name('track.open');
 
-// Unsubscribe landing page + RFC 8058 one-click POST handler.
-Route::match(['get', 'post'], '/u/{contact}', [UnsubscribeController::class, 'show'])
+// Unsubscribe confirmation GET, CSRF form POST, and RFC 8058 one-click POST.
+Route::get('/u/{contact}', [UnsubscribeController::class, 'show'])
     ->name('unsubscribe')
+    ->middleware('signed');
+Route::post('/u/{contact}', [UnsubscribeController::class, 'confirm'])
+    ->name('unsubscribe.confirm')
+    ->middleware('signed');
+Route::post('/u/{contact}/one-click', [UnsubscribeController::class, 'oneClick'])
+    ->name('unsubscribe.one-click')
     ->middleware('signed');
 
 // Public, signed HTML import URL used by Zoho Campaigns createCampaign.

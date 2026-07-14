@@ -22,7 +22,7 @@
 
     @can('create campaigns')
         @if(Route::has('admin.campaigns.create'))
-            <a href="{{ route('admin.campaigns.create') }}" class="btn btn-sm btn-light btn-active-light-primary">
+            <a href="{{ route('admin.campaigns.create', ['segment_id' => $model->id]) }}" class="btn btn-sm btn-light btn-active-light-primary">
                 <i class="bi bi-rocket me-1"></i>
                 Lancer une campagne
             </a>

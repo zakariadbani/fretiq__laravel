@@ -3,6 +3,7 @@
 namespace Tests\Feature\Backend;
 
 use App\Models\Campaign;
+use App\Mail\CampaignMailable;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
@@ -164,11 +165,9 @@ class TrackingAndUnsubscribeTest extends TestCase
     }
 
     /**
-     * GET /u/{contact} with a valid signed URL must:
-     *   - return HTTP 200
-     *   - create a Suppression row with reason='unsubscribe'
+     * GET /u/{contact} with a valid signed URL must show confirmation only.
      */
-    public function test_unsubscribe_via_signed_url_creates_suppression(): void
+    public function test_unsubscribe_get_shows_confirmation_without_suppression(): void
     {
         $contact = $this->makeClientContact('unsub@acme.test');
 
@@ -176,19 +175,18 @@ class TrackingAndUnsubscribeTest extends TestCase
 
         $response = $this->get($signedUrl);
 
-        $response->assertStatus(200);
+        $response->assertStatus(200)
+            ->assertSeeText('Confirmer la désinscription');
 
-        $this->assertDatabaseHas('suppressions', [
-            'email'  => 'unsub@acme.test',
-            'reason' => 'unsubscribe',
+        $this->assertDatabaseMissing('suppressions', [
+            'email' => 'unsub@acme.test',
         ]);
     }
 
     /**
-     * POST /u/{contact} (RFC 8058 one-click) with a valid signed URL must also
-     * create the suppression row.
+     * POST /u/{contact} with a valid signed URL confirms the human form.
      */
-    public function test_unsubscribe_post_via_signed_url_creates_suppression(): void
+    public function test_unsubscribe_confirmation_post_creates_suppression(): void
     {
         $contact = $this->makeClientContact('unsub-post@acme.test');
 
@@ -196,12 +194,43 @@ class TrackingAndUnsubscribeTest extends TestCase
 
         $response = $this->post($signedUrl);
 
-        // The UnsubscribeController returns a view (200) for both GET and POST.
         $response->assertStatus(200);
 
         $this->assertDatabaseHas('suppressions', [
             'email'  => 'unsub-post@acme.test',
             'reason' => 'unsubscribe',
+        ]);
+    }
+
+    public function test_unsubscribe_one_click_post_creates_suppression(): void
+    {
+        $contact = $this->makeClientContact('one-click@acme.test');
+
+        $signedUrl = URL::signedRoute('unsubscribe.one-click', ['contact' => $contact->id]);
+
+        $response = $this->post($signedUrl, ['List-Unsubscribe' => 'One-Click']);
+
+        $response->assertStatus(200);
+
+        $this->assertDatabaseHas('suppressions', [
+            'email'  => 'one-click@acme.test',
+            'reason' => 'unsubscribe',
+        ]);
+    }
+
+    public function test_unsubscribe_one_click_post_requires_rfc8058_body(): void
+    {
+        $contact = $this->makeClientContact('bad-one-click@acme.test');
+
+        $signedUrl = URL::signedRoute('unsubscribe.one-click', ['contact' => $contact->id]);
+
+        $response = $this->post($signedUrl);
+
+        $response->assertStatus(400)
+            ->assertSeeText('Demande indisponible');
+
+        $this->assertDatabaseMissing('suppressions', [
+            'email' => 'bad-one-click@acme.test',
         ]);
     }
 
@@ -218,7 +247,9 @@ class TrackingAndUnsubscribeTest extends TestCase
 
         $response = $this->get($unsignedUrl);
 
-        $response->assertStatus(403);
+        $response->assertStatus(403)
+            ->assertSeeText('Demande indisponible')
+            ->assertDontSee('tamper@acme.test');
     }
 
     /**
@@ -230,10 +261,37 @@ class TrackingAndUnsubscribeTest extends TestCase
         $contact   = $this->makeClientContact('idempotent@acme.test');
         $signedUrl = URL::signedRoute('unsubscribe', ['contact' => $contact->id]);
 
-        $this->get($signedUrl)->assertStatus(200);
-        $this->get($signedUrl)->assertStatus(200);
+        $this->post($signedUrl)->assertStatus(200);
+        $this->post($signedUrl)->assertStatus(200);
 
         $count = \DB::table('suppressions')->where('email', 'idempotent@acme.test')->count();
         $this->assertSame(1, $count, 'Suppression must not be created twice (firstOrCreate)');
+    }
+
+    public function test_visible_unsubscribe_link_and_list_unsubscribe_header_use_separate_urls(): void
+    {
+        $contact = $this->makeClientContact('header@acme.test');
+        $recipient = $this->makeCampaignRecipient($contact);
+        $recipient->load('run.campaign.template');
+        $campaign = $recipient->run->campaign;
+        $template = $campaign->template;
+
+        $confirmationUrl = URL::signedRoute('unsubscribe', ['contact' => $contact->id]);
+        $oneClickUrl = URL::signedRoute('unsubscribe.one-click', ['contact' => $contact->id]);
+
+        $mail = new CampaignMailable(
+            campaign: $campaign,
+            template: $template,
+            contact: $contact,
+            subjectLine: 'Subject',
+            trackingToken: $this->makeToken(),
+            unsubscribeUrl: $confirmationUrl,
+            resolvedHtml: '<a href="{{unsubscribe_url}}">Se désabonner</a>',
+        );
+
+        $this->assertStringContainsString($confirmationUrl, $mail->render());
+        $this->assertStringNotContainsString($oneClickUrl, $mail->render());
+        $this->assertSame('<' . $oneClickUrl . '>', $mail->headers()->text['List-Unsubscribe']);
+        $this->assertSame('List-Unsubscribe=One-Click', $mail->headers()->text['List-Unsubscribe-Post']);
     }
 }

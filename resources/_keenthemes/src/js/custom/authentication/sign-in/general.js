@@ -18,17 +18,17 @@ var KTSigninGeneral = function () {
                         validators: {
                             regexp: {
                                 regexp: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-                                message: 'The value is not a valid email address',
+                                message: 'Saisissez une adresse e-mail valide.',
                             },
                             notEmpty: {
-                                message: 'Email address is required'
+                                message: 'L’adresse e-mail est requise.'
                             }
                         }
                     },
                     'password': {
                         validators: {
                             notEmpty: {
-                                message: 'The password is required'
+                                message: 'Le mot de passe est requis.'
                             }
                         }
                     }
@@ -71,10 +71,10 @@ var KTSigninGeneral = function () {
 
                         // Show message popup. For more info check the plugin's official documentation: https://sweetalert2.github.io/
                         Swal.fire({
-                            text: "You have successfully logged in!",
+                            text: "Connexion réussie.",
                             icon: "success",
                             buttonsStyling: false,
-                            confirmButtonText: "Ok, got it!",
+                            confirmButtonText: "D’accord",
                             customClass: {
                                 confirmButton: "btn btn-primary"
                             }
@@ -94,10 +94,10 @@ var KTSigninGeneral = function () {
                 } else {
                     // Show error popup. For more info check the plugin's official documentation: https://sweetalert2.github.io/
                     Swal.fire({
-                        text: "Sorry, looks like there are some errors detected, please try again.",
+                        text: "Veuillez corriger les champs signalés.",
                         icon: "error",
                         buttonsStyling: false,
-                        confirmButtonText: "Ok, got it!",
+                        confirmButtonText: "D’accord",
                         customClass: {
                             confirmButton: "btn btn-primary"
                         }
@@ -129,10 +129,10 @@ var KTSigninGeneral = function () {
 
                             // Show message popup. For more info check the plugin's official documentation: https://sweetalert2.github.io/
                             Swal.fire({
-                                text: "You have successfully logged in!",
+                                text: "Connexion réussie.",
                                 icon: "success",
                                 buttonsStyling: false,
-                                confirmButtonText: "Ok, got it!",
+                                confirmButtonText: "D’accord",
                                 customClass: {
                                     confirmButton: "btn btn-primary"
                                 }
@@ -146,21 +146,36 @@ var KTSigninGeneral = function () {
                         } else {
                             // Show error popup. For more info check the plugin's official documentation: https://sweetalert2.github.io/
                             Swal.fire({
-                                text: "Sorry, the email or password is incorrect, please try again.",
+                                text: "L’adresse e-mail ou le mot de passe est incorrect.",
                                 icon: "error",
                                 buttonsStyling: false,
-                                confirmButtonText: "Ok, got it!",
+                                confirmButtonText: "D’accord",
                                 customClass: {
                                     confirmButton: "btn btn-primary"
                                 }
                             });
                         }
                     }).catch(function (error) {
+                        var message = 'Une erreur est survenue. Veuillez réessayer.';
+
+                        if (!error.response) {
+                            message = 'Impossible de joindre le serveur. Vérifiez votre connexion puis réessayez.';
+                        } else if (error.response.status === 419) {
+                            message = 'Votre session a expiré. Rechargez la page puis réessayez.';
+                        } else if (error.response.status === 422) {
+                            var errors = error.response.data && error.response.data.errors;
+                            var field = errors && Object.keys(errors)[0];
+
+                            if (field && errors[field] && errors[field][0]) {
+                                message = errors[field][0];
+                            }
+                        }
+
                         Swal.fire({
-                            text: "Sorry, looks like there are some errors detected, please try again.",
+                            text: message,
                             icon: "error",
                             buttonsStyling: false,
-                            confirmButtonText: "Ok, got it!",
+                            confirmButtonText: "D’accord",
                             customClass: {
                                 confirmButton: "btn btn-primary"
                             }
@@ -175,10 +190,10 @@ var KTSigninGeneral = function () {
                 } else {
                     // Show error popup. For more info check the plugin's official documentation: https://sweetalert2.github.io/
                     Swal.fire({
-                        text: "Sorry, looks like there are some errors detected, please try again.",
+                        text: "Veuillez corriger les champs signalés.",
                         icon: "error",
                         buttonsStyling: false,
-                        confirmButtonText: "Ok, got it!",
+                        confirmButtonText: "D’accord",
                         customClass: {
                             confirmButton: "btn btn-primary"
                         }

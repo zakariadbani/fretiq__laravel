@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Setting;
 use App\Services\Campaign\CampaignService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -43,6 +44,8 @@ class CampaignsDispatchDue extends Command
     {
         try {
             $count = $this->campaignService->dispatchDue();
+
+            Setting::set('campaign_scheduler.commands.dispatch_due.last_success_at', now()->utc()->toIso8601String());
 
             $this->info("Dispatched {$count} due run(s).");
 

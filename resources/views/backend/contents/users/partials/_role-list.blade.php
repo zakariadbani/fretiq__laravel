@@ -27,7 +27,7 @@
                     @foreach($role->permissions->shuffle()->take(5) as $permission)
                         <div class="d-flex align-items-center py-2">
                             <span class="bullet bg-primary me-3"></span>
-                            {{ ucfirst($permission->name) }}
+                            {{ permission_label($permission->name) }}
                         </div>
                     @endforeach
                     @if($role->permissions->count() > 5)

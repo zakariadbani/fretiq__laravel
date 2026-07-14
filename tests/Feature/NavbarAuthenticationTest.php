@@ -3,12 +3,21 @@
 namespace Tests\Feature;
 
 use App\Models\User;
+use Database\Seeders\Acl\PermissionsSeeder;
+use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class NavbarAuthenticationTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
+    }
 
     /**
      * Test that authenticated user can see navbar with profile information.
@@ -18,9 +27,11 @@ class NavbarAuthenticationTest extends TestCase
         $user = User::factory()->create([
             'name' => 'Test User',
             'email' => 'test@example.com',
+            'email_verified_at' => now(),
         ]);
+        $user->assignRole('superadmin');
 
-        $response = $this->actingAs($user)->get('/dashboard');
+        $response = $this->actingAs($user)->get('/admin/dashboard');
 
         $response->assertStatus(200);
         $response->assertSee('Test User');
@@ -34,10 +45,12 @@ class NavbarAuthenticationTest extends TestCase
         $user = User::factory()->create([
             'name' => 'Jane Doe',
             'email' => 'jane@example.com',
+            'email_verified_at' => now(),
             'profile_photo_path' => null,
         ]);
+        $user->assignRole('superadmin');
 
-        $response = $this->actingAs($user)->get('/dashboard');
+        $response = $this->actingAs($user)->get('/admin/dashboard');
 
         $response->assertStatus(200);
         // Should display initial instead of crashing
@@ -63,10 +76,12 @@ class NavbarAuthenticationTest extends TestCase
         $user = User::factory()->create([
             'name' => 'Test User',
             'email' => 'noname@example.com',
+            'email_verified_at' => now(),
         ]);
+        $user->assignRole('superadmin');
 
         // Even with a valid user, the template null coalescing should work
-        $response = $this->actingAs($user)->get('/dashboard');
+        $response = $this->actingAs($user)->get('/admin/dashboard');
 
         $response->assertStatus(200);
         // Should not crash with null reference errors
@@ -82,9 +97,11 @@ class NavbarAuthenticationTest extends TestCase
         $user = User::factory()->create([
             'name' => 'John Doe',
             'email' => 'john@example.com',
+            'email_verified_at' => now(),
         ]);
+        $user->assignRole('superadmin');
 
-        $response = $this->actingAs($user)->get('/dashboard');
+        $response = $this->actingAs($user)->get('/admin/dashboard');
 
         $response->assertStatus(200);
         // Should handle all user property accesses safely with null coalescing
@@ -92,4 +109,3 @@ class NavbarAuthenticationTest extends TestCase
         $response->assertSee('John Doe');
     }
 }
-

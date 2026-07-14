@@ -3,6 +3,7 @@
 namespace App\Crud\ViewConfigs;
 
 use App\Models\Campaign;
+use App\Models\CampaignRun;
 
 /**
  * ViewConfig descriptor for the Campaign detail/edit pages.
@@ -25,8 +26,9 @@ class CampaignViewConfig
      * @param  array|null     $stats            Optional pre-computed stats from CampaignController::campaignStats().
      * @param  int|null       $recipientsTotal       Distinct contacts across all runs (null = unknown, badge omitted).
      * @param  int|null       $currentAudienceTotal  Live segment audience count (null = unknown, badge omitted).
+     * @param  int|null       $executedRunsTotal     Executed history count (null = derive from loaded runs).
      */
-    public static function make(?Campaign $model, ?array $stats = null, ?int $recipientsTotal = null, ?int $currentAudienceTotal = null): array
+    public static function make(?Campaign $model, ?array $stats = null, ?int $recipientsTotal = null, ?int $currentAudienceTotal = null, ?int $executedRunsTotal = null): array
     {
         $hasId = $model && $model->id;
 
@@ -34,11 +36,15 @@ class CampaignViewConfig
         $typeCfg   = $hasId ? config('global.data.schedule_types.' . $model->schedule_type, []) : [];
         $typeLabel = $typeCfg['label'] ?? null;
         $typeColor = $typeCfg['color'] ?? 'secondary';
+        $timezone  = $hasId ? $model->scheduleTimezone() : null;
 
         // ── Hero badges (schedule type) ──────────────────────────────────────
         $badges = [];
         if ($hasId && $typeLabel) {
             $badges[] = ['label' => $typeLabel, 'color' => $typeColor];
+        }
+        if ($hasId && $model->isOverdue()) {
+            $badges[] = ['label' => 'En retard', 'color' => 'danger'];
         }
 
         // ── Subtitle pills ────────────────────────────────────────────────────
@@ -51,9 +57,9 @@ class CampaignViewConfig
                 $subtitle[] = ['icon' => 'bi-calendar2', 'text' => $typeLabel];
             }
             // Prochaine exécution (scheduled_at or next_run_at)
-            $nextRun = $model->next_run_at ?? $model->scheduled_at;
-            if ($nextRun) {
-                $subtitle[] = ['icon' => 'bi-clock', 'text' => 'Prochain envoi : ' . $nextRun->format('d/m/Y H:i')];
+            $nextRun = $model->scheduledAtLocal();
+            if ($model->effectiveScheduledAt() && $nextRun) {
+                $subtitle[] = ['icon' => 'bi-clock', 'text' => 'Prochain envoi : ' . $nextRun->format('d/m/Y H:i') . ' ' . $timezone];
             }
         }
 
@@ -78,7 +84,7 @@ class CampaignViewConfig
             $tiles[] = [
                 'icon'    => 'bi-envelope-open',
                 'color'   => 'success',
-                'value'   => $stats ? ($stats['open_rate'] ?? '0') . '%' : '—',
+                'value'   => $stats ? CampaignRun::rateLabel($stats['open_rate'] ?? null) : '—',
                 'caption' => "Taux d'ouverture",
             ];
         }
@@ -103,7 +109,9 @@ class CampaignViewConfig
 
         // ── Tabs ──────────────────────────────────────────────────────────────
         // $runsCount is null when runs relation is not loaded (edit/create) — badge omitted.
-        $runsCount = $model && $model->relationLoaded('runs') ? $model->runs->count() : null;
+        $runsCount = $executedRunsTotal ?? ($model && $model->relationLoaded('runs')
+            ? $model->runs->filter(fn (CampaignRun $run) => $run->isExecuted())->count()
+            : null);
 
         $tabs = [
             ['key' => 'apercu',        'label' => 'Aperçu',        'icon' => 'bi-grid',          'mode' => 'view'],
@@ -125,10 +133,10 @@ class CampaignViewConfig
             ];
 
             if ($model->scheduled_at) {
-                $detailRows[] = ['label' => 'Planifié le', 'value' => $model->scheduled_at, 'type' => 'date'];
+                $detailRows[] = ['label' => 'Planifié le', 'value' => $model->scheduled_at->copy()->setTimezone($timezone)->format('d/m/Y H:i') . ' ' . $timezone, 'type' => 'text'];
             }
             if ($model->next_run_at) {
-                $detailRows[] = ['label' => 'Prochain envoi', 'value' => $model->next_run_at, 'type' => 'date'];
+                $detailRows[] = ['label' => 'Prochain envoi', 'value' => $model->next_run_at->copy()->setTimezone($timezone)->format('d/m/Y H:i') . ' ' . $timezone, 'type' => 'text'];
             }
             if ($model->timezone) {
                 $detailRows[] = ['label' => 'Fuseau horaire', 'value' => $model->timezone, 'type' => 'text'];

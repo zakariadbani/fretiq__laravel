@@ -108,7 +108,10 @@
                                     $overbooked = ($quotaPackage?->daily_credits !== null) && (($activeDailyLimitSum ?? 0) > $quotaPackage->daily_credits);
                                 @endphp
                                 <div class="form-text mt-1 {{ $overbooked ? 'text-warning' : 'text-muted' }}">
-                                    Quota package : {{ $quotaPackage?->daily_credits ?? '∞' }} recherches SerpAPI/j &middot; {{ $quotaPackage?->daily_contact_credits ?? '∞' }} contacts/j — total réservé par les critères actifs : {{ $activeDailyLimitSum ?? 0 }} recherches/j. 1 recherche retourne jusqu'à {{ \App\Services\Discovery\CompanyDiscoveryService::PAGE_SIZE }} résultats Google avant filtrage IA.
+                                    Sur-réservation = priorité demandée, pas réservation garantie : le premier lancement consomme le quota disponible, les suivants attendent.
+                                </div>
+                                <div class="form-text mt-1 {{ $overbooked ? 'text-warning' : 'text-muted' }}">
+                                    Quota package : {{ $quotaPackage?->daily_credits ?? '∞' }} recherches SerpAPI/j &middot; {{ $quotaPackage?->daily_contact_credits ?? '∞' }} contacts/j. Priorité demandée par les critères actifs : {{ $activeDailyLimitSum ?? 0 }} recherches/j. 1 recherche retourne jusqu'à {{ \App\Services\Discovery\CompanyDiscoveryService::PAGE_SIZE }} résultats Google avant filtrage IA.
                                 </div>
                             </div>
 

@@ -91,7 +91,7 @@ class SegmentViewConfig
                 'icon'       => 'bi-rocket',
                 'color'      => 'light-primary',
                 'permission' => 'create campaigns',
-                'href'       => route('admin.campaigns.create'),
+                'href'       => route('admin.campaigns.create', ['segment_id' => $model->id]),
             ];
         }
 

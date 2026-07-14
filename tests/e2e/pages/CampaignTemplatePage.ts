@@ -61,6 +61,12 @@ export class CampaignTemplatePage extends DataTablePage {
    * DO NOT click — calls paid Gemini API.
    */
   readonly translateButton: Locator;
+  readonly translationForm: Locator;
+  readonly translationSubjectInput: Locator;
+  readonly translationHtmlTextarea: Locator;
+  readonly translationSaveButton: Locator;
+  readonly stickyFormActions: Locator;
+  readonly routeLinks: Locator;
 
   constructor(page: Page) {
     super(page, {
@@ -83,6 +89,12 @@ export class CampaignTemplatePage extends DataTablePage {
     this.reviewButton       = page.locator('#tr-review-btn');
     this.reviewStateBadge   = page.locator('#tr-review-state');
     this.translateButton    = page.locator('#tr-translate-btn');
+    this.translationForm = page.locator('#campaign_template_translation_form');
+    this.translationSubjectInput = page.locator('#campaign_template_translation_form input[name="subject"]');
+    this.translationHtmlTextarea = page.locator('#campaign_template_translation_form textarea[name="html_content"]');
+    this.translationSaveButton = page.locator('#tr-save-btn');
+    this.stickyFormActions = page.locator('[data-crud-form-actions="sticky"]');
+    this.routeLinks = page.locator('a[data-crud-route-link="true"]');
   }
 
   /** Navigate to the campaign templates index page. */
@@ -154,6 +166,36 @@ export class CampaignTemplatePage extends DataTablePage {
   async openTraductionsTab() {
     await this.traductionsTabLink.click();
     await this.page.locator('#template_traductions').waitFor({ state: 'visible', timeout: 10000 });
+  }
+
+  async openGeneralTab() {
+    await this.page.locator('a[data-bs-toggle="tab"][href="#template_general"]').click();
+    await this.page.locator('#template_general').waitFor({ state: 'visible', timeout: 10000 });
+  }
+
+  async fillTranslation(data: { subject: string; htmlContent: string; previewText?: string }) {
+    await this.translationSubjectInput.fill(data.subject);
+    if (data.previewText !== undefined) {
+      await this.page.locator('#campaign_template_translation_form input[name="preview_text"]').fill(data.previewText);
+    }
+
+    await this.page.evaluate((html: string) => {
+      const editor = (window as any).tinymce?.get('tr_en_html');
+      if (editor) {
+        editor.setContent(html);
+      }
+      const ta = document.querySelector<HTMLTextAreaElement>(
+        '#campaign_template_translation_form textarea[name="html_content"]'
+      );
+      if (!ta) throw new Error('translation html_content textarea not found in DOM');
+      ta.value = html;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.dispatchEvent(new Event('change', { bubbles: true }));
+    }, data.htmlContent);
+  }
+
+  async saveTranslation() {
+    await this.translationSaveButton.click();
   }
 
   /**

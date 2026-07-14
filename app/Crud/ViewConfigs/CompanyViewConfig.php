@@ -53,8 +53,10 @@ class CompanyViewConfig
         }
 
         // ── Status-bar toggle (null when no id — omit on create) ─────────────
+        $isRejected = $hasId && $model->qualification_status === 'rejected';
+
         $toggle = null;
-        if ($hasId) {
+        if ($hasId && ! $isRejected) {
             $toggle = [
                 'field'       => 'is_active',
                 'route'       => route('admin.companies.executeSwitch', $model->id),
@@ -81,6 +83,10 @@ class CompanyViewConfig
         ];
 
         // ── Detail rows ───────────────────────────────────────────────────────
+        if ($isRejected) {
+            $tabs = array_slice($tabs, 0, 1);
+        }
+
         $detailRows = [];
         if ($hasId) {
             $detailRows = [
@@ -132,17 +138,17 @@ class CompanyViewConfig
 
         // ── Quick actions ─────────────────────────────────────────────────────
         $quickActions = [];
-        if ($hasId && \Illuminate\Support\Facades\Route::has('admin.campaigns.create')) {
+        if ($hasId && ! $isRejected && \Illuminate\Support\Facades\Route::has('admin.campaigns.create')) {
             $quickActions[] = [
                 'label'      => 'Lancer une campagne',
                 'icon'       => 'bi-rocket',
                 'color'      => 'light-primary',
                 'permission' => 'create campaigns',
-                'href'       => route('admin.campaigns.create'),
+                'href'       => route('admin.campaigns.create', ['company_id' => $model->id]),
             ];
         }
 
-        if ($hasId && $model->domain && \Illuminate\Support\Facades\Route::has('admin.companies.enrich')) {
+        if ($hasId && ! $isRejected && $model->domain && \Illuminate\Support\Facades\Route::has('admin.companies.enrich')) {
             $quickActions[] = [
                 'label'      => 'Récupérer les contacts',
                 'icon'       => 'bi-person-plus',

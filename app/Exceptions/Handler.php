@@ -3,6 +3,9 @@
 namespace App\Exceptions;
 
 use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
+use Illuminate\Http\Request;
+use Illuminate\Routing\Exceptions\InvalidSignatureException;
+use Illuminate\Session\TokenMismatchException;
 use Throwable;
 
 class Handler extends ExceptionHandler
@@ -45,6 +48,18 @@ class Handler extends ExceptionHandler
     {
         $this->reportable(function (Throwable $e) {
             //
+        });
+
+        $this->renderable(function (InvalidSignatureException $e, Request $request) {
+            if ($request->is('u/*')) {
+                return response()->view('public.unsubscribed', ['state' => 'error'], 403);
+            }
+        });
+
+        $this->renderable(function (TokenMismatchException $e, Request $request) {
+            if ($request->is('u/*')) {
+                return response()->view('public.unsubscribed', ['state' => 'error'], 419);
+            }
         });
     }
 }

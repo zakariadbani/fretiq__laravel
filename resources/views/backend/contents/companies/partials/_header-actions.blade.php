@@ -6,23 +6,35 @@
 --}}
 
 @if($isView)
+    @php($isRejected = $model->qualification_status === 'rejected')
+
     @can('view companies')
-        <a href="{{ route('admin.companies.index') }}" class="btn btn-sm btn-light">
+        <a href="{{ $isRejected ? route('admin.companies.archive') : route('admin.companies.index') }}" class="btn btn-sm btn-light">
             <i class="bi bi-arrow-left me-1"></i>
-            Retour à la liste
+            {{ $isRejected ? 'Retour aux archives' : 'Retour à la liste' }}
         </a>
     @endcan
 
     @can('edit companies')
-        <a href="{{ route('admin.companies.edit', $model->id) }}" class="btn btn-sm btn-primary">
-            <i class="bi bi-pencil me-1"></i>
-            Modifier
-        </a>
+        @if($isRejected)
+            <form action="{{ route('admin.companies.restore', $model->id) }}" method="POST" class="d-inline">
+                @csrf
+                <button type="submit" class="btn btn-sm btn-success">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i>
+                    Restaurer
+                </button>
+            </form>
+        @else
+            <a href="{{ route('admin.companies.edit', $model->id) }}" class="btn btn-sm btn-primary">
+                <i class="bi bi-pencil me-1"></i>
+                Modifier
+            </a>
+        @endif
     @endcan
 
     @can('create campaigns')
-        @if(Route::has('admin.campaigns.create'))
-            <a href="{{ route('admin.campaigns.create') }}" class="btn btn-sm btn-light btn-active-light-primary">
+        @if(!$isRejected && Route::has('admin.campaigns.create'))
+            <a href="{{ route('admin.campaigns.create', ['company_id' => $model->id]) }}" class="btn btn-sm btn-light btn-active-light-primary">
                 <i class="bi bi-rocket me-1"></i>
                 Lancer une campagne
             </a>

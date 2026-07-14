@@ -23,5 +23,7 @@
                          'isView'         => $isView,
                          'quotaRemaining' => $quotaRemaining ?? null,
                          'quotaPackage'   => $quotaPackage   ?? null,
+                         'dailyQuotaSummary' => $dailyQuotaSummary ?? [],
+                         'monthlyQuotaSummary' => $monthlyQuotaSummary ?? [],
                      ], \Illuminate\Support\Arr::except(get_defined_vars(), ['__data', '__path']))->render(),
 ])

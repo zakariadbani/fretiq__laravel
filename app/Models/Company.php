@@ -92,6 +92,11 @@ class Company extends Model
         return $query->withoutGlobalScope('notRejected');
     }
 
+    public function scopeRejected(Builder $query): Builder
+    {
+        return $query->withRejected()->where('companies.qualification_status', 'rejected');
+    }
+
     // ── Relationships ──────────────────────────────────────────────────────────
 
     /**

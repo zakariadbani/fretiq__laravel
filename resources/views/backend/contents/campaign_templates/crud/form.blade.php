@@ -69,8 +69,7 @@
     @endif
 
     {{-- ── Tab content ────────────────────────────────────────────────── --}}
-    <div class="tab-content" id="template_tab_content"
-         data-out-of-form-panes='["template_traductions"]'>
+    <div class="tab-content" id="template_tab_content">
 
         {{-- ── Général (default active) ──────────────────────────────── --}}
         <div class="tab-pane fade show active" id="template_general" role="tabpanel">
@@ -197,19 +196,27 @@
 </form>
 
 {{-- ── Out-of-form panes (edit mode only) ───────────────────────────────── --}}
-{{-- crud-tabs.js moves these into #template_tab_content after DOMContentLoaded --}}
+{{-- External tab panes stay outside #form_crud so scoped forms do not nest. --}}
 @if(isset($model) && $model->id)
 
-    <div class="tab-pane fade" id="template_traductions" role="tabpanel" data-crud-pane>
+    <div class="tab-pane fade" id="template_traductions" role="tabpanel">
         @include('backend.contents.campaign_templates.partials._traductions-tab', ['model' => $model])
     </div>
 
 @endif
 
 @push('scripts')
-    <script src="{{ asset('assets/plugins/custom/tinymce/tinymce.js') }}?v={{ filemtime(public_path('assets/plugins/custom/tinymce/tinymce.js')) }}"></script>
+    @php
+        $assetVersion = static function (string $asset): string {
+            $path = public_path($asset);
+            $modifiedAt = file_exists($path) ? filemtime($path) : false;
+
+            return $modifiedAt === false ? '1' : (string) $modifiedAt;
+        };
+    @endphp
+    <script src="{{ asset('assets/plugins/custom/tinymce/tinymce.js') }}?v={{ $assetVersion('assets/plugins/custom/tinymce/tinymce.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
-    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}?v={{ filemtime(public_path('assets/js/custom/backend/crud-tabs.js')) }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}?v={{ $assetVersion('assets/js/custom/backend/crud-tabs.js') }}"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function () {
             var translationPane = '#template_traductions';
@@ -239,8 +246,8 @@
             });
         });
     </script>
-    <script src="{{ asset('assets/js/custom/backend/tinymce-html-field.js') }}?v={{ filemtime(public_path('assets/js/custom/backend/tinymce-html-field.js')) }}"></script>
-    <script src="{{ asset('assets/js/custom/backend/campaign-template-translations.js') }}?v={{ file_exists(public_path('assets/js/custom/backend/campaign-template-translations.js')) ? filemtime(public_path('assets/js/custom/backend/campaign-template-translations.js')) : '1' }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/tinymce-html-field.js') }}?v={{ $assetVersion('assets/js/custom/backend/tinymce-html-field.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/campaign-template-translations.js') }}?v={{ $assetVersion('assets/js/custom/backend/campaign-template-translations.js') }}"></script>
 @endpush
 
 </x-default-layout>

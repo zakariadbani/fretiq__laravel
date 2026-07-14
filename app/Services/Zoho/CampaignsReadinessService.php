@@ -19,6 +19,10 @@ namespace App\Services\Zoho;
  */
 class CampaignsReadinessService
 {
+    public function __construct(
+        private readonly ZohoAuthService $authService,
+    ) {}
+
     /**
      * Run the preflight checklist and return a structured result.
      *
@@ -94,6 +98,38 @@ class CampaignsReadinessService
         ];
     }
 
+    /**
+     * Dispatch-grade readiness: config checklist plus a real Campaigns OAuth token.
+     *
+     * @return array{ready: bool, messages: array<int, string>, access_token_checked: bool}
+     */
+    public function dispatchCheck(): array
+    {
+        $check = $this->check();
+        $messages = [];
+
+        foreach ($check['items'] as $item) {
+            if (($item['status'] ?? false) !== true) {
+                $messages[] = ($item['label'] ?? 'Prérequis Zoho') . ' : ' . ($item['note'] ?? 'à vérifier.');
+            }
+        }
+
+        $tokenChecked = false;
+
+        if ($messages === []) {
+            try {
+                $tokenChecked = trim($this->authService->getAccessToken('campaigns')) !== '';
+            } catch (\Throwable $e) {
+                $messages[] = 'OAuth Zoho Campaigns expiré ou invalide : reconnectez Zoho Campaigns avant de lancer l’envoi.';
+            }
+        }
+
+        return [
+            'ready' => $messages === [] && $tokenChecked,
+            'messages' => $messages,
+            'access_token_checked' => $tokenChecked,
+        ];
+    }
     // ── Private helpers ────────────────────────────────────────────────────────
 
     /**

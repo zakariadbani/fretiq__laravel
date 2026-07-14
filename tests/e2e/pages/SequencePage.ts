@@ -78,6 +78,9 @@ export class SequencePage extends DataTablePage {
 
   /** Submit button in the add-step form */
   readonly addStepSubmitButton: Locator;
+  readonly stepDeleteButtons: Locator;
+  readonly stepMoveUpButtons: Locator;
+  readonly stepMoveDownButtons: Locator;
 
   constructor(page: Page) {
     super(page, {
@@ -98,6 +101,9 @@ export class SequencePage extends DataTablePage {
     this.addStepTemplateSelect = addStepForm.locator('select[name="template_id"]');
     this.addStepSubjectInput  = addStepForm.locator('input[name="subject"]');
     this.addStepSubmitButton  = addStepForm.locator('button[type="submit"]');
+    this.stepDeleteButtons = page.locator("#sequence_steps button[aria-label=\"Supprimer l'étape\"]");
+    this.stepMoveUpButtons = page.locator("#sequence_steps button[aria-label=\"Monter l'étape\"]");
+    this.stepMoveDownButtons = page.locator("#sequence_steps button[aria-label=\"Descendre l'étape\"]");
   }
 
   // ── Navigation ────────────────────────────────────────────────────────────

@@ -20,7 +20,6 @@ class NewPasswordController extends Controller
      */
     public function create(Request $request)
     {
-        addJavascriptFile('assets/js/custom/authentication/reset-password/new-password.js');
 
         return view('pages/auth.reset-password', ['request' => $request]);
     }

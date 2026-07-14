@@ -31,6 +31,8 @@ class ConsumptionController extends Controller
         $package = $quota->activePackage();
         $today   = $quota->today();
         [$periodStart, $periodEnd] = $quota->currentPeriod($today);
+        $dailyQuotaSummary = $quota->dailyDisplaySummary();
+        $monthlyQuotaSummary = $quota->monthlyDisplaySummary($today);
 
         // ── Today: company meter ────────────────────────────────────────────
         $isUnlimited   = $quota->isUnlimited();
@@ -60,6 +62,8 @@ class ConsumptionController extends Controller
             'package'                   => $package,
             'periodStart'               => $periodStart,
             'periodEnd'                 => $periodEnd,
+            'dailyQuotaSummary'         => $dailyQuotaSummary,
+            'monthlyQuotaSummary'       => $monthlyQuotaSummary,
 
             'isUnlimited'               => $isUnlimited,
             'usedToday'                 => $usedToday,
