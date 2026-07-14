@@ -30,6 +30,14 @@ class CompanyDiscoveryService
 {
     public const PAGE_SIZE = 10;
     private const MAX_SEARCHES_PER_RUN = 15;
+    private const BLOCKED_SOCIAL_DOMAINS = [
+        'linkedin.com',
+        'facebook.com',
+        'instagram.com',
+        'x.com',
+        'twitter.com',
+        'youtube.com',
+    ];
 
     public function __construct(
         private readonly IntentQueryService $intentQuery = new IntentQueryService(),
@@ -143,7 +151,20 @@ class CompanyDiscoveryService
         $host = strtolower($host);
         $host = preg_replace('/^www\./', '', $host);
 
-        return $host ?: null;
+        return $host && ! $this->isBlockedDomain($host) ? $host : null;
+    }
+
+    public function isBlockedDomain(string $domain): bool
+    {
+        $domain = strtolower(rtrim(trim($domain), '.'));
+
+        foreach (self::BLOCKED_SOCIAL_DOMAINS as $blocked) {
+            if ($domain === $blocked || str_ends_with($domain, '.' . $blocked)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // ── Local fixture driver ──────────────────────────────────────────────────

@@ -155,4 +155,10 @@ class Company extends Model
 
         return 'badge-light-' . $color;
     }
+
+    public function hasSocialDomain(): bool
+    {
+        return ! empty($this->domain)
+            && app(\App\Services\Discovery\CompanyDiscoveryService::class)->isBlockedDomain($this->domain);
+    }
 }

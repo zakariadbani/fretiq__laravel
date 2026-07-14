@@ -564,6 +564,37 @@ class CompanyDiscoveryServiceTest extends TestCase
         $this->assertSame(['other-rejected.test', 'fresh.test'], array_column($snapshot, 'domain'));
     }
 
+    public function test_live_discovery_filters_social_network_domains_without_false_positives(): void
+    {
+        config([
+            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+        ]);
+
+        Http::fake([
+            '*' => Http::response([
+                'organic_results' => [
+                    [
+                        'title'   => 'LinkedIn profile',
+                        'link'    => 'https://fr.linkedin.com/in/example',
+                        'snippet' => 'Profile result',
+                    ],
+                    $this->serpResult('linkedin-logistics.com'),
+                    $this->serpResult('valid-company.test'),
+                ],
+            ], 200),
+        ]);
+
+        $criteria = $this->makePersistedCriteria();
+        $run = $this->makeRun($criteria);
+
+        $snapshot = $this->service->discoverForRun($criteria, $run, 1);
+        $expected = ['linkedin-logistics.com', 'valid-company.test'];
+
+        $this->assertSame($expected, array_column($snapshot, 'domain'));
+        $this->assertSame($expected, array_column($run->refresh()->candidates_snapshot, 'domain'));
+    }
+
     public function test_live_discovery_stops_at_search_cap(): void
     {
         config([

@@ -428,6 +428,16 @@
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
     <script>
+        // Re-baseline the crud-tabs.js dirty-guard snapshot after on-load PROGRAMMATIC
+        // mutations (async ai_queries injection, run_at_hour disable) so an untouched form
+        // does not read dirty. Only for automatic on-load changes — never after a user action.
+        // ponytail: replicates crud-tabs.js serialiseForm(); safe here (no TinyMCE on this form).
+        // If a 2nd module needs this, promote to a shared `crud:rebaseline` event in crud-tabs.js.
+        function rebaselineFormSnapshot() {
+            var form = document.getElementById('form_crud');
+            if (form) form.dataset.cleanSnapshot = new URLSearchParams(new FormData(form)).toString();
+        }
+
         @if(isset($model) && $model->id)
         (function () {
             var previewUrl  = '{{ route('admin.prospect_criteria.preview_queries', $model->id) }}';
@@ -442,7 +452,7 @@
             // Renders queries as real form inputs (name="ai_queries[i][q|enabled]") so
             // they submit with Enregistrer — this card is a stateless preview, Enregistrer
             // is the only action that persists ai_queries (beforeSave() on the controller).
-            function renderQueries(queries, execution) {
+            function renderQueries(queries, execution, notice) {
                 if (execution && execution.search_budget !== undefined) {
                     executionBudget = parseInt(execution.search_budget, 10);
                     if (isNaN(executionBudget)) {
@@ -451,8 +461,11 @@
                 }
 
                 if (!queries || queries.length === 0) {
-                    $container.html(
-                        '<div class="text-muted fs-7"><i class="bi bi-exclamation-circle me-1"></i>Aucune requête générée — renseignez une description de cible ou au moins un secteur/pays.</div>'
+                    // notice is a server-controlled French string (AI-unavailable vs no-criteria);
+                    // fall back to the default text when no notice is passed (e.g. loadQueries on ready).
+                    $container.html(notice
+                        ? '<div class="alert alert-light-warning border border-warning border-dashed p-4 mb-0 fs-7"><i class="bi bi-exclamation-triangle me-1"></i>' + notice + '</div>'
+                        : '<div class="text-muted fs-7"><i class="bi bi-exclamation-circle me-1"></i>Aucune requête générée — renseignez une description de cible ou au moins un secteur/pays.</div>'
                     );
                     return;
                 }
@@ -621,6 +634,9 @@
                     $container.html(
                         '<div class="text-danger fs-7"><i class="bi bi-x-circle me-1"></i>Erreur lors du chargement des requêtes.</div>'
                     );
+                }).always(function () {
+                    // ponytail: sub-300ms window before this fires; a user edit landing inside it is negligible.
+                    rebaselineFormSnapshot();
                 });
             }
 
@@ -643,7 +659,7 @@
                         queries:    collectQueries(),
                     },
                 }).done(function (data) {
-                    renderQueries(data.queries || []);
+                    renderQueries(data.queries || [], null, data.notice);
                 }).fail(function () {
                     $container.html(
                         '<div class="text-danger fs-7"><i class="bi bi-x-circle me-1"></i>Erreur lors de la génération des requêtes.</div>'
@@ -705,6 +721,10 @@
             // Guarded select2 fallback init — Metronic data-control="select2" auto-init may
             // already cover these; only initialise controls that have not been touched yet.
             $('#form_crud select[multiple]').not('.select2-hidden-accessible').select2();
+
+            // run_at_hour is disabled above when auto_run is off; re-snapshot so that
+            // programmatic disable (which drops it from FormData) does not read as dirty.
+            rebaselineFormSnapshot();
         });
     </script>
 @endpush

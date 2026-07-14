@@ -12,6 +12,7 @@ use App\Models\CampaignRecipient;
 use App\Models\Company;
 use App\Models\Demande;
 use App\Models\DiscoveryRun;
+use App\Services\Discovery\CompanyDiscoveryService;
 use App\Services\Discovery\ContactUpsertService;
 use App\Services\Discovery\HunterEnrichmentService;
 use App\Services\Quota\DiscoveryQuotaService;
@@ -302,6 +303,7 @@ class CompanyController extends BackendController
      */
     public function enrich(
         $id,
+        CompanyDiscoveryService $discoveryService,
         DiscoveryQuotaService $quotaService,
         HunterEnrichmentService $hunterService,
         ContactUpsertService $contactUpsert
@@ -314,6 +316,13 @@ class CompanyController extends BackendController
             return response()->json([
                 'message' => 'error',
                 'text'    => "Cette entreprise n'a pas de domaine — enrichissement impossible.",
+            ], 422);
+        }
+
+        if ($discoveryService->isBlockedDomain($company->domain)) {
+            return response()->json([
+                'message' => 'error',
+                'text'    => "Ce domaine appartient \u{00E0} un r\u{00E9}seau social \u{2014} renseignez le domaine du site de l'entreprise.",
             ], 422);
         }
 

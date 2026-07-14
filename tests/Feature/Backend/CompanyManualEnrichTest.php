@@ -223,6 +223,21 @@ class CompanyManualEnrichTest extends TestCase
         $this->assertSame(0, DiscoveryRun::count(), 'No run row must be created when domain is missing');
     }
 
+    public function test_422_for_social_network_domain_before_quota_reservation(): void
+    {
+        $this->assignUnlimitedPackage();
+
+        $company = $this->makeCompany(['domain' => 'fr.linkedin.com']);
+        $runsBefore = DiscoveryRun::count();
+
+        $response = $this->actingAs($this->superadmin)
+            ->postJson("/admin/companies/{$company->id}/enrich");
+
+        $response->assertStatus(422);
+        $this->assertStringContainsString("r\u{00E9}seau social", $response->json('text') ?? '');
+        $this->assertSame($runsBefore, DiscoveryRun::count(), 'No run row for a social-network domain');
+    }
+
     /**
      * Limited contact package, today's contact quota fully burned → 422, no new run row.
      * Manual enrichment checks the CONTACT meter (not company meter).

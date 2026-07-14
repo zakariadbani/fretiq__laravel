@@ -16,10 +16,16 @@
         </h3>
         <div class="card-toolbar">
             @can('enrich companies')
+                @php
+                    $enrichDisabled = empty($model->domain) || $model->hasSocialDomain();
+                    $enrichTooltip  = empty($model->domain)
+                        ? 'Renseignez un domaine pour récupérer les contacts'
+                        : ($model->hasSocialDomain() ? 'Domaine réseau social — renseignez le site de l\'entreprise' : null);
+                @endphp
                 <button type="button"
                         class="btn btn-sm btn-light-success me-2"
                         onclick="enrichCompany({{ (int) $model->id }}, '{{ csrf_token() }}')"
-                        @if(empty($model->domain)) disabled data-bs-toggle="tooltip" title="Renseignez un domaine pour récupérer les contacts" @endif>
+                        @if($enrichDisabled) disabled @if($enrichTooltip) data-bs-toggle="tooltip" title="{{ $enrichTooltip }}" @endif @endif>
                     <i class="bi bi-person-plus fs-4 me-1"></i>
                     Récupérer les contacts
                 </button>

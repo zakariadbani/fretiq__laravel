@@ -476,7 +476,20 @@ class ProspectCriteriaController extends BackendController
             ->values()
             ->all();
 
-        return response()->json(['queries' => $queries]);
+        // Empty result has two very different causes; name the real one so the UI does
+        // not tell the user to "enter a target" they already entered. expand() returns []
+        // both when no description was given AND when the Gemini call failed (429/500/etc.,
+        // swallowed by design) — mirror its own trim() guard to tell them apart.
+        $notice = null;
+        if (empty($queries)) {
+            $hasCriteria = trim((string) ($criteria->ai_target ?? '')) !== ''
+                || trim((string) ($criteria->ai_exclude ?? '')) !== '';
+            $notice = $hasCriteria
+                ? "L'IA est momentanément indisponible (limite atteinte). Réessayez dans quelques minutes."
+                : 'Renseignez une description de cible ou au moins un secteur/pays.';
+        }
+
+        return response()->json(['queries' => $queries, 'notice' => $notice]);
     }
 
     /**

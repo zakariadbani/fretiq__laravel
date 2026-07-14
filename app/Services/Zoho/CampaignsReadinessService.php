@@ -56,7 +56,7 @@ class CampaignsReadinessService
             'spf_dkim_dmarc' => [
                 'label'  => 'SPF / DKIM / DMARC configurés',
                 'status' => (bool) config('prospecting.spf_dkim_dmarc_configured', false),
-                'note'   => 'Vérification manuelle — configurer PROSPECTING_SPF_DKIM_DMARC_CONFIGURED=true une fois validé',
+                'note'   => 'Vérification manuelle — configurer SPF_DKIM_DMARC_CONFIGURED=true une fois validé',
             ],
 
             // ── List-Unsubscribe ───────────────────────────────────────────────

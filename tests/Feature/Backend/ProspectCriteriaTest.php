@@ -826,6 +826,7 @@ class ProspectCriteriaTest extends TestCase
                 ['q' => 'grossiste textile France -transporteur', 'enabled' => false],
                 ['q' => 'importateur habillement Maroc -logistique', 'enabled' => true],
             ],
+            'notice' => null,
         ]);
 
         $criteria->refresh();
@@ -838,6 +839,42 @@ class ProspectCriteriaTest extends TestCase
                 && str_contains($prompt, 'transporteurs et logisticiens')
                 && ! str_contains($prompt, 'Ancienne cible stockée');
         });
+    }
+
+    /**
+     * When Gemini is unreachable (e.g. HTTP 429 rate-limit) expand() returns [] by
+     * design; with a target still filled, generate-queries must surface an
+     * "AI unavailable" notice instead of the misleading "enter a target" empty state.
+     */
+    public function test_generate_queries_surfaces_notice_when_gemini_unavailable(): void
+    {
+        config(['services.gemini.api_key' => 'test-gemini-key']);
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response('rate limited', 429),
+        ]);
+
+        $criteria = ProspectCriteria::create([
+            'name'        => 'Critère Notice Indispo',
+            'ai_target'   => 'grossistes textile',
+            'daily_limit' => 10,
+            'is_active'   => true,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->post('/admin/prospect_criteria/' . $criteria->id . '/generate-queries', [
+                'ai_target'  => 'grossistes textile et importateurs habillement',
+                'ai_exclude' => '',
+                'queries'    => [],
+            ]);
+
+        $response->assertStatus(200);
+        $response->assertJson(['queries' => []]);
+        $this->assertStringContainsString(
+            'indisponible',
+            (string) $response->json('notice'),
+            'A failed Gemini call with a target set must return the AI-unavailable notice, not the no-criteria text.'
+        );
     }
 
     // ── Automation fields (auto_run/run_at_hour/contact_limit/min_score_enrich/auto_enrich) ──
