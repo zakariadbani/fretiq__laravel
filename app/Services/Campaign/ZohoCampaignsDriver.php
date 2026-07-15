@@ -174,11 +174,15 @@ class ZohoCampaignsDriver implements CampaignsClient
         // before submitting to the API — recipients would otherwise see literal braces.
         $subject    = self::translateMergeTags($campaign->subject ?: $template->subject);
         $contentUrl = URL::temporarySignedRoute('campaigns.zoho-content', now()->addDays(7), ['run' => $run->id]);
-        // Zoho Campaigns rejects unverified sender emails. Prefer the verified
-        // account-level sender configured for Zoho, then fall back to the campaign
-        // sender identity and finally Laravel's mail.from address.
-        $fromEmail = config('services.zoho.default_from_email')
-            ?: ($sender?->email ?? config('mail.from.address', 'noreply@fretiq.fr'));
+        // The campaign's own selected sender identity is used first — each campaign
+        // sends from the sender the user picked at creation time. ZOHO_DEFAULT_FROM_EMAIL
+        // is only a fallback for campaigns without a sender identity, then Laravel's
+        // mail.from address. Whichever address resolves MUST be a verified sender in
+        // Zoho Campaigns (Settings → Sender addresses) — Zoho returns code 6610
+        // "Email is not verified" otherwise.
+        $fromEmail = ($sender?->email)
+            ?: config('services.zoho.default_from_email')
+            ?: config('mail.from.address', 'noreply@fretiq.fr');
 
         Log::info('[ZohoCampaignsDriver] Création de la campagne Zoho.', [
             'run_id'    => $run->id,

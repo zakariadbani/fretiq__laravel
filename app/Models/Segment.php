@@ -42,6 +42,17 @@ class Segment extends Model
         'last_built_at' => 'datetime',
     ];
 
+    /**
+     * Accessor overrides the plain boolean cast: Eloquent's primitive-cast
+     * short-circuit returns raw null unchanged for a NULL is_manual column,
+     * so callers that require a real bool (SegmentService::resolveAudience())
+     * would get null. Coerce here so is_manual is always a real bool.
+     */
+    public function getIsManualAttribute($value)
+    {
+        return (bool) $value;
+    }
+
     // ── Validation ─────────────────────────────────────────────────────────────
 
     /**

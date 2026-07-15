@@ -13,6 +13,7 @@ use App\Models\Segment;
 use App\Models\SenderIdentity;
 use App\Models\Suppression;
 use App\Services\Campaign\CampaignService;
+use App\Services\Campaign\CampaignsClient;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -141,6 +142,43 @@ class CampaignSendTest extends TestCase
         $this->assertNotNull($recipient->provider_message_id, 'provider_message_id must be set after send');
 
         Mail::assertSent(CampaignMailable::class);
+    }
+
+    /**
+     * A local-driver run whose every per-recipient send throws (e.g. an SMTP
+     * outage) must be marked 'failed', not 'sent'. Before this fix the run was
+     * always marked 'sent' even when stats_sent stayed 0, which silently masked
+     * a weeks-long prod SMTP outage.
+     */
+    public function test_local_run_with_all_sends_failing_is_marked_failed_not_sent(): void
+    {
+        $contact  = $this->makeClientContact();
+        $segment  = Segment::create(['name' => 'Clients', 'scope' => 'client']);
+        $template = $this->makeTemplate();
+        $sender   = $this->makeSender();
+        $campaign = $this->makeCampaign($segment, $template, $sender);
+
+        $this->mock(CampaignsClient::class, function ($mock) {
+            $mock->shouldReceive('driverName')->andReturn('local');
+            $mock->shouldReceive('send')->andThrow(new \RuntimeException('SMTP connection refused'));
+        });
+
+        $service = app(CampaignService::class);
+        $run     = $service->scheduleOneShot($campaign);
+
+        $service->sendRun($run);
+
+        $run->refresh();
+
+        $this->assertSame('failed', $run->status, 'A run where every send attempt failed must be marked failed, not sent');
+        $this->assertSame(0, (int) $run->stats_sent);
+        $this->assertNotNull($run->finished_at);
+
+        $this->assertDatabaseHas('campaign_recipients', [
+            'campaign_run_id' => $run->id,
+            'contact_id'      => $contact->id,
+            'status'          => 'queued',
+        ]);
     }
 
     /**

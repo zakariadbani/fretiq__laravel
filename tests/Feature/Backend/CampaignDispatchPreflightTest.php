@@ -226,6 +226,37 @@ class CampaignDispatchPreflightTest extends TestCase
         $this->assertDatabaseMissing('campaign_runs', ['campaign_id' => $campaign->id]);
     }
 
+    public function test_missing_zoho_topic_id_blocks_send_without_run_or_queue(): void
+    {
+        Bus::fake();
+
+        config([
+            'services.zoho.driver' => 'zoho',
+            'services.zoho.campaigns.refresh_token' => 'refresh-token',
+            'services.zoho.campaigns.client_id' => 'client-id',
+            'services.zoho.campaigns.client_secret' => 'client-secret',
+            'services.zoho.campaigns.list_key' => 'verified-list-key',
+            'services.zoho.campaigns.topic_id' => null,
+            'prospecting.cold_send_enabled' => true,
+            'app.url' => 'https://fretiq.example.test',
+        ]);
+
+        $this->makeClientContact('zoho-topic@example.test');
+        $campaign = $this->makeCampaign(Segment::create(['name' => 'Clients', 'scope' => 'client']), [
+            'driver' => 'zoho',
+            'zoho_list_key' => 'verified-list-key',
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->postJson("/admin/campaigns/{$campaign->id}/send")
+            ->assertStatus(422)
+            ->assertJson(['message' => 'error'])
+            ->assertJsonPath('text', 'Préparation Zoho incomplète : sujet (topic) Zoho non configuré.');
+
+        Bus::assertNotDispatched(SendCampaignJob::class);
+        $this->assertDatabaseMissing('campaign_runs', ['campaign_id' => $campaign->id]);
+    }
+
     public function test_due_dispatch_marks_blocked_run_failed_without_queueing(): void
     {
         Bus::fake();

@@ -139,6 +139,10 @@ class CampaignService
             if ($listKey === '') {
                 $messages[] = 'Préparation Zoho incomplète : ajoutez et vérifiez la liste Zoho dédiée avant de lancer l’envoi.';
             }
+
+            if (trim((string) config('services.zoho.campaigns.topic_id')) === '') {
+                $messages[] = 'Préparation Zoho incomplète : sujet (topic) Zoho non configuré.';
+            }
         }
 
         return [
@@ -415,13 +419,15 @@ class CampaignService
         }
 
         // ── One-shot auto-done (branch-agnostic) ──────────────────────────────
-        // Once a one-shot campaign's run reaches terminal status 'sent', flip the
-        // campaign to is_active=false. This is unconditional: done = dispatched,
-        // even when all recipients failed (stats_sent=0). The report page shows the truth.
+        // A one-shot campaign auto-completes (is_active=false) only when its run
+        // reaches terminal status 'sent'. A run where every recipient failed
+        // (sendViaLocal marks it 'failed') is intentionally left is_active=true —
+        // the campaign stays active so the operator can retry via
+        // « Envoyer maintenant » without having to manually re-enable it first.
         //
         // Re-sending a one-shot via « Envoyer maintenant » re-arms it as
         // is_active=true via scheduleOneShot() before the next sendRun call,
-        // so the lifecycle paused→active→paused works correctly.
+        // so the lifecycle paused→active→paused works correctly on a 'sent' run.
         $run->refresh();
         if ($run->status === 'sent' && $run->campaign->schedule_type === 'one_shot') {
             $run->campaign->update(['is_active' => false]);
@@ -521,6 +527,13 @@ class CampaignService
         // (isSuppressed() is a plain normalized-equality lookup — see Suppression::isSuppressed()).
         $suppressed = Suppression::pluck('email')->map(fn ($e) => strtolower(trim($e)))->flip();
 
+        // Count real send ATTEMPTS (recipients that pass the suppression re-check
+        // and reach the try{} send below) — NOT $recipients->count(), which also
+        // includes recipients skipped by the 4a suppression re-check. Using the
+        // raw recipient count would mislabel an all-suppressed run (zero real
+        // attempts) as 'failed' below.
+        $attempted = 0;
+
         foreach ($recipients as $recipient) {
             $contact = $recipient->contact;
 
@@ -532,6 +545,8 @@ class CampaignService
                 ]);
                 continue;
             }
+
+            $attempted++;
 
             // ── 4b. Generate tracking token and create EmailTrackingEvent ─────
             $token = TrackingToken::generate($run->id, $contact->id);
@@ -573,9 +588,16 @@ class CampaignService
             ->where('status', 'sent')
             ->count();
 
+        // A run where every real send ATTEMPT failed (every per-recipient send
+        // threw) must be marked 'failed', not 'sent' — a silent 0-delivered 'sent'
+        // run previously masked a weeks-long prod SMTP outage. Gate on $attempted,
+        // not $recipients->count(): an all-suppressed run (zero real attempts,
+        // every recipient skipped at the 4a re-check) must stay 'sent'.
+        $status = ($attempted > 0 && $sentCount === 0) ? 'failed' : 'sent';
+
         $run->update([
             'stats_sent'  => $sentCount,
-            'status'      => 'sent',
+            'status'      => $status,
             'finished_at' => now(),
         ]);
 

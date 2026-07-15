@@ -102,7 +102,7 @@ class ZohoDriverSelectionTest extends TestCase
         ]);
     }
 
-    private function makeCampaignWithRun(Contact $contact): CampaignRun
+    private function makeCampaignWithRun(Contact $contact, string $senderEmail = 'noreply@tcl.test'): CampaignRun
     {
         $segment  = Segment::create(['name' => 'Clients', 'scope' => 'client']);
         $template = CampaignTemplate::create([
@@ -112,7 +112,7 @@ class ZohoDriverSelectionTest extends TestCase
         ]);
         $sender = SenderIdentity::create([
             'name'  => 'TCL France',
-            'email' => 'noreply@tcl.test',
+            'email' => $senderEmail,
         ]);
         $campaign = Campaign::create([
             'name'               => 'Campagne Zoho Test',
@@ -268,5 +268,36 @@ class ZohoDriverSelectionTest extends TestCase
         Http::assertSent(fn ($req) => str_contains($req->url(), 'addlistsubscribersinbulk'));
         Http::assertSent(fn ($req) => str_contains($req->url(), 'createCampaign'));
         Http::assertSent(fn ($req) => str_contains($req->url(), 'sendcampaign'));
+    }
+
+    /**
+     * Sender precedence: dispatchRun() must resolve `from` using the campaign's
+     * own senderIdentity email FIRST — services.zoho.default_from_email is only
+     * a fallback for campaigns with no sender identity at all (see the from-email
+     * resolution comment in ZohoCampaignsDriver::dispatchRun()).
+     */
+    public function test_dispatch_run_prefers_sender_identity_over_config_default_from_email(): void
+    {
+        config([
+            'services.zoho.campaigns.list_key' => 'verified-list-key',
+            'services.zoho.default_from_email' => 'default@example.com',
+            'app.url' => 'https://fretiq.example.test',
+        ]);
+
+        $contact = $this->makeClientContact('identity-precedence@acme.test');
+        $run     = $this->makeCampaignWithRun($contact, 'identity@example.com');
+
+        $zohoClientMock = \Mockery::mock(\App\Services\Zoho\ZohoCampaignsClient::class);
+        $zohoClientMock->shouldReceive('addListSubscribers')->once()->andReturn([]);
+        $zohoClientMock->shouldReceive('createCampaign')
+            ->once()
+            ->withArgs(fn ($name, $subject, $fromEmail, $listKey, $contentUrl) => $fromEmail === 'identity@example.com')
+            ->andReturn(['campaignKey' => 'CK-IDENTITY']);
+        $zohoClientMock->shouldReceive('sendCampaign')->once()->andReturn([]);
+
+        $driver  = new ZohoCampaignsDriver($zohoClientMock);
+        $summary = $driver->dispatchRun($run, collect([$contact]));
+
+        $this->assertSame('CK-IDENTITY', $summary['campaign_key']);
     }
 }

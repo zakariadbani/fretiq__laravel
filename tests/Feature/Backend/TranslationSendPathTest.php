@@ -42,6 +42,7 @@ class TranslationSendPathTest extends TestCase
 
         config([
             'prospecting.cold_send_enabled' => false,
+            'services.zoho.driver' => 'local',
             'translation.base_language'     => 'fr',
             'translation.target_languages'  => ['en'],
             'translation.francophone_countries' => ['FR', 'BE', 'LU', 'MC', 'CH', 'CA'],
