@@ -34,7 +34,7 @@ fretiq is a single-tenant prospection SaaS built for TCL France. It automates th
 **Administration**
 
 - Users / Roles / Permissions — backend CRUD user management
-- Zoho — integration status, sync, readiness checklist
+- Zoho — integration status and sync
 
 ## Getting started
 

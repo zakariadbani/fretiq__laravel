@@ -13,8 +13,6 @@ import { expectPath } from '../helpers/test-utils';
  * they must NEVER be clicked (clicking fires live Zoho API calls).
  *
  * Stable selectors used:
- *   .card-label with text "Driver Campaigns réel — prérequis" — readiness card header
- *   table th with text "Prérequis"                            — readiness table
  *   form[action*="zoho/sync"] button[type="submit"]           — sync button
  *   form[action*="zoho/sync_templates"] button[type="submit"] — import button
  *   .fw-bold.text-gray-800 with text "Driver CRM"             — driver label
@@ -40,17 +38,7 @@ test.describe('Zoho module', () => {
     await expect(zoho.crmDriverCard).toBeVisible({ timeout: 10000 });
   });
 
-  // ── 3. Readiness checklist card renders ───────────────────────────────────
-
-  test('campaigns-driver readiness checklist card and table render', async ({ page }) => {
-    const zoho = new ZohoPage(page);
-    await zoho.goto();
-
-    await expect(zoho.readinessCardTitle).toBeVisible({ timeout: 10000 });
-    await expect(zoho.readinessTable).toBeVisible({ timeout: 10000 });
-  });
-
-  // ── 4. Sync buttons are present (NOT clicked) ─────────────────────────────
+  // ── 3. Sync buttons are present (NOT clicked) ─────────────────────────────
 
   test('sync buttons are present in the DOM (not clicked)', async ({ page }) => {
     const zoho = new ZohoPage(page);

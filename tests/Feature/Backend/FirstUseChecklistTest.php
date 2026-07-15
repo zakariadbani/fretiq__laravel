@@ -43,7 +43,6 @@ class FirstUseChecklistTest extends TestCase
                     'Identité expéditeur',
                     'Segment destinataire',
                     'Modèle d’e-mail',
-                    'Prérequis d’envoi',
                     'Première campagne',
                 ], false);
         }
@@ -54,8 +53,6 @@ class FirstUseChecklistTest extends TestCase
         config([
             'services.zoho.driver' => 'zoho',
             'services.zoho.campaigns.refresh_token' => 'test-refresh-token',
-            'prospecting.spf_dkim_dmarc_configured' => true,
-            'prospecting.bounce_handling_configured' => true,
             'prospecting.cold_send_enabled' => true,
             'app.url' => 'https://fretiq.test',
         ]);
@@ -106,42 +103,4 @@ class FirstUseChecklistTest extends TestCase
         $this->assertSame('Configurer', $item['action']);
     }
 
-    public function test_commercial_readiness_item_links_to_authorized_screen(): void
-    {
-        $commercial = User::factory()->create([
-            'email_verified_at' => now(),
-            'is_active' => true,
-        ]);
-        $commercial->assignRole('commercial');
-
-        $this->actingAs($commercial);
-
-        $item = collect(app(FirstUseChecklistService::class)->checklist()['items'])
-            ->firstWhere('label', 'Prérequis d’envoi');
-
-        $this->assertNotNull($item);
-        $this->assertFalse($commercial->can('view zoho'));
-        $this->assertSame(route('admin.campaigns.index'), $item['url']);
-        $this->assertSame('Voir campagnes', $item['action']);
-    }
-
-    public function test_readiness_item_has_no_action_without_authorized_destination(): void
-    {
-        $user = User::factory()->create([
-            'email_verified_at' => now(),
-            'is_active' => true,
-        ]);
-        $user->givePermissionTo('backend.access');
-
-        $this->actingAs($user);
-
-        $item = collect(app(FirstUseChecklistService::class)->checklist()['items'])
-            ->firstWhere('label', 'Prérequis d’envoi');
-
-        $this->assertNotNull($item);
-        $this->assertFalse($user->can('view zoho'));
-        $this->assertFalse($user->can('view campaigns'));
-        $this->assertNull($item['url']);
-        $this->assertNull($item['action']);
-    }
 }

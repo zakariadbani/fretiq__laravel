@@ -10,7 +10,6 @@ use App\Models\EmailTrackingEvent;
 use App\Models\SequenceEnrollment;
 use App\Models\Suppression;
 use App\Services\Campaign\ZohoCampaignsDriver;
-use App\Services\Zoho\CampaignsReadinessService;
 use App\Support\TrackingToken;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -42,7 +41,6 @@ class CampaignService
         private readonly SegmentService   $segmentService,
         private readonly SendWindowGuard  $sendWindowGuard,
         private readonly SequenceService  $sequenceService,
-        private readonly CampaignsReadinessService $readinessService,
     ) {}
 
     // ── Scheduling ─────────────────────────────────────────────────────────────
@@ -140,13 +138,6 @@ class CampaignService
             $listKey = trim((string) ($campaign->zoho_list_key ?: config('services.zoho.campaigns.list_key')));
             if ($listKey === '') {
                 $messages[] = 'Préparation Zoho incomplète : ajoutez et vérifiez la liste Zoho dédiée avant de lancer l’envoi.';
-            }
-
-            if ($listKey !== '') {
-                $readiness = $this->readinessService->dispatchCheck();
-                if (! $readiness['ready']) {
-                    $messages = array_merge($messages, $readiness['messages']);
-                }
             }
         }
 

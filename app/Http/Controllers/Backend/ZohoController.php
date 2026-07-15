@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Jobs\RunZohoCrmSyncJob;
 use App\Models\ZohoSyncLog;
 use App\Models\ZohoToken;
-use App\Services\Zoho\CampaignsReadinessService;
 use App\Services\Zoho\ZohoCrmTemplatesService;
 use Illuminate\Http\Request;
 
@@ -60,9 +59,6 @@ class ZohoController extends Controller
         // ── History (last 15 rows) ────────────────────────────────────────────
         $history = ZohoSyncLog::orderByDesc('synced_at')->limit(15)->get();
 
-        // ── Campaigns driver readiness checklist (Phase 5) ────────────────────
-        $campaignsReadiness = app(CampaignsReadinessService::class)->check();
-
         return view('backend.contents.zoho.index', [
             'crmDriver'           => $crmDriver,
             'campaignsDriver'     => $campaignsDriver,
@@ -72,7 +68,6 @@ class ZohoController extends Controller
             'tokenMinutes'        => $tokenMinutes,
             'tokenExpiry'         => $tokenExpiry,
             'history'             => $history,
-            'campaignsReadiness'  => $campaignsReadiness,
         ]);
     }
 

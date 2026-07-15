@@ -5,7 +5,6 @@ namespace Tests\Feature\Backend;
 // >>> custom-test-author:zoho-code
 
 use App\Models\User;
-use App\Services\Zoho\CampaignsReadinessService;
 use App\Services\Zoho\ZohoCrmSyncService;
 use App\Services\Zoho\ZohoCrmTemplatesService;
 use Database\Seeders\Acl\PermissionsSeeder;
@@ -16,7 +15,7 @@ use Tests\TestCase;
 
 /**
  * ZohoGeneratedTest — HTTP-layer tests for ZohoController covering the gaps
- * not reached by ZohoAccessTest / CampaignsReadinessTest.
+ * not reached by ZohoAccessTest.
  *
  * Permission gates:
  *   index          → 'view zoho'
@@ -24,15 +23,13 @@ use Tests\TestCase;
  *   syncTemplates  → 'create campaign_templates'
  *
  * Response shapes:
- *   index          → 200 view (shows readiness checklist)
+ *   index          → 200 view
  *   sync           → 302 redirect to admin.zoho.index + flash
  *   syncTemplates  → 302 redirect to admin.zoho.index + flash
  *
  * Services mocked via $this->app->bind():
  *   ZohoCrmSyncService     → anonymous class returning void (sync path)
  *   ZohoCrmTemplatesService → anonymous class returning canned import result
- *   CampaignsReadinessService → anonymous class returning minimal not-ready result
- *                              (so ZohoController::index() never touches CRM or HTTP)
  *
  * Http::fake() is registered as a safety net to block any stray outbound calls.
  */
@@ -51,25 +48,6 @@ class ZohoGeneratedTest extends TestCase
 
         // Safety net: no outbound HTTP is ever allowed in this suite.
         Http::preventStrayRequests();
-
-        // Stub CampaignsReadinessService so ZohoController::index() never needs
-        // a real ZohoToken / ZohoSyncLog row and never makes HTTP calls.
-        $this->app->bind(CampaignsReadinessService::class, function () {
-            return new class {
-                public function check(): array
-                {
-                    return [
-                        'items' => [
-                            'oauth_configured' => ['label' => 'OAuth configuré', 'status' => false, 'note' => ''],
-                            'driver_zoho'      => ['label' => 'Driver = zoho',   'status' => false, 'note' => ''],
-                            'public_app_url'   => ['label' => 'APP_URL public',  'status' => false, 'note' => ''],
-                        ],
-                        'ready'  => false,
-                        'driver' => 'local',
-                    ];
-                }
-            };
-        });
 
         $this->superadmin = User::factory()->create([
             'email_verified_at' => now(),
@@ -168,7 +146,6 @@ class ZohoGeneratedTest extends TestCase
 
     /**
      * User with 'view zoho' (superadmin) gets HTTP 200.
-     * The readiness checklist card must be present.
      */
     public function test_index_superadmin_returns_200(): void
     {

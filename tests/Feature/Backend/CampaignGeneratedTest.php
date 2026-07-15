@@ -34,7 +34,6 @@ use Tests\TestCase;
  *   CampaignViewRecipientsTest:   view page rollup, search, chips, markReplied redirects.
  *   MarkRepliedTest:              markReplied happy-path, commercial can mark, conversion_count.
  *   CampaignsDataTableRenderTest: DataTable AJAX, toggle/badge rendering.
- *   CampaignsReadinessTest:       readiness service + Zoho admin screen.
  *
  * This file covers the uncovered surface:
  *   - index 403 for user without `view campaigns`

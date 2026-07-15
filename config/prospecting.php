@@ -14,16 +14,6 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Compliance prerequisites (cold-send gate — CampaignsReadinessService)
-    |--------------------------------------------------------------------------
-    | Flip to true only once each prerequisite is actually confirmed for the
-    | sending domain. Read by App\Services\Zoho\CampaignsReadinessService.
-    */
-    'spf_dkim_dmarc_configured'  => env('SPF_DKIM_DMARC_CONFIGURED', false),
-    'bounce_handling_configured' => env('BOUNCE_HANDLING_CONFIGURED', false),
-
-    /*
-    |--------------------------------------------------------------------------
     | Free-webmail domains
     |--------------------------------------------------------------------------
     | Emails at these domains are classified as email_kind='personal' (excluded

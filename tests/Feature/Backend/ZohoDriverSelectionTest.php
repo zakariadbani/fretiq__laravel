@@ -52,8 +52,6 @@ class ZohoDriverSelectionTest extends TestCase
             'services.zoho.campaigns.client_id' => 'x',
             'services.zoho.campaigns.client_secret' => 'y',
             'services.zoho.campaigns.list_key' => 'verified-list-key',
-            'prospecting.spf_dkim_dmarc_configured' => true,
-            'prospecting.bounce_handling_configured' => true,
             'prospecting.cold_send_enabled' => true,
             'app.url' => 'https://fretiq.example.test',
         ]);

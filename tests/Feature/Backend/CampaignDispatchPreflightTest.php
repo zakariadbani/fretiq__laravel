@@ -14,12 +14,10 @@ use App\Models\Suppression;
 use App\Models\User;
 use App\Services\Campaign\CampaignService;
 use App\Services\Campaign\SegmentService;
-use App\Services\Zoho\CampaignsReadinessService;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -208,8 +206,6 @@ class CampaignDispatchPreflightTest extends TestCase
             'services.zoho.campaigns.client_id' => 'client-id',
             'services.zoho.campaigns.client_secret' => 'client-secret',
             'services.zoho.campaigns.list_key' => '',
-            'prospecting.spf_dkim_dmarc_configured' => true,
-            'prospecting.bounce_handling_configured' => true,
             'prospecting.cold_send_enabled' => true,
             'app.url' => 'https://fretiq.example.test',
         ]);
@@ -225,107 +221,6 @@ class CampaignDispatchPreflightTest extends TestCase
             ->assertStatus(422)
             ->assertJson(['message' => 'error'])
             ->assertJsonPath('text', 'Préparation Zoho incomplète : ajoutez et vérifiez la liste Zoho dédiée avant de lancer l’envoi.');
-
-        Bus::assertNotDispatched(SendCampaignJob::class);
-        $this->assertDatabaseMissing('campaign_runs', ['campaign_id' => $campaign->id]);
-    }
-
-    public function test_non_oauth_incomplete_readiness_blocks_schedule_without_run_or_queue(): void
-    {
-        Bus::fake();
-
-        config([
-            'services.zoho.driver' => 'zoho',
-            'services.zoho.campaigns.refresh_token' => 'refresh-token',
-            'services.zoho.campaigns.client_id' => 'client-id',
-            'services.zoho.campaigns.client_secret' => 'client-secret',
-            'services.zoho.campaigns.list_key' => 'verified-list-key',
-            'prospecting.spf_dkim_dmarc_configured' => false,
-            'prospecting.bounce_handling_configured' => true,
-            'prospecting.cold_send_enabled' => true,
-            'app.url' => 'https://fretiq.example.test',
-        ]);
-
-        $this->makeClientContact('zoho-readiness@example.test');
-        $campaign = $this->makeCampaign(Segment::create(['name' => 'Clients', 'scope' => 'client']), [
-            'driver' => 'zoho',
-            'zoho_list_key' => 'verified-list-key',
-        ]);
-
-        $this->actingAs($this->superadmin)
-            ->postJson("/admin/campaigns/{$campaign->id}/schedule")
-            ->assertStatus(422)
-            ->assertJson(['message' => 'error'])
-            ->assertJsonPath('text', 'SPF / DKIM / DMARC configurés : Vérification manuelle — configurer PROSPECTING_SPF_DKIM_DMARC_CONFIGURED=true une fois validé');
-
-        Bus::assertNotDispatched(SendCampaignJob::class);
-        $this->assertDatabaseMissing('campaign_runs', ['campaign_id' => $campaign->id]);
-    }
-
-    public function test_zoho_oauth_failure_blocks_before_queueing(): void
-    {
-        Bus::fake();
-        Http::fake(['*oauth/v2/token*' => Http::response(['error' => 'invalid_grant'], 400)]);
-
-        config([
-            'services.zoho.driver' => 'zoho',
-            'services.zoho.campaigns.refresh_token' => 'bad-refresh-token',
-            'services.zoho.campaigns.client_id' => 'client-id',
-            'services.zoho.campaigns.client_secret' => 'client-secret',
-            'services.zoho.campaigns.list_key' => 'verified-list-key',
-            'prospecting.spf_dkim_dmarc_configured' => true,
-            'prospecting.bounce_handling_configured' => true,
-            'prospecting.cold_send_enabled' => true,
-            'app.url' => 'https://fretiq.example.test',
-        ]);
-
-        $this->makeClientContact('zoho@example.test');
-        $campaign = $this->makeCampaign(Segment::create(['name' => 'Clients', 'scope' => 'client']), [
-            'driver' => 'zoho',
-            'zoho_list_key' => 'verified-list-key',
-        ]);
-
-        $this->actingAs($this->superadmin)
-            ->postJson("/admin/campaigns/{$campaign->id}/send")
-            ->assertStatus(422)
-            ->assertJson(['message' => 'error'])
-            ->assertJsonPath('text', 'OAuth Zoho Campaigns expiré ou invalide : reconnectez Zoho Campaigns avant de lancer l’envoi.');
-
-        Bus::assertNotDispatched(SendCampaignJob::class);
-        $this->assertDatabaseMissing('campaign_runs', ['campaign_id' => $campaign->id]);
-    }
-
-    public function test_unknown_zoho_readiness_result_blocks_send_without_run_or_queue(): void
-    {
-        Bus::fake();
-        $this->fakeZohoReadinessFailure('Vérification Zoho indisponible : réessayez après avoir contrôlé la page Zoho.');
-
-        $this->makeClientContact('zoho-unknown@example.test');
-        $campaign = $this->makeZohoReadyCampaign('zoho-unknown');
-
-        $this->actingAs($this->superadmin)
-            ->postJson("/admin/campaigns/{$campaign->id}/send")
-            ->assertStatus(422)
-            ->assertJson(['message' => 'error'])
-            ->assertJsonPath('text', 'Vérification Zoho indisponible : réessayez après avoir contrôlé la page Zoho.');
-
-        Bus::assertNotDispatched(SendCampaignJob::class);
-        $this->assertDatabaseMissing('campaign_runs', ['campaign_id' => $campaign->id]);
-    }
-
-    public function test_stale_zoho_readiness_result_blocks_schedule_without_run_or_queue(): void
-    {
-        Bus::fake();
-        $this->fakeZohoReadinessFailure('Vérification Zoho obsolète : relancez la vérification de la liste avant envoi.');
-
-        $this->makeClientContact('zoho-stale@example.test');
-        $campaign = $this->makeZohoReadyCampaign('zoho-stale');
-
-        $this->actingAs($this->superadmin)
-            ->postJson("/admin/campaigns/{$campaign->id}/schedule")
-            ->assertStatus(422)
-            ->assertJson(['message' => 'error'])
-            ->assertJsonPath('text', 'Vérification Zoho obsolète : relancez la vérification de la liste avant envoi.');
 
         Bus::assertNotDispatched(SendCampaignJob::class);
         $this->assertDatabaseMissing('campaign_runs', ['campaign_id' => $campaign->id]);
@@ -468,40 +363,4 @@ class CampaignDispatchPreflightTest extends TestCase
         return Segment::create(['name' => 'Mixed ' . $prefix, 'scope' => 'mixed']);
     }
 
-    private function makeZohoReadyCampaign(string $name): Campaign
-    {
-        config([
-            'services.zoho.driver' => 'zoho',
-            'services.zoho.campaigns.refresh_token' => 'refresh-token',
-            'services.zoho.campaigns.client_id' => 'client-id',
-            'services.zoho.campaigns.client_secret' => 'client-secret',
-            'services.zoho.campaigns.list_key' => 'verified-list-key',
-            'prospecting.spf_dkim_dmarc_configured' => true,
-            'prospecting.bounce_handling_configured' => true,
-            'prospecting.cold_send_enabled' => true,
-            'app.url' => 'https://fretiq.example.test',
-        ]);
-
-        return $this->makeCampaign(Segment::create(['name' => $name, 'scope' => 'client']), [
-            'driver' => 'zoho',
-            'zoho_list_key' => 'verified-list-key',
-        ]);
-    }
-
-    private function fakeZohoReadinessFailure(string $message): void
-    {
-        $this->app->forgetInstance(CampaignService::class);
-        $this->app->instance(CampaignsReadinessService::class, new class($message) extends CampaignsReadinessService {
-            public function __construct(private readonly string $message) {}
-
-            public function dispatchCheck(): array
-            {
-                return [
-                    'ready' => false,
-                    'messages' => [$this->message],
-                    'access_token_checked' => false,
-                ];
-            }
-        });
-    }
 }

@@ -6,7 +6,6 @@ use App\Models\Campaign;
 use App\Models\CampaignTemplate;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
-use App\Services\Zoho\CampaignsReadinessService;
 use Illuminate\Support\Facades\Route;
 
 class FirstUseChecklistService
@@ -16,9 +15,6 @@ class FirstUseChecklistService
      */
     public function checklist(): array
     {
-        $readiness = app(CampaignsReadinessService::class)->check();
-        $readinessDestination = $this->readinessDestination();
-
         $items = [
             $this->item(
                 'Identité expéditeur',
@@ -44,17 +40,6 @@ class FirstUseChecklistService
                 'campaign_templates',
                 'Rédiger'
             ),
-            [
-                'label'    => 'Prérequis d’envoi',
-                'detail'   => $readiness['ready']
-                    ? 'Le driver, le tracking et les prérequis de délivrabilité sont prêts.'
-                    : ($this->can('view zoho')
-                        ? 'Vérifier le driver, APP_URL public, SPF/DKIM/DMARC, bounces et base légale.'
-                        : 'Un administrateur doit valider les prérequis avant le premier envoi.'),
-                'complete' => (bool) $readiness['ready'],
-                'url'      => $readinessDestination['url'],
-                'action'   => $readinessDestination['action'],
-            ],
             $this->item(
                 'Première campagne',
                 'Assembler segment, modèle, expéditeur et planning.',
@@ -97,22 +82,6 @@ class FirstUseChecklistService
         }
 
         return compact('label', 'detail', 'complete', 'url', 'action');
-    }
-
-    /**
-     * @return array{url: string|null, action: string|null}
-     */
-    private function readinessDestination(): array
-    {
-        if ($this->can('view zoho') && Route::has('admin.zoho.index')) {
-            return ['url' => route('admin.zoho.index'), 'action' => 'Vérifier'];
-        }
-
-        if ($this->can('view campaigns') && Route::has('admin.campaigns.index')) {
-            return ['url' => route('admin.campaigns.index'), 'action' => 'Voir campagnes'];
-        }
-
-        return ['url' => null, 'action' => null];
     }
 
     private function can(string $permission): bool

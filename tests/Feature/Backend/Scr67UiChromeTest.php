@@ -91,11 +91,6 @@ BLADE, ['name' => 'Entreprise - Acme & Fils <Nord> "Express"']);
             'tokenStatus' => 'absent',
             'tokenExpiry' => null,
             'tokenMinutes' => null,
-            'campaignsReadiness' => [
-                'items' => [],
-                'ready' => true,
-                'driver' => 'local',
-            ],
             'history' => collect(),
         ])->render();
 
