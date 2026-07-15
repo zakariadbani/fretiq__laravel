@@ -137,18 +137,31 @@ class ZohoCampaignsClient
             'emailids' => $emails->implode(','),
         ]);
 
+        $payload = $response->json() ?? [];
+
+        // Idempotent recovery: Zoho reports the deterministic name already exists (2205) —
+        // an earlier prep created the list but never persisted its key. Recover by name
+        // instead of dead-locking. Same predicate as the throw in assertRecipientListSuccess,
+        // so it fires only for that exact response; code 0/absent is untouched below.
+        if (! $response->failed() && (string) ($payload['code'] ?? '') === '2205') {
+            $existingKey = $this->findRecipientListKeyByName($listName);
+            if ($existingKey !== '') {
+                Log::info('[ZohoCampaignsClient] recovered existing list on 2205', [
+                    'list_name' => $listName,
+                    'list_key'  => $existingKey,
+                ]);
+                return $existingKey;
+            }
+            throw new \RuntimeException('[ZohoCampaignsClient] createRecipientList : liste « ' . $listName . ' » déjà présente sur Zoho mais introuvable dans getmailinglists — récupération impossible.');
+        }
+
         $payload = $this->assertRecipientListSuccess($response, 'createRecipientList');
         $listKey = trim((string) ($payload['listkey'] ?? $payload['listKey'] ?? ''));
         if ($listKey === '') {
             throw new \RuntimeException('[ZohoCampaignsClient] createRecipientList erreur API Zoho : clé de liste absente.');
         }
 
-        $listsResponse = Http::withHeaders([
-            'Authorization' => 'Zoho-oauthtoken ' . $this->authService->getAccessToken('campaigns'),
-        ])->timeout(30)->get($this->apiUrl . '/getmailinglists', ['resfmt' => 'JSON']);
-        $listsPayload = $this->assertRecipientListSuccess($listsResponse, 'getMailingLists');
-        $lists = $listsPayload['list_of_details'] ?? [];
-        $verified = collect(is_array($lists) ? $lists : [])->contains(
+        $verified = collect($this->fetchAllMailingLists())->contains(
             fn (mixed $list) => is_array($list) && trim((string) ($list['listkey'] ?? $list['listKey'] ?? '')) === $listKey
         );
         if (! $verified) {
@@ -202,6 +215,54 @@ class ZohoCampaignsClient
     public function listSubscribers(string $listKey): array
     {
         return $this->listRecipientEmails($listKey);
+    }
+
+    /** @return array<int, array<string,mixed>> Every mailing list, page by page. */
+    private function fetchAllMailingLists(): array
+    {
+        $all = [];
+        $fromIndex = 1;
+        $range = 50;      // Zoho getmailinglists page size; confirmed-safe default
+        $pages = 0;
+
+        do {
+            $response = Http::withHeaders([
+                'Authorization' => 'Zoho-oauthtoken ' . $this->authService->getAccessToken('campaigns'),
+            ])->timeout(30)->get($this->apiUrl . '/getmailinglists', [
+                'resfmt'    => 'JSON',
+                'sort'      => 'asc',
+                'fromindex' => $fromIndex,
+                'range'     => $range,
+            ]);
+            $payload = $this->assertRecipientListSuccess($response, 'getMailingLists');
+            $lists = $payload['list_of_details'] ?? [];
+            if (! is_array($lists)) { $lists = []; }
+            foreach ($lists as $l) { if (is_array($l)) { $all[] = $l; } }
+            $fromIndex += count($lists);
+        } while (count($lists) === $range && ++$pages < 200); // ponytail: 200-page cap guards an unverified/ignored range param from looping
+
+        return $all;
+    }
+
+    /**
+     * Resolve an existing recipient list's key by exact (normalized) name.
+     * Returns '' when there is no unambiguous single match, so the caller refuses
+     * rather than recover the wrong list (add-only sync must never top up a wrong list).
+     */
+    private function findRecipientListKeyByName(string $listName): string
+    {
+        $target = mb_strtolower(trim($listName));
+        if ($target === '') { return ''; }
+
+        $matches = [];
+        foreach ($this->fetchAllMailingLists() as $list) {
+            if (mb_strtolower(trim((string) ($list['listname'] ?? ''))) === $target) {
+                $key = trim((string) ($list['listkey'] ?? $list['listKey'] ?? ''));
+                if ($key !== '') { $matches[$key] = true; }
+            }
+        }
+
+        return count($matches) === 1 ? array_key_first($matches) : '';
     }
 
     private function assertRecipientListSuccess(\Illuminate\Http\Client\Response $response, string $operation): array

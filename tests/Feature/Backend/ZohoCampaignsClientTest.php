@@ -141,6 +141,97 @@ class ZohoCampaignsClientTest extends TestCase
         Http::assertNotSent(fn (\Illuminate\Http\Client\Request $request) => str_contains($request->url(), '/createCampaign') || str_contains($request->url(), '/sendcampaign'));
     }
 
+    public function test_create_recipient_list_recovers_existing_key_on_duplicate_name_error(): void
+    {
+        $listName = 'Fretiq — Campagne #2';
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*addlistandcontacts*' => Http::response(['status' => 'error', 'code' => '2205', 'message' => 'List already exists'], 200),
+            '*getmailinglists*' => Http::response([
+                'code' => 0,
+                'list_of_details' => [['listkey' => 'list-existing-2', 'listname' => $listName]],
+            ], 200),
+        ]);
+
+        $listKey = $this->makeClient()->createRecipientList($listName, ['jean@acme.test']);
+
+        $this->assertSame('list-existing-2', $listKey);
+    }
+
+    public function test_create_recipient_list_recovers_existing_key_from_second_mailing_list_page(): void
+    {
+        $listName = 'Fretiq — Campagne paginée';
+        $pageOne = array_map(
+            fn (int $index) => ['listkey' => 'other-' . $index, 'listname' => 'Other list ' . $index],
+            range(1, 50),
+        );
+        $pageRequests = [];
+
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*addlistandcontacts*' => Http::response(['status' => 'error', 'code' => '2205', 'message' => 'List already exists'], 200),
+            '*getmailinglists*' => function (\Illuminate\Http\Client\Request $request) use (&$pageRequests, $pageOne, $listName) {
+                $pageRequests[] = [
+                    'fromindex' => $request['fromindex'],
+                    'range' => $request['range'],
+                ];
+
+                return Http::response([
+                    'code' => 0,
+                    'list_of_details' => count($pageRequests) === 1
+                        ? $pageOne
+                        : [['listkey' => 'list-page-2', 'listname' => $listName]],
+                ], 200);
+            },
+        ]);
+
+        $listKey = $this->makeClient()->createRecipientList($listName, ['jean@acme.test']);
+
+        $this->assertSame('list-page-2', $listKey);
+        $this->assertSame([
+            ['fromindex' => 1, 'range' => 50],
+            ['fromindex' => 51, 'range' => 50],
+        ], $pageRequests);
+    }
+
+    public function test_create_recipient_list_refuses_duplicate_name_recovery_when_list_is_missing(): void
+    {
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*addlistandcontacts*' => Http::response(['status' => 'error', 'code' => '2205', 'message' => 'List already exists'], 200),
+            '*getmailinglists*' => Http::response([
+                'code' => 0,
+                'list_of_details' => [['listkey' => 'other-key', 'listname' => 'Other list']],
+            ], 200),
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('introuvable dans getmailinglists');
+
+        $this->makeClient()->createRecipientList('Fretiq — Missing', ['jean@acme.test']);
+    }
+
+    public function test_create_recipient_list_refuses_duplicate_name_recovery_when_name_is_ambiguous(): void
+    {
+        $listName = 'Fretiq — Duplicate';
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*addlistandcontacts*' => Http::response(['status' => 'error', 'code' => '2205', 'message' => 'List already exists'], 200),
+            '*getmailinglists*' => Http::response([
+                'code' => 0,
+                'list_of_details' => [
+                    ['listkey' => 'duplicate-1', 'listname' => $listName],
+                    ['listkey' => 'duplicate-2', 'listname' => $listName],
+                ],
+            ], 200),
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('introuvable dans getmailinglists');
+
+        $this->makeClient()->createRecipientList($listName, ['jean@acme.test']);
+    }
+
     public function test_list_recipient_emails_paginates_and_add_recipient_contacts_inspects_api_code_without_campaign_calls(): void
     {
         Http::preventStrayRequests();
