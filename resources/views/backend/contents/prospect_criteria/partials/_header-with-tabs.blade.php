@@ -25,5 +25,6 @@
                          'quotaPackage'   => $quotaPackage   ?? null,
                          'dailyQuotaSummary' => $dailyQuotaSummary ?? [],
                          'monthlyQuotaSummary' => $monthlyQuotaSummary ?? [],
+                         'quotaMeters'    => $quotaMeters ?? [],
                      ], \Illuminate\Support\Arr::except(get_defined_vars(), ['__data', '__path']))->render(),
 ])

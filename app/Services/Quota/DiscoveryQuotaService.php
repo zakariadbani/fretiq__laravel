@@ -663,6 +663,106 @@ class DiscoveryQuotaService
     }
 
     /**
+     * Render-ready quota meters for the UI (index strip + view hero badge).
+     *
+     * Pure composition of dailyDisplaySummary() + monthlyDisplaySummary() — no
+     * fresh accounting math — plus the severity/colour rule that used to be
+     * duplicated as inline closures inside the _quota-badge Blade partial.
+     *
+     * Severity: 0 = healthy (or unlimited), 2 = warning (<= 20% of the cap left),
+     * 3 = exhausted. A meter's severity is max(daily, monthly): the tighter of
+     * the two caps wins.
+     *
+     * `unlimited` reflects the DAILY meter. The monthly meter is unlimited
+     * exactly when monthly.total === null (displayMeterSummary() nulls it).
+     *
+     * Degrades to "everything unlimited" when the quota tables are not yet
+     * migrated, mirroring ProspectCriteriaController::resolveQuotaVars() — an
+     * un-migrated dev DB must not 500 the listing.
+     *
+     * @return array<string, array{key: string, label: string, icon: string, severity: int, color: string, unlimited: bool, daily: array{used_reserved: int, total: ?int, remaining: ?int}, monthly: array{used_reserved: int, total: ?int, remaining: ?int}}>
+     */
+    public function displayMeters(): array
+    {
+        $meta = [
+            'company'  => ['label' => 'Requêtes de découverte', 'icon' => 'bi-building'],
+            'contacts' => ['label' => 'Contacts',               'icon' => 'bi-person-lines-fill'],
+        ];
+
+        try {
+            $daily   = $this->dailyDisplaySummary();
+            $monthly = $this->monthlyDisplaySummary();
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Quota tables not yet migrated — feed the same shape through the
+            // normal path so every meter comes back unlimited with null totals.
+            $blank   = ['unlimited' => true, 'used_reserved' => 0, 'total' => null, 'remaining' => null];
+            $daily   = ['company' => $blank, 'contacts' => $blank];
+            $monthly = $daily;
+        }
+
+        $meters = [];
+
+        foreach ($meta as $key => $labels) {
+            $dailyMeter   = $daily[$key];
+            $monthlyMeter = $monthly[$key];
+
+            $severity = max(
+                $this->displayMeterSeverity($dailyMeter['remaining'], $dailyMeter['total']),
+                $this->displayMeterSeverity($monthlyMeter['remaining'], $monthlyMeter['total'])
+            );
+
+            $meters[$key] = [
+                'key'       => $key,
+                'label'     => $labels['label'],
+                'icon'      => $labels['icon'],
+                'severity'  => $severity,
+                'color'     => match ($severity) {
+                    3       => 'danger',
+                    2       => 'warning',
+                    default => 'success',
+                },
+                'unlimited' => (bool) $dailyMeter['unlimited'],
+                'daily'     => [
+                    'used_reserved' => (int) $dailyMeter['used_reserved'],
+                    'total'         => $dailyMeter['total'],
+                    'remaining'     => $dailyMeter['remaining'],
+                ],
+                'monthly'   => [
+                    'used_reserved' => (int) $monthlyMeter['used_reserved'],
+                    'total'         => $monthlyMeter['total'],
+                    'remaining'     => $monthlyMeter['remaining'],
+                ],
+            ];
+        }
+
+        return $meters;
+    }
+
+    /**
+     * Severity for a single meter — ported verbatim from the closure that used
+     * to live in prospect_criteria/partials/_quota-badge.blade.php.
+     *
+     * null remaining means unlimited → always healthy. `$cap > 0` is null-safe:
+     * null > 0 is false in PHP 8, so a null cap never reaches the division.
+     */
+    private function displayMeterSeverity(?int $remaining, ?int $cap): int
+    {
+        if ($remaining === null) {
+            return 0;
+        }
+
+        if ($remaining === 0) {
+            return 3;
+        }
+
+        if ($cap > 0 && ($remaining / $cap) <= 0.20) {
+            return 2;
+        }
+
+        return 0;
+    }
+
+    /**
      * @return array{unlimited: bool, used_reserved: int, total: ?int, remaining: ?int}
      */
     private function displayMeterSummary(bool $unlimited, int $usedReserved, ?int $total): array

@@ -8,6 +8,13 @@
     <x-crud.breadcrumb :items="[['label' => 'Critères de découverte']]" />
 @endsection
 
+{{-- Quota meters + over-reservation banner (was an inline toolbar badge) --}}
+@include('backend.contents.prospect_criteria.partials._quota-strip', [
+    'quotaMeters'         => $quotaMeters ?? [],
+    'quotaPackage'        => $quotaPackage ?? null,
+    'activeDailyLimitSum' => $activeDailyLimitSum ?? null,
+])
+
 <div class="card">
     {{-- Card header --}}
     <div class="card-header border-0 pt-6">
@@ -25,19 +32,7 @@
 
         {{-- Toolbar --}}
         <div class="card-toolbar">
-            <div class="d-flex justify-content-end align-items-center gap-3" data-kt-table-toolbar="base">
-
-                {{-- Daily quota badge (solde) --}}
-                @include('backend.contents.prospect_criteria.partials._quota-badge', [
-                    'quotaRemaining'          => $quotaRemaining ?? null,
-                    'quotaPackage'            => $quotaPackage ?? null,
-                    'contactRemaining'        => $contactRemaining ?? null,
-                    'monthlyRemaining'        => $monthlyRemaining ?? null,
-                    'monthlyContactRemaining' => $monthlyContactRemaining ?? null,
-                    'activeDailyLimitSum'     => $activeDailyLimitSum ?? null,
-                    'dailyQuotaSummary'       => $dailyQuotaSummary ?? [],
-                    'monthlyQuotaSummary'     => $monthlyQuotaSummary ?? [],
-                ])
+            <div class="d-flex justify-content-end" data-kt-table-toolbar="base">
 
                 {{-- Filter button --}}
                 <button type="button"
@@ -80,6 +75,14 @@
                 </a>
                 @endcan
             </div>
+        </div>
+    </div>
+
+    <div id="active-filters-bar" class="d-none px-9 pt-3">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <span class="fw-semibold text-gray-700">Filtres actifs :</span>
+            <div id="active-filters-badges" class="d-flex flex-wrap gap-2" aria-live="polite"></div>
+            <button type="button" id="clear-all-filters" class="btn btn-sm btn-light-primary d-none">Tout effacer</button>
         </div>
     </div>
 

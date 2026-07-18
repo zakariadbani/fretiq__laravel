@@ -30,7 +30,7 @@
                 Historique des lancements ({{ $runsTotal }})
             </h3>
             <div class="text-muted fs-7 mt-2">
-                {{ $runsTotal }} lancement(s) de découverte · {{ number_format($searchesTotal) }} recherche(s) SerpAPI consommée(s).
+                {{ $runsTotal }} lancement(s) de découverte · {{ number_format($searchesTotal) }} requête(s) de découverte consommée(s).
             </div>
         </div>
     </div>
@@ -47,7 +47,7 @@
                         <tr class="fw-bold text-muted bg-light">
                             <th class="ps-7">Démarrée le</th>
                             <th>Statut</th>
-                            <th>Recherches SerpAPI</th>
+                            <th>Requêtes de découverte</th>
                             <th>Traitées</th>
                             <th>Nouvelles</th>
                             <th>Contacts</th>

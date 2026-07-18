@@ -44,7 +44,7 @@ class SettingController extends Controller
         'decouverte' => [
             'label'       => 'Découverte',
             'enabled'     => true,
-            'description' => 'Paramètres du moteur de découverte : scoring IA, enrichissement Hunter et seuils de qualification.',
+            'description' => 'Paramètres du moteur de découverte : scoring IA, enrichissement des contacts et seuils de qualification.',
             'fields'      => [
                 'auto_scoring' => [
                     'type'    => 'boolean',
@@ -56,7 +56,7 @@ class SettingController extends Controller
                     'type'    => 'boolean',
                     'label'   => 'Enrichissement automatique des contacts',
                     'default' => true,
-                    'help'    => 'Récupère automatiquement les contacts (Hunter) des entreprises dont le score atteint le seuil. 1 crédit par entreprise traitée.',
+                    'help'    => 'Récupère automatiquement les contacts des entreprises dont le score atteint le seuil. 1 crédit par entreprise traitée.',
                 ],
                 'min_score_enrich' => [
                     'type'    => 'number',
@@ -123,7 +123,7 @@ class SettingController extends Controller
 
         // Compute static scoring_provider display for the Découverte tab
         $driver = config('services.scoring.driver', 'heuristic');
-        $driverLabel = $driver === 'gemini' ? 'Gemini (IA)' : 'Heuristique (règles)';
+        $driverLabel = $driver === 'gemini' ? 'Assistant IA' : 'Heuristique (règles)';
 
         $apiKey = config('services.gemini.api_key');
         $badgeText = $apiKey ? 'Clé configurée' : 'Clé non configurée';

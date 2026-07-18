@@ -140,7 +140,7 @@ class CampaignTemplateController extends BackendController
 
         $message = $success
             ? ($targetLang === $baseLang ? 'Version FR générée depuis EN.' : 'Version EN générée depuis FR.')
-            : "Échec de la traduction : vérifiez la version source et la configuration de l'API Gemini.";
+            : "Échec de la traduction : vérifiez la version source et la configuration de la traduction automatique.";
 
         return response()->json([
             'success'         => $success,

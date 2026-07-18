@@ -43,7 +43,7 @@ class ProspectCriteriaViewConfig
                 $subtitle[] = ['icon' => 'bi-geo-alt', 'text' => implode(', ', $mapped)];
             }
             if ($model->daily_limit) {
-                $subtitle[] = ['icon' => 'bi-clock', 'text' => $model->daily_limit . ' recherches SerpAPI/j'];
+                $subtitle[] = ['icon' => 'bi-clock', 'text' => $model->daily_limit . ' requêtes de découverte/j'];
             }
             if ($model->auto_run && $model->run_at_hour !== null) {
                 $subtitle[] = ['icon' => 'bi-alarm', 'text' => 'Auto · ' . sprintf('%02d:00', $model->run_at_hour)];
@@ -117,7 +117,7 @@ class ProspectCriteriaViewConfig
             $detailRows = [
                 ['label' => 'Nom',              'value' => $model->name,       'type' => 'text'],
                 ['label' => 'Actif',            'value' => $model->is_active,  'type' => 'boolean'],
-                ['label' => 'Recherches SerpAPI / jour', 'value' => $model->daily_limit ? $model->daily_limit . ' recherches/j' : null, 'type' => 'text'],
+                ['label' => 'Requêtes de découverte / jour', 'value' => $model->daily_limit ? $model->daily_limit . ' requêtes/j' : null, 'type' => 'text'],
                 ['label' => 'Découverte automatique', 'value' => ($model->auto_run && $model->run_at_hour !== null)
                     ? 'Quotidienne à ' . sprintf('%02d:00', $model->run_at_hour) . ' (heure ' . $quotaTz . ')'
                     : 'Manuelle', 'type' => 'text'],

@@ -139,8 +139,8 @@ class GlobalDataTable extends DataTable
             ->parameters([
                 'scrollX' => true,
                 'searchDelay' => 350,
-                'drawCallback' => 'function() { KTMenu.createInstances(); if (window.DataTableUtils) { DataTableUtils.fixAccessibility(this.api().table().container()); } }',
-                'initComplete' => 'function() { if (window.DataTableUtils) { DataTableUtils.fixAccessibility(this.api().table().container()); } }',
+                'drawCallback' => 'function() { try { if (window.KTMenu) { KTMenu.createInstances(); } if (window.DataTableUtils && window.DataTableUtils.fixAccessibility instanceof Function) { window.DataTableUtils.fixAccessibility(this.api().table().container()); } } catch (e) { console.error(e); } }',
+                'initComplete' => 'function() { try { if (window.DataTableUtils && window.DataTableUtils.fixAccessibility instanceof Function) { window.DataTableUtils.fixAccessibility(this.api().table().container()); } } catch (e) { console.error(e); } }',
                 'buttons' => $this->buttons,
                 'language' => $this->dataTableLanguage(),
             ])
@@ -162,7 +162,7 @@ class GlobalDataTable extends DataTable
     protected function getColumns()
     {
         $columns = [];
-        $columns[] = Column::make('id')->title('ID')->addClass('ps-0');
+        $columns[] = Column::make('id')->title('ID')->addClass('ps-0')->responsivePriority(1);
 
         foreach ($this->columns as $key => $column) {
             $orderable = isset($column['orderable']) ? $column['orderable'] : true;

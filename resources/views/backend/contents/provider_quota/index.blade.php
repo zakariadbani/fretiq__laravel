@@ -9,7 +9,11 @@
 @endsection
 
 @php
-    // Severity helper - mirrors the idiom in prospect_criteria/partials/_quota-badge.blade.php.
+    // Local bar styling for provider (SerpAPI / Hunter) figures — unrelated to the severity
+    // rule in DiscoveryQuotaService::displayMeters(), which only covers the internal package
+    // credit ledger. These used/total values come from the providers' own account endpoints,
+    // so there is no meter, cap or `remaining` from the service to reuse here.
+    // Never divides unless $cap > 0 — a cap of 0 is valid and means danger.
     $barClass = function ($used, $cap): string {
         $cap  = ($cap  === null) ? null : (int) $cap;
         $used = ($used === null) ? 0    : (int) $used;
@@ -56,8 +60,8 @@
             <div class="card-header border-0 pt-6">
                 <div class="card-title">
                     <div>
-                        <h3 class="card-label fw-bold fs-4 mb-0">SerpAPI</h3>
-                        <div class="text-muted fs-7 mt-1">Découverte</div>
+                        <h3 class="card-label fw-bold fs-4 mb-0">Découverte</h3>
+                        <div class="text-muted fs-7 mt-1">Requêtes de découverte</div>
                     </div>
                 </div>
             </div>
@@ -78,7 +82,7 @@
                     @endphp
 
                     <div class="fw-bold fs-2x text-gray-800 mb-2">{{ $serpRemaining ?? '—' }}</div>
-                    <div class="text-muted fs-7 mb-5">recherches restantes</div>
+                    <div class="text-muted fs-7 mb-5">requêtes restantes</div>
 
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <span class="fw-semibold text-gray-700">Utilisé / Total</span>
@@ -129,8 +133,8 @@
             <div class="card-header border-0 pt-6">
                 <div class="card-title">
                     <div>
-                        <h3 class="card-label fw-bold fs-4 mb-0">Hunter</h3>
-                        <div class="text-muted fs-7 mt-1">Enrichissement</div>
+                        <h3 class="card-label fw-bold fs-4 mb-0">Enrichissement contacts</h3>
+                        <div class="text-muted fs-7 mt-1">Contacts</div>
                     </div>
                 </div>
             </div>
@@ -153,7 +157,7 @@
                     @endphp
 
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="fw-semibold text-gray-700"><i class="bi bi-search me-1"></i> Recherches - Utilisé / Total</span>
+                        <span class="fw-semibold text-gray-700"><i class="bi bi-search me-1"></i> Requêtes d'enrichissement - Utilisées / Total</span>
                         <span class="fw-bold text-gray-800">{{ $quotaValue($hunterSearchesUsed, $hunterSearchesTotal) }}</span>
                     </div>
                     <div class="text-muted fs-7 mb-1">Réservé / Total : {{ $quotaValue($hunterSearchesReserved, $hunterSearchesTotal) }}</div>

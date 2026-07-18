@@ -26,7 +26,7 @@
         <div>
             <h3 class="card-title fw-bolder m-0">
                 <i class="bi bi-diagram-3 text-info fs-3 me-2"></i>
-                Résultats par requête SerpAPI
+                Résultats par requête de découverte
             </h3>
             <div class="text-muted fs-7 mt-2">
                 {{ number_format($totalFound) }} candidat(s) trouvé(s) · {{ number_format($totalKept) }} entreprise(s) gardée(s) · {{ number_format($totalExcluded) }} exclue(s) par l'IA.

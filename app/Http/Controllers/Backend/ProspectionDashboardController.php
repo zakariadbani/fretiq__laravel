@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Backend;
 
 use App\Http\Controllers\Controller;
 use App\Services\Analytics\AnalyticsService;
-use App\Services\Onboarding\FirstUseChecklistService;
 
 class ProspectionDashboardController extends Controller
 {
@@ -22,7 +21,6 @@ class ProspectionDashboardController extends Controller
             'funnel'            => $analytics->funnel(),
             'engagementOverTime'=> $analytics->engagementOverTime(),
             'topCampaigns'      => $analytics->topCampaigns(),
-            'firstUseChecklist' => app(FirstUseChecklistService::class)->checklist(),
         ]);
     }
 }

@@ -146,7 +146,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
                 ]);
                 $run->update([
                     'status'      => 'failed',
-                    'error'       => 'Budget SerpAPI épuisé (retry)',
+                    'error'       => 'Budget de découverte épuisé (retry)',
                     'finished_at' => now(),
                 ]);
                 return;

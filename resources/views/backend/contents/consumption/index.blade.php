@@ -9,8 +9,12 @@
 @endsection
 
 @php
-    // Severity helper — mirrors the idiom in prospect_criteria/partials/_quota-badge.blade.php
-    // (never divides unless $cap > 0 — a cap of 0 is valid and means danger).
+    // Local bar styling for this page — deliberately NOT the severity rule in
+    // DiscoveryQuotaService::displayMeters(). That rule is remaining-based, 3-valued, and
+    // collapses daily+monthly into a single severity via max(); this page renders the two
+    // periods as four independent bars and needs a 4th class besides (bg-primary =
+    // healthy-limited vs bg-success = unlimited).
+    // Never divides unless $cap > 0 — a cap of 0 is valid and means danger.
     $barClass = function (?int $used, ?int $cap): string {
         if ($cap === null) return 'bg-success';
         if ($cap <= 0)     return 'bg-danger';

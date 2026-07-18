@@ -9,46 +9,94 @@ use Illuminate\Http\Request;
 
 class ProspectCriteriaDataTable extends BackendDataTable
 {
+    /**
+     * Maximum number of sector badges rendered inline in the "Secteurs" cell.
+     *
+     * Badges are inline-block — atomic boxes that cannot break internally — so the
+     * column's min-content floor is its widest single badge and its max-content
+     * demand is the sum of all of them. Rendering every sector put
+     * "Machines & Équipements industriels" (~200px) on that floor, and the combined
+     * demand pushed DataTables Responsive past the available width at both 1440px
+     * and 1280px, collapsing BOTH "Secteurs" and "Pays" behind the "+" row expander.
+     * Capping at 2 drops the widest badge out of the DOM and cuts the column's width
+     * demand; the remainder is surfaced as a "+N" chip whose title lists the names.
+     */
+    protected const SECTOR_BADGE_LIMIT = 2;
+
+    /**
+     * Deliberate column cut.
+     *
+     * The listing is structurally over-subscribed: inside the admin shell the
+     * .table-responsive container measures ~1055px at a 1440px viewport (sidebar
+     * plus card padding consume the rest), while the full visible column set
+     * demanded ~1054px — effectively zero slack. DataTables Responsive resolved
+     * that by hiding whichever columns lost the priority tie, so "Pays" and
+     * "Requêtes/j" disappeared at 1440px and "Secteurs" as well at 1280px.
+     * Priority tuning only changes WHICH column is sacrificed, never whether one
+     * is, so the column set is cut here instead of letting Responsive choose.
+     *
+     * Visible set: Nom, Secteurs, Pays, Requêtes/j, Actif, Dern. découverte, Action.
+     * Hidden here: Entreprises, Contacts, Automat., Créé le (plus ID, see
+     * getColumns()). All remain in the payload — hidden, not removed — so export
+     * and ordering keep working and re-enabling one is a one-line change.
+     */
     protected $columns = [
+        // 'raw' => true is required: createEditColumns() wraps the name in a
+        // .min-w-200px div. Without it yajra escapes the markup and the wrapper
+        // renders as literal text in the cell.
         'name' => [
             'title'      => 'Nom',
             'orderable'  => true,
             'searchable' => true,
+            'raw'        => true,
+            'priority'   => 1,
         ],
         'sectors' => [
             'title'      => 'Secteurs',
             'orderable'  => false,
             'searchable' => false,
             'raw'        => true,
+            'priority'   => 4,
         ],
         'countries' => [
             'title'      => 'Pays',
             'orderable'  => false,
             'searchable' => false,
             'raw'        => true,
+            'priority'   => 5,
         ],
+        // Hidden: see the "deliberate column cut" note above $columns.
+        // visible(false) rather than removal keeps the withCount() aggregate
+        // available to the export and to any future re-enable.
         'companies_count' => [
             'title'      => 'Entreprises',
             'orderable'  => true,
             'searchable' => false,
             'raw'        => true,
+            'priority'   => 5,
+            'visible'    => false,
         ],
         'contacts_count' => [
             'title'      => 'Contacts',
             'orderable'  => true,
             'searchable' => false,
             'raw'        => true,
+            'priority'   => 5,
+            'visible'    => false,
         ],
         'daily_limit' => [
-            'title'      => 'Découvertes/j',
+            'title'      => 'Requêtes/j',
             'orderable'  => true,
             'searchable' => false,
+            'priority'   => 6,
         ],
         'automation' => [
-            'title'      => 'Automatisation',
+            'title'      => 'Automat.',
             'orderable'  => false,
             'searchable' => false,
             'raw'        => true,
+            'priority'   => 3,
+            'visible'    => false,
         ],
         'is_active' => [
             'title'      => 'Actif',
@@ -57,17 +105,24 @@ class ProspectCriteriaDataTable extends BackendDataTable
             'switch'     => true,
             'typetoggle' => 'status',
             'raw'        => true,
+            'priority'   => 2,
         ],
         'last_discovery' => [
-            'title'      => 'Dernière découverte',
+            'title'      => 'Dern. découverte',
             'orderable'  => false,
             'searchable' => false,
             'raw'        => true,
+            'priority'   => 3,
         ],
+        // 'created_at' hidden rather than removed (CompaniesDataTable drops it outright).
+        // Keeping the key registered leaves GlobalDataTable's editColumn('created_at')
+        // and the export intact; visible(false) only pulls it out of the rendered table.
         'created_at' => [
             'title'      => 'Créé le',
             'orderable'  => true,
             'searchable' => false,
+            'priority'   => 8,
+            'visible'    => false,
         ],
     ];
 
@@ -118,19 +173,121 @@ class ProspectCriteriaDataTable extends BackendDataTable
     }
 
     /**
+     * Disable scrollX for this table only.
+     *
+     * scrollX fights DataTables Responsive: with a horizontal scroll container
+     * active, Responsive under-measures available width and collapses columns
+     * that comfortably fit (at 1440px this crushed "Nom" to ~90px and hid
+     * "Dern. découverte" behind a "+" expander). The blade already wraps this
+     * table in .table-responsive, so horizontal overflow is still handled.
+     *
+     * Builder::parameters() array_merges into the existing attributes, so this
+     * overrides only scrollX and leaves searchDelay, drawCallback, initComplete,
+     * buttons and language from GlobalDataTable::html() untouched.
+     */
+    public function html()
+    {
+        return parent::html()->parameters(['scrollX' => false]);
+    }
+
+    /**
+     * Hide the ID column for this table only.
+     *
+     * GlobalDataTable::getColumns() unconditionally prepends
+     * Column::make('id')->title('ID')->responsivePriority(1). "id" is not a key
+     * in $columns, so the 'visible' => false flag that the parent honours for
+     * declared columns cannot reach it.
+     *
+     * Two ways to hide it from a subclass: a JS columnDefs entry in html()
+     * targeting index 0, or this. columnDefs targets by position, which silently
+     * hides the wrong column the moment a column is added ahead of it, and it
+     * splits hiding across two mechanisms (PHP visible flags + a JS override).
+     * Taking the parent's already-built list and flipping the flag on the column
+     * whose data key is 'id' matches by identity instead of position, reuses the
+     * parent's loop rather than restating it, and keeps Column::visible(false)
+     * as the single hiding mechanism for this table.
+     *
+     * The column is hidden, not dropped, so GlobalDataTable::html()'s orderBy(0)
+     * still resolves to `id` — DataTables sorts on hidden columns fine.
+     */
+    protected function getColumns()
+    {
+        $columns = parent::getColumns();
+
+        // Column objects are held by handle, so mutating in place updates the array.
+        foreach ($columns as $column) {
+            if (($column['data'] ?? null) === 'id') {
+                $column->visible(false);
+                break;
+            }
+        }
+
+        return $columns;
+    }
+
+    /**
      * Render sectors as badge spans (escaped) and countries as escaped comma list.
      * Appends a "Lancer la découverte" button to the standard action column.
      * The is_active switch column is handled automatically by the base class.
      */
     protected function createEditColumns(): void
     {
+        // Width floor for the "Nom" column.
+        //
+        // GlobalDataTable::html() sets autoWidth(false), so DataTables assigns no
+        // explicit column widths and the browser's auto table-layout distributes
+        // space by min-content demand. The "Secteurs" cells render inline-block
+        // .badge spans — atomic boxes that cannot break internally — so their
+        // min-content floor is the widest badge (~200px). "Nom" is plain text whose
+        // longest unbreakable token is short, so auto-layout squeezed it to near
+        // min-content (~102px at 1440px, wrapping long names over 7 lines).
+        // The min-w-200px wrapper gives the cell a floor auto-layout must respect.
+        //
+        // e() is mandatory here: criterion names are user-supplied and the column
+        // is registered raw (see $columns['name']['raw']), so yajra no longer escapes.
+        $this->datatables->editColumn('name', function (ProspectCriteria $row) {
+            return '<div class="min-w-200px">' . e($row->name ?? '') . '</div>';
+        });
+
         $this->datatables->editColumn('sectors', function (ProspectCriteria $row) {
             $sectors = is_array($row->sectors) ? $row->sectors : [];
+
+            // Normalise before slicing so a blank entry cannot consume one of the
+            // visible slots or render as an empty badge box.
+            $sectors = array_values(array_filter(
+                array_map(static fn($s) => trim((string) $s), $sectors),
+                static fn(string $s) => $s !== ''
+            ));
+
             if (empty($sectors)) {
                 return '<span class="text-muted">—</span>';
             }
-            $badges = array_map(fn($s) => '<span class="badge badge-light-primary me-1">' . e(trim($s)) . '</span>', $sectors);
-            return implode('', $badges);
+
+            $visible = array_slice($sectors, 0, self::SECTOR_BADGE_LIMIT);
+            $hidden  = array_slice($sectors, self::SECTOR_BADGE_LIMIT);
+
+            // e() is mandatory on every value emitted here: sector names are
+            // user-supplied and this column is registered raw (see
+            // $columns['sectors']['raw']), so yajra no longer escapes. Laravel's e()
+            // uses ENT_QUOTES, which also makes the value safe to interpolate into
+            // the double-quoted title attribute of the counter chip below.
+            $html = '';
+            foreach ($visible as $sector) {
+                $html .= '<span class="badge badge-light-primary me-1">' . e($sector) . '</span>';
+            }
+
+            if ($hidden !== []) {
+                // Deliberately lighter than the sector badges so it reads as a
+                // control, not as a sector. Plain title rather than
+                // data-bs-toggle="tooltip": native, and needs no JS re-init after a
+                // DataTables redraw swaps the row out.
+                $html .= '<span class="badge badge-light text-muted"'
+                    . ' title="' . e(implode(', ', $hidden)) . '">'
+                    . '+' . count($hidden)
+                    . '</span>';
+            }
+
+            return $html;
         });
 
         $this->datatables->editColumn('countries', function (ProspectCriteria $row) {

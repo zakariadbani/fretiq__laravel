@@ -1,0 +1,27 @@
+# deps — must re-list; .graphifyignore replaces .gitignore at this dir
+/vendor/
+/node_modules/
+# compiled / build / runtime artifacts
+/public/
+/bootstrap/cache/
+/storage/
+# Metronic starter-kit theme + front-end build (not architecture)
+/resources/_keenthemes/
+/resources/mix/
+/resources/landing/
+# tests & test artifacts
+/tests/
+/playwright-report/
+/test-results/
+/.screenshots/
+# translation string tables (not architecture)
+/lang/
+# graphify's own output
+graphify-out/
+# hidden staging / process / tooling dirs (not architecture)
+/.claude/
+/.codex-staging/
+/.grill/
+/.planning/
+/.playwright-mcp/
+/.qa/

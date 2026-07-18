@@ -33,6 +33,7 @@ const requiredCustomBackendAssets = [
     'js/custom/backend/segment-contacts.js',
     'js/custom/backend/segment-form.js',
     'js/custom/backend/tinymce-html-field.js',
+    'js/custom/datatables-utils.js',
 ];
 
 mix.options({
@@ -75,7 +76,7 @@ mix.copyDirectory('node_modules/tinymce/skins', 'public/assets/plugins/custom/ti
 const missingCustomBackendSources = requiredCustomBackendAssets.filter(asset => !fs.existsSync(path.resolve(dir, asset)));
 if (missingCustomBackendSources.length) {
     throw new Error(
-        `Missing required custom backend sources: ${missingCustomBackendSources.join(', ')}. Add tracked sources under ${dir}/js/custom/backend and rerun npm run dev.`
+        `Missing required custom backend sources: ${missingCustomBackendSources.join(', ')}. Add tracked sources under ${dir}/js/custom and rerun npm run dev.`
     );
 }
 
@@ -92,7 +93,7 @@ mix.after(stats => {
     const missingAssets = requiredCustomBackendAssets.filter(asset => !fs.existsSync(path.resolve('public/assets', asset)));
     if (missingAssets.length) {
         throw new Error(
-            `Missing required custom backend assets: ${missingAssets.join(', ')}. Add tracked sources under ${dir}/js/custom/backend and rerun npm run dev.`
+            `Missing required custom backend assets: ${missingAssets.join(', ')}. Add tracked sources under ${dir}/js/custom and rerun npm run dev.`
         );
     }
 });

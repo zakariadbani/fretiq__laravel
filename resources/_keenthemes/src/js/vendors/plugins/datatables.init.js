@@ -82,7 +82,10 @@ $.extend( true, DataTable.defaults, {
 
 
 /* Default class modification */
-$.extend( DataTable.ext.classes, {
+// Deep extend: DT 2.x `search`/`length` are objects, and a shallow
+// extend replaces them wholesale, dropping `container: 'dt-search'` /
+// `container: 'dt-length'` set by core and datatables.bootstrap5.js.
+$.extend( true, DataTable.ext.classes, {
 	sWrapper:      "dataTables_wrapper dt-bootstrap4",
 	sFilterInput:  "form-control form-control-sm form-control-solid",
 	sLengthSelect: "form-select form-select-sm form-select-solid",

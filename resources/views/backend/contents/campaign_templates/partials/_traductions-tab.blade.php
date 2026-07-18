@@ -106,9 +106,9 @@
             <div class="bg-light-warning border-warning border border-dashed rounded p-6 mb-7 d-flex align-items-start gap-3">
                 <i class="bi bi-exclamation-triangle-fill text-warning fs-3 mt-1 flex-shrink-0"></i>
                 <div>
-                    <span class="fw-bold text-gray-800">Clé API Gemini non configurée</span><br>
+                    <span class="fw-bold text-gray-800">Assistant IA non configuré</span><br>
                     <span class="text-muted fs-7">
-                        Renseignez <code>GEMINI_API_KEY</code> dans votre <code>.env</code> pour activer la traduction automatique.
+                        L'assistant IA n'est pas activé. Contactez l'administrateur pour activer la traduction automatique.
                     </span>
                 </div>
             </div>

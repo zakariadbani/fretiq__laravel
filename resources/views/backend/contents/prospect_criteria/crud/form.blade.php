@@ -1,7 +1,7 @@
 <x-default-layout>
 
 @section('title')
-    {{ isset($model) && $model->id ? 'Modifier le critère — ' . e($model->name) : 'Ajouter un critère de découverte' }}
+    {{ isset($model) && $model->id ? 'Modifier le critère — ' . $model->name : 'Ajouter un critère de découverte' }}
 @endsection
 
 @section('breadcrumbs')
@@ -94,7 +94,7 @@
 
                             {{-- Recherches SerpAPI / jour --}}
                             <div class="fv-row mb-7">
-                                <label class="required fw-semibold fs-6 mb-2">Recherches SerpAPI / jour</label>
+                                <label class="required fw-semibold fs-6 mb-2">Requêtes de découverte / jour</label>
                                 <div class="input-group input-group-solid">
                                     <input type="number"
                                            name="daily_limit"
@@ -102,7 +102,7 @@
                                            value="{{ old('daily_limit', $model->daily_limit ?? 20) }}"
                                            min="1"
                                            max="500" />
-                                    <span class="input-group-text fw-semibold text-gray-500">recherches / jour</span>
+                                    <span class="input-group-text fw-semibold text-gray-500">requêtes / jour</span>
                                 </div>
                                 @php
                                     $overbooked = ($quotaPackage?->daily_credits !== null) && (($activeDailyLimitSum ?? 0) > $quotaPackage->daily_credits);
@@ -111,7 +111,7 @@
                                     Sur-réservation = priorité demandée, pas réservation garantie : le premier lancement consomme le quota disponible, les suivants attendent.
                                 </div>
                                 <div class="form-text mt-1 {{ $overbooked ? 'text-warning' : 'text-muted' }}">
-                                    Quota package : {{ $quotaPackage?->daily_credits ?? '∞' }} recherches SerpAPI/j &middot; {{ $quotaPackage?->daily_contact_credits ?? '∞' }} contacts/j. Priorité demandée par les critères actifs : {{ $activeDailyLimitSum ?? 0 }} recherches/j. 1 recherche retourne jusqu'à {{ \App\Services\Discovery\CompanyDiscoveryService::PAGE_SIZE }} résultats Google avant filtrage IA.
+                                    Quota package : {{ $quotaPackage?->daily_credits ?? '∞' }} requêtes de découverte/j &middot; {{ $quotaPackage?->daily_contact_credits ?? '∞' }} contacts/j. Priorité demandée par les critères actifs : {{ $activeDailyLimitSum ?? 0 }} requêtes/j. 1 requête retourne jusqu'à {{ \App\Services\Discovery\CompanyDiscoveryService::PAGE_SIZE }} résultats web avant filtrage IA.
                                 </div>
                             </div>
 
@@ -572,9 +572,9 @@
 
             function executionSummary(queries, plan) {
                 return '<div class="alert alert-light-info border border-info border-dashed p-4 mb-4">'
-                    + '<div class="fw-bold text-gray-800 mb-1">Prochain lancement : jusqu\'à ' + plan.budget + ' recherche(s) SerpAPI exécutée(s) maintenant</div>'
+                    + '<div class="fw-bold text-gray-800 mb-1">Prochain lancement : jusqu\'à ' + plan.budget + ' requête(s) de découverte exécutée(s) maintenant</div>'
                     + '<div class="text-muted fs-7">' + plan.prepared + ' requête(s) préparée(s) · ' + plan.immediate + ' dans le budget immédiat · ' + plan.queued + ' en attente · ' + plan.exhausted + ' déjà épuisée(s) · ' + plan.disabled + ' désactivée(s).</div>'
-                    + '<div class="text-muted fs-8 mt-2"><i class="bi bi-info-circle me-1"></i>L\'aperçu ne consomme aucun crédit. 1 recherche SerpAPI = 1 crédit. Une même requête peut consommer plusieurs pages si Google renvoie une page suivante.</div>'
+                    + '<div class="text-muted fs-8 mt-2"><i class="bi bi-info-circle me-1"></i>L\'aperçu ne consomme aucun crédit. 1 requête de découverte = 1 crédit. Une même requête peut consommer plusieurs pages si le moteur de recherche renvoie une page suivante.</div>'
                     + '</div>';
             }
 

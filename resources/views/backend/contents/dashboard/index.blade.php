@@ -8,8 +8,6 @@
     <x-crud.breadcrumb :items="[['label' => 'Tableau de bord']]" />
 @endsection
 
-@include('backend.partials._first-use-checklist', ['checklist' => $firstUseChecklist ?? null])
-
 {{-- ====================================================================== --}}
 {{-- KPI Cards Row (8 cartes)                                                --}}
 {{-- ====================================================================== --}}

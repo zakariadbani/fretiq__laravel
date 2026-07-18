@@ -20,16 +20,9 @@
         </a>
     @endcan
 
-    {{-- Quota solde badge --}}
+    {{-- Quota solde badge (compact) --}}
     @include('backend.contents.prospect_criteria.partials._quota-badge', [
-        'quotaRemaining'          => $quotaRemaining          ?? null,
-        'quotaPackage'            => $quotaPackage            ?? null,
-        'contactRemaining'        => $contactRemaining        ?? null,
-        'monthlyRemaining'        => $monthlyRemaining        ?? null,
-        'monthlyContactRemaining' => $monthlyContactRemaining ?? null,
-        'activeDailyLimitSum'     => $activeDailyLimitSum     ?? null,
-        'dailyQuotaSummary'       => $dailyQuotaSummary       ?? [],
-        'monthlyQuotaSummary'     => $monthlyQuotaSummary     ?? [],
+        'quotaMeters' => $quotaMeters ?? [],
     ])
 
     @can('run discovery')

@@ -41,10 +41,19 @@
         <div>
             <h3 class="card-title fw-bolder m-0">
                 <i class="bi bi-building-check text-primary fs-3 me-2"></i>
-                Entreprises gardées ({{ $resultCompanies->total() }})
+                @if(request()->boolean('audit'))
+                    Entreprises — gardées + exclues ({{ $resultCompanies->total() }})
+                @else
+                    Entreprises gardées ({{ $resultCompanies->total() }})
+                @endif
             </h3>
             <div class="text-muted fs-7 mt-2">
-                Liste des entreprises conservées après filtrage IA. Cliquez sur un en-tête pour trier la table. Les exclusions se consultent dans « Résultats par requête SerpAPI ».
+                @if(request()->boolean('audit'))
+                    Liste des entreprises gardées et exclues par le filtrage IA.
+                @else
+                    Liste des entreprises conservées après filtrage IA.
+                @endif
+                Cliquez sur un en-tête pour trier la table. Les exclusions se consultent dans « Résultats par requête de découverte ».
             </div>
         </div>
         <div class="card-toolbar">
