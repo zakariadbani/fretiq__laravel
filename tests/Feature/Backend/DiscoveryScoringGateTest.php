@@ -593,6 +593,45 @@ class DiscoveryScoringGateTest extends TestCase
         $this->assertSame(0, (int) $run->contacts_count);
     }
 
+    /**
+     * Product decision guard: enrichment is opted into PER CRITERIA. With NO
+     * decouverte.auto_enrich settings row at all (fresh install) and a criteria left
+     * on « Hérité » (auto_enrich = null), the code-level fallback must be false —
+     * Hunter is never called.
+     *
+     * Regression: the fallback used to be `true`, so a missing settings row silently
+     * turned enrichment on for every criteria and burned contact credits.
+     */
+    public function test_missing_auto_enrich_setting_with_inherited_criteria_does_not_enrich(): void
+    {
+        // Deliberately do NOT set decouverte.auto_enrich — the row must not exist.
+        Setting::set('decouverte.auto_scoring', true);
+        Setting::set('decouverte.min_score_enrich', 0);  // permissive gate: only auto_enrich can block
+
+        $this->assertFalse(
+            Setting::has('decouverte.auto_enrich'),
+            'Precondition: no decouverte.auto_enrich settings row must exist for this test'
+        );
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6, 'auto_enrich' => null]);
+        $run      = $this->makeRunningRun($criteria, 6);
+
+        /** @var DiscoveryPipelineService $pipeline */
+        $pipeline = app(DiscoveryPipelineService::class);
+        $pipeline->run($criteria, 6, $run);
+
+        $run->refresh();
+
+        $this->assertGreaterThan(0, (int) $run->companies_count,
+            'Companies must still be discovered and scored — only enrichment is off');
+        $this->assertSame(0, (int) $run->contacts_count,
+            'contacts_count must be 0 — a missing auto_enrich setting falls back to false');
+        $this->assertSame(0, (int) $run->contact_consumed,
+            'contact_consumed must be 0 — Hunter must never be called');
+        $this->assertSame(0, Contact::where('source', 'discovered')->count(),
+            'No discovered contact rows may exist when enrichment never ran');
+    }
+
     public function test_criteria_auto_enrich_null_inherits_global(): void
     {
         Setting::set('decouverte.auto_enrich', false);
@@ -609,6 +648,214 @@ class DiscoveryScoringGateTest extends TestCase
         $run->refresh();
 
         $this->assertSame(0, (int) $run->contacts_count);
+    }
+
+    // ── enrichment_status audit column ────────────────────────────────────────
+    //
+    // One case per branch of DiscoveryPipelineService::resolveEnrichmentStatus().
+    // These answer the operational question "87 companies, 2 with contacts — why?"
+
+    /**
+     * Replace the container's HunterEnrichmentService with a stub returning $payload.
+     * null models a provider failure (no API key / every provider call failed).
+     */
+    private function fakeHunter(?array $payload): void
+    {
+        $this->app->instance(
+            \App\Services\Discovery\HunterEnrichmentService::class,
+            new class ($payload) extends \App\Services\Discovery\HunterEnrichmentService {
+                public function __construct(private readonly ?array $payload) {}
+
+                public function domainSearch(string $domain, int $limit = 10): ?array
+                {
+                    return $this->payload;
+                }
+            }
+        );
+    }
+
+    /**
+     * Replace the container's LeadScoringService so every candidate is flagged as a
+     * competitor (exclude=true) — the highest-precedence enrichment_status branch.
+     */
+    private function fakeExcludingScorer(): void
+    {
+        $this->app->instance(
+            \App\Services\Scoring\LeadScoringService::class,
+            new class extends \App\Services\Scoring\LeadScoringService {
+                public function __construct() {}
+
+                public function score(array $candidate, \App\Models\ProspectCriteria $criteria): array
+                {
+                    return ['score' => 95, 'explanation' => 'Concurrent direct', 'exclude' => true];
+                }
+            }
+        );
+    }
+
+    private function statusesOf(): array
+    {
+        return Company::withRejected()
+            ->where('source', 'discovered')
+            ->pluck('enrichment_status')
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    public function test_enrichment_status_enriched_when_hunter_returns_emails(): void
+    {
+        Setting::set('decouverte.auto_scoring', false);
+        Setting::set('decouverte.auto_enrich', true);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6]);
+        app(DiscoveryPipelineService::class)->run($criteria, 6, $this->makeRunningRun($criteria, 6));
+
+        $this->assertSame([Company::ENRICHMENT_ENRICHED], $this->statusesOf());
+    }
+
+    public function test_enrichment_status_hunter_empty_when_provider_returns_no_usable_emails(): void
+    {
+        Setting::set('decouverte.auto_scoring', false);
+        Setting::set('decouverte.auto_enrich', true);
+        $this->fakeHunter(['organization' => null, 'industry' => null, 'country' => null, 'emails' => [], 'raw' => []]);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6]);
+        app(DiscoveryPipelineService::class)->run($criteria, 6, $this->makeRunningRun($criteria, 6));
+
+        $this->assertSame([Company::ENRICHMENT_HUNTER_EMPTY], $this->statusesOf());
+        $this->assertSame(0, Contact::count(), 'No contact may be created when Hunter returns no emails.');
+    }
+
+    public function test_enrichment_status_hunter_failed_when_provider_returns_null(): void
+    {
+        Setting::set('decouverte.auto_scoring', false);
+        Setting::set('decouverte.auto_enrich', true);
+        $this->fakeHunter(null);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6]);
+        app(DiscoveryPipelineService::class)->run($criteria, 6, $this->makeRunningRun($criteria, 6));
+
+        $this->assertSame([Company::ENRICHMENT_HUNTER_FAILED], $this->statusesOf());
+    }
+
+    public function test_enrichment_status_skipped_low_score_below_threshold(): void
+    {
+        Setting::set('decouverte.auto_scoring', true);
+        Setting::set('decouverte.auto_enrich', true);
+        Setting::set('decouverte.min_score_enrich', 101); // gates every candidate
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6]);
+        app(DiscoveryPipelineService::class)->run($criteria, 6, $this->makeRunningRun($criteria, 6));
+
+        $this->assertSame([Company::ENRICHMENT_SKIPPED_LOW_SCORE], $this->statusesOf());
+    }
+
+    public function test_enrichment_status_skipped_enrich_off_beats_low_score(): void
+    {
+        // auto_enrich=false has higher precedence than the score gate, so even a
+        // score-gating threshold must still report « enrichissement désactivé ».
+        Setting::set('decouverte.auto_scoring', true);
+        Setting::set('decouverte.auto_enrich', false);
+        Setting::set('decouverte.min_score_enrich', 101);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6]);
+        app(DiscoveryPipelineService::class)->run($criteria, 6, $this->makeRunningRun($criteria, 6));
+
+        $this->assertSame([Company::ENRICHMENT_SKIPPED_ENRICH_OFF], $this->statusesOf());
+    }
+
+    public function test_enrichment_status_skipped_budget_once_contact_cap_is_spent(): void
+    {
+        Setting::set('decouverte.auto_scoring', false);
+        Setting::set('decouverte.auto_enrich', true);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6]);
+
+        // contactCap=2 → the first 2 candidates enrich, the rest hit the budget wall.
+        app(DiscoveryPipelineService::class)->run($criteria, 6, $this->makeRunningRun($criteria, 6), 2);
+
+        $this->assertSame(
+            2,
+            Company::where('enrichment_status', Company::ENRICHMENT_ENRICHED)->count(),
+            'Exactly the contact-capped number of companies may be enriched.'
+        );
+        $this->assertGreaterThan(
+            0,
+            Company::where('enrichment_status', Company::ENRICHMENT_SKIPPED_BUDGET)->count(),
+            'Candidates processed after the contact budget is spent must report skipped_budget.'
+        );
+    }
+
+    public function test_enrichment_status_skipped_excluded_wins_over_every_other_branch(): void
+    {
+        Setting::set('decouverte.auto_scoring', true);
+        Setting::set('decouverte.auto_enrich', true);
+        Setting::set('decouverte.min_score_enrich', 0);
+        $this->fakeExcludingScorer();
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6]);
+        app(DiscoveryPipelineService::class)->run($criteria, 6, $this->makeRunningRun($criteria, 6));
+
+        $this->assertSame([Company::ENRICHMENT_SKIPPED_EXCLUDED], $this->statusesOf());
+    }
+
+    /**
+     * The already-rejected early-continue branch must NOT rewrite the stored status:
+     * re-discovering a known competitor costs no Gemini/Hunter call, so it has no new
+     * information to record.
+     */
+    public function test_already_rejected_candidate_keeps_its_existing_enrichment_status(): void
+    {
+        Setting::set('decouverte.auto_scoring', true);
+        Setting::set('decouverte.auto_enrich', true);
+        Setting::set('decouverte.min_score_enrich', 0);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6]);
+
+        $rejected = Company::create([
+            'name'                 => 'Known Competitor',
+            'domain'               => 'bolloretransport.com',
+            'criteria_id'          => $criteria->id,
+            'qualification_status' => 'rejected',
+            'enrichment_status'    => Company::ENRICHMENT_ENRICHED,
+            'relationship'         => 'prospect',
+            'source'               => 'discovered',
+        ]);
+
+        app(DiscoveryPipelineService::class)->run($criteria, 6, $this->makeRunningRun($criteria, 6));
+
+        $rejected->refresh();
+
+        $this->assertSame(
+            Company::ENRICHMENT_ENRICHED,
+            $rejected->enrichment_status,
+            'The already-rejected short-circuit must leave enrichment_status untouched.'
+        );
+    }
+
+    /**
+     * NULL means "never attempted" — a manually created company must not be given a
+     * status by a discovery run that never reaches its domain.
+     */
+    public function test_manually_created_company_keeps_null_enrichment_status(): void
+    {
+        $manual = Company::create([
+            'name'         => 'Manual Entry',
+            'domain'       => 'manual-only.test',
+            'relationship' => 'prospect',
+            'source'       => 'manual',
+        ]);
+
+        Setting::set('decouverte.auto_scoring', false);
+        Setting::set('decouverte.auto_enrich', true);
+
+        $criteria = $this->makeCriteria(['daily_limit' => 6]);
+        app(DiscoveryPipelineService::class)->run($criteria, 6, $this->makeRunningRun($criteria, 6));
+
+        $manual->refresh();
+
+        $this->assertNull($manual->enrichment_status);
     }
 
 }

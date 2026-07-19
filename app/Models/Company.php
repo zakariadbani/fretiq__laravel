@@ -21,6 +21,32 @@ class Company extends Model
      */
     protected $table = 'companies';
 
+    // ── Enrichment status ──────────────────────────────────────────────────────
+    // Records WHY a discovered company ended up with (or without) contacts.
+    // NULL = never attempted (legacy rows, manually created companies).
+    // Labels + badge colours live in config('global.data.company_enrichment_statuses').
+
+    /** Hunter was called and at least one contact was created. */
+    public const ENRICHMENT_ENRICHED = 'enriched';
+
+    /** Hunter was called but returned zero usable e-mail addresses. */
+    public const ENRICHMENT_HUNTER_EMPTY = 'hunter_empty';
+
+    /** Hunter was called but returned null (no API key / both provider calls failed). */
+    public const ENRICHMENT_HUNTER_FAILED = 'hunter_failed';
+
+    /** Score was below the enrich threshold — Hunter never called. */
+    public const ENRICHMENT_SKIPPED_LOW_SCORE = 'skipped_low_score';
+
+    /** auto_enrich resolved false for this criteria — Hunter never called. */
+    public const ENRICHMENT_SKIPPED_ENRICH_OFF = 'skipped_enrich_off';
+
+    /** Per-run contact budget exhausted — Hunter never called. */
+    public const ENRICHMENT_SKIPPED_BUDGET = 'skipped_budget';
+
+    /** AI scorer flagged the candidate as a competitor — Hunter never called. */
+    public const ENRICHMENT_SKIPPED_EXCLUDED = 'skipped_excluded';
+
     /**
      * The attributes that are mass assignable.
      *
@@ -37,6 +63,7 @@ class Company extends Model
         'relationship',
         'source',
         'enrichment_data',
+        'enrichment_status',
         'ai_score',
         'ai_explanation',
         'qualification_status',
@@ -137,6 +164,7 @@ class Company extends Model
             'relationship'         => 'nullable|' . ConfigEnum::in('company_relationships'),
             'source'               => 'nullable|' . ConfigEnum::in('company_sources'),
             'qualification_status' => 'nullable|' . ConfigEnum::in('company_qualification_statuses'),
+            'enrichment_status'    => 'nullable|' . ConfigEnum::in('company_enrichment_statuses'),
             'is_active'            => 'nullable|boolean',
             'ai_score'             => 'nullable|integer|between:0,100',
             'zoho_account_id'      => 'nullable|string|max:100',

@@ -5,6 +5,7 @@ namespace App\Services\Discovery;
 use App\Models\Company;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
+use App\Support\DomainBlocklist;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -25,22 +26,36 @@ use Illuminate\Support\Facades\Log;
  * queries, enabled ones only) when present, else falls back to buildQueries(). buildQueries()
  * itself stays a pure criteria→string[] function (no HTTP) — the live IntentQueryService call
  * only happens from the controller's generateQueries() action, never from here or from preview.
+ *
+ * Engines: each ai_queries entry may carry an optional 'engine' key — 'google' (organic,
+ * the default when absent) or 'google_maps' (local business listings). Google organic
+ * surfaces articles/directories/PDFs; Google Maps surfaces actual businesses, which is
+ * the higher-quality prospection source (Morocco-first business focus).
  */
 class CompanyDiscoveryService
 {
     public const PAGE_SIZE = 10;
+
+    /** Google Maps returns 20 local_results per page (empirically verified — see discoverMapsPage()). */
+    public const MAPS_PAGE_SIZE = 20;
+
+    /** Largest page any engine can return — used to size engine-agnostic candidate requests. */
+    public const MAX_PAGE_SIZE = self::MAPS_PAGE_SIZE;
+
+    public const ENGINE_GOOGLE = 'google';
+    public const ENGINE_GOOGLE_MAPS = 'google_maps';
+    public const ENGINE_GOOGLE_LOCAL = 'google_local';
+    public const ENGINE_BING = 'bing';
+
+    /** @var list<string> */
+    public const ENGINES = [self::ENGINE_GOOGLE, self::ENGINE_GOOGLE_MAPS, self::ENGINE_GOOGLE_LOCAL, self::ENGINE_BING];
+
     private const MAX_SEARCHES_PER_RUN = 15;
-    private const BLOCKED_SOCIAL_DOMAINS = [
-        'linkedin.com',
-        'facebook.com',
-        'instagram.com',
-        'x.com',
-        'twitter.com',
-        'youtube.com',
-    ];
 
     public function __construct(
         private readonly IntentQueryService $intentQuery = new IntentQueryService(),
+        private readonly DomainBlocklist $blocklist = new DomainBlocklist(),
+        private readonly DiscoveryEngineRegistry $engines = new DiscoveryEngineRegistry(),
     ) {}
 
     /**
@@ -80,7 +95,10 @@ class CompanyDiscoveryService
         }
 
         if ($this->isLocal()) {
-            return $this->discoverFromFixtures($searchBudget * self::PAGE_SIZE);
+            // MAX_PAGE_SIZE (not PAGE_SIZE): a google_maps search yields up to 20 candidates
+            // per call, so sizing this on the organic page size would silently truncate the
+            // local driver below what the live maps path can return for the same budget.
+            return $this->discoverFromFixtures($searchBudget * self::MAX_PAGE_SIZE);
         }
 
         return $this->discoverFromSerpApiBySearchBudget($criteria, $run, $searchBudget);
@@ -132,7 +150,7 @@ class CompanyDiscoveryService
                 ];
             } catch (\Throwable $e) {
                 Log::warning('[CompanyDiscoveryService] SerpAPI account call threw an exception', [
-                    'error' => $e->getMessage(),
+                    'exception_class' => $e::class,
                 ]);
                 return null;
             }
@@ -140,8 +158,17 @@ class CompanyDiscoveryService
     }
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    /**
+     * Single choke point for turning a SERP link into a storable company domain.
+     * Used by the fixture, cursor and cursorless paths alike — returns null for
+     * blocked hosts AND for document URLs (PDF, Word, Excel…).
+     */
     public function extractDomain(string $url): ?string
     {
+        if ($this->blocklist->isBlockedUrl($url)) {
+            return null;
+        }
+
         $host = parse_url($url, PHP_URL_HOST);
 
         if (! $host) {
@@ -156,45 +183,39 @@ class CompanyDiscoveryService
 
     public function isBlockedDomain(string $domain): bool
     {
-        $domain = strtolower(rtrim(trim($domain), '.'));
-
-        foreach (self::BLOCKED_SOCIAL_DOMAINS as $blocked) {
-            if ($domain === $blocked || str_ends_with($domain, '.' . $blocked)) {
-                return true;
-            }
-        }
-
-        return false;
+        return $this->blocklist->isBlocked($domain);
     }
 
     // ── Local fixture driver ──────────────────────────────────────────────────
 
+    /**
+     * Local dev driver. Uses one fixture per selected engine family: generic web
+     * results for Google/Bing and local listings for Google Maps/Google Local.
+     */
     private function discoverFromFixtures(int $max): array
     {
-        $path = base_path('database/fixtures/discovery/serpapi.json');
-
-        if (! file_exists($path)) {
-            Log::warning('[CompanyDiscoveryService] Local fixture missing', ['path' => $path]);
-            return [];
-        }
-
-        $raw = json_decode(file_get_contents($path), true);
-
-        if (! is_array($raw)) {
-            Log::warning('[CompanyDiscoveryService] Local fixture is not a valid JSON array.');
-            return [];
-        }
+        $families = $this->engines->fixtureFamilies($this->engines->selected());
+        $organic = in_array('web', $families, true)
+            ? ($this->readFixture('serpapi.json', true) ?? [])
+            : [];
+        $maps = in_array('local', $families, true)
+            ? ($this->readFixture('serpapi_maps.json', false) ?? [])
+            : [];
 
         $results = [];
         $seen    = [];
 
-        foreach ($raw as $item) {
+        foreach ($organic as $item) {
             if (count($results) >= $max) {
-                break;
+                return $results;
+            }
+
+            if (! is_array($item)) {
+                continue;
             }
 
             $url    = $item['link'] ?? $item['url'] ?? null;
-            $domain = $url ? $this->extractDomain($url) : null;
+            $domain = is_string($url) ? $this->extractDomain($url) : null;
 
             if (! $domain || isset($seen[$domain])) {
                 continue;
@@ -209,7 +230,49 @@ class CompanyDiscoveryService
             ];
         }
 
+        // The maps fixture may be either a bare list of local_results items or the
+        // full SerpAPI envelope ({"local_results": [...]}) — accept both.
+        $localResults = is_array($maps['local_results'] ?? null) ? $maps['local_results'] : $maps;
+
+        foreach ($this->mapMapsResults($localResults, null) as $candidate) {
+            if (count($results) >= $max) {
+                break;
+            }
+
+            if (isset($seen[$candidate['domain']])) {
+                continue;
+            }
+
+            $seen[$candidate['domain']] = true;
+            unset($candidate['discovery_query']);
+            $results[] = $candidate;
+        }
+
         return $results;
+    }
+
+    /**
+     * @return array<mixed>|null  null = missing/invalid and the caller should bail
+     */
+    private function readFixture(string $file, bool $warnWhenMissing): ?array
+    {
+        $path = base_path('database/fixtures/discovery/' . $file);
+
+        if (! file_exists($path)) {
+            if ($warnWhenMissing) {
+                Log::warning('[CompanyDiscoveryService] Local fixture missing', ['path' => $path]);
+            }
+            return $warnWhenMissing ? null : [];
+        }
+
+        $raw = json_decode(file_get_contents($path), true);
+
+        if (! is_array($raw)) {
+            Log::warning('[CompanyDiscoveryService] Local fixture is not a valid JSON array.', ['path' => $path]);
+            return $warnWhenMissing ? null : [];
+        }
+
+        return $raw;
     }
 
     // ── Real SerpAPI driver ───────────────────────────────────────────────────
@@ -253,37 +316,26 @@ class CompanyDiscoveryService
 
             while (count($snapshot) < $need && $searches < self::MAX_SEARCHES_PER_RUN) {
                 $cursors = $this->normaliseCursors($criteria->fresh()?->discovery_cursors ?? [], $queries);
-                $cursor  = $cursors[$key] ?? ['q' => $query, 'start' => 0, 'exhausted' => false];
+                $cursor  = $cursors[$key] ?? $query + ['start' => 0, 'exhausted' => false];
 
                 if ((bool) ($cursor['exhausted'] ?? false)) {
                     break;
                 }
 
                 $start = max(0, (int) ($cursor['start'] ?? 0));
+                $providerParams = is_array($cursor['provider_params'] ?? null) ? $cursor['provider_params'] : [];
                 $response = null;
+                $this->recordAttemptRotation($criteria, $queries, $query);
 
                 try {
-                    $params = [
-                        'api_key' => $apiKey,
-                        'engine'  => 'google',
-                        'q'       => $query,
-                        'num'     => self::PAGE_SIZE,
-                        'filter'  => 0,
-                    ];
-
-                    if ($start > 0) {
-                        $params['start'] = $start;
-                    }
-
-                    $response = Http::timeout(20)
-                        ->acceptJson()
-                        ->get('https://serpapi.com/search.json', $params);
+                    $response = $this->fetchPage($apiKey, $query, $start, $providerParams);
                 } catch (\Throwable $e) {
                     Log::warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
                         'criteria_id' => $criteria->id,
-                        'query'       => $query,
+                        'query'       => $query['q'],
+                        'engine'      => $query['engine'],
                         'start'       => $start,
-                        'error'       => $e->getMessage(),
+                        'exception_class' => $e::class,
                     ]);
                     return $snapshot;
                 }
@@ -293,18 +345,17 @@ class CompanyDiscoveryService
                 if ($response->failed()) {
                     Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
                         'criteria_id' => $criteria->id,
-                        'query'       => $query,
+                        'query'       => $query['q'],
+                        'engine'      => $query['engine'],
                         'start'       => $start,
                         'status'      => $response->status(),
                     ]);
                     return $snapshot;
                 }
 
-                $organicResults = $response->json('organic_results', []);
-                $exhausted = empty($organicResults) || ! (bool) $response->json('serpapi_pagination.next');
-                $pageCandidates = $this->normalisePage($criteria, $query, $organicResults, $snapshot);
+                [$pageCandidates, $exhausted, $nextStart, $nextParams] = $this->parsePage($criteria, $query, $response, $snapshot);
 
-                $committed = $this->appendPage($criteria, $run, $queries, $query, $start, $pageCandidates, $exhausted);
+                $committed = $this->appendPage($criteria, $run, $queries, $query, $start, $pageCandidates, $exhausted, $nextStart, $nextParams);
                 if (! $committed) {
                     return $this->snapshot($run->fresh());
                 }
@@ -348,90 +399,89 @@ class CompanyDiscoveryService
         $snapshot = $this->snapshot($run);
         $cursors  = $this->normaliseCursors($criteria->discovery_cursors ?? [], $queries);
         $order    = $this->rotatedQueryOrder($queries, $cursors);
-        $searches = 0;
+        $attempts = 0;
         $maxSearches = min($searchBudget, self::MAX_SEARCHES_PER_RUN);
 
-        foreach ($order as $query) {
-            if ($searches >= $maxSearches) {
-                break;
-            }
+        // Round-robin: at most one attempt per query×engine stream per round.
+        // A broken provider stream cannot prevent the remaining streams from running.
+        while ($attempts < $maxSearches) {
+            $attemptedThisRound = false;
 
-            $key = $this->queryKey($query);
-
-            while ($searches < $maxSearches) {
-                $cursors = $this->normaliseCursors($criteria->fresh()?->discovery_cursors ?? [], $queries);
-                $cursor  = $cursors[$key] ?? ['q' => $query, 'start' => 0, 'exhausted' => false];
-
-                if ((bool) ($cursor['exhausted'] ?? false)) {
+            foreach ($order as $query) {
+                if ($attempts >= $maxSearches) {
                     break;
                 }
 
+                $key = $this->queryKey($query);
+                $cursors = $this->normaliseCursors($criteria->fresh()?->discovery_cursors ?? [], $queries);
+                $cursor  = $cursors[$key] ?? $query + ['start' => 0, 'exhausted' => false];
+
+                if ((bool) ($cursor['exhausted'] ?? false)) {
+                    continue;
+                }
+
                 $start = max(0, (int) ($cursor['start'] ?? 0));
-                $response = null;
+                $providerParams = is_array($cursor['provider_params'] ?? null) ? $cursor['provider_params'] : [];
+
+                // Debit durably before network I/O. HTTP errors and exceptions still
+                // consume a SerpAPI attempt and retries can never exceed the reservation.
+                if (! $this->reserveSerpApiAttempt($run)) {
+                    return $this->snapshot($run->fresh());
+                }
+
+                $attempts++;
+                $attemptedThisRound = true;
+                $this->recordAttemptRotation($criteria, $queries, $query);
 
                 try {
-                    $params = [
-                        'api_key' => $apiKey,
-                        'engine'  => 'google',
-                        'q'       => $query,
-                        'num'     => self::PAGE_SIZE,
-                        'filter'  => 0,
-                    ];
-
-                    if ($start > 0) {
-                        $params['start'] = $start;
-                    }
-
-                    $response = Http::timeout(20)
-                        ->acceptJson()
-                        ->get('https://serpapi.com/search.json', $params);
+                    $response = $this->fetchPage($apiKey, $query, $start, $providerParams);
                 } catch (\Throwable $e) {
                     Log::warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
                         'criteria_id' => $criteria->id,
-                        'query'       => $query,
+                        'query'       => $query['q'],
+                        'engine'      => $query['engine'],
                         'start'       => $start,
-                        'error'       => $e->getMessage(),
+                        'exception_class' => $e::class,
                     ]);
-                    return $snapshot;
+                    continue;
                 }
 
                 if ($response->failed()) {
                     Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
                         'criteria_id' => $criteria->id,
-                        'query'       => $query,
+                        'query'       => $query['q'],
+                        'engine'      => $query['engine'],
                         'start'       => $start,
                         'status'      => $response->status(),
                     ]);
-                    return $snapshot;
+                    continue;
                 }
 
-                $searches++;
+                [$pageCandidates, $exhausted, $nextStart, $nextParams] = $this->parsePage($criteria, $query, $response, $snapshot);
 
-                $organicResults = $response->json('organic_results', []);
-                $exhausted = empty($organicResults) || ! (bool) $response->json('serpapi_pagination.next');
-                $pageCandidates = $this->normalisePage($criteria, $query, $organicResults, $snapshot);
-
-                $committed = $this->appendPage($criteria, $run, $queries, $query, $start, $pageCandidates, $exhausted);
+                $committed = $this->appendPage($criteria, $run, $queries, $query, $start, $pageCandidates, $exhausted, $nextStart, $nextParams);
                 if (! $committed) {
                     return $this->snapshot($run->fresh());
                 }
 
-                $this->recordSerpApiSearch($run);
                 $snapshot = $this->snapshot($run->fresh());
-
-                if ($pageCandidates === [] || $exhausted) {
-                    break;
-                }
 
                 if (! app()->runningUnitTests()) {
                     usleep(600_000);
                 }
+            }
+
+            if (! $attemptedThisRound) {
+                break;
             }
         }
 
         return $snapshot;
     }
 
+    /**
+     * @param list<array{q: string, engine: string}> $queries
+     */
     private function discoverFromSerpApiWithoutCursor(ProspectCriteria $criteria, string $apiKey, array $queries, int $max): array
     {
         $results = [];
@@ -443,53 +493,36 @@ class CompanyDiscoveryService
             }
 
             try {
-                $response = Http::timeout(20)
-                    ->acceptJson()
-                    ->get('https://serpapi.com/search.json', [
-                        'api_key' => $apiKey,
-                        'engine'  => 'google',
-                        'q'       => $query,
-                        'num'     => self::PAGE_SIZE,
-                        'filter'  => 0,
-                    ]);
+                $response = $this->fetchPage($apiKey, $query, 0);
 
                 if ($response->failed()) {
                     Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
                         'criteria_id' => $criteria->id,
-                        'query'       => $query,
+                        'query'       => $query['q'],
+                        'engine'      => $query['engine'],
                         'status'      => $response->status(),
                     ]);
                     continue;
                 }
 
-                $organicResults = $response->json('organic_results', []);
-
-                foreach ($organicResults as $item) {
+                foreach ($this->rawPageCandidates($query, $response) as $candidate) {
                     if (count($results) >= $max) {
                         break;
                     }
 
-                    $url    = $item['link'] ?? null;
-                    $domain = $url ? $this->extractDomain($url) : null;
-
-                    if (! $domain || isset($seen[$domain])) {
+                    if (isset($seen[$candidate['domain']])) {
                         continue;
                     }
 
-                    $seen[$domain] = true;
-                    $results[]     = [
-                        'domain'          => $domain,
-                        'title'           => $item['title'] ?? null,
-                        'snippet'         => $item['snippet'] ?? null,
-                        'url'             => $url,
-                        'discovery_query' => $query,
-                    ];
+                    $seen[$candidate['domain']] = true;
+                    $results[] = $candidate;
                 }
             } catch (\Throwable $e) {
                 Log::warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
                     'criteria_id' => $criteria->id,
-                    'query'       => $query,
-                    'error'       => $e->getMessage(),
+                    'query'       => $query['q'],
+                    'engine'      => $query['engine'],
+                    'exception_class' => $e::class,
                 ]);
             }
 
@@ -501,32 +534,75 @@ class CompanyDiscoveryService
     }
 
     /**
-     * @return list<string>
+     * Expand every enabled, unique criteria query across the globally selected
+     * discovery engines. Legacy per-query engine keys are intentionally ignored.
+     *
+     * @return list<array{q: string, engine: string}>
      */
     private function enabledQueries(ProspectCriteria $criteria): array
     {
-        $queries = ! empty($criteria->ai_queries)
+        $rows = ! empty($criteria->ai_queries)
             ? collect($criteria->ai_queries)
                 ->filter(fn ($r) => is_array($r) && ($r['enabled'] ?? true) === true)
-                ->pluck('q')
+                ->map(fn (array $r) => $r['q'] ?? null)
                 ->all()
             : $this->buildQueries($criteria);
 
-        return collect($queries)
-            ->filter(fn ($q) => is_string($q) && trim($q) !== '')
-            ->map(fn ($q) => trim($q))
-            ->unique()
-            ->values()
-            ->all();
+        $queries = [];
+        $texts = [];
+
+        foreach ($rows as $q) {
+            if (! is_string($q) || trim($q) === '') {
+                continue;
+            }
+            $texts[trim($q)] = true;
+        }
+
+        foreach (array_keys($texts) as $q) {
+            foreach ($this->engines->selected() as $engine) {
+                $queries[] = ['q' => $q, 'engine' => $engine];
+            }
+        }
+
+        return $queries;
     }
 
-    private function queryKey(string $query): string
+    private function normaliseEngine(mixed $engine): string
     {
-        return md5($query);
+        return in_array($engine, $this->engines->ids(), true) ? $engine : self::ENGINE_GOOGLE;
     }
 
     /**
-     * @param list<string> $queries
+     * Stable cursor key for a query.
+     *
+     * Organic queries keep the historical md5($q) key UNCHANGED so every cursor already
+     * stored in prospect_criteria.discovery_cursors keeps pointing at its query — hashing
+     * the engine unconditionally would silently reset pagination for every criteria.
+     * Maps queries get an engine-prefixed key: the same text on a different engine is a
+     * genuinely different result stream and must paginate independently.
+     *
+     * @param array{q: string, engine: string} $query
+     */
+    private function queryKey(array $query): string
+    {
+        $engine = $this->normaliseEngine($query['engine'] ?? null);
+
+        return $engine === self::ENGINE_GOOGLE
+            ? md5($query['q'])
+            : md5($engine . ':' . $query['q']);
+    }
+
+    /**
+     * Results per page for the given engine. Organic returns 10; Google Maps returns 20
+     * and its serpapi_pagination.next advances &start by 20.
+     */
+    private function pageSizeFor(string $engine): int
+    {
+        return $this->engines->get($this->normaliseEngine($engine))->pageSize();
+    }
+
+    /**
+     * @param list<array{q: string, engine: string}> $queries
      * @return array<string, mixed>
      */
     private function normaliseCursors(?array $stored, array $queries): array
@@ -539,11 +615,16 @@ class CompanyDiscoveryService
             $key = $this->queryKey($query);
             $validKeys[$key] = true;
             $existing = is_array($stored[$key] ?? null) ? $stored[$key] : [];
+            $adapter = $this->engines->get($query['engine']);
 
             $cursors[$key] = [
-                'q'         => $query,
+                'q'         => $query['q'],
+                'engine'    => $query['engine'],
                 'start'     => max(0, (int) ($existing['start'] ?? 0)),
                 'exhausted' => (bool) ($existing['exhausted'] ?? false),
+                'provider_params' => $adapter->sanitizeCursorParams(
+                    is_array($existing['provider_params'] ?? null) ? $existing['provider_params'] : []
+                ),
             ];
         }
 
@@ -552,10 +633,15 @@ class CompanyDiscoveryService
                 continue;
             }
 
+            $storedEngine = $this->normaliseEngine($storedCursor['engine'] ?? null);
             $cursors[$storedKey] = [
                 'q'         => is_string($storedCursor['q'] ?? null) ? $storedCursor['q'] : '',
+                'engine'    => $storedEngine,
                 'start'     => max(0, (int) ($storedCursor['start'] ?? 0)),
                 'exhausted' => (bool) ($storedCursor['exhausted'] ?? false),
+                'provider_params' => $this->engines->get($storedEngine)->sanitizeCursorParams(
+                    is_array($storedCursor['provider_params'] ?? null) ? $storedCursor['provider_params'] : []
+                ),
             ];
         }
 
@@ -568,9 +654,9 @@ class CompanyDiscoveryService
     }
 
     /**
-     * @param list<string> $queries
+     * @param list<array{q: string, engine: string}> $queries
      * @param array<string, mixed> $cursors
-     * @return list<string>
+     * @return list<array{q: string, engine: string}>
      */
     private function rotatedQueryOrder(array $queries, array $cursors): array
     {
@@ -578,7 +664,7 @@ class CompanyDiscoveryService
             return [];
         }
 
-        $keys = array_map(fn (string $query) => $this->queryKey($query), $queries);
+        $keys = array_map(fn (array $query) => $this->queryKey($query), $queries);
         $last = $cursors['_rotation'] ?? null;
         $index = is_string($last) ? array_search($last, $keys, true) : false;
         $start = $index === false ? 0 : ($index + 1) % count($queries);
@@ -590,11 +676,159 @@ class CompanyDiscoveryService
     }
 
     /**
-     * @return list<array{domain: string, title: ?string, snippet: ?string, url: string, discovery_query: string}>
+     * Issue one engine-appropriate SerpAPI search page.
+     *
+     * google_maps params verified live 2026-07-19 (STATUS 200):
+     * GET https://serpapi.com/search.json?engine=google_maps&type=search&q=fabricant+textile+Casablanca&hl=fr
+     * → top-level keys search_metadata, search_parameters, search_information, local_results,
+     *   serpapi_pagination. local_results held 20 items (page size 20, NOT 10 like organic),
+     *   16 of which carried a non-empty `website`. Item keys include title, address, phone,
+     *   country, type, types, rating, reviews, gps_coordinates, website.
+     *   serpapi_pagination.next advances &start by 20.
+     *
+     * @param array{q: string, engine: string} $query
      */
-    private function normalisePage(ProspectCriteria $criteria, string $query, array $organicResults, array $snapshot): array
+    private function fetchPage(string $apiKey, array $query, int $start, array $providerParams = [])
+    {
+        $engine = $this->normaliseEngine($query['engine'] ?? null);
+        $params = ['api_key' => $apiKey] + $this->engines->get($engine)->params($query['q'], $start, $providerParams);
+
+        return Http::timeout(20)
+            ->acceptJson()
+            ->get('https://serpapi.com/search.json', $params);
+    }
+
+    /**
+     * Turn a fetched page into filtered candidates + the exhausted flag.
+     *
+     * @param array{q: string, engine: string} $query
+     * @return array{0: list<array<string, mixed>>, 1: bool, 2: ?int, 3: array<string, string>}
+     */
+    private function parsePage(ProspectCriteria $criteria, array $query, $response, array $snapshot): array
+    {
+        $engine = $this->normaliseEngine($query['engine'] ?? null);
+        $payload = $response->json();
+        $pageResult = $this->engines->get($engine)->parse(is_array($payload) ? $payload : [], $query['q']);
+
+        $page = $this->dedupeAgainstSnapshot($this->rawPageCandidates($query, $response), $snapshot);
+
+        return [$this->rejectKnownDomains($criteria, $page), $pageResult->exhausted, $pageResult->nextStart, $pageResult->nextParams];
+    }
+
+    /**
+     * Engine-specific normalisation into the candidate contract. No dedup, no DB.
+     *
+     * @param array{q: string, engine: string} $query
+     * @return list<array<string, mixed>>
+     */
+    private function rawPageCandidates(array $query, $response): array
+    {
+        $engine = $this->normaliseEngine($query['engine'] ?? null);
+        $payload = $response->json();
+        $parsed = $this->engines->get($engine)->parse(is_array($payload) ? $payload : [], $query['q']);
+        $page = [];
+
+        foreach ($parsed->candidates as $candidate) {
+            $url = $candidate['url'] ?? null;
+            $domain = is_string($url) ? $this->extractDomain($url) : null;
+            if ($domain === null) {
+                continue;
+            }
+            $candidate['domain'] = $domain;
+            $page[] = $candidate;
+        }
+
+        return $page;
+    }
+
+    /**
+     * Normalise SerpAPI google_maps local_results into the candidate contract, plus the
+     * optional phone/country/sector_hint keys the enrichment path consumes as fallbacks.
+     *
+     * Results with no `website`, or whose website fails extractDomain() (blocklisted host,
+     * document URL, unparseable), are skipped — a Maps entry without a reachable site is
+     * not a prospectable company.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function mapMapsResults(array $localResults, ?string $query): array
     {
         $page = [];
+
+        foreach ($localResults as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            $website = $item['website'] ?? null;
+
+            if (! is_string($website) || trim($website) === '') {
+                continue;
+            }
+
+            $website = trim($website);
+            $domain  = $this->extractDomain($website);
+
+            if (! $domain) {
+                continue;
+            }
+
+            $type    = is_string($item['type'] ?? null) ? trim($item['type']) : '';
+            $address = is_string($item['address'] ?? null) ? trim($item['address']) : '';
+            $snippet = trim(implode(' — ', array_filter([$type, $address], fn ($v) => $v !== '')));
+
+            $candidate = [
+                'domain'          => $domain,
+                'title'           => is_string($item['title'] ?? null) ? $item['title'] : null,
+                'snippet'         => $snippet !== '' ? $snippet : null,
+                'url'             => $website,
+                'discovery_query' => $query,
+            ];
+
+            $phone = is_string($item['phone'] ?? null) ? trim($item['phone']) : '';
+            if ($phone !== '') {
+                $candidate['phone'] = $phone;
+            }
+
+            $country = $this->normaliseCountry($item['country'] ?? null);
+            if ($country !== null) {
+                $candidate['country'] = $country;
+            }
+
+            if ($type !== '') {
+                $candidate['sector_hint'] = $type;
+            }
+
+            $page[] = $candidate;
+        }
+
+        return $page;
+    }
+
+    /**
+     * Maps' `country` is an ISO-2 code ("MA"). Uppercase it and drop anything that is
+     * not a plain 2-letter code so a surprise long-form value never lands in a country column.
+     */
+    private function normaliseCountry(mixed $country): ?string
+    {
+        if (! is_string($country)) {
+            return null;
+        }
+
+        $country = strtoupper(trim($country));
+
+        return preg_match('/^[A-Z]{2}$/', $country) === 1 ? $country : null;
+    }
+
+    /**
+     * Drop candidates whose domain already appears in the run snapshot or earlier in
+     * the same page.
+     *
+     * @param list<array<string, mixed>> $page
+     * @return list<array<string, mixed>>
+     */
+    private function dedupeAgainstSnapshot(array $page, array $snapshot): array
+    {
         $seen = [];
 
         foreach ($snapshot as $candidate) {
@@ -603,28 +837,31 @@ class CompanyDiscoveryService
             }
         }
 
-        foreach ($organicResults as $item) {
-            if (! is_array($item)) {
-                continue;
-            }
+        $deduped = [];
 
-            $url    = $item['link'] ?? null;
-            $domain = is_string($url) ? $this->extractDomain($url) : null;
+        foreach ($page as $candidate) {
+            $domain = $candidate['domain'] ?? null;
 
             if (! $domain || isset($seen[$domain])) {
                 continue;
             }
 
             $seen[$domain] = true;
-            $page[] = [
-                'domain'          => $domain,
-                'title'           => $item['title'] ?? null,
-                'snippet'         => $item['snippet'] ?? null,
-                'url'             => $url,
-                'discovery_query' => $query,
-            ];
+            $deduped[] = $candidate;
         }
 
+        return $deduped;
+    }
+
+    /**
+     * Drop candidates that are already a visible Company, or already rejected under
+     * THIS criteria. Shared by the organic and google_maps paths.
+     *
+     * @param list<array<string, mixed>> $page
+     * @return list<array<string, mixed>>
+     */
+    private function rejectKnownDomains(ProspectCriteria $criteria, array $page): array
+    {
         if ($page === []) {
             return [];
         }
@@ -651,19 +888,22 @@ class CompanyDiscoveryService
     }
 
     /**
-     * @param list<string> $queries
+     * @param list<array{q: string, engine: string}> $queries
+     * @param array{q: string, engine: string} $query
      * @param list<array<string, mixed>> $pageCandidates
      */
     private function appendPage(
         ProspectCriteria $criteria,
         DiscoveryRun $run,
         array $queries,
-        string $query,
+        array $query,
         int $expectedStart,
         array $pageCandidates,
-        bool $exhausted
+        bool $exhausted,
+        ?int $nextStart,
+        array $nextParams,
     ): bool {
-        return DB::transaction(function () use ($criteria, $run, $queries, $query, $expectedStart, $pageCandidates, $exhausted) {
+        return DB::transaction(function () use ($criteria, $run, $queries, $query, $expectedStart, $pageCandidates, $exhausted, $nextStart, $nextParams) {
             /** @var ProspectCriteria|null $lockedCriteria */
             $lockedCriteria = ProspectCriteria::whereKey($criteria->id)->lockForUpdate()->first();
             /** @var DiscoveryRun|null $lockedRun */
@@ -699,10 +939,14 @@ class CompanyDiscoveryService
                 $snapshot[] = $candidate;
             }
 
+            // SerpAPI's next URL is authoritative. Bing page sizes vary, so adding
+            // a fixed page size would overlap or skip results.
             $cursors[$key] = [
-                'q'         => $query,
-                'start'     => $expectedStart + self::PAGE_SIZE,
+                'q'         => $query['q'],
+                'engine'    => $query['engine'],
+                'start'     => $nextStart ?? $expectedStart,
                 'exhausted' => $exhausted,
+                'provider_params' => $this->engines->get($query['engine'])->sanitizeCursorParams($nextParams),
             ];
             $cursors['_rotation'] = $key;
 
@@ -728,9 +972,47 @@ class CompanyDiscoveryService
         ));
     }
 
-    private function recordSerpApiSearch(DiscoveryRun $run): void
+    private function reserveSerpApiAttempt(DiscoveryRun $run): bool
     {
-        DiscoveryRun::whereKey($run->id)->increment('searches_consumed');
+        return DB::transaction(function () use ($run): bool {
+            $locked = DiscoveryRun::whereKey($run->id)->lockForUpdate()->first();
+            if (! $locked) {
+                return false;
+            }
+
+            $reserved = (int) ($locked->searches_reserved ?? $locked->credits_reserved ?? 0);
+            $consumed = (int) ($locked->searches_consumed ?? 0);
+            if ($consumed >= $reserved) {
+                return false;
+            }
+
+            $locked->searches_consumed = $consumed + 1;
+            $locked->save();
+
+            return true;
+        });
+    }
+
+    /**
+     * Rotate immediately after reserving an attempt, before network I/O. The page
+     * cursor is left untouched so a failed stream retries the same provider page,
+     * while the next invocation starts from the following stream.
+     *
+     * @param list<array{q: string, engine: string}> $queries
+     * @param array{q: string, engine: string} $query
+     */
+    private function recordAttemptRotation(ProspectCriteria $criteria, array $queries, array $query): void
+    {
+        DB::transaction(function () use ($criteria, $queries, $query): void {
+            $locked = ProspectCriteria::whereKey($criteria->id)->lockForUpdate()->first();
+            if (! $locked) {
+                return;
+            }
+
+            $cursors = $this->normaliseCursors($locked->discovery_cursors ?? [], $queries);
+            $cursors['_rotation'] = $this->queryKey($query);
+            $locked->forceFill(['discovery_cursors' => $cursors])->save();
+        });
     }
 
     /**

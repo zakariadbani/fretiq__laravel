@@ -87,6 +87,17 @@ class CompanyViewConfig
             $tabs = array_slice($tabs, 0, 1);
         }
 
+        // Enrichment audit status — NULL must render as an explicit « Non tenté »
+        // badge (not a dash), so it is resolved here and passed as a plain badge
+        // rather than relying on the enum type's null → dash fallback.
+        $enrCfg = [];
+        if ($hasId) {
+            $enrCfg = $model->enrichment_status
+                ? (config('global.data.company_enrichment_statuses.' . $model->enrichment_status)
+                    ?? ['label' => $model->enrichment_status, 'color' => 'secondary'])
+                : config('global.data.company_enrichment_status_null', ['label' => 'Non tenté', 'color' => 'secondary']);
+        }
+
         $detailRows = [];
         if ($hasId) {
             $detailRows = [
@@ -98,6 +109,7 @@ class CompanyViewConfig
                 ['label' => 'Relation',        'value' => $model->relationship,          'type' => 'enum', 'configKey' => 'company_relationships'],
                 ['label' => 'Source',          'value' => $model->source,                'type' => 'enum', 'configKey' => 'company_sources'],
                 ['label' => 'Statut qualif.',  'value' => $model->qualification_status,  'type' => 'enum', 'configKey' => 'company_qualification_statuses'],
+                ['label' => 'Enrichissement',  'value' => $enrCfg['label'] ?? 'Non tenté', 'type' => 'badge', 'color' => $enrCfg['color'] ?? 'secondary'],
                 ['label' => 'Score IA',        'value' => $model->ai_score,             'type' => 'score'],
                 ['label' => 'Créé le',         'value' => $model->created_at,            'type' => 'date'],
             ];

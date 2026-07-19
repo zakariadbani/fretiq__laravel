@@ -10,8 +10,9 @@
 
 {{--
     ProspectCriteria view — hero + tabbar + aperçu contract.
-    Tab pane IDs: criteria_apercu / criteria_general.
-    Aperçu is native (default active); Général deep-links to edit.
+    Native tab pane IDs: criteria_apercu / criteria_resultats.
+    Aperçu is active by default and includes the discovery history;
+    Général and Automatisation deep-link to edit.
     "Lancer la découverte" preserved in hero actions slot AND as a quick_action.
 --}}
 
@@ -35,16 +36,14 @@
             'model'  => $model,
             'config' => $viewConfig ?? \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::make($model),
         ])
+
+        <div class="mt-10">
+            @include('backend.contents.prospect_criteria.partials._discovery-history', ['model' => $model])
+        </div>
     </div>
     {{-- end Aperçu --}}
 
-    {{-- ── Tab 2: Historique (native on view) ────────────────────────────── --}}
-    <div class="tab-pane fade" id="criteria_historique" role="tabpanel">
-        @include('backend.contents.prospect_criteria.partials._discovery-history', ['model' => $model])
-    </div>
-    {{-- end Historique --}}
-
-    {{-- ── Tab 3: Résultats (inline discovered companies) ────────────────── --}}
+    {{-- ── Tab 2: Résultats (inline discovered companies) ────────────────── --}}
     <div class="tab-pane fade" id="criteria_resultats" role="tabpanel">
         @include('backend.contents.prospect_criteria.partials._query-results', [
             'model'       => $model,
@@ -61,8 +60,8 @@
     {{-- end Résultats --}}
 
     {{--
-        Tab 4 (Général) is NOT a native pane here —
-        it deep-links to the edit page via the tab nav. No pane div needed.
+        Général and Automatisation are NOT native panes here — they
+        deep-link to the edit page via the tab nav. No pane divs are needed.
     --}}
 
 </div>

@@ -7,11 +7,15 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * HunterEnrichmentService — Hunter.io domain-search enrichment.
+ * HunterEnrichmentService — Hunter.io domain and company enrichment.
  *
  * Driver selection:  config('services.hunter.driver', 'local')
  *   'local'  → loads database/fixtures/discovery/hunter.json — NO HTTP
  *   anything else  → calls live Hunter API
+ *
+ * A live enrichment bundle makes two provider requests (and can therefore use
+ * two Hunter API units): Domain Search for emails and Company Enrichment for
+ * authoritative organization metadata.
  *
  * Returns ['organization', 'industry', 'country', 'emails' => [...], 'raw' => data]
  * or null when the domain cannot be enriched.
@@ -129,34 +133,97 @@ class HunterEnrichmentService
             return null;
         }
 
+        $domainSearchData = null;
+        $companyData = null;
+        $domainPromise = null;
+        $companyPromise = null;
+
         try {
-            $response = Http::timeout(20)
+            $domainPromise = Http::timeout(20)
                 ->acceptJson()
+                ->async()
                 ->get('https://api.hunter.io/v2/domain-search', [
                     'domain'  => $domain,
                     'api_key' => $apiKey,
                     'limit'   => $limit,
                 ]);
-
-            if ($response->failed()) {
-                Log::warning('[HunterEnrichmentService] Hunter domain-search failed', [
-                    'domain' => $domain,
-                    'status' => $response->status(),
-                ]);
-                return null;
-            }
-
-            $data = $response->json('data', []);
-
-            return $this->normalizeHunterData($data);
         } catch (\Throwable $e) {
             Log::error('[HunterEnrichmentService] Hunter domain-search threw an exception', [
                 'domain' => $domain,
-                'error'  => $e->getMessage(),
+                'exception' => $e::class,
             ]);
         }
 
-        return null;
+        try {
+            $companyPromise = Http::timeout(20)
+                ->acceptJson()
+                ->async()
+                ->get('https://api.hunter.io/v2/companies/find', [
+                    'domain' => $domain,
+                    'api_key' => $apiKey,
+                ]);
+        } catch (\Throwable $e) {
+            Log::error('[HunterEnrichmentService] Hunter company enrichment threw an exception', [
+                'domain' => $domain,
+                'exception' => $e::class,
+            ]);
+        }
+
+        if ($domainPromise !== null) {
+            try {
+                $domainResponse = $domainPromise->wait();
+
+                if ($domainResponse->failed()) {
+                    Log::warning('[HunterEnrichmentService] Hunter domain-search failed', [
+                        'domain' => $domain,
+                        'status' => $domainResponse->status(),
+                    ]);
+                } else {
+                    $domainSearchData = $domainResponse->json('data', []);
+                }
+            } catch (\Throwable $e) {
+                Log::error('[HunterEnrichmentService] Hunter domain-search threw an exception', [
+                    'domain' => $domain,
+                    'exception' => $e::class,
+                ]);
+            }
+        }
+
+        if ($companyPromise !== null) {
+            try {
+                $companyResponse = $companyPromise->wait();
+
+                if ($companyResponse->failed()) {
+                    Log::warning('[HunterEnrichmentService] Hunter company enrichment failed', [
+                        'domain' => $domain,
+                        'status' => $companyResponse->status(),
+                    ]);
+                } else {
+                    $companyData = $companyResponse->json('data', []);
+                }
+            } catch (\Throwable $e) {
+                Log::error('[HunterEnrichmentService] Hunter company enrichment threw an exception', [
+                    'domain' => $domain,
+                    'exception' => $e::class,
+                ]);
+            }
+        }
+
+        if ($domainSearchData === null && $companyData === null) {
+            return null;
+        }
+
+        return [
+            'organization' => data_get($companyData, 'name')
+                ?? data_get($domainSearchData, 'organization'),
+            'industry' => data_get($companyData, 'category.industry'),
+            'country' => data_get($companyData, 'geo.countryCode'),
+            'emails' => data_get($domainSearchData, 'emails', []),
+            'raw' => [
+                'company' => $companyData,
+                'domain_search' => $domainSearchData,
+            ],
+        ];
     }
 
     // ── Shared normalizer ─────────────────────────────────────────────────────

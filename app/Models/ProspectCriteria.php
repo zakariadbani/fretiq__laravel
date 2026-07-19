@@ -67,6 +67,34 @@ class ProspectCriteria extends Model
     ];
 
     /**
+     * Keep all writes engine-neutral, including imports and direct model saves.
+     * Legacy duplicates collapse by trimmed query and remain enabled when any
+     * duplicate was enabled.
+     */
+    public function setAiQueriesAttribute(mixed $value): void
+    {
+        if ($value === null) {
+            $this->attributes['ai_queries'] = null;
+            return;
+        }
+
+        $rows = is_array($value) ? $value : [];
+        $normalized = [];
+        foreach ($rows as $row) {
+            $q = is_array($row) ? trim((string) ($row['q'] ?? '')) : '';
+            if ($q === '') {
+                continue;
+            }
+            if (! isset($normalized[$q])) {
+                $normalized[$q] = ['q' => $q, 'enabled' => false];
+            }
+            $normalized[$q]['enabled'] = $normalized[$q]['enabled'] || (bool) ($row['enabled'] ?? true);
+        }
+
+        $this->attributes['ai_queries'] = json_encode(array_values($normalized), JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
      * Invalidate the cached AI queries and un-hide previously rejected companies
      * whenever the targeting description changes — a stale ai_queries cache or a
      * stale reject would otherwise silently survive an edited intent.
@@ -145,7 +173,11 @@ class ProspectCriteria extends Model
             'name'               => 'required|string|max:100',
             'ai_target'          => 'nullable|string|max:2000',
             'ai_exclude'         => 'nullable|string|max:2000',
-            'ai_queries'         => 'nullable|array',
+            // Discovery engines are selected globally in Settings. Criteria rows
+            // intentionally contain only the query text and its enabled flag.
+            'ai_queries'           => 'nullable|array',
+            'ai_queries.*.q'       => 'required|string|max:500',
+            'ai_queries.*.enabled' => 'boolean',
             'sectors'            => 'nullable|array|max:50',
             'sectors.*'          => 'string|max:100',
             'countries'          => 'nullable|array|max:50',

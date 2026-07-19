@@ -35,6 +35,7 @@
     {{-- ── Tab 1: Aperçu (default active on view) ────────────────────────── --}}
     <div class="tab-pane fade show active" id="company_apercu" role="tabpanel">
         @include('backend.contents.companies.partials._score-recap', ['model' => $model])
+        @include('backend.contents.companies.partials._enrichment-recap', ['model' => $model])
         @include('backend.partials.crud._apercu', [
             'model'  => $model,
             'config' => \App\Crud\ViewConfigs\CompanyViewConfig::make($model, $stats ?? null),

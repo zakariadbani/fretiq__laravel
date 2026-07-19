@@ -95,6 +95,41 @@ class ProspectCriteriaTest extends TestCase
     }
 
     /**
+     * The listing returns each criterion's exact company aggregate.
+     */
+    public function test_datatable_shows_company_count_for_each_criteria(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name'        => 'Critère avec entreprises',
+            'daily_limit' => 10,
+            'is_active'   => true,
+        ]);
+
+        Company::create(['criteria_id' => $criteria->id, 'name' => 'Entreprise Alpha']);
+        Company::create(['criteria_id' => $criteria->id, 'name' => 'Entreprise Beta']);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get(
+                '/admin/prospect_criteria'
+                . '?draw=1&start=0&length=10'
+                . '&columns[0][data]=id&columns[0][name]=id'
+                . '&order[0][column]=0&order[0][dir]=asc',
+                ['X-Requested-With' => 'XMLHttpRequest', 'Accept' => 'application/json']
+            );
+
+        $response->assertOk();
+        $row = collect($response->json('data'))->first(
+            static fn (array $row) => str_contains($row['name'] ?? '', 'Critère avec entreprises')
+        );
+
+        $this->assertNotNull($row, 'Created criterion must appear in DataTable results.');
+        $this->assertSame(
+            '<span class="badge badge-light-primary">2</span>',
+            $row['companies_count']
+        );
+    }
+
+    /**
      * Storing a criteria via POST with comma-separated sectors string creates the DB
      * record and casts the comma string to a proper PHP array.
      *
@@ -572,9 +607,9 @@ class ProspectCriteriaTest extends TestCase
     }
 
     /**
-     * Historique tab distinguishes discovery launches from SerpAPI searches.
+     * Aperçu includes discovery history without exposing a standalone history tab.
      */
-    public function test_view_history_shows_run_count_and_serpapi_search_count(): void
+    public function test_view_apercu_includes_history_without_history_tab(): void
     {
         $criteria = ProspectCriteria::create([
             'name'        => 'Critère Historique SerpAPI',
@@ -601,14 +636,22 @@ class ProspectCriteriaTest extends TestCase
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id . '#criteria_historique');
+            ->get('/admin/prospect_criteria/' . $criteria->id);
 
         $response->assertStatus(200);
         $response->assertSee('Historique des lancements (1)', false);
-        $response->assertSee('1 lancement(s) de découverte · 4 recherche(s) SerpAPI consommée(s).', false);
-        $response->assertSee('Recherches SerpAPI', false);
+        $response->assertSee('1 lancement(s) de découverte · 4 requête(s) de découverte consommée(s).', false);
+        $response->assertSee('Requêtes de découverte', false);
         $response->assertSee('>4</span>', false);
         $response->assertSee('/ 4</span>', false);
+        $response->assertDontSee('href="#criteria_historique"', false);
+        $response->assertDontSee('id="criteria_historique"', false);
+
+        $config = \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::make($criteria);
+        $tabKeys = array_column($config['tabs'], 'key');
+
+        $this->assertNotContains('historique', $tabKeys);
+        $this->assertSame(['apercu', 'general', 'automatisation', 'resultats'], $tabKeys);
     }
 
     // ── TODO-PC-2: Dupliquer ──────────────────────────────────────────────────
@@ -875,6 +918,80 @@ class ProspectCriteriaTest extends TestCase
             (string) $response->json('notice'),
             'A failed Gemini call with a target set must return the AI-unavailable notice, not the no-criteria text.'
         );
+    }
+
+    public function test_legacy_duplicate_engine_queries_are_saved_as_unique_engine_neutral_rows(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name' => 'Legacy engines',
+            'daily_limit' => 10,
+            'is_active' => true,
+            'ai_queries' => [
+                ['q' => 'transitaire Maroc', 'enabled' => false, 'engine' => 'google'],
+                ['q' => ' transitaire Maroc ', 'enabled' => true, 'engine' => 'google_maps'],
+            ],
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->put('/admin/prospect_criteria/' . $criteria->id, [
+                'name' => 'Legacy engines',
+                'daily_limit' => 10,
+                'is_active' => 1,
+                'ai_queries' => $criteria->ai_queries,
+            ])
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame([
+            ['q' => 'transitaire Maroc', 'enabled' => true],
+        ], $criteria->refresh()->ai_queries);
+    }
+
+    public function test_criteria_html_and_query_json_do_not_expose_engine_controls_or_ids(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name' => 'Neutral criteria',
+            'daily_limit' => 10,
+            'is_active' => true,
+            'ai_queries' => [[
+                'q' => 'fabricant textile Maroc',
+                'enabled' => true,
+                'engine' => 'google_maps',
+            ]],
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/' . $criteria->id . '/edit')
+            ->assertOk()
+            ->assertDontSee('q-engine', false)
+            ->assertDontSee('[engine]', false)
+            ->assertDontSee('data-engine', false)
+            ->assertDontSee('google_maps', false);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/' . $criteria->id . '/preview-queries')
+            ->assertOk();
+
+        $this->assertSame([
+            ['q' => 'fabricant textile Maroc', 'enabled' => true],
+        ], $response->json('queries'));
+
+        foreach ($response->json('queries') as $queryRow) {
+            $this->assertArrayNotHasKey('engine', $queryRow);
+        }
+
+        $content = $response->getContent();
+        $this->assertStringNotContainsString('"engine":', $content);
+        $this->assertStringNotContainsString('google_maps', $content);
+        $this->assertStringNotContainsString('google_local', $content);
+        $this->assertStringNotContainsString('"google"', $content);
+        $this->assertStringNotContainsString('"bing"', $content);
+        $this->assertStringNotContainsString('Google', $content);
+        $this->assertStringNotContainsString('Google Maps', $content);
+        $this->assertStringNotContainsString('Google Local', $content);
+        $this->assertStringNotContainsString('Bing', $content);
+        $this->assertStringNotContainsString('q-engine', $content);
+        $this->assertStringNotContainsString('data-engine', $content);
     }
 
     // ── Automation fields (auto_run/run_at_hour/contact_limit/min_score_enrich/auto_enrich) ──

@@ -24,21 +24,17 @@ class ProspectCriteriaDataTable extends BackendDataTable
     protected const SECTOR_BADGE_LIMIT = 2;
 
     /**
-     * Deliberate column cut.
+     * Responsive column priorities.
      *
-     * The listing is structurally over-subscribed: inside the admin shell the
-     * .table-responsive container measures ~1055px at a 1440px viewport (sidebar
-     * plus card padding consume the rest), while the full visible column set
-     * demanded ~1054px — effectively zero slack. DataTables Responsive resolved
-     * that by hiding whichever columns lost the priority tie, so "Pays" and
-     * "Requêtes/j" disappeared at 1440px and "Secteurs" as well at 1280px.
-     * Priority tuning only changes WHICH column is sacrificed, never whether one
-     * is, so the column set is cut here instead of letting Responsive choose.
+     * The listing is over-subscribed inside the admin shell, so DataTables may
+     * collapse lower-priority columns at narrower desktop widths. The company
+     * count is a required discovery metric and therefore has priority 3; Pays
+     * and Requêtes/j may collapse before it when space runs out.
      *
-     * Visible set: Nom, Secteurs, Pays, Requêtes/j, Actif, Dern. découverte, Action.
-     * Hidden here: Entreprises, Contacts, Automat., Créé le (plus ID, see
-     * getColumns()). All remain in the payload — hidden, not removed — so export
-     * and ordering keep working and re-enabling one is a one-line change.
+     * Visible set: Nom, Secteurs, Pays, Entreprises, Requêtes/j, Actif,
+     * Dern. découverte, Action. Hidden here: Contacts, Automat., Créé le (plus
+     * ID, see getColumns()). Hidden columns remain in the payload for export and
+     * ordering.
      */
     protected $columns = [
         // 'raw' => true is required: createEditColumns() wraps the name in a
@@ -65,16 +61,14 @@ class ProspectCriteriaDataTable extends BackendDataTable
             'raw'        => true,
             'priority'   => 5,
         ],
-        // Hidden: see the "deliberate column cut" note above $columns.
-        // visible(false) rather than removal keeps the withCount() aggregate
-        // available to the export and to any future re-enable.
+        // Required discovery metric. Its strong priority keeps it visible before
+        // lower-value Pays/Requêtes/j columns when Responsive needs room.
         'companies_count' => [
             'title'      => 'Entreprises',
             'orderable'  => true,
             'searchable' => false,
             'raw'        => true,
-            'priority'   => 5,
-            'visible'    => false,
+            'priority'   => 3,
         ],
         'contacts_count' => [
             'title'      => 'Contacts',

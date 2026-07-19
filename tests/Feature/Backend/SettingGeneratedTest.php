@@ -103,6 +103,7 @@ class SettingGeneratedTest extends TestCase
                         'auto_scoring'     => '1',
                         'auto_enrich'      => '1',
                         'min_score_enrich' => '60',
+                        'discovery_engines' => ['google', 'google_maps'],
                     ],
                 ],
             ])
@@ -124,6 +125,7 @@ class SettingGeneratedTest extends TestCase
                         'auto_scoring'     => '1',
                         'auto_enrich'      => '1',
                         'min_score_enrich' => '60',
+                        'discovery_engines' => ['google', 'google_maps'],
                     ],
                 ],
             ])
@@ -146,6 +148,7 @@ class SettingGeneratedTest extends TestCase
                     'decouverte' => [
                         'auto_scoring' => '1',
                         'auto_enrich'  => '1',
+                        'discovery_engines' => ['google', 'google_maps'],
                         // min_score_enrich intentionally omitted
                     ],
                 ],
@@ -170,6 +173,7 @@ class SettingGeneratedTest extends TestCase
                         'auto_scoring'     => '1',
                         'auto_enrich'      => '1',
                         'min_score_enrich' => '0',
+                        'discovery_engines' => ['google', 'google_maps'],
                         'timezone'         => 'Europe/Paris',
                     ],
                 ],
@@ -200,6 +204,7 @@ class SettingGeneratedTest extends TestCase
                         'auto_scoring'     => '1',
                         'auto_enrich'      => '1',
                         'min_score_enrich' => '100',
+                        'discovery_engines' => ['google', 'google_maps'],
                         'timezone'         => 'Europe/Paris',
                     ],
                 ],
@@ -247,6 +252,7 @@ class SettingGeneratedTest extends TestCase
                         'auto_scoring'     => '1',
                         'auto_enrich'      => '1',
                         'min_score_enrich' => '55',
+                        'discovery_engines' => ['google', 'google_maps'],
                     ],
                 ],
             ])
@@ -280,6 +286,7 @@ class SettingGeneratedTest extends TestCase
                         'auto_scoring'     => '0',
                         'auto_enrich'      => '0',
                         'min_score_enrich' => '77',
+                        'discovery_engines' => ['google', 'google_maps'],
                     ],
                 ],
             ])
@@ -309,6 +316,7 @@ class SettingGeneratedTest extends TestCase
                         'auto_scoring'     => '1',
                         'auto_enrich'      => '1',
                         'min_score_enrich' => '50',
+                        'discovery_engines' => ['google', 'google_maps'],
                     ],
                     // attempt to inject data for a disabled tab
                     'envoi_identites' => [
@@ -323,6 +331,77 @@ class SettingGeneratedTest extends TestCase
         $this->assertDatabaseMissing('settings', [
             'group_name' => 'envoi_identites',
         ]);
+    }
+
+    public function test_discovery_engines_render_with_safe_defaults_and_round_trip(): void
+    {
+        $this->actingAs($this->superadmin)
+            ->get('/admin/settings')
+            ->assertOk()
+            ->assertSee('settings[decouverte][discovery_engines][]', false)
+            ->assertSee('value="google" selected', false)
+            ->assertSee('value="google_maps" selected', false)
+            ->assertSee('value="google_local"', false)
+            ->assertSee('value="bing"', false);
+
+        $this->actingAs($this->superadmin)
+            ->post('/admin/settings/save', [
+                'active_tab' => 'decouverte',
+                'settings' => ['decouverte' => [
+                    'min_score_enrich' => 50,
+                    'timezone' => 'Europe/Paris',
+                    'discovery_engines' => ['google_local', 'bing'],
+                ]],
+            ])
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(
+            ['google_local', 'bing'],
+            Setting::get('decouverte.discovery_engines')
+        );
+    }
+
+    public function test_discovery_engines_reject_empty_unknown_and_duplicate_values(): void
+    {
+        foreach ([[], ['unknown'], ['google', 'google']] as $engines) {
+            $this->actingAs($this->superadmin)
+                ->post('/admin/settings/save', [
+                    'active_tab' => 'decouverte',
+                    'settings' => ['decouverte' => [
+                        'min_score_enrich' => 50,
+                        'timezone' => 'Europe/Paris',
+                        'discovery_engines' => $engines,
+                    ]],
+                ])
+                ->assertSessionHasErrors();
+        }
+    }
+
+    public function test_discovery_engines_reject_an_omitted_multiselect_key(): void
+    {
+        $this->actingAs($this->superadmin)
+            ->post('/admin/settings/save', [
+                'active_tab' => 'decouverte',
+                'settings' => ['decouverte' => [
+                    'min_score_enrich' => 50,
+                    'timezone' => 'Europe/Paris',
+                    // A browser omits the select key after every option is cleared.
+                ]],
+            ])
+            ->assertSessionHasErrors('settings.decouverte.discovery_engines');
+    }
+
+    public function test_invalid_stored_engine_ids_are_not_rendered_as_selected(): void
+    {
+        Setting::set('decouverte.discovery_engines', ['google', 'invalid', 'bing']);
+
+        $html = $this->actingAs($this->superadmin)->get('/admin/settings');
+
+        $html->assertOk()
+            ->assertSee('value="google" selected', false)
+            ->assertSee('value="bing" selected', false)
+            ->assertDontSee('value="invalid"', false);
     }
 }
 

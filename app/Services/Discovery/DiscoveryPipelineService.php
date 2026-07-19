@@ -69,6 +69,16 @@ class DiscoveryPipelineService
     private const SCAN_EXTRA_CEILING = 100;
 
     /**
+     * Wall-clock seconds one attempt may spend inside the candidate loop before it
+     * stops cleanly. Must stay BELOW RunDiscoveryPipelineJob::$timeout (300) so the
+     * attempt ends on its own terms — cursor persisted, stats returned — instead of
+     * being killed mid-candidate by the queue worker.
+     *
+     * Overridable via the `decouverte.run_time_budget` setting; see runTimeBudget().
+     */
+    private const DEFAULT_RUN_TIME_BUDGET = 240;
+
+    /**
      * ISO-2 country code map. Reused from ZohoCrmSyncService; inlined for isolation.
      */
     private const COUNTRY_MAP = [
@@ -117,6 +127,7 @@ class DiscoveryPipelineService
         private readonly HunterEnrichmentService  $hunter,
         private readonly LeadScoringService       $scoring,
         private readonly ContactUpsertService     $contactUpsert,
+        private readonly HomepageSnapshotService  $homepage,
     ) {}
 
     /**
@@ -138,11 +149,18 @@ class DiscoveryPipelineService
     public function run(ProspectCriteria $criteria, ?int $cap = null, ?DiscoveryRun $run = null, ?int $contactCap = null): array
     {
         // $cap is a SerpAPI search-call budget, not a kept-company budget.
-        // One search returns up to CompanyDiscoveryService::PAGE_SIZE candidates.
+        // One search returns up to a full page of candidates, and page size is
+        // engine-dependent (google organic = 10, google_maps = 20).
         $searchBudget = $cap !== null
             ? max(0, $cap)
             : ($criteria->daily_limit ?: 20);
-        $candidateLimit = $searchBudget * CompanyDiscoveryService::PAGE_SIZE;
+        // Sized engine-agnostically off MAX_PAGE_SIZE: using the organic PAGE_SIZE
+        // would cap a 20-result Maps page at 10 and silently discard half of it.
+        // Only the manual path (discover(), below) consumes $candidateLimit — queued
+        // discovery runs go through discoverForRun() and never see it. Raising it
+        // cannot raise API spend: the provider-call budget is $searchBudget, enforced
+        // separately.
+        $candidateLimit = $searchBudget * CompanyDiscoveryService::MAX_PAGE_SIZE;
 
         // Contact budget: how many Hunter calls are allowed in this attempt.
         // PHP_INT_MAX means unlimited (no contactCap set).
@@ -153,7 +171,10 @@ class DiscoveryPipelineService
 
         // Read scoring/enrichment settings once per run (avoids repeated DB/cache reads).
         $autoScoring = (bool) Setting::get('decouverte.auto_scoring', true);
-        $autoEnrich  = $criteria->auto_enrich ?? (bool) Setting::get('decouverte.auto_enrich', true);
+        // Product decision: enrichment is opted into PER CRITERIA. The global toggle is
+        // only the « Hérité » fallback, and its code-level default is false so a missing
+        // settings row can never silently turn Hunter on for every criteria.
+        $autoEnrich  = $criteria->auto_enrich ?? (bool) Setting::get('decouverte.auto_enrich', false);
         $minScore    = (int) ($criteria->min_score_enrich ?? Setting::get('decouverte.min_score_enrich', 50));
 
         // Resume cursor: $offset = number of candidates already processed (scanned, not just kept).
@@ -170,12 +191,59 @@ class DiscoveryPipelineService
 
         $candidates = array_slice($allCandidates, $offset);
 
+        // ── Homepage prefetch ────────────────────────────────────────────────
+        // The scorer is the only consumer of excerpt(), so this is pure waste when
+        // scoring is off. When it is on, one pooled burst collapses N × timeout of
+        // serial homepage latency into ceil(N / POOL_CHUNK) × timeout — the whole
+        // difference between an attempt that finishes inside the job timeout and one
+        // killed mid-candidate. prefetch() already no-ops when
+        // `decouverte.fetch_homepage` is off, already skips domains that are cached,
+        // and never throws — so no extra guarding belongs here.
+        // After this, the per-candidate excerpt() call below is a cache hit.
+        if ($autoScoring) {
+            $prefetchDomains = [];
+
+            foreach ($candidates as $candidate) {
+                $prefetchDomain = $candidate['domain'] ?? null;
+
+                if (is_string($prefetchDomain) && $prefetchDomain !== '') {
+                    $prefetchDomains[] = $prefetchDomain;
+                }
+            }
+
+            $this->homepage->prefetch($prefetchDomains);
+        }
+
         $completedThisAttempt = 0; // kept rows only — stats/logging only; not a budget gate anymore
         $scannedThisAttempt   = 0; // every processed candidate (kept + rejected)
         $scanTarget           = count($candidates);
 
+        // Wall-clock deadline for this attempt. Homepages are pooled above, but Gemini
+        // stays serial (~1.5 s per candidate), so a large slice can still outlive the
+        // queue job timeout.
+        $startedAt  = microtime(true);
+        $timeBudget = $this->runTimeBudget();
+
         foreach ($candidates as $candidate) {
             if ($scannedThisAttempt >= $scanTarget) {
+                break;
+            }
+
+            // Checked BEFORE any scoring/Hunter work so we never abandon a candidate
+            // half-processed. `consumed` is CAS-persisted per candidate, so the next
+            // attempt resumes at exactly this position — breaking here is a clean
+            // pause, not lost work, and falls through to the normal return below.
+            if ($this->timeBudgetExceeded($startedAt, $timeBudget)) {
+                Log::info('[DiscoveryPipelineService] Time budget exhausted — stopping this attempt; the run resumes from the same cursor on the next attempt.', [
+                    'run_id'            => $run?->id,
+                    'criteria_id'       => $criteria->id,
+                    'consumed'          => $offset + $scannedThisAttempt,
+                    'scanned'           => $scannedThisAttempt,
+                    'elapsed_seconds'   => round(microtime(true) - $startedAt, 1),
+                    'budget_seconds'    => $timeBudget,
+                    'unscanned'         => $scanTarget - $scannedThisAttempt,
+                ]);
+
                 break;
             }
 
@@ -233,7 +301,17 @@ class DiscoveryPipelineService
                 $excludeFlag = false;
 
                 if ($autoScoring) {
-                    $scoreResult = $this->scoring->score($candidate, $criteria);
+                    // Feed the real homepage text to the scorer, not just the SERP
+                    // snippet — an article ABOUT freight reads like a shipper otherwise.
+                    // Enrich a LOCAL copy only: $candidate stays untouched for upsertCompany().
+                    $scoringCandidate = $candidate;
+                    $excerpt          = $this->homepage->excerpt($domain);
+
+                    if ($excerpt !== null) {
+                        $scoringCandidate['homepage_excerpt'] = $excerpt;
+                    }
+
+                    $scoreResult = $this->scoring->score($scoringCandidate, $criteria);
                     $score       = $scoreResult['score'];
                     $explanation = $scoreResult['explanation'];
                     $excludeFlag = $scoreResult['exclude'] ?? false;
@@ -245,7 +323,9 @@ class DiscoveryPipelineService
                 // Enrich when: not excluded, auto_enrich is on, AND either scoring is off OR
                 // score passes the gate, AND the per-attempt contact budget has not been exhausted.
                 // Once contactBudget is spent, companies continue being discovered but Hunter is skipped.
-                $shouldEnrich = ! $excluded && $autoEnrich && (! $autoScoring || $score >= $minScore) && ($contactSpent < $contactBudget);
+                $budgetExhausted = $contactSpent >= $contactBudget;
+
+                $shouldEnrich = ! $excluded && $autoEnrich && (! $autoScoring || $score >= $minScore) && ! $budgetExhausted;
 
                 // ── Step 3: Hunter enrichment (if gate passed) ───────────────
                 // $hunterCalled tracks whether Hunter was actually invoked for this candidate.
@@ -257,10 +337,26 @@ class DiscoveryPipelineService
                     $contactSpent++;
                 }
 
+                // ── Step 3b: Resolve the enrichment audit status ─────────────
+                // Computed BEFORE the company upsert so it rides along in the same
+                // write — no second UPDATE per candidate. The usable-email count is
+                // derived from the Hunter payload with the same "must have a value"
+                // rule ContactUpsertService applies, so it matches $contactCount.
+                $enrichmentStatus = $this->resolveEnrichmentStatus(
+                    $excluded,
+                    $autoEnrich,
+                    $autoScoring,
+                    $score,
+                    $minScore,
+                    $budgetExhausted,
+                    $hunterCalled,
+                    $enrichment
+                );
+
                 // ── Step 4: Upsert Company + Contacts ────────────────────────
                 $company = $this->upsertCompany(
                     $criteria, $domain, $candidate, $enrichment,
-                    $score, $explanation, $autoScoring, $excluded
+                    $score, $explanation, $autoScoring, $excluded, $enrichmentStatus
                 );
 
                 $isNew = $company->wasRecentlyCreated;
@@ -420,12 +516,136 @@ class DiscoveryPipelineService
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /**
+     * Wall-clock budget, in seconds, for one attempt's candidate loop.
+     *
+     * Defensive read (same idiom as HomepageSnapshotService::positiveSetting()): a
+     * missing, non-numeric or non-positive value falls back to the default. Honouring
+     * a stored 0 would mean "stop before the first candidate", silently disabling all
+     * discovery — the setting must never be able to express that.
+     */
+    private function runTimeBudget(): int
+    {
+        $value = Setting::get('decouverte.run_time_budget', self::DEFAULT_RUN_TIME_BUDGET);
+
+        if (! is_numeric($value) || (int) $value <= 0) {
+            return self::DEFAULT_RUN_TIME_BUDGET;
+        }
+
+        return (int) $value;
+    }
+
+    /**
+     * Whether this attempt has spent its wall-clock budget.
+     *
+     * $now is injectable so the decision can be unit-tested without simulating a
+     * multi-minute run.
+     *
+     * @param  float      $startedAt Monotonic-ish start from microtime(true).
+     * @param  int        $budget    Budget in seconds (already defaulted).
+     * @param  float|null $now       Defaults to the current microtime(true).
+     */
+    private function timeBudgetExceeded(float $startedAt, int $budget, ?float $now = null): bool
+    {
+        return (($now ?? microtime(true)) - $startedAt) >= $budget;
+    }
+
+    /**
+     * Resolve the per-company enrichment audit status.
+     *
+     * Answers "why does this company have no contacts?" — the admin UI cannot
+     * otherwise distinguish "never attempted" (NULL) from "attempted, found nothing".
+     *
+     * Precedence is deliberate and evaluated top-down: the FIRST reason that
+     * prevented enrichment wins, so a candidate that is both excluded and
+     * low-score reports 'skipped_excluded' (the scorer's verdict, not the gate's).
+     *
+     * Branches 1–4 fully cover every case where Hunter was not called (they are the
+     * exact negation of $shouldEnrich), so branches 5–7 only ever run when
+     * $hunterCalled is true.
+     *
+     * @param  bool       $excluded        Scorer flagged the candidate as a competitor.
+     * @param  bool       $autoEnrich      Resolved per-criteria enrichment toggle.
+     * @param  bool       $autoScoring     Whether scoring ran.
+     * @param  int|null   $score           AI score (null when scoring disabled).
+     * @param  int        $minScore        Enrich threshold.
+     * @param  bool       $budgetExhausted Per-run contact budget was already spent.
+     * @param  bool       $hunterCalled    Whether Hunter was actually invoked.
+     * @param  array|null $enrichment      Hunter payload (null = provider failure).
+     * @return string One of the Company::ENRICHMENT_* constants.
+     */
+    private function resolveEnrichmentStatus(
+        bool $excluded,
+        bool $autoEnrich,
+        bool $autoScoring,
+        ?int $score,
+        int $minScore,
+        bool $budgetExhausted,
+        bool $hunterCalled,
+        ?array $enrichment
+    ): string {
+        if ($excluded) {
+            return Company::ENRICHMENT_SKIPPED_EXCLUDED;
+        }
+
+        if (! $autoEnrich) {
+            return Company::ENRICHMENT_SKIPPED_ENRICH_OFF;
+        }
+
+        if ($autoScoring && $score < $minScore) {
+            return Company::ENRICHMENT_SKIPPED_LOW_SCORE;
+        }
+
+        if ($budgetExhausted) {
+            return Company::ENRICHMENT_SKIPPED_BUDGET;
+        }
+
+        // Hunter ran but the provider gave us nothing at all (no API key, or both
+        // provider calls failed) — distinct from "ran fine, found no addresses".
+        if ($hunterCalled && $enrichment === null) {
+            return Company::ENRICHMENT_HUNTER_FAILED;
+        }
+
+        return $this->countUsableEmails($enrichment) === 0
+            ? Company::ENRICHMENT_HUNTER_EMPTY
+            : Company::ENRICHMENT_ENRICHED;
+    }
+
+    /**
+     * Count Hunter e-mail entries that ContactUpsertService will actually turn into
+     * a contact row (it skips any entry without a non-empty `value`).
+     */
+    private function countUsableEmails(?array $enrichment): int
+    {
+        $emails = $enrichment['emails'] ?? [];
+
+        if (! is_array($emails)) {
+            return 0;
+        }
+
+        $count = 0;
+        foreach ($emails as $email) {
+            if (! empty($email['value'] ?? null)) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    /**
      * Upsert a company row from discovery data.
      *
      * Credit semantics: enrichment_data is only written when $enrichment !== null,
      * preventing null-wipe of previously enriched data when the scoring gate skips
      * Hunter for this candidate. ai_score + ai_explanation are only written when
      * $scored=true to avoid clobbering existing scores when scoring is disabled.
+     * Existing sector/country values are preserved when a partial enrichment has no
+     * replacement metadata; new companies still receive nullable values.
+     *
+     * Candidate metadata fallbacks: a discovery source may carry optional `phone`,
+     * `country` and `sector_hint` keys (Google Maps). They are FALLBACKS ONLY — used
+     * when Hunter supplied nothing for that field AND the existing row is empty for
+     * it. They never overwrite data already held.
      *
      * Client-downgrade guard: companies with relationship='client' are never
      * downgraded to 'prospect'; only criteria_id is updated.
@@ -451,6 +671,7 @@ class DiscoveryPipelineService
      * @param  string|null      $explanation    Score explanation (null when scoring disabled).
      * @param  bool             $scored         Whether scoring ran for this candidate.
      * @param  bool             $excluded       Whether the scorer flagged this candidate for rejection.
+     * @param  string|null      $enrichmentStatus Enrichment audit status (null = do not touch the column).
      * @return Company
      */
     private function upsertCompany(
@@ -461,12 +682,31 @@ class DiscoveryPipelineService
         ?int $score,
         ?string $explanation,
         bool $scored,
-        bool $excluded = false
+        bool $excluded = false,
+        ?string $enrichmentStatus = null
     ): Company {
         /** @var Company|null $existing */
         $existing = Company::withRejected()->where('domain', $domain)->first();
 
         $isClient = $existing && $existing->relationship === 'client';
+
+        $enrichedSector = $enrichment['industry'] ?? null;
+        $enrichedCountry = $this->mapIso2($enrichment['country'] ?? null);
+
+        // Forward-compatible candidate metadata (Google Maps discovery source).
+        // FALLBACKS ONLY — used when Hunter supplied nothing for the field AND the
+        // existing row is empty for it. Never overwrites data we already hold.
+        $candidateSector  = $candidate['sector_hint'] ?? null;
+        $candidateCountry = $this->mapIso2($candidate['country'] ?? null);
+        $candidatePhone   = $candidate['phone'] ?? null;
+
+        if ($enrichedSector === null && $candidateSector !== null && empty($existing?->sector)) {
+            $enrichedSector = $candidateSector;
+        }
+
+        if ($enrichedCountry === null && $candidateCountry !== null && empty($existing?->country)) {
+            $enrichedCountry = $candidateCountry;
+        }
 
         // Build attributes to set / update
         $attributes = [
@@ -474,10 +714,27 @@ class DiscoveryPipelineService
             'name'        => $enrichment['organization']
                 ?? $candidate['title']
                 ?? $domain,
-            'sector'      => $enrichment['industry'] ?? null,
-            'country'     => $this->mapIso2($enrichment['country'] ?? null),
             'source'      => 'discovered',
         ];
+
+        // phone has no Hunter equivalent — only ever filled when the row is empty.
+        if (! empty($candidatePhone) && empty($existing?->phone)) {
+            $attributes['phone'] = $candidatePhone;
+        }
+
+        // Enrichment audit status — written in the same save as everything else so
+        // no candidate costs a second UPDATE. null means "leave the column alone".
+        if ($enrichmentStatus !== null) {
+            $attributes['enrichment_status'] = $enrichmentStatus;
+        }
+
+        if (! $existing || $enrichedSector !== null) {
+            $attributes['sector'] = $enrichedSector;
+        }
+
+        if (! $existing || $enrichedCountry !== null) {
+            $attributes['country'] = $enrichedCountry;
+        }
 
         // Only write enrichment_data when enrichment ran — do not null-wipe
         // previously enriched data when the scoring gate skips Hunter this pass.

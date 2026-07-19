@@ -6,8 +6,10 @@ use App\Models\Company;
 use App\Models\Contact;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
+use App\Models\Setting;
 use App\Services\Discovery\ContactUpsertService;
 use App\Services\Discovery\DiscoveryPipelineService;
+use App\Services\Discovery\HomepageSnapshotService;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Database\QueryException;
@@ -397,5 +399,79 @@ class DiscoveryPipelineTest extends TestCase
         $this->assertSame(1, (int) $run->contact_consumed);
         $this->assertSame(0, (int) $run->companies_count);
         $this->assertSame(1, $stats['contacts_consumed']);
+    }
+
+    // ── Homepage prefetch wiring ──────────────────────────────────────────────
+
+    /**
+     * The candidate loop scores serially, and excerpt() costs a full HTTP timeout on
+     * every uncached domain — measured at ~3.5 s average and 14 s for a dead domain.
+     * Serially that alone outlives RunDiscoveryPipelineJob's 300 s timeout on a full
+     * ~100-candidate slice, so the run MUST warm the cache in one pooled burst before
+     * the loop starts. This test pins that ordering: prefetch() runs exactly once,
+     * carries the candidate domains, and lands before the first excerpt() call.
+     */
+    public function test_homepage_prefetch_runs_once_with_candidate_domains_before_any_scoring(): void
+    {
+        $criteria = $this->makeCriteria(['auto_enrich' => false]);
+
+        $prefetched   = null;
+        $excerptCalls = [];
+
+        $homepage = \Mockery::mock(HomepageSnapshotService::class);
+
+        $homepage->shouldReceive('prefetch')
+            ->once()
+            ->andReturnUsing(function (array $domains) use (&$prefetched): void {
+                $prefetched = $domains;
+            });
+
+        $homepage->shouldReceive('excerpt')
+            ->andReturnUsing(function (string $domain) use (&$prefetched, &$excerptCalls): ?string {
+                $this->assertNotNull(
+                    $prefetched,
+                    "excerpt({$domain}) ran before prefetch() — the pooled warm-up must precede the loop."
+                );
+                $excerptCalls[] = $domain;
+
+                return null;
+            });
+
+        $this->app->instance(HomepageSnapshotService::class, $homepage);
+
+        app(DiscoveryPipelineService::class)->run($criteria);
+
+        $this->assertIsArray($prefetched);
+        $this->assertNotEmpty($prefetched, 'prefetch() must receive the candidate domains, not an empty list.');
+
+        foreach ($prefetched as $domain) {
+            $this->assertIsString($domain);
+            $this->assertNotSame('', $domain, 'Blank domains must be filtered out before prefetch().');
+        }
+
+        // Every domain the scorer asked for must have been warmed — that is the whole
+        // point: each excerpt() below is then a pure cache hit, not an HTTP round-trip.
+        $this->assertNotEmpty($excerptCalls, 'Scoring is on, so excerpt() must have been consulted.');
+
+        foreach ($excerptCalls as $domain) {
+            $this->assertContains($domain, $prefetched, "excerpt({$domain}) was not warmed by prefetch().");
+        }
+    }
+
+    /**
+     * The excerpt is only ever consumed by the scorer, so warming homepages when
+     * scoring is off is pure wasted latency and HTTP spend.
+     */
+    public function test_homepage_prefetch_is_skipped_when_auto_scoring_is_off(): void
+    {
+        Setting::set('decouverte.auto_scoring', false);
+
+        $homepage = \Mockery::mock(HomepageSnapshotService::class);
+        $homepage->shouldNotReceive('prefetch');
+        $homepage->shouldNotReceive('excerpt');
+
+        $this->app->instance(HomepageSnapshotService::class, $homepage);
+
+        app(DiscoveryPipelineService::class)->run($this->makeCriteria(['auto_enrich' => false]));
     }
 }

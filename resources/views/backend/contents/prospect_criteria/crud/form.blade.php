@@ -124,7 +124,7 @@
                                     Sur-réservation = priorité demandée, pas réservation garantie : le premier lancement consomme le quota disponible, les suivants attendent.
                                 </div>
                                 <div class="form-text mt-1 {{ $overbooked ? 'text-warning' : 'text-muted' }}">
-                                    Quota package : {{ $quotaPackage?->daily_credits ?? '∞' }} requêtes de découverte/j &middot; {{ $quotaPackage?->daily_contact_credits ?? '∞' }} contacts/j. Priorité demandée par les critères actifs : {{ $activeDailyLimitSum ?? 0 }} requêtes/j. 1 requête retourne jusqu'à {{ \App\Services\Discovery\CompanyDiscoveryService::PAGE_SIZE }} résultats web avant filtrage IA.
+                                    Quota package : {{ $quotaPackage?->daily_credits ?? '∞' }} requêtes de découverte/j &middot; {{ $quotaPackage?->daily_contact_credits ?? '∞' }} contacts/j. Priorité demandée par les critères actifs : {{ $activeDailyLimitSum ?? 0 }} requêtes/j. Une requête retourne jusqu'à {{ \App\Services\Discovery\CompanyDiscoveryService::MAX_PAGE_SIZE }} résultats selon les sources, avant filtrage IA.
                                 </div>
                             </div>
 
@@ -467,11 +467,11 @@
             var previewUrl  = '{{ route('admin.prospect_criteria.preview_queries', $model->id) }}';
             var generateUrl = '{{ route('admin.prospect_criteria.generate_queries', $model->id) }}';
             var csrfToken   = '{{ csrf_token() }}';
-            var discoveryCursors = @json($model->discovery_cursors ?? []);
             var $container  = $('#query-preview-content');
             var $genBtn     = $('#btn-generate-ai');
 
             var executionBudget = null;
+            var selectedEngineCount = 0;
 
             // Renders queries as real form inputs (name="ai_queries[i][q|enabled]") so
             // they submit with Enregistrer — this card is a stateless preview, Enregistrer
@@ -482,6 +482,9 @@
                     if (isNaN(executionBudget)) {
                         executionBudget = null;
                     }
+                }
+                if (execution && execution.engine_count !== undefined) {
+                    selectedEngineCount = Math.max(0, parseInt(execution.engine_count, 10) || 0);
                 }
 
                 if (!queries || queries.length === 0) {
@@ -507,7 +510,6 @@
                     // saves incorrect ai_queries even though the preview looked correct.
                     var qAttrEsc   = qTextEsc.replace(/"/g, '&quot;').replace(/'/g, '&#039;');
                     var enabled    = item.enabled !== false;
-                    var status     = plan.statuses[q] || {state: enabled ? 'queued' : 'disabled'};
                     html += '<div class="border border-gray-300 rounded p-4 mb-3' + (enabled ? '' : ' opacity-50') + '" data-qi="' + i + '">'
                           + '<div class="d-flex align-items-center flex-wrap gap-2">'
                           + '<input type="hidden" name="ai_queries[' + i + '][q]" value="' + qAttrEsc + '" />'
@@ -517,7 +519,7 @@
                           + '</label>'
                           + '<span class="badge badge-light-warning me-1">' + (i + 1) + '</span>'
                           + '<span class="text-gray-700 fs-7 flex-grow-1">' + qTextEsc + '</span>'
-                          + statusBadges(q, status)
+                          + (enabled ? '' : '<span class="badge badge-light-secondary ms-3">Désactivée</span>')
                           + '</div>'
                           + '</div>';
                 });
@@ -525,104 +527,39 @@
                 bindToggles();
             }
 
-            function cursorInfo(q) {
-                var found = null;
-                $.each(discoveryCursors || {}, function (key, value) {
-                    if (key !== '_rotation' && value && value.q === q) {
-                        found = { key: key, cursor: value };
-                        return false;
-                    }
-                });
-                return found;
-            }
-
             function buildExecutionPlan(queries) {
-                var actionable = [];
+                var actionable = 0;
                 var disabled = 0;
-                var exhausted = 0;
-                var statuses = {};
 
                 $.each(queries, function (i, item) {
                     var q = item.q != null ? item.q : item;
                     var enabled = item.enabled !== false;
-                    var info = cursorInfo(q);
                     if (!enabled) {
                         disabled++;
-                        statuses[q] = { state: 'disabled' };
                         return;
                     }
-                    if (info && info.cursor && info.cursor.exhausted) {
-                        exhausted++;
-                        statuses[q] = { state: 'exhausted', cursor: info.cursor };
-                        return;
-                    }
-                    actionable.push({ q: q, key: info ? info.key : null, cursor: info ? info.cursor : null });
+                    actionable++;
                 });
 
-                var rotationKey = discoveryCursors ? discoveryCursors._rotation : null;
-                var start = 0;
-                if (rotationKey) {
-                    $.each(actionable, function (i, item) {
-                        if (item.key === rotationKey) {
-                            start = (i + 1) % actionable.length;
-                            return false;
-                        }
-                    });
-                }
-                var ordered = actionable.length
-                    ? actionable.slice(start).concat(actionable.slice(0, start))
-                    : [];
-                var budget = executionBudget === null ? ordered.length : Math.max(0, executionBudget);
-
-                $.each(ordered, function (i, item) {
-                    statuses[item.q] = {
-                        state: i < budget ? 'immediate' : 'queued',
-                        rank: i + 1,
-                        cursor: item.cursor,
-                    };
-                });
+                var preparedAttempts = actionable * selectedEngineCount;
+                var budget = executionBudget === null ? preparedAttempts : Math.max(0, executionBudget);
 
                 return {
-                    statuses: statuses,
                     prepared: queries.length,
-                    actionable: actionable.length,
-                    immediate: Math.min(budget, actionable.length),
-                    queued: Math.max(0, actionable.length - budget),
+                    actionable: actionable,
+                    preparedAttempts: preparedAttempts,
+                    possibleAttempts: Math.min(budget, preparedAttempts),
                     disabled: disabled,
-                    exhausted: exhausted,
                     budget: budget,
                 };
             }
 
             function executionSummary(queries, plan) {
                 return '<div class="alert alert-light-info border border-info border-dashed p-4 mb-4">'
-                    + '<div class="fw-bold text-gray-800 mb-1">Prochain lancement : jusqu\'à ' + plan.budget + ' requête(s) de découverte exécutée(s) maintenant</div>'
-                    + '<div class="text-muted fs-7">' + plan.prepared + ' requête(s) préparée(s) · ' + plan.immediate + ' dans le budget immédiat · ' + plan.queued + ' en attente · ' + plan.exhausted + ' déjà épuisée(s) · ' + plan.disabled + ' désactivée(s).</div>'
-                    + '<div class="text-muted fs-8 mt-2"><i class="bi bi-info-circle me-1"></i>L\'aperçu ne consomme aucun crédit. 1 requête de découverte = 1 crédit. Une même requête peut consommer plusieurs pages si le moteur de recherche renvoie une page suivante.</div>'
+                    + '<div class="fw-bold text-gray-800 mb-1">Prochain lancement : ' + plan.possibleAttempts + ' appels possibles sur ' + plan.preparedAttempts + ' préparés</div>'
+                    + '<div class="text-muted fs-7">' + plan.actionable + ' requête(s) active(s) · ' + plan.disabled + ' désactivée(s).</div>'
+                    + '<div class="text-muted fs-8 mt-2"><i class="bi bi-info-circle me-1"></i>L\'aperçu ne consomme aucun crédit. Les moteurs sont configurés globalement dans Paramètres.</div>'
                     + '</div>';
-            }
-
-            function statusBadges(q, status) {
-                var html = '';
-                if (status.state === 'disabled') {
-                    return '<span class="badge badge-light-secondary ms-3">Désactivée</span>';
-                }
-                if (status.state === 'exhausted') {
-                    return '<span class="badge badge-light-danger ms-3">Déjà épuisée</span>';
-                }
-                if (status.state === 'immediate') {
-                    html += '<span class="badge badge-light-success ms-3">Dans le budget · rang ' + status.rank + '</span>';
-                } else if (status.state === 'queued') {
-                    html += '<span class="badge badge-light-secondary ms-3">En attente · rang ' + status.rank + '</span>';
-                }
-
-                if (status.cursor) {
-                    var start = parseInt(status.cursor.start || 0, 10);
-                    var page = Math.floor((isNaN(start) ? 0 : start) / 10) + 1;
-                    html += '<span class="badge badge-light-info ms-2">Page suivante : ' + page + '</span>';
-                }
-
-                return html;
             }
 
             // Toggling only dims the row locally — no server call. The state submits

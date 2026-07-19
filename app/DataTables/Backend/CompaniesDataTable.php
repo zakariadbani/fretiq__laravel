@@ -55,6 +55,12 @@ class CompaniesDataTable extends BackendDataTable
             'searchable' => false,
             'raw'        => true,
         ],
+        'enrichment_status' => [
+            'title'      => 'Enrichissement',
+            'orderable'  => true,
+            'searchable' => false,
+            'raw'        => true,
+        ],
         'contacts_count' => [
             'title'      => '# Contacts',
             'orderable'  => true,
@@ -87,6 +93,12 @@ class CompaniesDataTable extends BackendDataTable
             'configKey' => 'company_qualification_statuses',
             'title'     => 'Statut qualification',
         ],
+        'enrichment_status' => [
+            'type'      => 'select_enum',
+            'filterKey' => 'enrichment_status',
+            'configKey' => 'company_enrichment_statuses',
+            'title'     => 'Statut enrichissement',
+        ],
         'source' => [
             'type'      => 'select_enum',
             'filterKey' => 'source',
@@ -105,7 +117,13 @@ class CompaniesDataTable extends BackendDataTable
         parent::__construct($model, $request);
 
         if ($request->routeIs('admin.companies.archive')) {
-            unset($this->columns['is_active'], $this->table_filters['qualification_status']);
+            // Archive rows are all qualification_status='rejected' (hence almost all
+            // enrichment_status='skipped_excluded') — both filters would be no-ops.
+            unset(
+                $this->columns['is_active'],
+                $this->table_filters['qualification_status'],
+                $this->table_filters['enrichment_status']
+            );
         }
     }
 
@@ -274,6 +292,24 @@ class CompaniesDataTable extends BackendDataTable
             }
             $cfg   = $qualificationStatuses[$row->qualification_status] ?? [];
             $label = e($cfg['label'] ?? $row->qualification_status);
+            $color = e($cfg['color'] ?? 'secondary');
+
+            return '<span class="badge badge-light-' . $color . '">' . $label . '</span>';
+        });
+
+        // ── Enrichment status badge ──────────────────────────────────────────
+        // NULL renders as an explicit « Non tenté » badge rather than a dash: the
+        // whole point of this column is telling "never attempted" apart from
+        // "attempted, found nothing".
+        $enrichmentStatuses = config('global.data.company_enrichment_statuses', []);
+        $enrichmentNullCfg  = config('global.data.company_enrichment_status_null', []);
+
+        $this->datatables->editColumn('enrichment_status', function (Company $row) use ($enrichmentStatuses, $enrichmentNullCfg) {
+            $cfg = empty($row->enrichment_status)
+                ? $enrichmentNullCfg
+                : ($enrichmentStatuses[$row->enrichment_status] ?? []);
+
+            $label = e($cfg['label'] ?? $row->enrichment_status ?? 'Non tenté');
             $color = e($cfg['color'] ?? 'secondary');
 
             return '<span class="badge badge-light-' . $color . '">' . $label . '</span>';

@@ -87,6 +87,24 @@ class GeminiScoringDriver implements ScoringDriverInterface
         $targetBlock  = $aiTarget  !== '' ? "- Cible: {$aiTarget}\n"      : '';
         $excludeBlock = $aiExclude !== '' ? "- À exclure: {$aiExclude}\n" : '';
 
+        // Homepage excerpt (HomepageSnapshotService). When absent, the prompt stays
+        // byte-identical to the pre-Phase-2 version — both blocks collapse to ''.
+        $excerpt = $candidate['homepage_excerpt'] ?? null;
+        $hasExcerpt = is_string($excerpt) && trim($excerpt) !== '';
+
+        $homepageBlock = $hasExcerpt
+            ? "\nExtrait de la page d'accueil du site:\n\"\"\"\n" . trim($excerpt) . "\n\"\"\""
+            : '';
+
+        $junkBlock = $hasExcerpt
+            ? "\nSi l'extrait de la page d'accueil montre qu'il s'agit d'un site d'actualités ou de presse, "
+              . "d'un annuaire en ligne, d'un hébergeur de documents ou de PDF, d'un site d'offres d'emploi, "
+              . "d'une institution publique ou d'une encyclopédie — et non d'une entreprise qui expédie des "
+              . "marchandises — attribue un score entre 0 et 10 et mets exclude à false: ce n'est pas un "
+              . "concurrent, seulement un résultat sans valeur. Le champ exclude reste réservé aux véritables "
+              . "concurrents (transporteur, transitaire, commissionnaire de transport, logisticien).\n"
+            : '';
+
         return <<<PROMPT
 Tu es un expert en prospection B2B pour TCL France, un commissionnaire de transport.
 Évalue la pertinence de ce prospect pour une campagne de prospection fret.
@@ -95,7 +113,7 @@ Candidat:
 - Domaine: {$domain}
 - Titre: {$title}
 - Description: {$snippet}
-- URL: {$url}
+- URL: {$url}{$homepageBlock}
 
 Critères de prospection:
 - Nom: {$name}
@@ -107,7 +125,7 @@ Classe la pertinence du candidat par rapport à la Cible ci-dessus si elle est p
 Si le candidat correspond à la description "À exclure" (ex: transporteur, transitaire,
 commissionnaire de transport ou logisticien concurrent), mets exclude à true et explique
 pourquoi dans explanation.
-
+{$junkBlock}
 Réponds UNIQUEMENT avec un objet JSON strict (sans markdown, sans commentaire):
 {"score": <entier entre 0 et 100>, "explanation": "<1-2 phrases en français expliquant le score>", "exclude": <true ou false>}
 

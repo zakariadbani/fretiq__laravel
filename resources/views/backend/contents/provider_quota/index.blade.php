@@ -149,25 +149,20 @@
                         $hunterSearchesAvailable = $hunter['searches_available'] ?? null;
                         $hunterVerificationsUsed = $hunter['verifications_used'] ?? null;
                         $hunterVerificationsAvailable = $hunter['verifications_available'] ?? null;
-                        $hunterSearchesReserved = ($hunterSearchesUsed === null && $hunterSearchesAvailable === null) ? null : (int) ($providerReservations['hunter_searches'] ?? 0);
+                        $hunterSearchesReserved = (int) ($providerReservations['hunter_searches'] ?? 0);
                         $hunterSearchesTotal = ($hunterSearchesUsed === null || $hunterSearchesAvailable === null) ? null : max(0, (int) $hunterSearchesUsed + (int) $hunterSearchesAvailable);
                         $hunterVerificationsTotal = ($hunterVerificationsUsed === null || $hunterVerificationsAvailable === null) ? null : max(0, (int) $hunterVerificationsUsed + (int) $hunterVerificationsAvailable);
-                        $hunterSearchesRemaining = $hunterSearchesAvailable === null ? null : max(0, (int) $hunterSearchesAvailable - (int) $hunterSearchesReserved);
-                        $hunterSearchesOverbooked = $hunterSearchesAvailable === null ? 0 : max(0, (int) $hunterSearchesReserved - max(0, (int) $hunterSearchesAvailable));
                     @endphp
 
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="fw-semibold text-gray-700"><i class="bi bi-search me-1"></i> Requêtes d'enrichissement - Utilisées / Total</span>
+                        <span class="fw-semibold text-gray-700"><i class="bi bi-search me-1"></i> Recherches - Utilisé / Total</span>
                         <span class="fw-bold text-gray-800">{{ $quotaValue($hunterSearchesUsed, $hunterSearchesTotal) }}</span>
                     </div>
-                    <div class="text-muted fs-7 mb-1">Réservé / Total : {{ $quotaValue($hunterSearchesReserved, $hunterSearchesTotal) }}</div>
-                    <div class="text-muted fs-7 mb-2">Restant / Total : {{ $quotaValue($hunterSearchesRemaining, $hunterSearchesTotal) }}</div>
-                    @if($hunterSearchesOverbooked > 0)
-                        <div class="text-danger fs-7 mb-2">Surquota {{ $hunterSearchesOverbooked }} au-delà du disponible</div>
-                    @endif
+                    <div class="text-muted fs-7 mb-1">Disponible / Total : {{ $quotaValue($hunterSearchesAvailable, $hunterSearchesTotal) }}</div>
+                    <div class="text-muted fs-7 mb-2">Bundles d’enrichissement réservés aujourd’hui : {{ $hunterSearchesReserved }}</div>
                     @if($hunterSearchesUsed !== null && $hunterSearchesTotal !== null)
                         <div class="progress h-8px mb-6">
-                            <div class="progress-bar {{ $barClass($hunterSearchesUsed + $hunterSearchesReserved, $hunterSearchesTotal) }}" style="width: {{ $pct($hunterSearchesUsed + $hunterSearchesReserved, $hunterSearchesTotal) }}%"></div>
+                            <div class="progress-bar {{ $barClass($hunterSearchesUsed, $hunterSearchesTotal) }}" style="width: {{ $pct($hunterSearchesUsed, $hunterSearchesTotal) }}%"></div>
                         </div>
                     @else
                         <div class="mb-6"></div>

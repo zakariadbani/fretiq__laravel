@@ -84,10 +84,6 @@ class ProspectCriteriaViewConfig
         }
 
         // ── Tabs ──────────────────────────────────────────────────────────────
-        $runsCount = ($hasId && Schema::hasTable('discovery_runs'))
-            ? $model->discoveryRuns()->count()
-            : null;
-
         // Hoist discoveredCount here so both the Résultats tab badge and the
         // stat card below share the same value (no duplicate COUNT query).
         $discoveredCount = ($hasId && isset($stats['discovered_total']))
@@ -96,10 +92,9 @@ class ProspectCriteriaViewConfig
 
         $tabs = [
             ['key' => 'apercu',     'label' => 'Aperçu',     'icon' => 'bi-grid',           'mode' => 'view'],
-            ['key' => 'historique', 'label' => 'Historique', 'icon' => 'bi-clock-history',  'mode' => 'view', 'count' => $runsCount],
-            ['key' => 'resultats',  'label' => 'Résultats',  'icon' => 'bi-building-check',  'mode' => 'view', 'count' => $discoveredCount],
             ['key' => 'general',    'label' => 'Général',    'icon' => 'bi-sliders',         'mode' => 'edit'],
             ['key' => 'automatisation', 'label' => 'Automatisation', 'icon' => 'bi-robot', 'mode' => 'edit'],
+            ['key' => 'resultats',  'label' => 'Résultats',  'icon' => 'bi-building-check',  'mode' => 'view', 'count' => $discoveredCount],
         ];
 
         // ── Detail rows ───────────────────────────────────────────────────────

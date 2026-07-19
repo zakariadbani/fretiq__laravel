@@ -42,6 +42,24 @@ return [
     ],
 
     //---------------------------------------------------------------------------
+    // Entreprises — statut d'enrichissement (pourquoi 0 contact ?)
+    // Keys map 1:1 to App\Models\Company::ENRICHMENT_* constants.
+    // A NULL column value means « Non tenté » — see company_enrichment_status_null.
+    //---------------------------------------------------------------------------
+    'company_enrichment_statuses' => [
+        'enriched'            => ['label' => 'Enrichi',                  'color' => 'success'],
+        'hunter_empty'        => ['label' => 'Aucun email trouvé',       'color' => 'warning'],
+        'hunter_failed'       => ['label' => 'Échec du fournisseur',     'color' => 'danger'],
+        'skipped_low_score'   => ['label' => 'Score insuffisant',        'color' => 'warning'],
+        'skipped_enrich_off'  => ['label' => 'Enrichissement désactivé', 'color' => 'warning'],
+        'skipped_budget'      => ['label' => 'Quota contacts atteint',   'color' => 'warning'],
+        'skipped_excluded'    => ['label' => 'Exclu (concurrent)',       'color' => 'warning'],
+    ],
+
+    // Rendered when companies.enrichment_status IS NULL (never attempted).
+    'company_enrichment_status_null' => ['label' => 'Non tenté', 'color' => 'secondary'],
+
+    //---------------------------------------------------------------------------
     // Contacts — statut
     //---------------------------------------------------------------------------
     'contact_statuses' => [

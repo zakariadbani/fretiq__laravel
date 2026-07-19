@@ -14,6 +14,7 @@ use App\Models\Company;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Services\Discovery\CompanyDiscoveryService;
+use App\Services\Discovery\DiscoveryEngineRegistry;
 use App\Services\Discovery\IntentQueryService;
 use App\Services\Quota\DiscoveryQuotaService;
 use Illuminate\Http\Request;
@@ -301,7 +302,9 @@ class ProspectCriteriaController extends BackendController
             'contactRemaining'    => $contactRemaining,
             'monthlyRemaining'    => $monthlyRemaining,
             'globalMinScore'      => (int) \App\Models\Setting::get('decouverte.min_score_enrich', 50),
-            'globalAutoEnrich'    => (bool) \App\Models\Setting::get('decouverte.auto_enrich', true),
+            // Fallback false: enrichment is opted into per criteria; a missing settings
+            // row must not make « Hérité » read as "activé" in the form.
+            'globalAutoEnrich'    => (bool) \App\Models\Setting::get('decouverte.auto_enrich', false),
             'quotaTz'             => $quotaService->quotaTz(),
         ];
     }
@@ -350,20 +353,39 @@ class ProspectCriteriaController extends BackendController
             $attributes['company_sizes'] = [];
         }
 
-        // ai_queries: posted as ai_queries[i][q]/[enabled] hidden form fields (form.blade.php).
-        // Only normalize when present in the request — absence (e.g. a non-form caller)
-        // must leave the existing stored value untouched, not null it out.
+        // ai_queries: posted as ai_queries[i][q]/[enabled]. Engine selection is global.
+        // (form.blade.php). Only normalize when present in the request — absence (e.g. a
+        // non-form caller) must leave the existing stored value untouched, not null it out.
         if (array_key_exists('ai_queries', $attributes) && is_array($attributes['ai_queries'])) {
-            $attributes['ai_queries'] = array_values(array_filter(array_map(function ($row) {
-                $q = is_array($row) ? trim((string) ($row['q'] ?? '')) : '';
-                if ($q === '') {
-                    return null;
-                }
-                return ['q' => $q, 'enabled' => (bool) ($row['enabled'] ?? false)];
-            }, $attributes['ai_queries']), fn ($r) => $r !== null));
+            $attributes['ai_queries'] = $this->normalizeAiQueries($attributes['ai_queries']);
         }
 
         return $attributes;
+    }
+
+    /**
+     * Collapse legacy per-engine duplicates into one engine-neutral query row.
+     * A query remains enabled when any legacy duplicate was enabled.
+     *
+     * @return list<array{q: string, enabled: bool}>
+     */
+    private function normalizeAiQueries(array $rows): array
+    {
+        $normalized = [];
+
+        foreach ($rows as $row) {
+            $q = is_array($row) ? trim((string) ($row['q'] ?? '')) : '';
+            if ($q === '') {
+                continue;
+            }
+
+            if (! isset($normalized[$q])) {
+                $normalized[$q] = ['q' => $q, 'enabled' => false];
+            }
+            $normalized[$q]['enabled'] = $normalized[$q]['enabled'] || (bool) ($row['enabled'] ?? true);
+        }
+
+        return array_values($normalized);
     }
 
     /**
@@ -410,18 +432,27 @@ class ProspectCriteriaController extends BackendController
     public function previewQueries(
         ProspectCriteria $prospectCriteria,
         CompanyDiscoveryService $discoveryService,
-        DiscoveryQuotaService $quotaService
+        DiscoveryQuotaService $quotaService,
+        DiscoveryEngineRegistry $engineRegistry,
     ) {
         $queries = ! empty($prospectCriteria->ai_queries)
-            ? $prospectCriteria->ai_queries
+            ? $this->normalizeAiQueries($prospectCriteria->ai_queries)
             : array_map(
-                fn (string $q) => ['q' => $q, 'enabled' => true],
+                fn (string $q) => [
+                    'q'       => $q,
+                    'enabled' => true,
+                ],
                 $discoveryService->buildQueries($prospectCriteria)
             );
 
         return response()->json([
             'queries'   => $queries,
-            'execution' => $this->queryPreviewExecutionMeta($prospectCriteria, $quotaService),
+            'execution' => $this->queryPreviewExecutionMeta(
+                $prospectCriteria,
+                $quotaService,
+                count($engineRegistry->selected()),
+                count(array_filter($queries, fn (array $query) => ($query['enabled'] ?? true) === true)),
+            ),
         ]);
     }
 
@@ -431,9 +462,14 @@ class ProspectCriteriaController extends BackendController
      * any credits. Null package caps are treated as unlimited; missing quota tables
      * fall back to the criteria's daily SerpAPI search limit so the form still loads.
      *
-     * @return array{daily_limit: int, search_budget: int}
+     * @return array{daily_limit: int, search_budget: int, engine_count: int, prepared_attempts: int}
      */
-    private function queryPreviewExecutionMeta(ProspectCriteria $criteria, DiscoveryQuotaService $quotaService): array
+    private function queryPreviewExecutionMeta(
+        ProspectCriteria $criteria,
+        DiscoveryQuotaService $quotaService,
+        int $engineCount,
+        int $enabledQueryCount,
+    ): array
     {
         $dailyLimit = (int) ($criteria->daily_limit ?: 20);
         $caps = [$dailyLimit];
@@ -456,6 +492,8 @@ class ProspectCriteriaController extends BackendController
         return [
             'daily_limit'   => $dailyLimit,
             'search_budget' => max(0, min($caps)),
+            'engine_count' => max(0, $engineCount),
+            'prepared_attempts' => max(0, $engineCount) * max(0, $enabledQueryCount),
         ];
     }
 

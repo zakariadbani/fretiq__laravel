@@ -1,0 +1,91 @@
+{
+    "local_results": [
+        {
+            "position": 1,
+            "title": "Somitex Maroc",
+            "type": "Fabrique de textile",
+            "address": "26 Rue Lahcen El Basri, Casablanca 20250",
+            "country": "MA",
+            "phone": "+212 522-24-18-40",
+            "website": "https://www.somitex-maroc.ma/",
+            "rating": 4.3,
+            "reviews": 62
+        },
+        {
+            "position": 2,
+            "title": "Filatures du Détroit",
+            "type": "Filature de coton",
+            "address": "Zone Franche Logistique, Route de Rabat, Tanger 90000",
+            "country": "MA",
+            "phone": "+212 539-39-52-10",
+            "website": "http://www.filatures-detroit.ma/",
+            "rating": 4.1,
+            "reviews": 28
+        },
+        {
+            "position": 3,
+            "title": "Conserverie Atlas Agadir",
+            "type": "Conserverie de poisson",
+            "address": "Quartier Industriel Anza, Agadir 80000",
+            "country": "MA",
+            "phone": "+212 528-82-14-77",
+            "website": "https://www.conserverie-atlas.ma/",
+            "rating": 4.6,
+            "reviews": 113
+        },
+        {
+            "position": 4,
+            "title": "Agro Souss Primeurs",
+            "type": "Exportateur de fruits et légumes",
+            "address": "Km 12 Route d'Inezgane, Aït Melloul 86150",
+            "country": "MA",
+            "phone": "+212 528-24-90-05",
+            "website": "https://www.agro-souss.ma/",
+            "rating": 4.2,
+            "reviews": 47
+        },
+        {
+            "position": 5,
+            "title": "Maille & Confection Casablanca",
+            "type": "Fabricant de vêtements",
+            "address": "Lotissement Sidi Maârouf, Casablanca 20270",
+            "country": "MA",
+            "phone": "+212 522-97-33-21",
+            "website": "https://www.maille-confection.ma/",
+            "rating": 3.9,
+            "reviews": 19
+        },
+        {
+            "position": 6,
+            "title": "Huileries du Nord",
+            "type": "Huilerie",
+            "address": "Zone Industrielle Gzenaya, Tanger 90070",
+            "country": "MA",
+            "phone": "+212 539-30-71-88",
+            "website": "http://www.huileriesdunord.ma/",
+            "rating": 4.0,
+            "reviews": 35
+        },
+        {
+            "position": 7,
+            "title": "Atelier Textile Anfa (sans site web)",
+            "type": "Fabrique de textile",
+            "address": "Boulevard d'Anfa, Casablanca 20000",
+            "country": "MA",
+            "phone": "+212 522-36-11-02",
+            "rating": 3.7,
+            "reviews": 8
+        },
+        {
+            "position": 8,
+            "title": "Coopérative Argane Souss — chaîne YouTube",
+            "type": "Coopérative agricole",
+            "address": "Route de Taroudant, Agadir 80000",
+            "country": "MA",
+            "phone": "+212 528-33-42-19",
+            "website": "https://www.youtube.com/@argane-souss",
+            "rating": 4.8,
+            "reviews": 204
+        }
+    ]
+}

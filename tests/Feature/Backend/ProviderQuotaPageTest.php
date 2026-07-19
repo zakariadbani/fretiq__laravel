@@ -127,8 +127,8 @@ class ProviderQuotaPageTest extends TestCase
         $response->assertSee('743');
         $response->assertSeeText('120 / 500');
         $response->assertSeeText('30 / 100');
-        $response->assertSeeText('Réservé / Total : 0 / 500');
-        $response->assertSeeText('Restant / Total : 380 / 500');
+        $response->assertSeeText('Disponible / Total : 380 / 500');
+        $response->assertSeeText("Bundles d’enrichissement réservés aujourd’hui : 0");
         $response->assertSee('Starter');
         $response->assertSee('Utilisé / Total', false);
         $response->assertSee('Réservé / Total', false);
@@ -140,14 +140,12 @@ class ProviderQuotaPageTest extends TestCase
     /**
      * @dataProvider hunterQuotaCases
      */
-    public function test_hunter_quota_values_render_used_reserved_total_remaining_and_overbooking(
+    public function test_hunter_quota_values_keep_provider_usage_separate_from_app_bundle_reservations(
         int $searchesUsed,
         int $searchesAvailable,
         int $searchesReserved,
         string $expectedSearches,
-        string $expectedSearchesReserved,
-        string $expectedSearchesRemaining,
-        ?string $expectedSearchesOverbooked,
+        string $expectedSearchesAvailable,
         int $verificationsUsed,
         int $verificationsAvailable,
         string $expectedVerifications
@@ -175,41 +173,37 @@ class ProviderQuotaPageTest extends TestCase
         $response->assertSee('Recherches - Utilisé / Total', false);
         $response->assertSee('Vérifications - Utilisé / Total', false);
         $response->assertSeeText($expectedSearches);
-        $response->assertSeeText('Réservé / Total : '.$expectedSearchesReserved);
-        $response->assertSeeText('Restant / Total : '.$expectedSearchesRemaining);
+        $response->assertSeeText('Disponible / Total : '.$expectedSearchesAvailable);
+        $response->assertSeeText("Bundles d’enrichissement réservés aujourd’hui : ".$searchesReserved);
         $response->assertSeeText($expectedVerifications);
-        $response->assertDontSeeText('Restant / Total : -');
+        $response->assertDontSeeText('Réservé / Total');
+        $response->assertDontSeeText('Restant / Total');
+        $response->assertDontSeeText('Surquota');
 
         if ($searchesAvailable < 0) {
             $response->assertDontSeeText($searchesUsed.' / '.$searchesAvailable);
         }
 
-        if ($expectedSearchesOverbooked === null) {
-            $response->assertDontSeeText('Surquota '.$searchesAvailable.' au-delà du disponible');
-        } else {
-            $response->assertSeeText($expectedSearchesOverbooked);
-        }
-
         if ($verificationsAvailable < 0) {
             $response->assertDontSeeText($verificationsUsed.' / '.$verificationsAvailable);
         }
-
-        $response->assertDontSeeText('Surquota '.$verificationsAvailable.' au-delà du disponible');
     }
 
     public static function hunterQuotaCases(): array
     {
         return [
-            'empty quota' => [0, 500, 0, '0 / 500', '0 / 500', '500 / 500', null, 0, 100, '0 / 100'],
-            'full quota' => [500, 0, 0, '500 / 500', '0 / 500', '0 / 500', null, 100, 0, '100 / 100'],
-            'reserved quota' => [120, 380, 25, '120 / 500', '25 / 500', '355 / 500', null, 30, 70, '30 / 100'],
-            'overbooked reservation' => [120, 20, 50, '120 / 140', '50 / 140', '0 / 140', 'Surquota 30 au-delà du disponible', 30, 5, '30 / 35'],
-            'exceeded provider quota' => [520, -20, 0, '520 / 500', '0 / 500', '0 / 500', null, 130, -30, '130 / 100'],
+            'empty quota' => [0, 500, 0, '0 / 500', '500 / 500', 0, 100, '0 / 100'],
+            'full quota' => [500, 0, 0, '500 / 500', '0 / 500', 100, 0, '100 / 100'],
+            'reserved bundles' => [120, 380, 25, '120 / 500', '380 / 500', 30, 70, '30 / 100'],
+            'bundles exceed provider availability' => [120, 20, 50, '120 / 140', '20 / 140', 30, 5, '30 / 35'],
+            'exceeded provider quota' => [520, -20, 0, '520 / 500', '0 / 500', 130, -30, '130 / 100'],
         ];
     }
 
-    public function test_hunter_unavailable_usage_renders_reserved_as_unavailable(): void
+    public function test_hunter_unavailable_usage_keeps_app_bundle_reservations_visible(): void
     {
+        $this->reserveProviderQuota(hunterSearches: 7);
+
         $serp = Mockery::mock(CompanyDiscoveryService::class);
         $serp->shouldReceive('accountUsage')->andReturn(null);
         $this->instance(CompanyDiscoveryService::class, $serp);
@@ -228,8 +222,10 @@ class ProviderQuotaPageTest extends TestCase
         $response = $this->actingAs($this->superadmin)->get(route('admin.provider-quota.index'));
 
         $response->assertStatus(200);
-        $response->assertSeeText('Réservé / Total : —');
-        $response->assertSeeText('Restant / Total : —');
+        $response->assertSeeText('Disponible / Total : —');
+        $response->assertSeeText("Bundles d’enrichissement réservés aujourd’hui : 7");
+        $response->assertDontSeeText('Réservé / Total');
+        $response->assertDontSeeText('Restant / Total');
         $response->assertDontSeeText('Surquota');
     }
 

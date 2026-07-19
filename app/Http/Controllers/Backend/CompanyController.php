@@ -367,6 +367,19 @@ class CompanyController extends BackendController
                     $updateAttrs['country'] = $this->mapIso2($raw);
                 }
 
+                // Mirror DiscoveryPipelineService's audit statuses: Hunter answered,
+                // so the only two outcomes here are "enriched" or "found nothing".
+                $usableEmails = 0;
+                foreach (($enrichment['emails'] ?? []) as $emailData) {
+                    if (! empty($emailData['value'] ?? null)) {
+                        $usableEmails++;
+                    }
+                }
+
+                $updateAttrs['enrichment_status'] = $usableEmails > 0
+                    ? Company::ENRICHMENT_ENRICHED
+                    : Company::ENRICHMENT_HUNTER_EMPTY;
+
                 $company->fill($updateAttrs);
                 $company->save();
 
@@ -387,7 +400,9 @@ class CompanyController extends BackendController
                 ], 200);
             }
 
-            // Hunter returned null — no data for this domain.
+            // Hunter returned null — provider failure (no API key / all calls failed).
+            $company->forceFill(['enrichment_status' => Company::ENRICHMENT_HUNTER_FAILED])->save();
+
             DiscoveryRun::where('id', $run->id)->update([
                 'status'         => 'completed',
                 'contacts_count' => 0,
