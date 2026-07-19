@@ -255,6 +255,10 @@ class ProspectCriteriaController extends BackendController
      * stored daily_limit does not double-count against itself in the overbook
      * hint. resolveQuotaVars() (index badge) intentionally counts ALL active
      * criteria and is untouched.
+     *
+     * quotaRemaining/contactRemaining/monthlyRemaining are resolved here so the edit
+     * page's hero action row can compute the "Lancer la découverte" disabled state
+     * identically to the view page (which gets them from resolveQuotaVars()).
      */
     protected function getViewVars(): array
     {
@@ -270,9 +274,16 @@ class ProspectCriteriaController extends BackendController
             $activeDailyLimitSum = (int) $sumQuery
                 ->selectRaw('COALESCE(SUM(COALESCE(daily_limit, 20)), 0) AS s')
                 ->value('s');
+
+            $quotaRemaining    = $quotaService->remainingTodayForDisplay();
+            $contactRemaining  = $quotaService->contactRemainingTodayForDisplay();
+            $monthlyRemaining  = $quotaService->monthlyRemainingForDisplay();
         } catch (\Illuminate\Database\QueryException $e) {
             $quotaPackage        = null;
             $activeDailyLimitSum = null;
+            $quotaRemaining      = null;
+            $contactRemaining    = null;
+            $monthlyRemaining    = null;
         }
 
         return [
@@ -286,6 +297,9 @@ class ProspectCriteriaController extends BackendController
                 ->flatten()->values()->all(),
             'quotaPackage'        => $quotaPackage,
             'activeDailyLimitSum' => $activeDailyLimitSum,
+            'quotaRemaining'      => $quotaRemaining,
+            'contactRemaining'    => $contactRemaining,
+            'monthlyRemaining'    => $monthlyRemaining,
             'globalMinScore'      => (int) \App\Models\Setting::get('decouverte.min_score_enrich', 50),
             'globalAutoEnrich'    => (bool) \App\Models\Setting::get('decouverte.auto_enrich', true),
             'quotaTz'             => $quotaService->quotaTz(),

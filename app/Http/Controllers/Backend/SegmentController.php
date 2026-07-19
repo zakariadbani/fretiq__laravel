@@ -70,9 +70,8 @@ class SegmentController extends BackendController
      * Override edit() to inject segment stats alongside the standard form vars.
      * Mirrors view() pattern: find or redirect, compute stats, pass to form.
      *
-     * N.B. On construit la vue manuellement (sans passer par getView()) afin de
-     * pouvoir transmettre le $model à getViewVars(), ce qui active la fusion des
-     * valeurs filtre stockées qui ne seraient plus présentes dans les entreprises.
+     * N.B. On construit la vue manuellement (sans passer par getView()) afin
+     * d'injecter les statistiques et les variables standard du formulaire.
      */
     public function edit($id)
     {
@@ -85,11 +84,11 @@ class SegmentController extends BackendController
 
         $stats = $this->segmentStats($model);
 
-        // Construction manuelle pour passer $model à getViewVars() (stale-merge).
+        // Construction manuelle pour injecter les statistiques du segment.
         $view = view('backend.contents.segments.crud.form');
 
-        // Inject des vars dynamiques (scopes, sectors, countries…) avec fusion stale.
-        foreach ($this->getViewVars($model) as $varName => $var) {
+        // Inject des vars dynamiques (scopes, sectors, countries…).
+        foreach ($this->getViewVars() as $varName => $var) {
             $view->with($varName, $var);
         }
         $view->with('modelName', $this->modelName);
@@ -197,23 +196,20 @@ class SegmentController extends BackendController
 
     /**
      * Provide select options to the create/edit form views.
-     * Le paramètre $model (optionnel) permet de fusionner les valeurs stockées
-     * qui ne sont peut-être plus présentes dans les entreprises.
      */
-    protected function getViewVars(?Segment $model = null): array
+    protected function getViewVars(): array
     {
-        $allCountries = config('global.data.company_countries', []);
+        $sectors = array_values(array_unique(array_merge(
+            config('global.data.prospect_sectors', []),
+            Company::query()
+                ->whereNotNull('sector')
+                ->where('sector', '!=', '')
+                ->distinct()
+                ->pluck('sector')
+                ->all()
+        )));
+        sort($sectors);
 
-        // Secteurs distincts présents dans les entreprises.
-        $sectors = Company::query()
-            ->whereNotNull('sector')
-            ->where('sector', '!=', '')
-            ->distinct()
-            ->orderBy('sector')
-            ->pluck('sector')
-            ->all();
-
-        // Pays distincts présents dans les entreprises, avec libellé français.
         $dbCountryCodes = Company::query()
             ->whereNotNull('country')
             ->where('country', '!=', '')
@@ -221,33 +217,13 @@ class SegmentController extends BackendController
             ->pluck('country')
             ->all();
 
-        $countries = [];
+        $countries = config('global.data.company_countries', []);
         foreach ($dbCountryCodes as $iso) {
-            $countries[$iso] = $allCountries[$iso] ?? $iso;
-        }
-        asort($countries); // tri par libellé
-
-        // Fusion des valeurs stockées dans le modèle afin qu'un edit ne supprime
-        // pas silencieusement un filtre dont la valeur n'est plus dans la DB.
-        if ($model !== null) {
-            $stored = $model->filter ?? [];
-
-            // Secteurs stockés manquants dans la liste DB.
-            foreach ((array) ($stored['sector'] ?? []) as $s) {
-                if ($s !== '' && $s !== null && ! in_array($s, $sectors, true)) {
-                    $sectors[] = $s;
-                }
+            if (! array_key_exists($iso, $countries)) {
+                $countries[$iso] = $iso;
             }
-            sort($sectors);
-
-            // Pays stockés manquants dans la liste DB.
-            foreach ((array) ($stored['country'] ?? []) as $iso) {
-                if ($iso !== '' && $iso !== null && ! array_key_exists($iso, $countries)) {
-                    $countries[$iso] = $allCountries[$iso] ?? $iso;
-                }
-            }
-            asort($countries);
         }
+        asort($countries);
 
         return [
             'scopes'         => config('global.data.segment_scopes', []),

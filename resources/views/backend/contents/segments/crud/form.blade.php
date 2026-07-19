@@ -155,24 +155,12 @@
 
             {{-- CARD 2 — Ciblage ──────────────────────────────────── --}}
             @php
-                /* Belt-and-braces: union of stored values + available list so stale values
-                   still render as selected options even if not in the controller's $sectors/$countries. */
                 $storedSectors   = (array) old('filter.sector',  $model->filter['sector']  ?? []);
                 $storedCountries = (array) old('filter.country', $model->filter['country'] ?? []);
 
                 /* scalar-safe: legacy rows may have stored a plain string */
                 if (is_string($storedSectors))   { $storedSectors   = $storedSectors   ? [$storedSectors]   : []; }
                 if (is_string($storedCountries)) { $storedCountries = $storedCountries ? [$storedCountries] : []; }
-
-                /* Build option lists as union so nothing stored is ever silently dropped */
-                $sectorOptions   = array_unique(array_merge($sectors, array_diff($storedSectors, $sectors)));
-                /* $countries is assoc iso => label; merge in any stored iso codes missing from it */
-                $countryOptions  = $countries;
-                foreach ($storedCountries as $iso) {
-                    if (!isset($countryOptions[$iso])) {
-                        $countryOptions[$iso] = $iso; // fallback label = code
-                    }
-                }
             @endphp
 
             <div class="card mb-5" data-segment-dynamic-fields {{ $isManual ? 'hidden' : '' }}>
@@ -192,37 +180,23 @@
                         {{-- Secteurs d'activité --}}
                         <div class="col-md-4 fv-row">
                             <label class="fw-semibold fs-6 mb-2">Secteurs d'activité</label>
-                            <select name="filter[sector][]"
-                                    class="form-select form-select-solid"
-                                    multiple
-                                    data-control="select2"
-                                    data-placeholder="Tous les secteurs"
-                                    data-allow-clear="true">
-                                @foreach($sectorOptions as $sector)
-                                    <option value="{{ $sector }}"
-                                        {{ in_array($sector, $storedSectors) ? 'selected' : '' }}>
-                                        {{ $sector }}
-                                    </option>
-                                @endforeach
-                            </select>
+                            <x-crud.select-multi
+                                name="filter[sector]"
+                                :options="$sectors"
+                                :selected="$storedSectors"
+                                :tags="true"
+                                placeholder="Tous les secteurs" />
                         </div>
 
                         {{-- Pays --}}
                         <div class="col-md-4 fv-row">
                             <label class="fw-semibold fs-6 mb-2">Pays</label>
-                            <select name="filter[country][]"
-                                    class="form-select form-select-solid"
-                                    multiple
-                                    data-control="select2"
-                                    data-placeholder="Tous les pays"
-                                    data-allow-clear="true">
-                                @foreach($countryOptions as $iso => $label)
-                                    <option value="{{ $iso }}"
-                                        {{ in_array($iso, $storedCountries) ? 'selected' : '' }}>
-                                        {{ $label }}
-                                    </option>
-                                @endforeach
-                            </select>
+                            <x-crud.select-multi
+                                name="filter[country]"
+                                :options="$countries"
+                                :selected="$storedCountries"
+                                :labelSuffix="true"
+                                placeholder="Tous les pays" />
                         </div>
 
                         {{-- Statut du contact --}}

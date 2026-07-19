@@ -99,6 +99,7 @@ class ProspectCriteriaViewConfig
             ['key' => 'historique', 'label' => 'Historique', 'icon' => 'bi-clock-history',  'mode' => 'view', 'count' => $runsCount],
             ['key' => 'resultats',  'label' => 'Résultats',  'icon' => 'bi-building-check',  'mode' => 'view', 'count' => $discoveredCount],
             ['key' => 'general',    'label' => 'Général',    'icon' => 'bi-sliders',         'mode' => 'edit'],
+            ['key' => 'automatisation', 'label' => 'Automatisation', 'icon' => 'bi-robot', 'mode' => 'edit'],
         ];
 
         // ── Detail rows ───────────────────────────────────────────────────────

@@ -25,6 +25,7 @@
 
     All multi-value fields use <x-crud.select-multi> component (select2, data-tags where allowed).
     is_active uses hidden input + checkbox pattern (D9) so deactivation always posts is_active=0.
+    It renders in CREATE mode only — on edit, the hero status-bar owns the toggle (AJAX, $toggleableFields).
 --}}
 
 <form method="POST" action="{{ $route }}" class="form" id="form_crud">
@@ -57,6 +58,13 @@
                    data-bs-toggle="tab" href="#criteria_general">
                     <i class="bi bi-sliders me-1"></i>
                     Général
+                </a>
+            </li>
+            <li class="nav-item mt-2">
+                <a class="nav-link text-active-primary ms-0 me-10 py-5"
+                   data-bs-toggle="tab" href="#criteria_automatisation">
+                    <i class="bi bi-robot me-1"></i>
+                    Automatisation
                 </a>
             </li>
         </ul>
@@ -92,6 +100,11 @@
                                        required />
                             </div>
 
+                        </div>
+
+                        {{-- Right column --}}
+                        <div class="col-lg-6">
+
                             {{-- Recherches SerpAPI / jour --}}
                             <div class="fv-row mb-7">
                                 <label class="required fw-semibold fs-6 mb-2">Requêtes de découverte / jour</label>
@@ -117,144 +130,32 @@
 
                         </div>
 
-                        {{-- Right column --}}
-                        <div class="col-lg-6">
-
-                            {{-- Actif — D9: hidden input ensures is_active=0 always posts when unchecked --}}
-                            <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2 d-block">Statut</label>
-                                <div class="d-flex align-items-center justify-content-between border border-dashed rounded p-4">
-                                    <div>
-                                        <div class="fw-semibold text-gray-800 fs-6">Activer ce critère</div>
-                                        <div class="text-muted fs-7">Un critère inactif ne peut pas lancer de découverte.</div>
-                                    </div>
-                                    <div class="form-check form-check-solid form-switch ms-4">
-                                        <input type="hidden" name="is_active" value="0" />
-                                        <input class="form-check-input h-20px w-30px"
-                                               type="checkbox"
-                                               name="is_active"
-                                               id="is_active"
-                                               value="1"
-                                               {{ old('is_active', ($model->is_active ?? true) ? '1' : '0') == '1' ? 'checked' : '' }} />
-                                    </div>
-                                </div>
-                            </div>
-
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {{-- Automatisation card --}}
-            <div class="card mb-5">
-                <div class="card-header border-0 pt-5">
-                    <h3 class="card-title fw-bolder m-0">
-                        <i class="bi bi-clock-history text-success fs-3 me-2"></i>
-                        Automatisation
-                    </h3>
-                    <div class="card-toolbar">
-                        <span class="text-muted fs-7">Découverte + enrichissement automatiques pour ce critère</span>
-                    </div>
-                </div>
-                <div class="card-body border-top p-9">
-                    <div class="row">
-                        {{-- Left column --}}
-                        <div class="col-lg-6">
-
-                            {{-- auto_run — hidden input + checkbox switch, same pattern as is_active --}}
-                            <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2 d-block">Découverte automatique</label>
-                                <div class="d-flex align-items-center justify-content-between border border-dashed rounded p-4">
-                                    <div>
-                                        <div class="fw-semibold text-gray-800 fs-6">Découverte automatique quotidienne</div>
-                                        <div class="text-muted fs-7">Lance la découverte une fois par jour, à l'heure choisie.</div>
-                                    </div>
-                                    <div class="form-check form-check-solid form-switch ms-4">
-                                        <input type="hidden" name="auto_run" value="0" />
-                                        <input class="form-check-input h-20px w-30px"
-                                               type="checkbox"
-                                               name="auto_run"
-                                               id="auto_run"
-                                               value="1"
-                                               {{ old('auto_run', ($model->auto_run ?? false) ? '1' : '0') == '1' ? 'checked' : '' }} />
+                        {{-- Actif — create mode only: on edit, the hero status-bar above the tabs
+                             already exposes this toggle (ProspectCriteriaViewConfig 'toggle' +
+                             $toggleableFields). D9: hidden input ensures is_active=0 always posts
+                             when unchecked. --}}
+                        @if(!isset($model) || !$model->id)
+                            <div class="col-12">
+                                <div class="fv-row mb-7">
+                                    <label class="fw-semibold fs-6 mb-2 d-block">Statut</label>
+                                    <div class="d-flex align-items-center justify-content-between border border-dashed rounded p-4">
+                                        <div>
+                                            <div class="fw-semibold text-gray-800 fs-6">Activer ce critère</div>
+                                            <div class="text-muted fs-7">Un critère inactif ne peut pas lancer de découverte.</div>
+                                        </div>
+                                        <div class="form-check form-check-solid form-switch ms-4">
+                                            <input type="hidden" name="is_active" value="0" />
+                                            <input class="form-check-input h-20px w-30px"
+                                                   type="checkbox"
+                                                   name="is_active"
+                                                   id="is_active"
+                                                   value="1"
+                                                   {{ old('is_active', ($model->is_active ?? true) ? '1' : '0') == '1' ? 'checked' : '' }} />
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-
-                            {{-- run_at_hour — placeholder '' option + 0..23 as HH:00 --}}
-                            <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Heure de lancement</label>
-                                @php
-                                    $currentRunAtHour = old('run_at_hour', $model->run_at_hour ?? null);
-                                @endphp
-                                <select name="run_at_hour" id="run_at_hour" class="form-select form-select-solid">
-                                    <option value="">&mdash;</option>
-                                    @for($h = 0; $h <= 23; $h++)
-                                        <option value="{{ $h }}" {{ (string) $currentRunAtHour === (string) $h ? 'selected' : '' }}>
-                                            {{ sprintf('%02d:00', $h) }}
-                                        </option>
-                                    @endfor
-                                </select>
-                                <div class="form-text text-muted mt-1">
-                                    Heure ({{ $quotaTz ?? 'Europe/Paris' }}) — lancement une fois par jour, à partir de l'heure choisie.
-                                </div>
-                            </div>
-
-                            {{-- contact_limit --}}
-                            <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Contacts max / exécution</label>
-                                <div class="input-group input-group-solid">
-                                    <input type="number"
-                                           name="contact_limit"
-                                           class="form-control form-control-solid"
-                                           value="{{ old('contact_limit', $model->contact_limit ?? '') }}"
-                                           placeholder="Illimité (borné par le quota package)"
-                                           min="1"
-                                           max="500" />
-                                    <span class="input-group-text fw-semibold text-gray-500">contacts / exécution</span>
-                                </div>
-                            </div>
-
-                        </div>
-
-                        {{-- Right column --}}
-                        <div class="col-lg-6">
-
-                            {{-- min_score_enrich --}}
-                            <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Score min. d'enrichissement</label>
-                                <input type="number"
-                                       name="min_score_enrich"
-                                       class="form-control form-control-solid"
-                                       value="{{ old('min_score_enrich', $model->min_score_enrich ?? '') }}"
-                                       placeholder="Hérité : {{ $globalMinScore }}"
-                                       min="0"
-                                       max="100" />
-                                <div class="form-text text-muted mt-1">
-                                    Seules les entreprises dont le score dépasse ce seuil sont enrichies automatiquement. Vide = valeur globale.
-                                </div>
-                            </div>
-
-                            {{-- auto_enrich — plain tri-state select ('' = Hérité), NEVER the hidden-checkbox pattern --}}
-                            <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Enrichissement automatique</label>
-                                @php
-                                    $currentAutoEnrich = $model->auto_enrich ?? null;
-                                @endphp
-                                <select name="auto_enrich" class="form-select form-select-solid">
-                                    <option value="" {{ old('auto_enrich', $currentAutoEnrich === null ? '' : ($currentAutoEnrich ? '1' : '0')) === '' ? 'selected' : '' }}>
-                                        Hérité (@if($globalAutoEnrich) activé @else désactivé @endif)
-                                    </option>
-                                    <option value="1" {{ old('auto_enrich', $currentAutoEnrich === null ? '' : ($currentAutoEnrich ? '1' : '0')) === '1' ? 'selected' : '' }}>
-                                        Activé
-                                    </option>
-                                    <option value="0" {{ old('auto_enrich', $currentAutoEnrich === null ? '' : ($currentAutoEnrich ? '1' : '0')) === '0' ? 'selected' : '' }}>
-                                        Désactivé
-                                    </option>
-                                </select>
-                            </div>
-
-                        </div>
+                        @endif
                     </div>
                 </div>
             </div>
@@ -389,6 +290,126 @@
         </div>
         {{-- end Général --}}
 
+        {{-- ── Automatisation ────────────────────────────────────────────── --}}
+        <div class="tab-pane fade" id="criteria_automatisation" role="tabpanel">
+
+            {{-- Automatisation card --}}
+            <div class="card mb-5">
+                <div class="card-header border-0 pt-5">
+                    <h3 class="card-title fw-bolder m-0">
+                        <i class="bi bi-robot text-success fs-3 me-2"></i>
+                        Automatisation
+                    </h3>
+                    <div class="card-toolbar">
+                        <span class="text-muted fs-7">Découverte + enrichissement automatiques pour ce critère</span>
+                    </div>
+                </div>
+                <div class="card-body border-top p-9">
+                    <div class="row">
+                        {{-- Left column --}}
+                        <div class="col-lg-6">
+
+                            {{-- auto_run — hidden input + checkbox switch, same pattern as is_active --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2 d-block">Découverte automatique</label>
+                                <div class="d-flex align-items-center justify-content-between border border-dashed rounded p-4">
+                                    <div>
+                                        <div class="fw-semibold text-gray-800 fs-6">Découverte automatique quotidienne</div>
+                                        <div class="text-muted fs-7">Lance la découverte une fois par jour, à l'heure choisie.</div>
+                                    </div>
+                                    <div class="form-check form-check-solid form-switch ms-4">
+                                        <input type="hidden" name="auto_run" value="0" />
+                                        <input class="form-check-input h-20px w-30px"
+                                               type="checkbox"
+                                               name="auto_run"
+                                               id="auto_run"
+                                               value="1"
+                                               {{ old('auto_run', ($model->auto_run ?? false) ? '1' : '0') == '1' ? 'checked' : '' }} />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {{-- run_at_hour — placeholder '' option + 0..23 as HH:00 --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Heure de lancement</label>
+                                @php
+                                    $currentRunAtHour = old('run_at_hour', $model->run_at_hour ?? null);
+                                @endphp
+                                <select name="run_at_hour" id="run_at_hour" class="form-select form-select-solid">
+                                    <option value="">&mdash;</option>
+                                    @for($h = 0; $h <= 23; $h++)
+                                        <option value="{{ $h }}" {{ (string) $currentRunAtHour === (string) $h ? 'selected' : '' }}>
+                                            {{ sprintf('%02d:00', $h) }}
+                                        </option>
+                                    @endfor
+                                </select>
+                                <div class="form-text text-muted mt-1">
+                                    Heure ({{ $quotaTz ?? 'Europe/Paris' }}) — lancement une fois par jour, à partir de l'heure choisie.
+                                </div>
+                            </div>
+
+                            {{-- contact_limit --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Contacts max / exécution</label>
+                                <div class="input-group input-group-solid">
+                                    <input type="number"
+                                           name="contact_limit"
+                                           class="form-control form-control-solid"
+                                           value="{{ old('contact_limit', $model->contact_limit ?? '') }}"
+                                           placeholder="Illimité (borné par le quota package)"
+                                           min="1"
+                                           max="500" />
+                                    <span class="input-group-text fw-semibold text-gray-500">contacts / exécution</span>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        {{-- Right column --}}
+                        <div class="col-lg-6">
+
+                            {{-- min_score_enrich --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Score min. d'enrichissement</label>
+                                <input type="number"
+                                       name="min_score_enrich"
+                                       class="form-control form-control-solid"
+                                       value="{{ old('min_score_enrich', $model->min_score_enrich ?? '') }}"
+                                       placeholder="Hérité : {{ $globalMinScore }}"
+                                       min="0"
+                                       max="100" />
+                                <div class="form-text text-muted mt-1">
+                                    Seules les entreprises dont le score dépasse ce seuil sont enrichies automatiquement. Vide = valeur globale.
+                                </div>
+                            </div>
+
+                            {{-- auto_enrich — plain tri-state select ('' = Hérité), NEVER the hidden-checkbox pattern --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Enrichissement automatique</label>
+                                @php
+                                    $currentAutoEnrich = $model->auto_enrich ?? null;
+                                @endphp
+                                <select name="auto_enrich" class="form-select form-select-solid">
+                                    <option value="" {{ old('auto_enrich', $currentAutoEnrich === null ? '' : ($currentAutoEnrich ? '1' : '0')) === '' ? 'selected' : '' }}>
+                                        Hérité (@if($globalAutoEnrich) activé @else désactivé @endif)
+                                    </option>
+                                    <option value="1" {{ old('auto_enrich', $currentAutoEnrich === null ? '' : ($currentAutoEnrich ? '1' : '0')) === '1' ? 'selected' : '' }}>
+                                        Activé
+                                    </option>
+                                    <option value="0" {{ old('auto_enrich', $currentAutoEnrich === null ? '' : ($currentAutoEnrich ? '1' : '0')) === '0' ? 'selected' : '' }}>
+                                        Désactivé
+                                    </option>
+                                </select>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+        {{-- end Automatisation --}}
+
     </div>
     {{-- end tab-content --}}
 
@@ -427,6 +448,9 @@
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
+    @if(isset($model) && $model->id)
+        @include('backend.contents.prospect_criteria.partials._discovery-script')
+    @endif
     <script>
         // Re-baseline the crud-tabs.js dirty-guard snapshot after on-load PROGRAMMATIC
         // mutations (async ai_queries injection, run_at_hour disable) so an untouched form
