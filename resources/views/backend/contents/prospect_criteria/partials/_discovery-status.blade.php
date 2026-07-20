@@ -110,8 +110,14 @@
                     </div>
                     <div class="col-xl-3 col-md-6">
                         <div class="rounded bg-light-warning p-3 h-100">
-                            <div class="text-muted fs-8 text-uppercase fw-semibold">Tentatives d’enrichissement</div>
+                            <div class="text-muted fs-8 text-uppercase fw-semibold mb-1">Tentatives d’enrichissement</div>
+                            <div class="fw-bold text-gray-800 mb-1">
+                                Réussites — objectif :
+                                <span data-discovery-successes>{{ $progress['successful_enrichments'] }}</span>
+                                / <span data-discovery-successes-target>{{ $progress['successful_enrichments_target'] }}</span>
+                            </div>
                             <div class="fw-bold text-gray-800">
+                                Tentatives consommées — quota :
                                 <span data-discovery-contact-attempts>{{ $progress['contact_attempts_consumed'] }}</span>
                                 / <span data-discovery-contact-attempts-total>{{ $progress['contact_attempts_reserved'] }}</span>
                             </div>
@@ -123,7 +129,6 @@
                     Résultats de cette exécution :
                     <strong data-discovery-companies>{{ $progress['companies_count'] }}</strong> entreprise(s) enregistrée(s),
                     <strong data-discovery-low-score>{{ $progress['low_score_count'] }}</strong> sous le seuil d’enrichissement,
-                    <strong data-discovery-successes>{{ $progress['successful_enrichments'] }}</strong>/<strong data-discovery-successes-target>{{ $progress['successful_enrichments_target'] }}</strong> enrichissement(s) réussi(s),
                     <strong data-discovery-contacts>{{ $progress['contacts_count'] }}</strong> contacts créé(s),
                     <strong data-discovery-excluded>{{ $progress['excluded_count'] }}</strong> exclue(s),
                     <strong data-discovery-skipped>{{ $progress['skipped_count'] }}</strong> ignorée(s).

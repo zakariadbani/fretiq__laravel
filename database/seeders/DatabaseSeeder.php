@@ -22,10 +22,9 @@ class DatabaseSeeder extends Seeder
             \Database\Seeders\UsersSeeder::class,
             \Database\Seeders\SettingsSeeder::class,
             \Database\Seeders\DefaultProspectionSeeder::class,
-            \Database\Seeders\SequenceSeeder::class,
             \Database\Seeders\ProspectCriteriaSeeder::class,
             // Must run after ProspectCriteriaSeeder (reads the famille criteria ids)
-            // and after DefaultProspectionSeeder (reads the mnejjar@tcl.ma sender).
+            // and after DefaultProspectionSeeder (reads the shared sender).
             \Database\Seeders\TclFamilleSequenceSeeder::class,
             \Database\Seeders\PackagesSeeder::class,
         ]);

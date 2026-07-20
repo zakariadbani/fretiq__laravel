@@ -728,6 +728,102 @@ class ProspectCriteriaTest extends TestCase
         $this->assertSame(['apercu', 'general', 'automatisation', 'resultats'], $tabKeys);
     }
 
+    public function test_running_discovery_renders_success_objective_and_attempt_quota_separately(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name' => 'Critère compteurs enrichissement',
+            'daily_limit' => 4,
+            'is_active' => true,
+        ]);
+
+        DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'discovery',
+            'status' => 'running',
+            'credits_reserved' => 4,
+            'searches_reserved' => 4,
+            'searches_consumed' => 1,
+            'contact_credits_reserved' => 10,
+            'contact_consumed' => 1,
+            'successful_enrichments_target' => 2,
+            'successful_enrichments' => 1,
+            'quota_date' => now()->toDateString(),
+            'started_at' => now(),
+        ]);
+
+        $content = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/'.$criteria->id)
+            ->assertOk()
+            ->getContent();
+
+        $activePanel = strstr($content, 'data-discovery-active-panel') ?: $content;
+        $resultsStart = strpos($activePanel, 'Résultats de cette exécution :');
+        $counterCards = $resultsStart === false ? $activePanel : substr($activePanel, 0, $resultsStart);
+
+        $this->assertStringContainsString('Réussites — objectif :', $counterCards);
+        $this->assertMatchesRegularExpression('/data-discovery-successes>\s*1\s*<\/span>\s*\/\s*<span data-discovery-successes-target>\s*2\s*<\/span>/', $counterCards);
+        $this->assertStringContainsString('Tentatives consommées — quota :', $counterCards);
+        $this->assertMatchesRegularExpression('/data-discovery-contact-attempts>\s*1\s*<\/span>\s*\/\s*<span data-discovery-contact-attempts-total>\s*10\s*<\/span>/', $counterCards);
+        $this->assertSame(1, substr_count($content, 'data-discovery-successes>'));
+        $this->assertSame(1, substr_count($content, 'data-discovery-successes-target>'));
+    }
+
+    public function test_discovery_counter_edge_states_keep_their_exact_values_and_completed_layout(): void
+    {
+        $scenarios = [
+            'zero of target' => ['running', 0, 2, 0, 10],
+            'target reached early' => ['running', 2, 2, 3, 10],
+            'attempt quota exhausted below target' => ['running', 1, 2, 10, 10],
+            'failed partial run' => ['failed', 1, 2, 4, 10],
+            'completed compact run' => ['completed', 2, 2, 3, 10],
+        ];
+
+        foreach ($scenarios as $name => [$status, $successes, $target, $attempts, $reserved]) {
+            $criteria = ProspectCriteria::create([
+                'name' => 'Critère '.$name,
+                'daily_limit' => 4,
+                'is_active' => true,
+            ]);
+
+            DiscoveryRun::create([
+                'prospect_criteria_id' => $criteria->id,
+                'type' => 'discovery',
+                'status' => $status,
+                'credits_reserved' => 4,
+                'searches_reserved' => 4,
+                'searches_consumed' => 1,
+                'contact_credits_reserved' => $reserved,
+                'contact_consumed' => $attempts,
+                'successful_enrichments_target' => $target,
+                'successful_enrichments' => $successes,
+                'quota_date' => now()->toDateString(),
+                'started_at' => now(),
+                'finished_at' => in_array($status, ['failed', 'completed'], true) ? now() : null,
+            ]);
+
+            $content = $this->actingAs($this->superadmin)
+                ->get('/admin/prospect_criteria/'.$criteria->id)
+                ->assertOk()
+                ->getContent();
+
+            $this->assertMatchesRegularExpression(
+                '/data-discovery-successes>\s*'.$successes.'\s*<\/span>\s*\/\s*<span data-discovery-successes-target>\s*'.$target.'\s*<\/span>/',
+                $content,
+                $name,
+            );
+            $this->assertMatchesRegularExpression(
+                '/data-discovery-contact-attempts>\s*'.$attempts.'\s*<\/span>\s*\/\s*<span data-discovery-contact-attempts-total>\s*'.$reserved.'\s*<\/span>/',
+                $content,
+                $name,
+            );
+
+            if ($status === 'completed') {
+                $this->assertStringContainsString('card-body py-3" data-discovery-summary', $content);
+                $this->assertStringContainsString('card-body py-5 d-none" data-discovery-active-panel', $content);
+            }
+        }
+    }
+
     // ── TODO-PC-2: Dupliquer ──────────────────────────────────────────────────
 
     /**

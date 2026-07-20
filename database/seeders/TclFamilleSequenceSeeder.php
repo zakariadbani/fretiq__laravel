@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\Campaign;
 use App\Models\CampaignTemplate;
+use App\Models\CampaignTemplateTranslation;
 use App\Models\ProspectCriteria;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
@@ -22,8 +23,8 @@ use Illuminate\Database\Seeder;
  *   CampaignTemplate ×4 → Sequence + SequenceStep ×4 → Segment → Campaign
  * Totals: 12 templates, 3 sequences (12 steps), 3 segments, 3 campaigns.
  *
- * All inserts use firstOrCreate with a stable logical key → idempotent across
- * migrate:fresh --seed runs. NOTHING seeded here is dispatchable until a human
+ * Base records use firstOrCreate with stable logical keys; English translations
+ * use updateOrCreate so copy and source hashes stay current. NOTHING seeded here is dispatchable until a human
  * activates it in the back-office:
  *   - Sequence: is_active = false (scheduler requires is_active=true to enroll
  *     contacts or send steps)
@@ -93,12 +94,13 @@ class TclFamilleSequenceSeeder extends Seeder
             2 => $this->famille2Templates(),
             3 => $this->famille3Templates(),
         ];
+        $englishTranslations = $this->englishTranslations();
 
         foreach ([1, 2, 3] as $n) {
             $tpl = [];
 
             foreach ($templates[$n] as $definition) {
-                $tpl[] = CampaignTemplate::firstOrCreate(
+                $template = CampaignTemplate::firstOrCreate(
                     ['name' => $definition['name']],
                     [
                         'subject'      => $definition['subject'],
@@ -106,6 +108,27 @@ class TclFamilleSequenceSeeder extends Seeder
                         'html_content' => $definition['html_content'],
                     ],
                 );
+                $hashes = $template->sourceHashes();
+                $translation = $englishTranslations[$definition['name']];
+
+                CampaignTemplateTranslation::updateOrCreate(
+                    [
+                        'campaign_template_id' => $template->id,
+                        'language' => 'en',
+                    ],
+                    [
+                        'subject' => $translation['subject'],
+                        'preview_text' => $translation['preview_text'],
+                        'html_content' => $translation['html_content'],
+                        'is_ai_generated' => true,
+                        'reviewed_at' => null,
+                        'src_subject_hash' => $hashes['subject'],
+                        'src_preview_hash' => $hashes['preview'],
+                        'src_body_hash' => $hashes['body'],
+                    ],
+                );
+
+                $tpl[] = $template;
             }
 
             // ── 2. Sequence + Steps ───────────────────────────────────────────────
@@ -156,7 +179,7 @@ class TclFamilleSequenceSeeder extends Seeder
             // ── 4. Campaign (safe draft — never dispatched) ───────────────────────
             if ($sender === null) {
                 $this->command?->warn(
-                    "TclFamilleSequenceSeeder: sender identity mnejjar@tcl.ma introuvable — "
+                    "TclFamilleSequenceSeeder: sender identity sales@tcltransport.com introuvable — "
                     . "campagne Famille {$n} non créée."
                 );
 
@@ -181,6 +204,260 @@ class TclFamilleSequenceSeeder extends Seeder
                 ],
             );
         }
+    }
+
+    /** @return array<string, array{subject: string, preview_text: string, html_content: string}> */
+    private function englishTranslations(): array
+    {
+        return [
+            'Famille 1 — Email 1 (J0) — Maîtrise de la contrainte' => [
+                'subject' => 'Secure your sensitive imports from Europe — {{company.name}}',
+                'preview_text' => 'Critical deadlines, sensitive goods and compliance: dedicated handling.',
+                'html_content' => <<<HTML
+<p>Hello {{contact.first_name}},</p>
+
+<p>When handling sensitive goods — healthcare, medical equipment, high-tech products or regulated instruments —
+a customs clearance delay or supply-chain disruption is never trivial: deadlines are critical, goods are high-value
+and certifications must be respected.</p>
+
+<p>At <strong>TCL Transport</strong>, we support Moroccan importers sourcing from Europe, with dedicated handling for
+high-value goods and products subject to strict regulations: traceability, temperature-controlled transport and
+complete export/import documentation.</p>
+
+<p>For your most urgent shipments, we are an <strong>IATA agent</strong> and work directly with airlines for both cargo
+and express services. This enables us to secure tight deadlines without an additional intermediary.</p>
+
+<p>Would you have 15 minutes this week to discuss your current flows and identify any friction points?</p>
+
+<p>Kind regards,<br>
+The TCL Transport team</p>
+
+HTML,
+            ],
+            'Famille 1 — Email 2 (J+4) — Preuve concrète' => [
+                'subject' => 'A recent air-freight shipment in practice',
+                'preview_text' => 'Collection within 48 hours and end-to-end documentation tracking.',
+                'html_content' => <<<HTML
+<p>Hello {{contact.first_name}},</p>
+
+<p>Following up on my previous message: we recently managed an urgent shipment for an importer in your sector,
+with collection required within 48 hours and complete documentation tracking through to final delivery.</p>
+
+<p>This type of situation is common in healthcare and medical logistics and, more broadly, for all controlled goods.
+If you face similar constraints, I can explain how we structure priority flows without systematically adding an
+urgency surcharge.</p>
+
+<p>We also operate <strong>customs-bonded warehouses (MEAD) in Tangier and Casablanca</strong>, helping streamline
+customs clearance for the most tightly controlled products.</p>
+
+<p>Would you like me to send you the details?</p>
+
+<p>Kind regards,<br>
+The TCL Transport team</p>
+
+HTML,
+            ],
+            'Famille 1 — Email 3 (J+9) — Contenu expert' => [
+                'subject' => 'What is changing in import customs controls',
+                'preview_text' => 'A compliance checklist to help prevent customs holds.',
+                'html_content' => <<<HTML
+<p>Hello {{contact.first_name}},</p>
+
+<p>One development directly affecting your flows is the tightening of document checks for certain sensitive or
+regulated products, for both imports and exports.</p>
+
+<p>We have prepared a <strong>compliance checklist</strong> to anticipate these checks and prevent customs holds. I
+would be glad to share it or simply discuss your current process.</p>
+
+<p>For less urgent but regular flows, our <strong>FCL/LCL ocean-freight service</strong> remains a relevant complement
+to air freight, offering better economics for volumes that can be planned.</p>
+
+<p>Kind regards,<br>
+The TCL Transport team</p>
+
+HTML,
+            ],
+            'Famille 1 — Email 4 (J+15) — CTA direct' => [
+                'subject' => 'A complimentary review of your supply chain?',
+                'preview_text' => 'A no-obligation 20-minute outside view of your logistics flows.',
+                'html_content' => <<<HTML
+<p>Hello {{contact.first_name}},</p>
+
+<p>I would like to offer a brief, no-obligation 20-minute review of your current import flows: lead times, recurring
+bottlenecks and any non-compliance costs.</p>
+
+<p>You will gain an independent view of your logistics, whether or not we subsequently work together.</p>
+
+<p>If regulated storage is also a priority, we offer <strong>warehousing and inventory management (WMS, picking)</strong>
+tailored to sensitive products.</p>
+
+<p>What time would suit you this week or next?</p>
+
+<p>Kind regards,<br>
+The TCL Transport team</p>
+
+HTML,
+            ],
+            'Famille 2 — Email 1 (J0) — Angle coût' => [
+                'subject' => 'Optimise the cost of your Europe–Morocco flows',
+                'preview_text' => 'Regular road groupage from Goussainville, Barcelona and Porto.',
+                'html_content' => <<<HTML
+<p>Hello {{contact.first_name}},</p>
+
+<p>On the Europe–Morocco corridor, many companies still pay a premium because groupage is not fully optimised or
+shipping frequency is inconsistent.</p>
+
+<p><strong>TCL Transport</strong> works with several businesses in your sector on this corridor, systematically
+optimising the volume-to-cost ratio of industrial flows through road groupage, LCL and FCL.</p>
+
+<p>We operate regular <strong>road groupage departures to Tangier and Casablanca</strong>: four departures per week
+from our Goussainville platform in France, two to three per week from Barcelona and one weekly departure from Porto.</p>
+
+<p>Would you be open to a quick comparison with your current solution?</p>
+
+<p>Kind regards,<br>
+The TCL Transport team</p>
+
+HTML,
+            ],
+            'Famille 2 — Email 2 (J+4) — Preuve sociale chiffrée' => [
+                'subject' => 'A practical example from your sector',
+                'preview_text' => 'Higher load factors, lower unit costs and more reliable lead times.',
+                'html_content' => <<<HTML
+<p>Hello {{contact.first_name}},</p>
+
+<p>Here is a practical example involving industrial flows comparable to yours: by optimising load factors and
+departure frequency from Europe, we helped a client significantly reduce unit transport costs while improving
+delivery reliability.</p>
+
+<p>For larger volumes, we also offer <strong>full truckload (FTL)</strong> for both imports and exports, alongside
+our groupage service.</p>
+
+<p>If your current volumes are suitable, I can prepare a quick simulation based on your actual flows.</p>
+
+<p>Kind regards,<br>
+The TCL Transport team</p>
+
+HTML,
+            ],
+            'Famille 2 — Email 3 (J+9) — Urgence & saisonnalité' => [
+                'subject' => 'Plan ahead for your volume peaks',
+                'preview_text' => 'Avoid spot-rate increases and capacity constraints.',
+                'html_content' => <<<HTML
+<p>Hello {{contact.first_name}},</p>
+
+<p>Your sector typically experiences volume peaks at certain times of year. Planning ahead helps avoid spot-rate
+increases and delays caused by limited capacity.</p>
+
+<p>For larger volumes, our <strong>FCL/LCL ocean-freight service</strong> is often the most economical option. We are
+currently planning capacity allocations for the coming months, including departures from Asia and the United States.</p>
+
+<p>Would you like to discuss it?</p>
+
+<p>Kind regards,<br>
+The TCL Transport team</p>
+
+HTML,
+            ],
+            'Famille 2 — Email 4 (J+15) — Offre tarifaire' => [
+                'subject' => 'A complimentary rate simulation for {{company.name}}',
+                'preview_text' => 'A no-obligation cost simulation within 48 hours.',
+                'html_content' => <<<HTML
+<p>Hello {{contact.first_name}},</p>
+
+<p>I would like to offer a <strong>cost simulation within 48 hours</strong> for your current industrial flows, with
+no commitment required. It will give you a concrete benchmark.</p>
+
+<p>Beyond transport, we also provide a complete logistics service
+(<strong>warehousing, inventory management, WMS and picking</strong>) that can integrate with your existing supply
+chain when needed.</p>
+
+<p>I only need your approximate volumes and usual shipping frequency.</p>
+
+<p>May I call you this week to collect those details?</p>
+
+<p>Kind regards,<br>
+The TCL Transport team</p>
+
+HTML,
+            ],
+            'Famille 3 — Email 1 (J0) — Gestion de projet' => [
+                'subject' => 'Keep project deadlines on track without logistics surprises',
+                'preview_text' => 'Sourcing, transport, customs and delivery aligned with your schedule.',
+                'html_content' => <<<HTML
+<p>Hello {{contact.first_name}},</p>
+
+<p>An equipment project often depends on a fixed date — opening, commissioning or site delivery — that leaves no
+room for logistics delays.</p>
+
+<p><strong>TCL Transport</strong> supports these projects with dedicated end-to-end coordination: sourcing, transport,
+customs clearance and final delivery aligned with your site schedule, using <strong>FCL/LCL ocean freight</strong> or
+<strong>full truckload (FTL)</strong> according to the equipment involved.</p>
+
+<p>Do you have a current project where a brief logistics review would be useful?</p>
+
+<p>Kind regards,<br>
+The TCL Transport team</p>
+
+HTML,
+            ],
+            'Famille 3 — Email 2 (J+4) — Cas concret' => [
+                'subject' => 'A project managed from end to end',
+                'preview_text' => 'Multiple deliveries synchronised to a demanding site schedule.',
+                'html_content' => <<<HTML
+<p>Hello {{contact.first_name}},</p>
+
+<p>To illustrate our approach, we recently coordinated all transport and logistics for a client delivering an
+equipment project comparable to yours, with several deliveries synchronised to a demanding site schedule.</p>
+
+<p>This coordination requires full visibility across every link in the chain — our core expertise in project logistics.
+Our <strong>customs-bonded warehouses (MEAD) in Tangier and Casablanca</strong> also provide flexible temporary storage
+until the site's delivery window opens.</p>
+
+<p>Would you like to learn more about our project-management method?</p>
+
+<p>Kind regards,<br>
+The TCL Transport team</p>
+
+HTML,
+            ],
+            'Famille 3 — Email 3 (J+9) — Accompagnement amont' => [
+                'subject' => 'Bring logistics into the purchasing phase',
+                'preview_text' => 'Anticipate logistics constraints from the sourcing stage.',
+                'html_content' => <<<HTML
+<p>Hello {{contact.first_name}},</p>
+
+<p>One frequently underestimated aspect of equipment projects is logistics planning during sourcing and purchasing.
+Addressing constraints early prevents extra costs or delays from emerging too late in the project.</p>
+
+<p>We provide this upstream support and, when needed, <strong>warehousing and inventory management (WMS, picking)</strong>
+while your project progresses — helping secure future projects from the definition stage onward.</p>
+
+<p>Kind regards,<br>
+The TCL Transport team</p>
+
+HTML,
+            ],
+            'Famille 3 — Email 4 (J+15) — CTA planning' => [
+                'subject' => 'Let us discuss your next project',
+                'preview_text' => '20 minutes to anticipate lead times, customs and site coordination.',
+                'html_content' => <<<HTML
+<p>Hello {{contact.first_name}},</p>
+
+<p>Do you have an upcoming project that would benefit from logistics planning? I suggest a 20-minute discussion to
+anticipate the critical points: lead times, customs and site coordination.</p>
+
+<p>For a practical view of our facilities, you can also take a 3D tour of our warehouses:
+<a href="https://tcltransport.com/visite-virtuelle-360/entrepot/">https://tcltransport.com/visite-virtuelle-360/entrepot/</a></p>
+
+<p>What time would work best for you?</p>
+
+<p>Kind regards,<br>
+The TCL Transport team</p>
+
+HTML,
+            ],
+        ];
     }
 
     // ──────────────────────────────────────────────────────────────────────────────

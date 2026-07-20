@@ -242,6 +242,31 @@ class DiscoveryProgressUiContractTest extends TestCase
         $this->assertStringContainsString('Contacts créés', $history);
     }
 
+    public function test_fourth_progress_card_distinguishes_success_objective_from_attempt_quota(): void
+    {
+        $status = file_get_contents($this->views.'/partials/_discovery-status.blade.php');
+
+        preg_match_all('/class="col-xl-3 col-md-6"/', $status, $cards, PREG_OFFSET_CAPTURE);
+        $this->assertCount(4, $cards[0]);
+
+        $resultsStart = strpos($status, 'Résultats de cette exécution :');
+        $this->assertNotFalse($resultsStart);
+        $fourthCard = substr($status, $cards[0][3][1], $resultsStart - $cards[0][3][1]);
+
+        $this->assertStringContainsString('Réussites — objectif :', $fourthCard);
+        $this->assertStringContainsString('data-discovery-successes>', $fourthCard);
+        $this->assertStringContainsString('data-discovery-successes-target>', $fourthCard);
+        $this->assertStringContainsString('Tentatives consommées — quota :', $fourthCard);
+        $this->assertStringContainsString('data-discovery-contact-attempts>', $fourthCard);
+        $this->assertStringContainsString('data-discovery-contact-attempts-total>', $fourthCard);
+        $this->assertSame(2, preg_match_all('/class="[^"]*fw-bold text-gray-800[^"]*"/', $fourthCard));
+        $this->assertSame(1, substr_count($status, 'data-discovery-successes>'));
+        $this->assertSame(1, substr_count($status, 'data-discovery-successes-target>'));
+        $this->assertSame(1, substr_count($status, 'data-discovery-contact-attempts>'));
+        $this->assertSame(1, substr_count($status, 'data-discovery-contact-attempts-total>'));
+        $this->assertStringNotContainsString('enrichissement(s) réussi(s),', $status);
+    }
+
     public function test_polling_updates_domain_snapshot_and_low_score_counters(): void
     {
         $script = file_get_contents($this->views.'/partials/_discovery-script.blade.php');
