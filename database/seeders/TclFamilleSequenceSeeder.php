@@ -47,7 +47,7 @@ class TclFamilleSequenceSeeder extends Seeder
         // resolved defensively: a missing sender means we skip the campaigns
         // (sender_identity_id is NOT NULL with a RESTRICT FK); a missing criteria
         // just leaves criteria_id out of the segment filter.
-        $sender = SenderIdentity::where('email', 'mnejjar@tcl.ma')->first();
+        $sender = SenderIdentity::where('email', 'sales@tcltransport.com')->first();
 
         $criteriaIds = [
             1 => ProspectCriteria::where('name', 'Famille 1 — Urgence & Réglementation (Importateurs MA)')->value('id'),

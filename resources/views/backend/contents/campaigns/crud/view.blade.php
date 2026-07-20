@@ -57,6 +57,55 @@
             'config' => $viewConfig ?? \App\Crud\ViewConfigs\CampaignViewConfig::make($model, $stats ?? null, $recipientsTotal ?? null),
         ])
 
+        @if($model->schedule_type === 'paced' && is_array($pacedProgress ?? null))
+        <div class="card card-flush mt-6">
+            <div class="card-header pt-5">
+                <h3 class="card-title fw-bold">Progression des sociétés</h3>
+            </div>
+            <div class="card-body pt-2">
+                <div class="row g-4">
+                    <div class="col-sm-6 col-xl-3">
+                        <div class="border rounded p-4 h-100" data-paced-processed="{{ $pacedProgress['processed'] }}">
+                            <div class="fs-2 fw-bold text-success">{{ number_format($pacedProgress['processed']) }}</div>
+                            <div class="text-muted fw-semibold">Sociétés traitées</div>
+                        </div>
+                    </div>
+                    <div class="col-sm-6 col-xl-3">
+                        <div class="border rounded p-4 h-100" data-paced-backlog-companies="{{ $pacedProgress['backlog_companies'] }}" data-paced-backlog-contacts="{{ $pacedProgress['backlog_contacts'] }}">
+                            <div class="fs-2 fw-bold text-primary">{{ number_format($pacedProgress['backlog_companies']) }}</div>
+                            <div class="text-muted fw-semibold">File actuelle</div>
+                            <div class="text-muted fs-8">{{ number_format($pacedProgress['backlog_contacts']) }} contact(s)</div>
+                        </div>
+                    </div>
+                    <div class="col-sm-6 col-xl-3">
+                        <div class="border rounded p-4 h-100" data-paced-failed="{{ $pacedProgress['failed'] }}">
+                            <div class="fs-2 fw-bold text-danger">{{ number_format($pacedProgress['failed']) }}</div>
+                            <div class="text-muted fw-semibold">Sociétés en échec</div>
+                        </div>
+                    </div>
+                    <div class="col-sm-6 col-xl-3">
+                        <div class="border rounded p-4 h-100" data-paced-last-batch-companies="{{ $pacedProgress['last_batch_companies'] }}">
+                            <div class="fw-bold text-gray-900">
+                                @if($pacedProgress['last_batch'])
+                                    {{ number_format($pacedProgress['last_batch_companies']) }} société(s)
+                                @else
+                                    —
+                                @endif
+                            </div>
+                            <div class="text-muted fw-semibold">Dernier lot</div>
+                            @if($pacedProgress['last_batch'])
+                                <div class="text-muted fs-8">{{ $pacedProgress['last_batch']->run_at->copy()->setTimezone($model->scheduleTimezone())->format('d/m/Y') }}</div>
+                            @endif
+                            <div class="text-muted fs-8 mt-2">
+                                Prochain lot : {{ $model->next_run_at ? $model->next_run_at->copy()->setTimezone($model->scheduleTimezone())->format('d/m/Y H:i') : 'non défini' }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        @endif
+
         {{-- ── Sequence stat: enrolled contacts ─────────────────────────── --}}
         @if($model->schedule_type === 'sequence')
         <div class="row g-4 mt-2">
@@ -280,12 +329,17 @@
         document.addEventListener('DOMContentLoaded', function () {
 
             // ── Schedule button ──────────────────────────────────────────────
+            const campaignActionErrorMessage = function (error) {
+                const data = error.response?.data || {};
+                if (typeof data.text === 'string' && data.text.trim() !== '') return data.text;
+                if (typeof data.message === 'string' && data.message.trim() !== '') return data.message;
+                if (Array.isArray(data.messages) && data.messages.length > 0) return data.messages.join(' ');
+                return error.message || 'Impossible de vérifier l’audience finale.';
+            };
+
             const previewDispatch = function (button) {
                 return axios.get(button.dataset.previewUrl).then(function (response) {
                     return response.data;
-                }).catch(function (error) {
-                    const data = error.response?.data || {};
-                    throw new Error(data.text || data.message || (data.messages || []).join(' ') || 'Impossible de vérifier l’audience finale.');
                 });
             };
 
@@ -315,13 +369,16 @@
             if (btnSchedule) {
                 btnSchedule.addEventListener('click', function () {
                     const self = this;
+                    const isPaced = (self.dataset.scheduleType || '') === 'paced';
                     self.disabled = true;
 
                     previewDispatch(self)
                         .then(function (preview) {
                             return Swal.fire({
-                                title: 'Planifier la campagne ?',
-                                html: 'Audience vérifiée : <strong>' + preview.count + '</strong> destinataire(s) éligible(s).<br>La campagne sera placée en file d’attente pour l’envoi à la date planifiée.',
+                                title: isPaced ? 'Activer l’envoi progressif ?' : 'Planifier la campagne ?',
+                                html: isPaced
+                                    ? 'Audience actuelle : <strong>' + preview.company_count + '</strong> société(s), <strong>' + preview.contact_count + '</strong> contact(s).<br>Cette action active les lots continus des jours ouvrés ; elle ne met pas toute la campagne en file d’attente.'
+                                    : 'Audience vérifiée : <strong>' + preview.count + '</strong> destinataire(s) éligible(s).<br>La campagne sera placée en file d’attente pour l’envoi à la date planifiée.',
                                 icon: 'question',
                                 showCancelButton: true,
                                 confirmButtonText: 'Planifier',
@@ -338,7 +395,7 @@
                                 return postCampaignAction(self);
                             }
                         })
-                        .catch(function (error) { showBlocked(error.message); })
+                        .catch(function (error) { showBlocked(campaignActionErrorMessage(error)); })
                         .finally(function () { self.disabled = false; });
                 });
             }
@@ -399,14 +456,18 @@
                     const self = this;
                     const scheduleType = self.dataset.scheduleType || '';
                     const isSequence = scheduleType === 'sequence';
+                    const isPaced = scheduleType === 'paced';
+                    const dailyCompanyLimit = self.dataset.dailyCompanyLimit || '20';
                     self.disabled = true;
 
                     previewDispatch(self)
                         .then(function (preview) {
                             return Swal.fire({
-                                title: isSequence ? 'Démarrer la séquence ?' : 'Envoyer maintenant ?',
-                                html: 'Audience vérifiée : <strong>' + preview.count + '</strong> destinataire(s) éligible(s).<br>'
-                                    + (isSequence ? 'Les contacts déjà inscrits seront ignorés.' : 'La campagne sera envoyée immédiatement. Cette action ne peut pas être annulée.'),
+                                title: isSequence ? 'Démarrer la séquence ?' : (isPaced ? 'Envoyer le lot du jour ?' : 'Envoyer maintenant ?'),
+                                html: isPaced
+                                    ? 'Audience actuelle : <strong>' + preview.company_count + '</strong> société(s), <strong>' + preview.contact_count + '</strong> contact(s).<br>Cette action prépare uniquement le lot du jour, limité à <strong>' + dailyCompanyLimit + '</strong> société(s).'
+                                    : 'Audience vérifiée : <strong>' + preview.count + '</strong> destinataire(s) éligible(s).<br>'
+                                        + (isSequence ? 'Les contacts déjà inscrits seront ignorés.' : 'La campagne sera envoyée immédiatement. Cette action ne peut pas être annulée.'),
                                 icon: isSequence ? 'question' : 'warning',
                                 showCancelButton: true,
                                 confirmButtonText: isSequence ? 'Démarrer' : 'Envoyer',
@@ -423,7 +484,7 @@
                                 return postCampaignAction(self);
                             }
                         })
-                        .catch(function (error) { showBlocked(error.message); })
+                        .catch(function (error) { showBlocked(campaignActionErrorMessage(error)); })
                         .finally(function () { self.disabled = false; });
                 });
             }        });

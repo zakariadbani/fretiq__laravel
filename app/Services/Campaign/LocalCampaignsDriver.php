@@ -7,7 +7,6 @@ use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Str;
 
 /**
  * LocalCampaignsDriver — development/test implementation of CampaignsClient.
@@ -15,12 +14,10 @@ use Illuminate\Support\Str;
  * Sends via Laravel Mail, which in dev routes to Mailpit and in tests respects
  * Mail::fake(). Never uses Mail::raw() — a real CampaignMailable is always used.
  *
- * Residual idempotency note: if the process dies after Mail::send() completes but
- * before the caller persists provider_message_id, the next retry will re-send
- * (recipient still has status='queued' + provider_message_id IS NULL). This is
- * accepted for the local driver. A real SMTP/Zoho driver should pass a provider-
- * level idempotency key (e.g. the recipient DB id as a Message-ID header) to
- * prevent the rare double-send.
+ * Retry identity is stable per CampaignRecipient: both Message-ID and the local
+ * provider reference derive from its database ID. SMTP/provider deduplication is
+ * still best-effort; exact-once delivery is impossible without provider-side
+ * reconciliation after a process dies between acceptance and local persistence.
  *
  * ZohoCampaignsDriver is Phase 5 — do NOT build it yet.
  */
@@ -52,6 +49,7 @@ class LocalCampaignsDriver implements CampaignsClient
         // Merge tags are substituted per-recipient so each contact sees their own name.
         $rawSubject = $campaign->subject ?: $resolved['subject'];
         $subject    = CampaignMailable::renderMergeTags($rawSubject, $contact, $unsubscribeUrl);
+        $messageId  = 'campaign-recipient-' . $recipient->id . '@fretiq.local';
 
         $mailable = new CampaignMailable(
             campaign:       $campaign,
@@ -62,12 +60,13 @@ class LocalCampaignsDriver implements CampaignsClient
             unsubscribeUrl: $unsubscribeUrl,
             resolvedHtml:   $resolved['html_content'],
             language:       $resolved['language'],
+            messageId:      $messageId,
         );
 
         Mail::to($contact->email)->send($mailable);
 
-        // Generate a local provider message ID — unique per send.
-        return 'local-' . Str::uuid()->toString();
+        // Stable retry identity. Provider dedupe remains best-effort.
+        return 'local-recipient-' . $recipient->id;
     }
 
     /**

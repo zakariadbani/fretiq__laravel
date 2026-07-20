@@ -59,6 +59,10 @@ Schedule::command('sequences:process')
     ->everyMinute()
     ->withoutOverlapping();
 
+Schedule::command('campaigns:sync-sequence-enrollments')
+    ->everyMinute()
+    ->withoutOverlapping();
+
 /*
 |--------------------------------------------------------------------------
 | Sprint-5: Campaign stats sync

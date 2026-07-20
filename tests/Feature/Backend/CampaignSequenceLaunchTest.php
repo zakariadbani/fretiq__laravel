@@ -14,6 +14,7 @@ use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStep;
 use App\Models\Suppression;
+use App\Models\User;
 use App\Services\Campaign\CampaignService;
 use App\Services\Campaign\SequenceService;
 use Database\Seeders\Acl\PermissionsSeeder;
@@ -134,6 +135,278 @@ class CampaignSequenceLaunchTest extends TestCase
     }
 
     // ── Tests ──────────────────────────────────────────────────────────────────
+
+    public function test_starting_sequence_campaign_enables_continuous_enrollment(): void
+    {
+        $company = $this->makeCompany('client');
+        $this->makeContact($company);
+        $campaign = $this->makeCampaign(
+            $this->makeSegment('client'),
+            $this->makeSequenceWithSteps(2),
+        );
+        $admin = User::factory()->create(['email_verified_at' => now()]);
+        $admin->assignRole('superadmin');
+
+        $this->actingAs($admin)
+            ->post("/admin/campaigns/{$campaign->id}/send")
+            ->assertOk();
+
+        $this->assertDatabaseHas('campaigns', [
+            'id' => $campaign->id,
+            'sequence_auto_enroll_enabled' => true,
+        ]);
+    }
+
+    public function test_sync_command_enrolls_newly_eligible_contact_at_step_zero(): void
+    {
+        $company = $this->makeCompany('client');
+        $this->makeContact($company);
+        $segment = $this->makeSegment('client');
+        $sequence = $this->makeSequenceWithSteps(2);
+        $campaign = $this->makeCampaign($segment, $sequence);
+
+        app(CampaignService::class)->launchSequence($campaign);
+        $campaign->update(['sequence_auto_enroll_enabled' => true]);
+        $newContact = $this->makeContact($company);
+
+        $this->artisan('campaigns:sync-sequence-enrollments')
+            ->assertSuccessful();
+
+        $this->assertDatabaseHas('sequence_enrollments', [
+            'sequence_id' => $sequence->id,
+            'contact_id' => $newContact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+        ]);
+        $this->assertSame(2, SequenceEnrollment::where('sequence_id', $sequence->id)->count());
+    }
+
+    public function test_stopping_auto_enrollment_keeps_existing_enrollment_active(): void
+    {
+        $company = $this->makeCompany('client');
+        $contact = $this->makeContact($company);
+        $campaign = $this->makeCampaign(
+            $this->makeSegment('client'),
+            $this->makeSequenceWithSteps(2),
+        );
+        app(CampaignService::class)->launchSequence($campaign);
+        $campaign->update(['sequence_auto_enroll_enabled' => true]);
+        $admin = User::factory()->create(['email_verified_at' => now()]);
+        $admin->assignRole('superadmin');
+
+        $this->actingAs($admin)
+            ->put("/admin/campaigns/{$campaign->id}/sequence-auto-enroll", ['state' => 0])
+            ->assertOk();
+
+        $this->assertFalse($campaign->fresh()->sequence_auto_enroll_enabled);
+        $this->assertDatabaseHas('sequence_enrollments', [
+            'campaign_id' => $campaign->id,
+            'contact_id' => $contact->id,
+            'status' => 'active',
+        ]);
+    }
+
+    public function test_sequence_campaign_view_exposes_auto_enrollment_control_and_sync_action(): void
+    {
+        $company = $this->makeCompany('client');
+        $this->makeContact($company);
+        $campaign = $this->makeCampaign(
+            $this->makeSegment('client'),
+            $this->makeSequenceWithSteps(2),
+        );
+        $campaign->update(['sequence_auto_enroll_enabled' => true]);
+        $admin = User::factory()->create(['email_verified_at' => now()]);
+        $admin->assignRole('superadmin');
+
+        $this->actingAs($admin)
+            ->get("/admin/campaigns/{$campaign->id}")
+            ->assertOk()
+            ->assertSee('Inscription automatique')
+            ->assertSee('Synchroniser maintenant')
+            ->assertSee(route('admin.campaigns.sequenceAutoEnroll', $campaign->id));
+    }
+
+    public function test_auto_enrollment_control_requires_send_campaigns_permission(): void
+    {
+        $campaign = $this->makeCampaign(
+            $this->makeSegment('client'),
+            $this->makeSequenceWithSteps(1),
+        );
+        $commercial = User::factory()->create(['email_verified_at' => now()]);
+        $commercial->assignRole('commercial');
+
+        $this->actingAs($commercial)
+            ->put("/admin/campaigns/{$campaign->id}/sequence-auto-enroll", ['state' => 1])
+            ->assertForbidden();
+    }
+
+    public function test_sync_command_skips_campaign_when_auto_enrollment_is_stopped(): void
+    {
+        $company = $this->makeCompany('client');
+        $this->makeContact($company);
+        $sequence = $this->makeSequenceWithSteps(1);
+        $campaign = $this->makeCampaign($this->makeSegment('client'), $sequence);
+        app(CampaignService::class)->launchSequence($campaign);
+        $newContact = $this->makeContact($company);
+
+        $this->artisan('campaigns:sync-sequence-enrollments')->assertSuccessful();
+
+        $this->assertDatabaseMissing('sequence_enrollments', [
+            'sequence_id' => $sequence->id,
+            'contact_id' => $newContact->id,
+        ]);
+    }
+
+    public function test_sync_command_never_reenrolls_terminal_contact(): void
+    {
+        $company = $this->makeCompany('client');
+        $contact = $this->makeContact($company);
+        $sequence = $this->makeSequenceWithSteps(1);
+        $campaign = $this->makeCampaign($this->makeSegment('client'), $sequence);
+        app(CampaignService::class)->launchSequence($campaign);
+        $campaign->update(['sequence_auto_enroll_enabled' => true]);
+        SequenceEnrollment::where('sequence_id', $sequence->id)
+            ->where('contact_id', $contact->id)
+            ->update(['status' => 'completed', 'next_send_at' => null]);
+
+        $this->artisan('campaigns:sync-sequence-enrollments')->assertSuccessful();
+        $this->artisan('campaigns:sync-sequence-enrollments')->assertSuccessful();
+
+        $this->assertSame(1, SequenceEnrollment::where('sequence_id', $sequence->id)
+            ->where('contact_id', $contact->id)
+            ->count());
+    }
+
+    public function test_new_auto_enrollment_starts_with_first_sequence_step(): void
+    {
+        $company = $this->makeCompany('client');
+        $this->makeContact($company);
+        $sequence = $this->makeSequenceWithSteps(2);
+        $campaign = $this->makeCampaign($this->makeSegment('client'), $sequence);
+        app(CampaignService::class)->launchSequence($campaign);
+        $campaign->update(['sequence_auto_enroll_enabled' => true]);
+        $newContact = $this->makeContact($company);
+
+        $this->artisan('campaigns:sync-sequence-enrollments')->assertSuccessful();
+        $enrollment = SequenceEnrollment::where('sequence_id', $sequence->id)
+            ->where('contact_id', $newContact->id)
+            ->firstOrFail();
+        app(SequenceService::class)->sendStep($enrollment);
+
+        $this->assertSame(1, $enrollment->fresh()->current_step);
+        $this->assertDatabaseHas('sequence_step_sends', [
+            'enrollment_id' => $enrollment->id,
+            'step_no' => 1,
+            'status' => 'sent',
+        ]);
+        Mail::assertSent(SequenceStepMailable::class, fn ($mail) => $mail->hasTo($newContact->email));
+    }
+
+    public function test_invalid_watched_campaign_does_not_block_other_campaigns(): void
+    {
+        $company = $this->makeCompany('client');
+        $contact = $this->makeContact($company);
+        $badSequence = Sequence::create(['name' => 'Empty watched sequence', 'is_active' => true]);
+        $badCampaign = $this->makeCampaign($this->makeSegment('client'), $badSequence);
+        $badCampaign->update(['sequence_auto_enroll_enabled' => true]);
+
+        $goodSequence = $this->makeSequenceWithSteps(1);
+        $goodCampaign = $this->makeCampaign($this->makeSegment('client'), $goodSequence);
+        $goodCampaign->update(['sequence_auto_enroll_enabled' => true]);
+
+        $this->artisan('campaigns:sync-sequence-enrollments')->assertSuccessful();
+
+        $this->assertDatabaseMissing('sequence_enrollments', ['campaign_id' => $badCampaign->id]);
+        $this->assertDatabaseHas('sequence_enrollments', [
+            'campaign_id' => $goodCampaign->id,
+            'contact_id' => $contact->id,
+        ]);
+    }
+
+    public function test_auto_enrollment_keeps_suppressed_new_contact_excluded(): void
+    {
+        $company = $this->makeCompany('client');
+        $this->makeContact($company);
+        $sequence = $this->makeSequenceWithSteps(1);
+        $campaign = $this->makeCampaign($this->makeSegment('client'), $sequence);
+        app(CampaignService::class)->launchSequence($campaign);
+        $campaign->update(['sequence_auto_enroll_enabled' => true]);
+        $suppressed = $this->makeContact($company);
+        Suppression::create(['email' => $suppressed->email, 'contact_id' => $suppressed->id]);
+
+        $this->artisan('campaigns:sync-sequence-enrollments')->assertSuccessful();
+
+        $this->assertDatabaseMissing('sequence_enrollments', [
+            'sequence_id' => $sequence->id,
+            'contact_id' => $suppressed->id,
+        ]);
+    }
+
+    public function test_contact_removed_from_segment_after_enrollment_finishes_its_sequence(): void
+    {
+        $company = $this->makeCompany('client');
+        $contact = $this->makeContact($company);
+        $sequence = $this->makeSequenceWithSteps(1);
+        $campaign = $this->makeCampaign($this->makeSegment('client'), $sequence);
+        app(CampaignService::class)->launchSequence($campaign);
+        $enrollment = SequenceEnrollment::where('campaign_id', $campaign->id)
+            ->where('contact_id', $contact->id)
+            ->firstOrFail();
+        $company->update(['relationship' => 'prospect']);
+
+        app(SequenceService::class)->sendStep($enrollment);
+
+        Mail::assertSent(SequenceStepMailable::class, fn ($mail) => $mail->hasTo($contact->email));
+        $this->assertSame(1, $enrollment->fresh()->current_step);
+    }
+
+    public function test_switching_away_from_sequence_stops_future_auto_enrollment(): void
+    {
+        $segment = $this->makeSegment('client');
+        $campaign = $this->makeCampaign($segment, $this->makeSequenceWithSteps(1));
+        $campaign->update(['sequence_auto_enroll_enabled' => true]);
+        $template = $this->makeTemplate();
+        $admin = User::factory()->create(['email_verified_at' => now()]);
+        $admin->assignRole('superadmin');
+
+        $this->actingAs($admin)
+            ->putJson("/admin/campaigns/{$campaign->id}", [
+                'name' => $campaign->name,
+                'segment_id' => $segment->id,
+                'template_id' => $template->id,
+                'sender_identity_id' => $campaign->sender_identity_id,
+                'schedule_type' => 'one_shot',
+                'timezone' => 'Europe/Paris',
+                'is_active' => 1,
+            ])
+            ->assertOk();
+
+        $this->assertFalse($campaign->fresh()->sequence_auto_enroll_enabled);
+    }
+
+    public function test_changing_sequence_stops_auto_enrollment_until_manual_restart(): void
+    {
+        $segment = $this->makeSegment('client');
+        $campaign = $this->makeCampaign($segment, $this->makeSequenceWithSteps(1));
+        $campaign->update(['sequence_auto_enroll_enabled' => true]);
+        $replacement = $this->makeSequenceWithSteps(1);
+        $admin = User::factory()->create(['email_verified_at' => now()]);
+        $admin->assignRole('superadmin');
+
+        $this->actingAs($admin)
+            ->putJson("/admin/campaigns/{$campaign->id}", [
+                'name' => $campaign->name,
+                'segment_id' => $segment->id,
+                'sequence_id' => $replacement->id,
+                'sender_identity_id' => $campaign->sender_identity_id,
+                'schedule_type' => 'sequence',
+                'is_active' => 1,
+            ])
+            ->assertOk();
+
+        $this->assertFalse($campaign->fresh()->sequence_auto_enroll_enabled);
+    }
 
     /**
      * Test 1: Launch enrolls resolved contacts; attribution set; status → 'active'; counts returned.

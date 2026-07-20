@@ -515,6 +515,148 @@ class SequenceGeneratedTest extends TestCase
         $this->assertArrayHasKey('delay_days', $response->json('errors'));
     }
 
+    // ── updateStep ───────────────────────────────────────────────────────────
+
+    public function test_update_step_changes_only_editable_fields_and_returns_json(): void
+    {
+        $sequence = $this->makeSequence();
+        $step = $this->makeStep($sequence, stepNo: 2);
+        $replacement = $this->makeTemplate('Modèle de remplacement');
+        $otherSequence = $this->makeSequence();
+
+        $response = $this->actingAs($this->superadmin)->putJson(
+            route('admin.sequences.updateStep', [$sequence->id, $step->id]),
+            [
+                'delay_days' => 8,
+                'template_id' => $replacement->id,
+                'subject' => 'Nouveau sujet',
+                'sequence_id' => $otherSequence->id,
+                'step_no' => 99,
+            ]
+        );
+
+        $response->assertOk()->assertJson([
+            'message' => 'Étape modifiée avec succès.',
+            'redirect' => route('admin.sequences.view', $sequence->id) . '#sequence_steps',
+        ]);
+        $this->assertDatabaseHas('sequence_steps', [
+            'id' => $step->id,
+            'sequence_id' => $sequence->id,
+            'step_no' => 2,
+            'delay_days' => 8,
+            'template_id' => $replacement->id,
+            'subject' => 'Nouveau sujet',
+        ]);
+    }
+
+    public function test_update_step_validation_returns_422_without_mutation(): void
+    {
+        $sequence = $this->makeSequence();
+        $step = $this->makeStep($sequence);
+
+        $response = $this->actingAs($this->superadmin)->putJson(
+            route('admin.sequences.updateStep', [$sequence->id, $step->id]),
+            ['delay_days' => -1, 'template_id' => 999999, 'subject' => str_repeat('x', 256)]
+        );
+
+        $response->assertUnprocessable()->assertJsonValidationErrors([
+            'delay_days', 'template_id', 'subject',
+        ]);
+        $this->assertDatabaseHas('sequence_steps', [
+            'id' => $step->id,
+            'delay_days' => 0,
+            'template_id' => $step->template_id,
+            'subject' => 'Étape 1',
+        ]);
+    }
+
+    public function test_update_step_rejects_step_owned_by_another_sequence(): void
+    {
+        $sequence = $this->makeSequence();
+        $otherSequence = $this->makeSequence();
+        $step = $this->makeStep($otherSequence);
+
+        $this->actingAs($this->superadmin)->putJson(
+            route('admin.sequences.updateStep', [$sequence->id, $step->id]),
+            ['delay_days' => 4, 'template_id' => $step->template_id, 'subject' => 'Interdit']
+        )->assertNotFound();
+
+        $this->assertDatabaseHas('sequence_steps', ['id' => $step->id, 'subject' => 'Étape 1']);
+    }
+
+    public function test_update_step_requires_edit_sequences_permission(): void
+    {
+        $sequence = $this->makeSequence();
+        $step = $this->makeStep($sequence);
+        $viewer = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
+        $viewer->givePermissionTo(['backend.access', 'view sequences']);
+
+        $this->actingAs($viewer)->putJson(
+            route('admin.sequences.updateStep', [$sequence->id, $step->id]),
+            ['delay_days' => 4, 'template_id' => $step->template_id, 'subject' => 'Interdit']
+        )->assertForbidden();
+
+        $this->assertDatabaseHas('sequence_steps', ['id' => $step->id, 'subject' => 'Étape 1']);
+    }
+
+    public function test_update_step_can_clear_subject_to_null(): void
+    {
+        $sequence = $this->makeSequence();
+        $step = $this->makeStep($sequence);
+
+        $this->actingAs($this->superadmin)->putJson(
+            route('admin.sequences.updateStep', [$sequence->id, $step->id]),
+            ['delay_days' => 0, 'template_id' => $step->template_id, 'subject' => '']
+        )->assertOk();
+
+        $this->assertDatabaseHas('sequence_steps', ['id' => $step->id, 'subject' => null]);
+    }
+
+    public function test_update_step_non_json_fallback_redirects_to_steps_with_flash(): void
+    {
+        $sequence = $this->makeSequence();
+        $step = $this->makeStep($sequence);
+
+        $this->actingAs($this->superadmin)
+            ->from(route('admin.sequences.edit', $sequence->id) . '#sequence_steps')
+            ->put(route('admin.sequences.updateStep', [$sequence->id, $step->id]), [
+                'delay_days' => 6,
+                'template_id' => $step->template_id,
+                'subject' => 'Sujet formulaire',
+            ])
+            ->assertRedirect(route('admin.sequences.edit', $sequence->id) . '#sequence_steps')
+            ->assertSessionHas('success', 'Étape modifiée avec succès.');
+    }
+
+    public function test_step_edit_action_and_modal_render_on_view_and_edit_pages(): void
+    {
+        $sequence = $this->makeSequence();
+        $step = $this->makeStep($sequence);
+        $updateUrl = route('admin.sequences.updateStep', [$sequence->id, $step->id]);
+
+        foreach (['admin.sequences.view', 'admin.sequences.edit'] as $routeName) {
+            $this->actingAs($this->superadmin)->get(route($routeName, $sequence->id))
+                ->assertOk()
+                ->assertSee('Modifier l’étape', false)
+                ->assertSee('id="sequence_step_edit_modal"', false)
+                ->assertSee('data-update-url="' . $updateUrl . '"', false);
+        }
+    }
+
+    public function test_step_edit_action_and_modal_are_hidden_without_edit_permission(): void
+    {
+        $sequence = $this->makeSequence();
+        $step = $this->makeStep($sequence);
+        $viewer = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
+        $viewer->givePermissionTo(['backend.access', 'view sequences']);
+
+        $this->actingAs($viewer)->get(route('admin.sequences.view', $sequence->id))
+            ->assertOk()
+            ->assertDontSee('Modifier l’étape', false)
+            ->assertDontSee('sequence_step_edit_modal', false)
+            ->assertDontSee(route('admin.sequences.updateStep', [$sequence->id, $step->id]), false);
+    }
+
     // ── deleteStep ────────────────────────────────────────────────────────────
 
     /**

@@ -116,7 +116,7 @@ All backend CRUD modules follow one pattern: `BackendController` base extended w
 
 - **Routes:** `admin.{models}.{action}` (plural snake_case), auto-loaded from `routes/Backend/**`. **Views:** `resources/views/backend/contents/{models}/crud/`.
 - Sidebar menu entries in `config/global/menu.php`; shared enums in `config/global/data.php`.
-- **Roles:** `superadmin` (all permissions), `admin` (all permissions), `commercial` (view/create/edit prospection entities only; no delete, no user/role management). Permission naming: `{action} {entity}`, plus the special strings `backend.access` and `send campaigns`.
+- **Roles:** `superadmin` (all permissions), `admin` (all except the six superadmin-only permissions: `manage packages`, `view provider quota`, `manage roles`, `manage permissions`, `view settings`, and `edit settings`), `commercial` (view/create/edit prospection entities only; no delete, no user/role management). Permission naming: `{action} {entity}`, plus the special strings `backend.access` and `send campaigns`.
 
 ## Safety rules
 

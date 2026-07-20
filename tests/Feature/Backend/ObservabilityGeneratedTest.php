@@ -10,7 +10,7 @@
  *   - ObservabilityControllerGatingTest: unauthenticated GET smoke.
  *
  * Gaps addressed in this file:
- *   1. admin role (distinct from superadmin) also holds 'manage roles' → 200.
+ *   1. admin role (distinct from superadmin) does not hold 'manage roles' → 403.
  *   2. Controller passes 'counts', 'failedJobs', 'failedRuns' to view (view data contract).
  *   3. failedJobs() returns a Collection with the expected column set.
  *   4. failedJobs() truncates a multi-line exception to its first non-empty line.
@@ -131,14 +131,14 @@ class ObservabilityGeneratedTest extends TestCase
     // ── Gap 1: admin role ───────────────────────────────────────────────────────
 
     /**
-     * The 'admin' role also holds 'manage roles', so the observability index
-     * must return 200 for an admin user (not just superadmin).
+     * Observability remains gated by 'manage roles'. The seeded admin role does
+     * not hold that superadmin-only permission and must therefore be forbidden.
      */
-    public function test_admin_role_can_view_observability(): void
+    public function test_admin_role_cannot_view_observability(): void
     {
         $this->actingAs($this->admin)
             ->get('/admin/observability')
-            ->assertStatus(200);
+            ->assertForbidden();
     }
 
     // ── Gap 2: view data contract ───────────────────────────────────────────────

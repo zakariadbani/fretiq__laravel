@@ -98,9 +98,9 @@ class CampaignService
     /**
      * Authoritative send preflight used by preview, controller actions, scheduler, and jobs.
      *
-     * @return array{ok: bool, count: int, contacts: \Illuminate\Support\Collection, messages: array<int, string>}
+     * @return array{ok: bool, count: int, contact_count: int, company_count: int, contacts: \Illuminate\Support\Collection, messages: array<int, string>}
      */
-    public function dispatchPreflight(Campaign $campaign): array
+    public function dispatchPreflight(Campaign $campaign, ?CampaignRun $run = null, bool $allowEmptyAudience = false): array
     {
         $campaign->loadMissing(['segment', 'template', 'senderIdentity', 'sequence']);
 
@@ -125,8 +125,17 @@ class CampaignService
         $contacts = collect();
         if ($campaign->segment !== null) {
             try {
-                $contacts = $this->segmentService->resolve($campaign->segment);
-                if ($contacts->isEmpty()) {
+                $contacts = $campaign->schedule_type === 'paced' && $run !== null
+                    ? CampaignRecipient::query()
+                        ->where('campaign_run_id', $run->id)
+                        ->with('contact.company')
+                        ->get()
+                        ->pluck('contact')
+                        ->filter()
+                        ->values()
+                    : $this->segmentService->resolve($campaign->segment);
+
+                if ($contacts->isEmpty() && ! $allowEmptyAudience) {
                     $messages[] = 'Aucun destinataire éligible après exclusions, suppressions et règles de conformité.';
                 }
             } catch (\Throwable $e) {
@@ -134,7 +143,9 @@ class CampaignService
             }
         }
 
-        if ($this->usesZohoDriver($campaign)) {
+        if ($campaign->schedule_type === 'paced' && $this->usesZohoDriver($campaign)) {
+            $messages[] = 'L’envoi progressif est indisponible avec le pilote Zoho tant que l’envoi par lot n’a pas été vérifié.';
+        } elseif ($this->usesZohoDriver($campaign)) {
             $listKey = trim((string) ($campaign->zoho_list_key ?: config('services.zoho.campaigns.list_key')));
             if ($listKey === '') {
                 $messages[] = 'Préparation Zoho incomplète : ajoutez et vérifiez la liste Zoho dédiée avant de lancer l’envoi.';
@@ -148,6 +159,8 @@ class CampaignService
         return [
             'ok' => $messages === [],
             'count' => $contacts->count(),
+            'contact_count' => $contacts->count(),
+            'company_count' => $contacts->pluck('company_id')->filter()->unique()->count(),
             'contacts' => $contacts,
             'messages' => array_values(array_unique($messages)),
         ];
@@ -282,9 +295,13 @@ class CampaignService
                 continue;
             }
 
-            $preflight = $this->dispatchPreflight($run->campaign);
+            $preflight = $this->dispatchPreflight($run->campaign, $run);
             if (! $preflight['ok']) {
                 $run->update(['status' => 'failed', 'finished_at' => now()]);
+                $this->finalizePacedFailure(
+                    $run,
+                    new \RuntimeException('Dispatch preflight failed.'),
+                );
                 Log::warning('[CampaignService] dispatchDue: run blocked by dispatch preflight.', [
                     'run_id' => $run->id,
                     'campaign_id' => $run->campaign_id,
@@ -382,9 +399,13 @@ class CampaignService
 
         // ── Step 2: Resolve eligible contacts (outside TX) ────────────────────
         // Dispatch preflight is repeated inside the job so queued/stale work fails closed.
-        $preflight = $this->dispatchPreflight($run->campaign);
+        $preflight = $this->dispatchPreflight($run->campaign, $run);
         if (! $preflight['ok']) {
             $run->update(['status' => 'failed', 'stats_sent' => 0, 'finished_at' => now()]);
+            $this->finalizePacedFailure(
+                $run,
+                new \RuntimeException('Dispatch preflight failed.'),
+            );
             Log::warning('[CampaignService] Send blocked by dispatch preflight.', [
                 'run_id' => $run->id,
                 'campaign_id' => $run->campaign_id,
@@ -396,16 +417,18 @@ class CampaignService
         $contacts = $preflight['contacts'];
 
         // ── Step 3: Insert recipient rows (idempotent via unique key) ─────────
-        foreach ($contacts as $contact) {
-            CampaignRecipient::firstOrCreate(
-                [
-                    'campaign_run_id' => $run->id,
-                    'contact_id'      => $contact->id,
-                ],
-                [
-                    'status' => 'queued',
-                ],
-            );
+        if ($run->campaign->schedule_type !== 'paced') {
+            foreach ($contacts as $contact) {
+                CampaignRecipient::firstOrCreate(
+                    [
+                        'campaign_run_id' => $run->id,
+                        'contact_id'      => $contact->id,
+                    ],
+                    [
+                        'status' => 'queued',
+                    ],
+                );
+            }
         }
 
         // ── Step 4: Driver-aware send ──────────────────────────────────────────
@@ -523,6 +546,42 @@ class CampaignService
             ->with('contact.company')
             ->get();
 
+        $isPaced = $run->campaign->schedule_type === 'paced';
+        $pacedTracking = collect();
+
+        if ($isPaced && $recipients->isNotEmpty()) {
+            $recipientIds = $recipients->pluck('id');
+            $pacedTracking = EmailTrackingEvent::query()
+                ->where('trackable_type', CampaignRecipient::class)
+                ->whereIn('trackable_id', $recipientIds)
+                ->get()
+                ->keyBy('trackable_id');
+
+            $now = now();
+            $missingRows = $recipients
+                ->reject(fn (CampaignRecipient $recipient): bool => $pacedTracking->has($recipient->id))
+                ->map(fn (CampaignRecipient $recipient): array => [
+                    'trackable_type' => CampaignRecipient::class,
+                    'trackable_id' => $recipient->id,
+                    'token' => TrackingToken::generate($run->id, $recipient->contact_id),
+                    'event' => 'pending',
+                    'human_open_count' => 0,
+                    'machine_open_count' => 0,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ])
+                ->all();
+
+            if ($missingRows !== []) {
+                EmailTrackingEvent::query()->insert($missingRows);
+                $pacedTracking = EmailTrackingEvent::query()
+                    ->where('trackable_type', CampaignRecipient::class)
+                    ->whereIn('trackable_id', $recipientIds)
+                    ->get()
+                    ->keyBy('trackable_id');
+            }
+        }
+
         // Prefetch the suppression list once instead of one query per recipient
         // (isSuppressed() is a plain normalized-equality lookup — see Suppression::isSuppressed()).
         $suppressed = Suppression::pluck('email')->map(fn ($e) => strtolower(trim($e)))->flip();
@@ -546,12 +605,44 @@ class CampaignService
                 continue;
             }
 
+            if ($isPaced) {
+                $coldSendEnabled = (bool) config('prospecting.cold_send_enabled', false);
+
+                if (! $coldSendEnabled && $contact->company?->relationship === 'prospect') {
+                    $recipient->update([
+                        'status' => 'skipped',
+                        'skip_reason' => 'cold_send_disabled',
+                    ]);
+                    continue;
+                }
+
+                if ($coldSendEnabled
+                    && $contact->company?->relationship === 'prospect'
+                    && $contact->email_kind === 'personal') {
+                    $recipient->update([
+                        'status' => 'skipped',
+                        'skip_reason' => 'personal_email',
+                    ]);
+                    continue;
+                }
+            }
+
             $attempted++;
 
-            // ── 4b. Generate tracking token and create EmailTrackingEvent ─────
-            $token = TrackingToken::generate($run->id, $contact->id);
+            // ── 4b. Generate tracking token ──────────────────────────────────
+            $trackingEvent = $isPaced
+                ? $pacedTracking->get($recipient->id)
+                : EmailTrackingEvent::query()
+                    ->where('trackable_type', CampaignRecipient::class)
+                    ->where('trackable_id', $recipient->id)
+                    ->first();
+            $token = $trackingEvent?->token
+                ?? TrackingToken::generate($run->id, $contact->id);
 
-            EmailTrackingEvent::createForSend($recipient, $token);
+            if (! $isPaced) {
+                // Preserve the existing non-paced pre-send reservation.
+                $trackingEvent = EmailTrackingEvent::createForSend($recipient, $token);
+            }
 
             // ── 4c. Build signed unsubscribe URL ─────────────────────────────
             $unsubscribeUrl = URL::signedRoute('unsubscribe', ['contact' => $contact->id]);
@@ -566,27 +657,62 @@ class CampaignService
                     $unsubscribeUrl,
                 );
 
-                // ── 4e. Record provider_message_id + sent status ───────────────
-                $recipient->update([
-                    'status'              => 'sent',
-                    'provider_message_id' => $pmid,
-                    'sent_at'             => now(),
-                ]);
+                DB::transaction(function () use ($recipient, $trackingEvent, $pmid, $isPaced): void {
+                    if ($isPaced) {
+                        $trackingEvent->markSent();
+                    }
+
+                    // ── 4e. Record provider_message_id + sent status ───────────
+                    $recipient->update([
+                        'status'              => 'sent',
+                        'provider_message_id' => $pmid,
+                        'sent_at'             => now(),
+                    ]);
+                });
             } catch (\Throwable $e) {
                 // Leave recipient in 'queued' state — next job retry will re-send.
                 Log::error('[CampaignService] Failed to send to recipient.', [
                     'run_id'       => $run->id,
                     'recipient_id' => $recipient->id,
                     'contact_id'   => $contact->id,
-                    'error'        => $e->getMessage(),
+                    'exception_class' => $e::class,
                 ]);
             }
         }
 
         // ── Step 5 (local): Recompute run stats and mark complete ──────────
         $sentCount = CampaignRecipient::where('campaign_run_id', $run->id)
-            ->where('status', 'sent')
+            ->whereNotNull('sent_at')
             ->count();
+
+        if ($isPaced) {
+            $queuedCount = CampaignRecipient::where('campaign_run_id', $run->id)
+                ->where('status', 'queued')
+                ->count();
+
+            $run->update(['stats_sent' => $sentCount]);
+
+            if ($queuedCount > 0) {
+                // Keep status=sending and finished_at empty. Throwing is the
+                // queue contract: SendCampaignJob retries only unsent rows.
+                $run->update(['status' => 'sending', 'finished_at' => null]);
+                throw new PacedCampaignRetryableException();
+            }
+
+            $this->markCompletedPacedDispatches($run);
+            $run->update([
+                'stats_sent' => $sentCount,
+                'status' => 'sent',
+                'finished_at' => now(),
+            ]);
+
+            Log::info('[CampaignService] Lot progressif complété (local).', [
+                'run_id' => $run->id,
+                'stats_sent' => $sentCount,
+            ]);
+
+            return;
+        }
 
         // A run where every real send ATTEMPT failed (every per-recipient send
         // threw) must be marked 'failed', not 'sent' — a silent 0-delivered 'sent'
@@ -605,5 +731,63 @@ class CampaignService
             'run_id'     => $run->id,
             'stats_sent' => $sentCount,
         ]);
+    }
+
+    /** Finalize company ledgers after SendCampaignJob exhausts all retries. */
+    public function finalizePacedFailure(CampaignRun $run, \Throwable $exception): void
+    {
+        $run->loadMissing('campaign');
+
+        if ($run->campaign?->schedule_type !== 'paced') {
+            return;
+        }
+
+        DB::transaction(function () use ($run): void {
+            $dispatches = $run->companyDispatches()->lockForUpdate()->get();
+
+            foreach ($dispatches as $dispatch) {
+                if ($dispatch->recipients()->where('status', 'queued')->exists()) {
+                    $dispatch->update([
+                        'status' => 'failed',
+                        'last_error' => 'Échec de livraison après épuisement des tentatives.',
+                        'processed_at' => null,
+                    ]);
+                } else {
+                    $dispatch->update([
+                        'status' => 'processed',
+                        'last_error' => null,
+                        'processed_at' => now(),
+                    ]);
+                }
+            }
+
+            $sentCount = CampaignRecipient::where('campaign_run_id', $run->id)
+                ->whereNotNull('sent_at')
+                ->count();
+
+            $run->update([
+                'stats_sent' => $sentCount,
+                'status' => $sentCount > 0 ? 'sent' : 'failed',
+                'finished_at' => now(),
+            ]);
+        });
+
+        Log::warning('[CampaignService] Lot progressif épuisé après les tentatives de file.', [
+            'run_id' => $run->id,
+            'exception_class' => $exception::class,
+        ]);
+    }
+
+    private function markCompletedPacedDispatches(CampaignRun $run): void
+    {
+        foreach ($run->companyDispatches()->get() as $dispatch) {
+            if (! $dispatch->recipients()->where('status', 'queued')->exists()) {
+                $dispatch->update([
+                    'status' => 'processed',
+                    'last_error' => null,
+                    'processed_at' => now(),
+                ]);
+            }
+        }
     }
 }

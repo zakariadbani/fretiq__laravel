@@ -5,6 +5,8 @@ namespace Tests\Feature\Backend;
 use App\Models\Campaign;
 use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
+use App\Models\Company;
+use App\Models\Contact;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
 use App\Models\User;
@@ -115,6 +117,21 @@ class CampaignSendAccessTest extends TestCase
     public function test_admin_can_schedule(): void
     {
         $campaign = $this->makeCampaign();
+        $company = Company::create([
+            'name' => 'Client ACL',
+            'relationship' => 'client',
+            'source' => 'manual',
+            'qualification_status' => 'pending',
+        ]);
+        Contact::create([
+            'company_id' => $company->id,
+            'email' => 'acl-client@example.test',
+            'name' => 'Client ACL',
+            'status' => 'new',
+            'source' => 'manual',
+            'legal_basis' => 'relationship',
+            'email_kind' => 'role',
+        ]);
 
         $response = $this->actingAs($this->superadmin)
             ->post("/admin/campaigns/{$campaign->id}/schedule");

@@ -25,6 +25,7 @@ import { DataTablePage } from './DataTablePage';
  *   submit button: btn.btn-primary.btn-sm inside the add-step form
  *
  * Step rows: <table> inside #sequence_steps .card .table-responsive
+ *   Edit: button[data-sequence-step-edit] opens #sequence_step_edit_modal.
  *   Delete: form[action*="/steps/"][method="post"] with @method('DELETE'),
  *           onsubmit="return confirm(...)" — native browser dialog (not SweetAlert).
  *
@@ -43,6 +44,7 @@ import { DataTablePage } from './DataTablePage';
  *   update  PUT   /admin/sequences/{id}
  *   delete  DELETE /admin/sequences/{id}
  *   addStep     POST   /admin/sequences/{id}/steps
+ *   updateStep  PUT    /admin/sequences/{id}/steps/{stepId}
  *   deleteStep  DELETE /admin/sequences/{id}/steps/{stepId}
  *   moveStepUp  POST   /admin/sequences/{id}/steps/{stepId}/move-up
  *   moveStepDown POST  /admin/sequences/{id}/steps/{stepId}/move-down
@@ -81,6 +83,13 @@ export class SequencePage extends DataTablePage {
   readonly stepDeleteButtons: Locator;
   readonly stepMoveUpButtons: Locator;
   readonly stepMoveDownButtons: Locator;
+  readonly stepEditButtons: Locator;
+  readonly editStepModal: Locator;
+  readonly editStepDelayInput: Locator;
+  readonly editStepTemplateSelect: Locator;
+  readonly editStepSubjectInput: Locator;
+  readonly editStepSubmitButton: Locator;
+  readonly editStepError: Locator;
 
   constructor(page: Page) {
     super(page, {
@@ -104,6 +113,13 @@ export class SequencePage extends DataTablePage {
     this.stepDeleteButtons = page.locator("#sequence_steps button[aria-label=\"Supprimer l'étape\"]");
     this.stepMoveUpButtons = page.locator("#sequence_steps button[aria-label=\"Monter l'étape\"]");
     this.stepMoveDownButtons = page.locator("#sequence_steps button[aria-label=\"Descendre l'étape\"]");
+    this.stepEditButtons = page.locator('#sequence_steps button[data-sequence-step-edit]');
+    this.editStepModal = page.locator('#sequence_step_edit_modal');
+    this.editStepDelayInput = this.editStepModal.locator('input[name="delay_days"]');
+    this.editStepTemplateSelect = this.editStepModal.locator('select[name="template_id"]');
+    this.editStepSubjectInput = this.editStepModal.locator('input[name="subject"]');
+    this.editStepSubmitButton = this.editStepModal.locator('button[type="submit"]');
+    this.editStepError = this.editStepModal.locator('#sequence_step_edit_error');
   }
 
   // ── Navigation ────────────────────────────────────────────────────────────
@@ -276,6 +292,28 @@ export class SequencePage extends DataTablePage {
     }
 
     await this.addStepSubmitButton.click();
+  }
+
+  /** Open the editor for a step row and wait until its values are visible. */
+  async openStepEditor(rowIndex = 0) {
+    await this.stepsTableRows().nth(rowIndex).locator('[data-sequence-step-edit]').click();
+    await this.editStepModal.waitFor({ state: 'visible', timeout: 10000 });
+  }
+
+  /** Fill and submit the shared step editor modal. */
+  async submitStepEdit(data: {
+    delayDays: number;
+    templateOptionLabel?: string;
+    subject?: string;
+  }) {
+    await this.editStepDelayInput.fill(String(data.delayDays));
+    if (data.templateOptionLabel !== undefined) {
+      await this.editStepTemplateSelect.selectOption({ label: data.templateOptionLabel });
+    }
+    if (data.subject !== undefined) {
+      await this.editStepSubjectInput.fill(data.subject);
+    }
+    await this.editStepSubmitButton.click();
   }
 
   /**

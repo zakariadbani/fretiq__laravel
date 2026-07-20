@@ -219,6 +219,20 @@
                                 @can('edit sequences')
                                 <td class="text-end pe-7">
                                     <div class="d-flex gap-1 justify-content-end">
+                                        <button type="button"
+                                                class="btn btn-sm btn-icon btn-light-primary"
+                                                title="Modifier l’étape"
+                                                data-bs-toggle="modal"
+                                                data-bs-target="#sequence_step_edit_modal"
+                                                data-bs-title="Modifier l’étape"
+                                                data-sequence-step-edit
+                                                data-update-url="{{ route('admin.sequences.updateStep', [$model->id, $step->id]) }}"
+                                                data-delay-days="{{ $step->delay_days }}"
+                                                data-template-id="{{ $step->template_id }}"
+                                                data-subject="{{ $step->subject }}"
+                                                aria-label="Modifier l’étape">
+                                            <i class="bi bi-pencil fs-5"></i>
+                                        </button>
                                         @if($step->id !== $firstStepId)
                                             <button type="submit"
                                                     form="sequence_step_move_up_{{ $step->id }}"
@@ -470,6 +484,8 @@
             </form>
         @endforeach
     @endcan
+
+    @include('backend.contents.sequences.partials._edit-step-modal')
 
 @endif
 

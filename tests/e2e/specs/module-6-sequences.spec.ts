@@ -383,6 +383,71 @@ test.describe('Sequences module', () => {
     expect(stepsAfterDelete).toBe(stepsBefore);
   });
 
+  test('editStep: edit-page modal is prefilled, recovers from 422, saves, and preserves the steps hash', async ({ page }) => {
+    const sequences = new SequencePage(page);
+    const name = uniqueName('E2E Edit Step Séquence');
+    createdSequenceNames.push(name);
+
+    await sequences.gotoCreate();
+    await sequences.fillAndSubmit({ name });
+    await page.waitForURL((url) => !url.pathname.endsWith('/create'), { timeout: 15000 });
+
+    await sequences.goto();
+    await waitForDataTable(page, 'sequence-table');
+    await sequences.search(name);
+    await waitForDataTable(page, 'sequence-table');
+    await sequences.clickRowAction(0, 'view');
+    await page.waitForLoadState('networkidle');
+
+    const sequenceId = page.url().match(/\/admin\/sequences\/(\d+)/)?.[1];
+    expect(sequenceId).toBeTruthy();
+    await sequences.clickStepsTab();
+
+    const templateSelect = sequences.addStepTemplateSelect;
+    await templateSelect.waitFor({ state: 'visible', timeout: 10000 });
+    const firstTemplate = templateSelect.locator('option:not([value=""])').first();
+    if (await firstTemplate.count() === 0) {
+      test.skip(true, 'No CampaignTemplate is available; run fretiq:e2e-seed first.');
+      return;
+    }
+
+    const templateLabel = (await firstTemplate.textContent() ?? '').trim();
+    await sequences.addStep({
+      templateOptionLabel: templateLabel,
+      delayDays: 2,
+      subject: 'Sujet avant modification',
+    });
+    await page.waitForLoadState('networkidle');
+
+    await sequences.gotoEdit(sequenceId!);
+    await page.waitForLoadState('networkidle');
+    await sequences.clickStepsTab();
+    await sequences.openStepEditor(0);
+
+    await expect(sequences.editStepDelayInput).toHaveValue('2');
+    await expect(sequences.editStepTemplateSelect.locator('option:checked')).toHaveText(templateLabel);
+    await expect(sequences.editStepSubjectInput).toHaveValue('Sujet avant modification');
+
+    // Remove the browser's min constraint so this submission reaches Laravel's
+    // validation endpoint and verifies the modal's recoverable 422 state.
+    await sequences.editStepDelayInput.evaluate((input) => input.removeAttribute('min'));
+    await sequences.submitStepEdit({ delayDays: -1, subject: 'Sujet invalide' });
+    await expect(sequences.editStepModal).toBeVisible();
+    await expect(sequences.editStepError).toContainText('Veuillez corriger');
+    await expect(sequences.editStepDelayInput).toHaveClass(/is-invalid/);
+    await expect(sequences.editStepDelayInput).toBeFocused();
+    await expect(sequences.editStepSubmitButton).toBeEnabled();
+
+    const reloadAfterSave = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 });
+    await sequences.submitStepEdit({ delayDays: 5, subject: 'Sujet après modification' });
+    await reloadAfterSave;
+    expect(page.url()).toContain(`/admin/sequences/${sequenceId}/edit#sequence_steps`);
+    await page.waitForLoadState('networkidle');
+    await expect(page.locator('#sequence_steps')).toBeVisible();
+    await expect(sequences.stepsTableRows().first()).toContainText('Sujet après modification');
+    await expect(sequences.stepsTableRows().first()).toContainText('+5 j');
+  });
+
   test('steps: icon-only actions expose French accessible names and tooltips', async ({ page }) => {
     const sequences = new SequencePage(page);
 

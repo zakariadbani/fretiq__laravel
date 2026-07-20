@@ -74,6 +74,12 @@ class CampaignRun extends Model
         return $this->hasMany(CampaignRecipient::class);
     }
 
+    /** Company ledger entries claimed by this paced batch. */
+    public function companyDispatches(): HasMany
+    {
+        return $this->hasMany(CampaignCompanyDispatch::class, 'current_run_id');
+    }
+
     // ── Validation ─────────────────────────────────────────────────────────────
 
     /**

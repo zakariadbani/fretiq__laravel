@@ -181,51 +181,50 @@ class CampaignSchedulerHealthTest extends TestCase
         Bus::assertDispatchedTimes(SendCampaignJob::class, 1);
     }
 
-    public function test_index_and_view_render_scheduler_warnings_until_all_required_commands_are_fresh(): void
+    public function test_index_hides_scheduler_warnings_while_view_renders_them_until_all_required_commands_are_fresh(): void
     {
         $campaign = $this->makeCampaign();
 
-        foreach (['/admin/campaigns', "/admin/campaigns/{$campaign->id}"] as $url) {
-            $this->actingAs($this->superadmin)
-                ->get($url)
-                ->assertOk()
-                ->assertSee("Le planificateur des campagnes n'est pas complet", false)
-                ->assertSee('campaigns:generate-runs', false)
-                ->assertSee('campaigns:dispatch-due', false);
-        }
+        $this->actingAs($this->superadmin)
+            ->get('/admin/campaigns')
+            ->assertOk()
+            ->assertDontSee("Le planificateur des campagnes n'est pas complet", false)
+            ->assertDontSee('campaigns:generate-runs', false)
+            ->assertDontSee('campaigns:dispatch-due', false);
+
+        $this->actingAs($this->superadmin)
+            ->get("/admin/campaigns/{$campaign->id}")
+            ->assertOk()
+            ->assertSee("Le planificateur des campagnes n'est pas complet", false)
+            ->assertSee('campaigns:generate-runs', false)
+            ->assertSee('campaigns:dispatch-due', false);
 
         Setting::set('campaign_scheduler.commands.generate_runs.last_success_at', now()->utc()->toIso8601String());
 
-        foreach (['/admin/campaigns', "/admin/campaigns/{$campaign->id}"] as $url) {
-            $this->actingAs($this->superadmin)
-                ->get($url)
-                ->assertOk()
-                ->assertDontSee('campaigns:generate-runs', false)
-                ->assertSee('campaigns:dispatch-due', false);
-        }
+        $this->actingAs($this->superadmin)
+            ->get("/admin/campaigns/{$campaign->id}")
+            ->assertOk()
+            ->assertDontSee('campaigns:generate-runs', false)
+            ->assertSee('campaigns:dispatch-due', false);
 
         Setting::set('campaign_scheduler.commands.generate_runs.last_success_at', now()->subMinutes(3)->utc()->toIso8601String());
         Setting::set('campaign_scheduler.commands.dispatch_due.last_success_at', now()->utc()->toIso8601String());
 
-        foreach (['/admin/campaigns', "/admin/campaigns/{$campaign->id}"] as $url) {
-            $this->actingAs($this->superadmin)
-                ->get($url)
-                ->assertOk()
-                ->assertSee('campaigns:generate-runs', false)
-                ->assertDontSee('campaigns:dispatch-due', false);
-        }
+        $this->actingAs($this->superadmin)
+            ->get("/admin/campaigns/{$campaign->id}")
+            ->assertOk()
+            ->assertSee('campaigns:generate-runs', false)
+            ->assertDontSee('campaigns:dispatch-due', false);
 
         Setting::set('campaign_scheduler.commands.generate_runs.last_success_at', now()->subMinute()->utc()->toIso8601String());
         Setting::set('campaign_scheduler.commands.dispatch_due.last_success_at', now()->subMinute()->utc()->toIso8601String());
 
-        foreach (['/admin/campaigns', "/admin/campaigns/{$campaign->id}"] as $url) {
-            $this->actingAs($this->superadmin)
-                ->get($url)
-                ->assertOk()
-                ->assertDontSee("Le planificateur des campagnes n'est pas complet", false)
-                ->assertDontSee('campaigns:generate-runs', false)
-                ->assertDontSee('campaigns:dispatch-due', false);
-        }
+        $this->actingAs($this->superadmin)
+            ->get("/admin/campaigns/{$campaign->id}")
+            ->assertOk()
+            ->assertDontSee("Le planificateur des campagnes n'est pas complet", false)
+            ->assertDontSee('campaigns:generate-runs', false)
+            ->assertDontSee('campaigns:dispatch-due', false);
     }
 
     public function test_datatable_marks_due_campaign_as_overdue(): void

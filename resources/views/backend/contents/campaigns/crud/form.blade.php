@@ -384,6 +384,36 @@
                         </div>
                     </div>
 
+                    {{-- paced fields --}}
+                    <div id="fields-paced" class="row" style="display:none;">
+                        <div class="col-lg-4">
+                            <div class="fv-row mb-7">
+                                <label class="required fw-semibold fs-6 mb-2">Premier envoi</label>
+                                <input type="text"
+                                       name="paced_first_send_at"
+                                       id="paced_first_send_at"
+                                       class="form-control form-control-solid"
+                                       placeholder="Date du premier lot..."
+                                       value="{{ old('paced_first_send_at', isset($model) && $model->schedule_type === 'paced' && $model->next_run_at ? $model->next_run_at->copy()->setTimezone($model->scheduleTimezone())->format('Y-m-d H:i') : '') }}"
+                                       autocomplete="off" />
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="fv-row mb-7">
+                                <label class="required fw-semibold fs-6 mb-2">Sociétés par jour</label>
+                                <input type="number"
+                                       name="daily_company_limit"
+                                       id="daily_company_limit"
+                                       class="form-control form-control-solid"
+                                       min="1"
+                                       value="{{ old('daily_company_limit', isset($model) && $model->schedule_type === 'paced' ? ($model->daily_company_limit ?? 20) : 20) }}" />
+                                <div class="form-text text-muted mt-1 fs-7">
+                                    Tous les contacts éligibles des sociétés sélectionnées recevront l’e-mail. Le nombre d’e-mails peut dépasser le nombre de sociétés.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     {{-- sequence fields --}}
                     <div id="fields-sequence" class="row" style="display:none;">
                         <div class="col-lg-5">
@@ -425,7 +455,7 @@
 
                                 <div class="form-text text-muted mt-1 fs-7">
                                     <i class="bi bi-info-circle me-1"></i>
-                                    Au lancement, les contacts éligibles du segment seront inscrits dans la séquence ; l'envoi des étapes est ensuite automatique (cadence = délais des étapes).
+                                    Au premier lancement, le suivi continu du segment est activé. Chaque nouveau contact éligible commence à l'étape 1 ; l'envoi suit ensuite les délais de la séquence.
                                 </div>
 
                                 {{-- Edit mode: enrolled count hint (consultant F5) --}}
@@ -437,7 +467,7 @@
                                         <div class="mt-2">
                                             <span class="badge badge-light-info">
                                                 <i class="bi bi-people me-1"></i>
-                                                {{ $enrolledHint }} contact(s) déjà inscrits — modifier la séquence n'affecte que les prochains lancements.
+                                                {{ $enrolledHint }} contact(s) déjà inscrits. Changer de séquence arrête le suivi automatique et exige un nouveau démarrage ; les parcours en cours restent inchangés.
                                             </span>
                                         </div>
                                     @endif
@@ -556,7 +586,7 @@
 
                     axios.get('{{ route("admin.campaigns.segmentCount", "") }}/' + segmentId)
                         .then(function (r) {
-                            countLabel.innerHTML = '<span class="badge badge-light-primary">' + r.data.count + ' contact(s)</span> dans ce segment.';
+                            countLabel.innerHTML = '<span class="badge badge-light-primary">' + r.data.contact_count + ' contact(s)</span> dans <span class="badge badge-light-info">' + r.data.company_count + ' société(s)</span>.';
                         })
                         .catch(function () {
                             countLabel.innerHTML = '<span class="text-muted">Impossible de récupérer le compte.</span>';
@@ -793,20 +823,33 @@
                 });
             }
 
+            const pacedFirstSendInput = document.getElementById('paced_first_send_at');
+            if (pacedFirstSendInput && typeof flatpickr !== 'undefined') {
+                flatpickr(pacedFirstSendInput, {
+                    enableTime: true,
+                    dateFormat: 'Y-m-d H:i',
+                    time_24hr: true,
+                    locale: 'fr',
+                    minDate: 'today',
+                });
+            }
+
             // ── Schedule type switcher ───────────────────────────────
             const scheduleTypeSelect   = document.getElementById('schedule_type_select');
             const fieldsOneShotEl      = document.getElementById('fields-one-shot');
             const fieldsRecurringEl    = document.getElementById('fields-recurring');
+            const fieldsPacedEl         = document.getElementById('fields-paced');
             const fieldsSequenceEl     = document.getElementById('fields-sequence');
             const fieldTemplateWrapper = document.getElementById('field-template-wrapper');
             const fieldSubjectWrapper  = document.getElementById('field-subject-wrapper');
             const fieldTimezoneWrapper = document.getElementById('field-timezone-wrapper');
 
             function applyScheduleMode(value) {
-                if (!fieldsOneShotEl || !fieldsRecurringEl || !fieldsSequenceEl) return;
+                if (!fieldsOneShotEl || !fieldsRecurringEl || !fieldsPacedEl || !fieldsSequenceEl) return;
                 const isSequence = value === 'sequence';
                 fieldsOneShotEl.style.display  = value === 'one_shot'  ? '' : 'none';
                 fieldsRecurringEl.style.display = value === 'recurring' ? '' : 'none';
+                fieldsPacedEl.style.display = value === 'paced' ? '' : 'none';
                 fieldsSequenceEl.style.display  = isSequence  ? '' : 'none';
 
                 // W1: hide template + subject + timezone in sequence mode

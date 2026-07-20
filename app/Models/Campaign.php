@@ -34,12 +34,14 @@ class Campaign extends Model
         'name',
         'subject',
         'schedule_type',
+        'daily_company_limit',
         'scheduled_at',
         'recurrence',
         'next_run_at',
         'timezone',
         'send_window',
         'is_active',
+        'sequence_auto_enroll_enabled',
         'driver',
         'zoho_list_key',
     ];
@@ -55,6 +57,8 @@ class Campaign extends Model
         'recurrence'   => 'array',
         'send_window'  => 'array',
         'is_active'    => 'boolean',
+        'sequence_auto_enroll_enabled' => 'boolean',
+        'daily_company_limit' => 'integer',
     ];
 
     // ── Relationships ──────────────────────────────────────────────────────────
@@ -99,6 +103,12 @@ class Campaign extends Model
         return $this->hasMany(CampaignRun::class);
     }
 
+    /** Company-level progress ledger for paced campaigns. */
+    public function companyDispatches(): HasMany
+    {
+        return $this->hasMany(CampaignCompanyDispatch::class);
+    }
+
     /**
      * All sequence enrollments attributed to this campaign.
      */
@@ -120,6 +130,12 @@ class Campaign extends Model
     public function scheduledAtLocal(): ?Carbon
     {
         return $this->effectiveScheduledAt()?->copy()->setTimezone($this->scheduleTimezone());
+    }
+
+    /** Defensive runtime default for paced campaigns created before the field existed. */
+    public function pacedDailyCompanyLimit(): int
+    {
+        return max(1, (int) ($this->daily_company_limit ?? 20));
     }
 
     public function isOverdue(?Carbon $now = null): bool
@@ -178,8 +194,14 @@ class Campaign extends Model
             'recurrence'         => 'nullable|array',
             'next_run_at'        => [
                 'nullable',
-                Rule::requiredIf(fn () => $this->schedule_type === 'recurring' && $isActive),
+                Rule::requiredIf(fn () => in_array($this->schedule_type, ['recurring', 'paced'], true) && $isActive),
                 'date',
+            ],
+            'daily_company_limit' => [
+                'nullable',
+                Rule::requiredIf(fn () => $this->schedule_type === 'paced' && $isActive),
+                'integer',
+                'min:1',
             ],
             'timezone'           => 'nullable|timezone',
             'send_window'        => 'nullable|array',
@@ -196,7 +218,8 @@ class Campaign extends Model
     public function messages(): array
     {
         return [
-            'next_run_at.required' => 'Le champ Premier envoi est obligatoire pour activer une campagne récurrente.',
+            'next_run_at.required' => 'Le champ Premier envoi est obligatoire pour activer cette campagne.',
+            'daily_company_limit.required' => 'Le nombre de sociétés par jour est obligatoire pour un envoi progressif.',
         ];
     }
 

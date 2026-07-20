@@ -18,8 +18,8 @@ import { expectPath } from '../helpers/test-utils';
  *   .card-label with text "Jobs échoués"                      — section card header
  *   .card-label with text "Exécutions de campagne échouées"   — section card header
  *
- * Gate: permission:manage roles — only superadmin / admin; ensure the test
- * storageState uses an admin or superadmin user.
+ * Gate: permission:manage roles — superadmin-only under the seeded ACL; the
+ * test storageState must use a superadmin user.
  */
 
 test.describe('Observability module', () => {

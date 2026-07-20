@@ -17,12 +17,25 @@ class UsersSeeder extends Seeder
      * prod superadmin before real use.
      *
      * Users created:
-     *   admin@fretiq.test      → role: superadmin
+     *   admin@fretiq.test      → role: admin
+     *   superadmin@fretiq.test      → role: superadmin
      *   commercial@fretiq.test → role: commercial
      */
     public function run(): void
     {
         // ── Superadmin ─────────────────────────────────────────────────────────
+        $admin = User::firstOrCreate(
+            ['email' => 'superadmin@fretiq.test'],
+            [
+                'name'              => 'Super Admin',
+                'password'          => Hash::make('superadmin@fretiq@2026'),
+                'is_active'         => true,
+                'email_verified_at' => now(),
+            ]
+        );
+        $admin->assignRole('superadmin');
+
+        // ── Admin ─────────────────────────────────────────────────────────
         $admin = User::firstOrCreate(
             ['email' => 'admin@fretiq.test'],
             [
@@ -32,7 +45,7 @@ class UsersSeeder extends Seeder
                 'email_verified_at' => now(),
             ]
         );
-        $admin->assignRole('superadmin');
+        $admin->assignRole('admin');
 
         // ── Commercial ────────────────────────────────────────────────────────
         $commercial = User::firstOrCreate(

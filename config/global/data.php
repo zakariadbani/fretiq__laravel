@@ -105,7 +105,17 @@ return [
     'schedule_types' => [
         'one_shot' => ['label' => 'Ponctuel',   'color' => 'secondary'],
         'recurring' => ['label' => 'Récurrent',  'color' => 'info'],
+        'paced' => ['label' => 'Envoi progressif', 'color' => 'warning'],
         'sequence' => ['label' => 'Séquence',   'color' => 'primary'],
+    ],
+
+    //---------------------------------------------------------------------------
+    // Campagnes progressives — état d'une société
+    //---------------------------------------------------------------------------
+    'campaign_company_dispatch_statuses' => [
+        'claimed' => ['label' => 'Réclamée', 'color' => 'info'],
+        'processed' => ['label' => 'Traitée', 'color' => 'success'],
+        'failed' => ['label' => 'Échec', 'color' => 'danger'],
     ],
 
     //---------------------------------------------------------------------------

@@ -22,7 +22,8 @@ class PermissionsSeeder extends Seeder
      *
      * Role mapping:
      *   superadmin  → all permissions
-     *   admin       → all permissions
+     *   admin       → all permissions except manage packages, view provider quota,
+     *                 manage roles, manage permissions, view settings, edit settings
      *   commercial  → view/create/edit on companies, contacts, segments, campaigns, sequences,
      *                 demandes, prospect_criteria, campaign_templates, sender_identities
      *                 + view/create suppressions + backend.access + run discovery
@@ -53,14 +54,14 @@ class PermissionsSeeder extends Seeder
         $keywordPermissions = [
             'backend.access',
             'send campaigns',
-            'manage roles',
-            'manage permissions',
+            'manage roles',       // superadmin only — gates role management and observability
+            'manage permissions', // superadmin only — gates permission management
             'view zoho',
             'sync zoho',
             'run discovery',
             'manage packages',   // superadmin only — admin/commercial MUST NOT receive this
-            'view settings',     // admin/superadmin only — commercial does NOT get this
-            'edit settings',     // admin/superadmin only — commercial does NOT get this
+            'view settings',     // superadmin only — gates the settings page
+            'edit settings',     // superadmin only — gates settings updates
             'enrich companies',  // commercial can trigger Hunter enrichment manually
             'view consumption',  // client-facing "Ma consommation" page — commercial + admin
             'view provider quota', // superadmin only — real vendor-account balances, NOT for admin/commercial
@@ -75,7 +76,7 @@ class PermissionsSeeder extends Seeder
 
         // ── 3. Assign permissions to roles ─────────────────────────────────────
 
-        // superadmin and admin get everything
+        // superadmin gets everything; admin excludes only superadmin-only controls
         $allPermissions = Permission::all();
 
         $superadmin = Role::where('name', 'superadmin')->where('guard_name', 'web')->first();
@@ -85,9 +86,17 @@ class PermissionsSeeder extends Seeder
 
         $admin = Role::where('name', 'admin')->where('guard_name', 'web')->first();
         if ($admin) {
-            // Admin gets all permissions EXCEPT superadmin-only vendor/package controls.
+            $superadminOnlyPermissions = [
+                'manage packages',
+                'view provider quota',
+                'manage roles',
+                'manage permissions',
+                'view settings',
+                'edit settings',
+            ];
+
             $adminPermissions = $allPermissions->filter(
-                fn ($p) => ! in_array($p->name, ['manage packages', 'view provider quota'], true)
+                fn ($p) => ! in_array($p->name, $superadminOnlyPermissions, true)
             );
             $admin->syncPermissions($adminPermissions);
         }

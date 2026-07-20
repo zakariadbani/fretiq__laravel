@@ -92,6 +92,7 @@ class RolePermissionGeneratedTest extends TestCase
             'is_active'         => true,
         ]);
         $this->admin->assignRole('admin');
+        $this->admin->givePermissionTo(['manage roles', 'manage permissions']);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

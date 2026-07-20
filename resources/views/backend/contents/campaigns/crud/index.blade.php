@@ -8,10 +8,6 @@
     <x-crud.breadcrumb :items="[['label' => 'Campagnes']]" />
 @endsection
 
-@include('backend.contents.campaigns.partials._scheduler-health', ['schedulerHealth' => $schedulerHealth ?? []])
-
-@include('backend.partials._first-use-checklist', ['checklist' => $firstUseChecklist ?? null])
-
 <div class="card">
     {{-- Card header --}}
     <div class="card-header border-0 pt-6">

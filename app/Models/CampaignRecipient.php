@@ -25,6 +25,7 @@ class CampaignRecipient extends Model
      */
     protected $fillable = [
         'campaign_run_id',
+        'company_dispatch_id',
         'contact_id',
         'status',
         'skip_reason',
@@ -68,6 +69,12 @@ class CampaignRecipient extends Model
         return $this->belongsTo(Contact::class);
     }
 
+    /** Company-level paced dispatch owning this frozen recipient. */
+    public function companyDispatch(): BelongsTo
+    {
+        return $this->belongsTo(CampaignCompanyDispatch::class, 'company_dispatch_id');
+    }
+
     // ── Validation ─────────────────────────────────────────────────────────────
 
     /**
@@ -79,6 +86,7 @@ class CampaignRecipient extends Model
     {
         return [
             'campaign_run_id'     => 'required|integer|exists:campaign_runs,id',
+            'company_dispatch_id' => 'nullable|integer|exists:campaign_company_dispatches,id',
             'contact_id'          => 'required|integer|exists:contacts,id',
             'status'              => 'nullable|' . ConfigEnum::in('campaign_recipient_statuses'),
             'skip_reason'         => 'nullable|string|max:100',

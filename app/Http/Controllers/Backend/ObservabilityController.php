@@ -8,9 +8,7 @@ use App\Services\Analytics\QueueObservabilityService;
 /**
  * ObservabilityController — queue / job failure monitoring screen.
  *
- * Gate: `manage roles` — only superadmin / admin have this permission;
- * commercial role does not, which satisfies the "admin only" requirement
- * without adding a new bespoke permission.
+ * Gate: `manage roles` — superadmin-only under the seeded ACL.
  */
 class ObservabilityController extends Controller
 {

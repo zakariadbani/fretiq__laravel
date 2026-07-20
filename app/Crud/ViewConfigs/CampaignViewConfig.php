@@ -90,21 +90,33 @@ class CampaignViewConfig
         }
 
         // ── Status-bar toggle ─────────────────────────────────────────────────
-        // is_active toggle — shown for non-sequence campaigns only.
-        // Sequence campaigns are paused via their sequence.is_active (drip engine),
-        // not via campaign.is_active. Mirroring SenderIdentityViewConfig toggle block.
         $toggle = null;
-        if ($hasId && $model->schedule_type !== 'sequence') {
-            $toggle = [
-                'field'       => 'is_active',
-                'route'       => route('admin.campaigns.executeSwitch', $model->id),
-                'permission'  => 'edit campaigns',
-                'title'       => 'Campagne active',
-                'description' => 'Décochez pour mettre en pause (le planificateur ignore la campagne).',
-                'success'     => 'Campagne mise à jour',
-                'error'       => 'Échec de la mise à jour',
-                'icon'        => 'bi-check-circle-fill',
-            ];
+        if ($hasId) {
+            if ($model->schedule_type === 'sequence') {
+                $toggle = [
+                    'field'       => 'sequence_auto_enroll_enabled',
+                    'route'       => route('admin.campaigns.sequenceAutoEnroll', $model->id),
+                    'permission'  => 'send campaigns',
+                    'title'       => 'Inscription automatique',
+                    'description' => 'Inscrit les nouveaux contacts du segment. Les parcours déjà commencés continuent après arrêt.',
+                    'success'     => 'Inscription automatique mise à jour',
+                    'error'       => 'Échec de la mise à jour',
+                    'icon'        => 'bi-person-plus-fill',
+                ];
+            } else {
+                $toggle = [
+                    'field'       => 'is_active',
+                    'route'       => route('admin.campaigns.executeSwitch', $model->id),
+                    'permission'  => $model->schedule_type === 'paced' && ! $model->is_active
+                        ? 'send campaigns'
+                        : 'edit campaigns',
+                    'title'       => 'Campagne active',
+                    'description' => 'Décochez pour mettre en pause (le planificateur ignore la campagne).',
+                    'success'     => 'Campagne mise à jour',
+                    'error'       => 'Échec de la mise à jour',
+                    'icon'        => 'bi-check-circle-fill',
+                ];
+            }
         }
 
         // ── Tabs ──────────────────────────────────────────────────────────────
@@ -137,6 +149,10 @@ class CampaignViewConfig
             }
             if ($model->next_run_at) {
                 $detailRows[] = ['label' => 'Prochain envoi', 'value' => $model->next_run_at->copy()->setTimezone($timezone)->format('d/m/Y H:i') . ' ' . $timezone, 'type' => 'text'];
+            }
+            if ($model->schedule_type === 'paced') {
+                $detailRows[] = ['label' => 'Sociétés par jour', 'value' => $model->pacedDailyCompanyLimit(), 'type' => 'text'];
+                $detailRows[] = ['label' => 'Jours d’envoi', 'value' => 'Du lundi au vendredi', 'type' => 'text'];
             }
             if ($model->timezone) {
                 $detailRows[] = ['label' => 'Fuseau horaire', 'value' => $model->timezone, 'type' => 'text'];

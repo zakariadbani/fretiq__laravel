@@ -67,6 +67,14 @@ class EmailTrackingEvent extends Model
         );
     }
 
+    /** Promote a paced pre-send reservation after provider acceptance. */
+    public function markSent(): void
+    {
+        if ($this->event !== 'sent') {
+            $this->update(['event' => 'sent']);
+        }
+    }
+
     // ── Relationships ──────────────────────────────────────────────────────────
 
     /**

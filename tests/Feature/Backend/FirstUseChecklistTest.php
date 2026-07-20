@@ -32,20 +32,12 @@ class FirstUseChecklistTest extends TestCase
         $this->superadmin->assignRole('superadmin');
     }
 
-    public function test_dashboard_and_campaign_index_show_first_use_order(): void
+    public function test_campaign_index_does_not_show_first_use_checklist(): void
     {
-        foreach (['/admin/dashboard', '/admin/campaigns'] as $url) {
-            $this->actingAs($this->superadmin)
-                ->get($url)
-                ->assertOk()
-                ->assertSeeInOrder([
-                    'Première campagne : ordre de préparation',
-                    'Identité expéditeur',
-                    'Segment destinataire',
-                    'Modèle d’e-mail',
-                    'Première campagne',
-                ], false);
-        }
+        $this->actingAs($this->superadmin)
+            ->get('/admin/campaigns')
+            ->assertOk()
+            ->assertDontSee('Première campagne : ordre de préparation', false);
     }
 
     public function test_checklist_marks_existing_setup_complete(): void

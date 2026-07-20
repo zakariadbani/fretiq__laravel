@@ -42,8 +42,10 @@
                 class="btn btn-sm fw-bold btn-info"
                 id="btn-schedule"
                 data-campaign-id="{{ $model->id }}"
+                data-schedule-type="{{ $model->schedule_type }}"
+                data-daily-company-limit="{{ $model->pacedDailyCompanyLimit() }}"
                 data-url="{{ route('admin.campaigns.schedule', $model->id) }}"
-                data-preview-url="{{ route('admin.campaigns.dispatchPreview', $model->id) }}">
+                data-preview-url="{{ route('admin.campaigns.dispatchPreview', ['id' => $model->id, 'action' => 'schedule']) }}">
             <i class="bi bi-calendar-check me-1"></i>
             Planifier
         </button>
@@ -54,11 +56,20 @@
                 id="btn-send-now"
                 data-campaign-id="{{ $model->id }}"
                 data-schedule-type="{{ $model->schedule_type }}"
+                data-daily-company-limit="{{ $model->pacedDailyCompanyLimit() }}"
                 data-url="{{ route('admin.campaigns.sendNow', $model->id) }}"
                 data-preview-url="{{ route('admin.campaigns.dispatchPreview', $model->id) }}">
-            @if($model->schedule_type === 'sequence')
-                <i class="bi bi-play-circle me-1"></i>
-                Démarrer la séquence
+            @if($model->schedule_type === 'paced')
+                <i class="bi bi-send me-1"></i>
+                Envoyer le lot du jour
+            @elseif($model->schedule_type === 'sequence')
+                @if($model->sequence_auto_enroll_enabled)
+                    <i class="bi bi-arrow-repeat me-1"></i>
+                    Synchroniser maintenant
+                @else
+                    <i class="bi bi-play-circle me-1"></i>
+                    Démarrer la séquence
+                @endif
             @else
                 <i class="bi bi-send me-1"></i>
                 Envoyer maintenant

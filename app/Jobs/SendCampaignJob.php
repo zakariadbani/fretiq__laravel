@@ -12,6 +12,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * SendCampaignJob — processes a single CampaignRun through the send engine.
@@ -116,5 +117,17 @@ class SendCampaignJob implements ShouldQueue, ShouldBeUnique
         app(CampaignService::class)->sendRun($run);
 
         Log::info('[SendCampaignJob] Run completed.', ['run_id' => $this->runId]);
+    }
+
+    /** Reconcile paced company ledgers after the queue exhausts all attempts. */
+    public function failed(Throwable $exception): void
+    {
+        $run = CampaignRun::find($this->runId);
+
+        if ($run === null) {
+            return;
+        }
+
+        app(CampaignService::class)->finalizePacedFailure($run, $exception);
     }
 }

@@ -23,8 +23,8 @@ class CampaignsDataTable extends BackendDataTable
             'raw'        => true,
         ],
         'is_active' => [
-            'title'      => 'Actif',
-            'orderable'  => true,
+            'title'      => 'Statut / suivi',
+            'orderable'  => false,
             'searchable' => false,
             'switch'     => true,
             'typetoggle' => 'status',
@@ -136,9 +136,10 @@ class CampaignsDataTable extends BackendDataTable
         });
 
         $this->datatables->editColumn('is_active', function (Campaign $row) {
-            // Sequence campaigns: pause is controlled via sequence.is_active — static badge.
             if ($row->schedule_type === 'sequence') {
-                return '<span class="badge badge-light-info">Via séquence</span>';
+                return $row->sequence_auto_enroll_enabled
+                    ? '<span class="badge badge-light-success">Inscriptions auto actives</span>'
+                    : '<span class="badge badge-light-secondary">Inscriptions auto arrêtées</span>';
             }
 
             return view('backend.components.datatable.status', [

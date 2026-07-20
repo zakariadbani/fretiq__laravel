@@ -94,20 +94,36 @@
                                 </td>
                                 @can('edit sequences')
                                 <td class="text-end pe-7">
-                                    <form method="POST"
-                                          action="{{ route('admin.sequences.deleteStep', [$model->id, $step->id]) }}"
-                                          onsubmit="return confirm('Supprimer cette étape ?');">
-                                        @csrf
-                                        @method('DELETE')
-                                        <button type="submit"
-                                                class="btn btn-sm btn-icon btn-light-danger"
-                                                title="Supprimer l'étape"
-                                                data-bs-toggle="tooltip"
-                                                data-bs-title="Supprimer l'étape"
-                                                aria-label="Supprimer l'étape">
-                                            <i class="bi bi-trash fs-5"></i>
+                                    <div class="d-flex gap-1 justify-content-end">
+                                        <button type="button"
+                                                class="btn btn-sm btn-icon btn-light-primary"
+                                                title="Modifier l’étape"
+                                                data-bs-toggle="modal"
+                                                data-bs-target="#sequence_step_edit_modal"
+                                                data-bs-title="Modifier l’étape"
+                                                data-sequence-step-edit
+                                                data-update-url="{{ route('admin.sequences.updateStep', [$model->id, $step->id]) }}"
+                                                data-delay-days="{{ $step->delay_days }}"
+                                                data-template-id="{{ $step->template_id }}"
+                                                data-subject="{{ $step->subject }}"
+                                                aria-label="Modifier l’étape">
+                                            <i class="bi bi-pencil fs-5"></i>
                                         </button>
-                                    </form>
+                                        <form method="POST"
+                                              action="{{ route('admin.sequences.deleteStep', [$model->id, $step->id]) }}"
+                                              onsubmit="return confirm('Supprimer cette étape ?');">
+                                            @csrf
+                                            @method('DELETE')
+                                            <button type="submit"
+                                                    class="btn btn-sm btn-icon btn-light-danger"
+                                                    title="Supprimer l'étape"
+                                                    data-bs-toggle="tooltip"
+                                                    data-bs-title="Supprimer l'étape"
+                                                    aria-label="Supprimer l'étape">
+                                                <i class="bi bi-trash fs-5"></i>
+                                            </button>
+                                        </form>
+                                    </div>
                                 </td>
                                 @endcan
                             </tr>
@@ -305,6 +321,8 @@
 
 </div>
 {{-- end tab-content --}}
+
+@include('backend.contents.sequences.partials._edit-step-modal')
 
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>

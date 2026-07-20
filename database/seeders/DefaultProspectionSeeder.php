@@ -29,9 +29,9 @@ class DefaultProspectionSeeder extends Seeder
     {
         // ── 1. Default SenderIdentity ─────────────────────────────────────────────
         $sender = SenderIdentity::firstOrCreate(
-            ['email' => 'mnejjar@tcl.ma'],
+            ['email' => 'sales@tcltransport.com'],
             [
-                'name'           => 'M. Nejjar — TCL France',
+                'name'           => 'Sales — TCL France',
                 'reply_to'       => null,
                 'signature_html' => '<p>TCL France</p>',
                 'is_default'     => true,

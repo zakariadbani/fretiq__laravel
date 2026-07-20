@@ -13,7 +13,7 @@ use Tests\TestCase;
  * ObservabilityAccessTest — permission enforcement + service shape for the
  * observability screen.
  *
- * Gate: `manage roles` — only superadmin/admin; commercial lacks it.
+ * Gate: `manage roles` — superadmin-only under the seeded ACL.
  *
  * counts() keys (from QueueObservabilityService source):
  *   failed_jobs, failed_runs, queued_recipients, scheduled_runs

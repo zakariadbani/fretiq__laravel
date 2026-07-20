@@ -23,7 +23,7 @@ return [
         //---------------------------------------------------------------------------
         [
             'content' => 'Prospection',
-            'permission' => ['view companies', 'view contacts'],
+            'permission' => ['view companies', 'view contacts', 'view prospect_criteria'],
             'classes' => ['content' => 'pt-8 pb-2'],
         ],
 
@@ -62,8 +62,38 @@ return [
         //---------------------------------------------------------------------------
         [
             'content' => 'Campagnes',
-            'permission' => ['view campaigns', 'view campaign_templates', 'view segments'],
+            'permission' => ['view campaigns', 'view campaign_templates', 'view sequences', 'view segments', 'view sender_identities'],
             'classes' => ['content' => 'pt-8 pb-2'],
+        ],
+
+        [
+            'title' => 'Campagnes',
+            'permission' => 'view campaigns',
+            'icon' => [
+                'svg' => 'flash-circle',
+                'font' => '<i class="bi bi-rocket fs-2"></i>',
+            ],
+            'path' => 'admin/campaigns',
+        ],
+
+        [
+            'title' => 'Planning',
+            'permission' => 'view campaigns',
+            'icon' => [
+                'svg' => 'calendar',
+                'font' => '<i class="bi bi-calendar3 fs-2"></i>',
+            ],
+            'path' => 'admin/planner',
+        ],
+
+        [
+            'title' => 'Séquences',
+            'permission' => 'view sequences',
+            'icon' => [
+                'svg' => 'abstract-14',
+                'font' => '<i class="bi bi-list-ol fs-2"></i>',
+            ],
+            'path' => 'admin/sequences',
         ],
 
         [
@@ -87,33 +117,13 @@ return [
         ],
 
         [
-            'title' => 'Séquences',
-            'permission' => 'view sequences',
+            'title' => "Identités d'expéditeur",
+            'permission' => 'view sender_identities',
             'icon' => [
-                'svg' => 'abstract-14',
-                'font' => '<i class="bi bi-list-ol fs-2"></i>',
+                'svg' => 'messages',
+                'font' => '<i class="bi bi-person-lines-fill fs-2"></i>',
             ],
-            'path' => 'admin/sequences',
-        ],
-
-        [
-            'title' => 'Campagnes',
-            'permission' => 'view campaigns',
-            'icon' => [
-                'svg' => 'flash-circle',
-                'font' => '<i class="bi bi-rocket fs-2"></i>',
-            ],
-            'path' => 'admin/campaigns',
-        ],
-
-        [
-            'title' => 'Planning',
-            'permission' => 'view campaigns',
-            'icon' => [
-                'svg' => 'calendar',
-                'font' => '<i class="bi bi-calendar3 fs-2"></i>',
-            ],
-            'path' => 'admin/planner',
+            'path' => 'admin/sender_identities',
         ],
 
         //---------------------------------------------------------------------------
@@ -160,7 +170,7 @@ return [
         //---------------------------------------------------------------------------
         [
             'content' => 'Administration',
-            'permission' => ['view users', 'manage roles', 'manage permissions', 'view sender_identities', 'view settings'],
+            'permission' => ['view users', 'manage roles', 'manage permissions', 'view zoho', 'view settings'],
             'classes' => ['content' => 'pt-8 pb-2'],
         ],
 
@@ -192,16 +202,6 @@ return [
                 'font' => '<i class="bi bi-key fs-2"></i>',
             ],
             'path' => 'admin/user-management/permissions',
-        ],
-
-        [
-            'title' => "Identités d'expéditeur",
-            'permission' => 'view sender_identities',
-            'icon' => [
-                'svg' => 'messages',
-                'font' => '<i class="bi bi-person-lines-fill fs-2"></i>',
-            ],
-            'path' => 'admin/sender_identities',
         ],
 
         [

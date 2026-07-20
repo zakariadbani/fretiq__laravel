@@ -32,7 +32,7 @@ class SequenceController extends BackendController
         $this->middleware('permission:create sequences')->only(['create', 'store']);
         $this->middleware('permission:edit sequences')->only([
             'edit', 'update', 'executeSwitch',
-            'addStep', 'deleteStep', 'moveStepUp', 'moveStepDown',
+            'addStep', 'updateStep', 'deleteStep', 'moveStepUp', 'moveStepDown',
             'pauseEnrollment', 'resumeEnrollment', 'stopEnrollment',
         ]);
         $this->middleware('permission:delete sequences')->only(['delete']);
@@ -135,6 +135,43 @@ class SequenceController extends BackendController
         ]);
 
         session()->flash('success', 'Étape ajoutée avec succès.');
+
+        return redirect()->back(fallback: route('admin.sequences.view', $sequence->id))
+            ->withFragment('sequence_steps');
+    }
+
+    /**
+     * Update the editable fields of a step owned by the requested sequence.
+     * PUT /sequences/{id}/steps/{stepId}
+     *
+     * @param int $id
+     * @param int $stepId
+     * @return \Illuminate\Http\JsonResponse|\Illuminate\Http\RedirectResponse
+     */
+    public function updateStep($id, $stepId)
+    {
+        $sequence = Sequence::findOrFail((int) $id);
+        $step = $sequence->steps()->findOrFail((int) $stepId);
+
+        $data = $this->currentRequest->validate([
+            'delay_days'  => 'required|integer|min:0',
+            'template_id' => 'required|integer|exists:campaign_templates,id',
+            'subject'     => 'nullable|string|max:255',
+        ]);
+
+        $step->update($data);
+
+        $message = 'Étape modifiée avec succès.';
+        $redirect = route('admin.sequences.view', $sequence->id) . '#sequence_steps';
+
+        if ($this->currentRequest->expectsJson()) {
+            return response()->json([
+                'message' => $message,
+                'redirect' => $redirect,
+            ]);
+        }
+
+        session()->flash('success', $message);
 
         return redirect()->back(fallback: route('admin.sequences.view', $sequence->id))
             ->withFragment('sequence_steps');

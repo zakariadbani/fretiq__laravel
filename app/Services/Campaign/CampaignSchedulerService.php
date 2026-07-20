@@ -8,10 +8,10 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
 /**
- * CampaignSchedulerService — materialises recurring CampaignRun rows.
+ * CampaignSchedulerService — materialises recurring and paced CampaignRun rows.
  *
  * Design (queue-idempotency.md §4, campaign-automation.md §3):
- *   - Reads campaigns where schedule_type='recurring', is_active=true,
+ *   - Reads campaigns where schedule_type is recurring or paced, is_active=true,
  *     next_run_at IS NOT NULL and <= now().
  *   - For each, inserts a CampaignRun with a deterministic occurrence_key (the unique
  *     DB constraint is the durable backstop — duplicate calls are no-ops).
@@ -23,8 +23,12 @@ use Illuminate\Support\Facades\Log;
  */
 class CampaignSchedulerService
 {
+    public function __construct(
+        private readonly PacedCampaignBatchService $pacedBatchService,
+    ) {}
+
     /**
-     * Find all recurring campaigns due for a new run and materialise them.
+     * Find all recurring/paced campaigns due for a new run and materialise them.
      *
      * Idempotent: CampaignRun::firstOrCreate with the unique(campaign_id, occurrence_key)
      * key means concurrent/repeated calls produce exactly one run row.
@@ -91,7 +95,35 @@ class CampaignSchedulerService
             }
         }
 
+        $pacedCampaigns = Campaign::where('schedule_type', 'paced')
+            ->where('is_active', true)
+            ->whereNotNull('next_run_at')
+            ->where('next_run_at', '<=', now())
+            ->get();
+
+        foreach ($pacedCampaigns as $campaign) {
+            // Candidate query is only an optimization. evaluateDue() locks and
+            // rechecks the fresh row before any run/cursor mutation.
+            $run = $this->pacedBatchService->evaluateDue($campaign, now());
+
+            if ($run?->wasRecentlyCreated) {
+                $count++;
+            }
+
+            Log::debug('[CampaignSchedulerService] Paced batch evaluated.', [
+                'campaign_id' => $campaign->id,
+                'occurrence_key' => $run?->occurrence_key,
+                'next_run_at' => $campaign->fresh()?->next_run_at?->toIso8601String(),
+            ]);
+        }
+
         return $count;
+    }
+
+    /** Advance one Monday-Friday occurrence while preserving local wall time. */
+    public function computeNextBusinessRun(Carbon $from, string $tz): Carbon
+    {
+        return $this->pacedBatchService->computeNextBusinessRun($from, $tz);
     }
 
     /**
