@@ -34,6 +34,7 @@ class Campaign extends Model
         'name',
         'subject',
         'schedule_type',
+        'sequence_enrollment_mode',
         'daily_company_limit',
         'scheduled_at',
         'recurrence',
@@ -163,6 +164,9 @@ class Campaign extends Model
             if ($model->schedule_type === null || $model->schedule_type === '') {
                 $model->schedule_type = 'one_shot';
             }
+            if ($model->sequence_enrollment_mode === null || $model->sequence_enrollment_mode === '') {
+                $model->sequence_enrollment_mode = 'immediate';
+            }
             if ($model->timezone === null || $model->timezone === '') {
                 $model->timezone = 'Europe/Paris';
             }
@@ -179,6 +183,8 @@ class Campaign extends Model
     public function rules(): array
     {
         $isActive = in_array($this->is_active, [true, 1, '1', 'true', 'on'], true);
+        $isPacedSequence = $this->schedule_type === 'sequence'
+            && $this->sequence_enrollment_mode === 'paced';
 
         return [
             'name'               => 'required|string|max:255',
@@ -190,20 +196,21 @@ class Campaign extends Model
             'sequence_id'        => 'nullable|required_if:schedule_type,sequence|integer|exists:sequences,id',
             'subject'            => 'nullable|string|max:255',
             'schedule_type'      => 'nullable|' . ConfigEnum::in('schedule_types'),
+            'sequence_enrollment_mode' => 'nullable|in:immediate,paced',
             'scheduled_at'       => 'nullable|date',
             'recurrence'         => 'nullable|array',
             'next_run_at'        => [
                 'nullable',
-                Rule::requiredIf(fn () => in_array($this->schedule_type, ['recurring', 'paced'], true) && $isActive),
+                Rule::requiredIf(fn () => (in_array($this->schedule_type, ['recurring', 'paced'], true) && $isActive) || $isPacedSequence),
                 'date',
             ],
             'daily_company_limit' => [
                 'nullable',
-                Rule::requiredIf(fn () => $this->schedule_type === 'paced' && $isActive),
+                Rule::requiredIf(fn () => ($this->schedule_type === 'paced' && $isActive) || $isPacedSequence),
                 'integer',
                 'min:1',
             ],
-            'timezone'           => 'nullable|timezone',
+            'timezone'           => [Rule::requiredIf(fn () => $isPacedSequence), 'nullable', 'timezone'],
             'send_window'        => 'nullable|array',
             'is_active'          => 'nullable|boolean',
             'driver'             => 'nullable|in:local,zoho',

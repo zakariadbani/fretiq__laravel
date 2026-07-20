@@ -43,6 +43,12 @@ class CampaignViewConfig
         if ($hasId && $typeLabel) {
             $badges[] = ['label' => $typeLabel, 'color' => $typeColor];
         }
+        if ($hasId && $model->schedule_type === 'sequence') {
+            $badges[] = [
+                'label' => $model->sequence_enrollment_mode === 'paced' ? 'Inscription progressive' : 'Inscription immédiate',
+                'color' => $model->sequence_enrollment_mode === 'paced' ? 'info' : 'secondary',
+            ];
+        }
         if ($hasId && $model->isOverdue()) {
             $badges[] = ['label' => 'En retard', 'color' => 'danger'];
         }
@@ -98,7 +104,9 @@ class CampaignViewConfig
                     'route'       => route('admin.campaigns.sequenceAutoEnroll', $model->id),
                     'permission'  => 'send campaigns',
                     'title'       => 'Inscription automatique',
-                    'description' => 'Inscrit les nouveaux contacts du segment. Les parcours déjà commencés continuent après arrêt.',
+                    'description' => $model->sequence_enrollment_mode === 'paced'
+                        ? 'Inscrit un nombre limité de sociétés chaque jour ouvré. Les parcours commencés continuent après arrêt.'
+                        : 'Inscrit les nouveaux contacts du segment. Les parcours déjà commencés continuent après arrêt.',
                     'success'     => 'Inscription automatique mise à jour',
                     'error'       => 'Échec de la mise à jour',
                     'icon'        => 'bi-person-plus-fill',
@@ -148,9 +156,12 @@ class CampaignViewConfig
                 $detailRows[] = ['label' => 'Planifié le', 'value' => $model->scheduled_at->copy()->setTimezone($timezone)->format('d/m/Y H:i') . ' ' . $timezone, 'type' => 'text'];
             }
             if ($model->next_run_at) {
-                $detailRows[] = ['label' => 'Prochain envoi', 'value' => $model->next_run_at->copy()->setTimezone($timezone)->format('d/m/Y H:i') . ' ' . $timezone, 'type' => 'text'];
+                $detailRows[] = ['label' => $model->schedule_type === 'sequence' ? 'Prochain lot' : 'Prochain envoi', 'value' => $model->next_run_at->copy()->setTimezone($timezone)->format('d/m/Y H:i') . ' ' . $timezone, 'type' => 'text'];
             }
-            if ($model->schedule_type === 'paced') {
+            if ($model->schedule_type === 'sequence') {
+                $detailRows[] = ['label' => 'Mode d’inscription', 'value' => $model->sequence_enrollment_mode === 'paced' ? 'Progressif' : 'Tous immédiatement', 'type' => 'text'];
+            }
+            if ($model->schedule_type === 'paced' || ($model->schedule_type === 'sequence' && $model->sequence_enrollment_mode === 'paced')) {
                 $detailRows[] = ['label' => 'Sociétés par jour', 'value' => $model->pacedDailyCompanyLimit(), 'type' => 'text'];
                 $detailRows[] = ['label' => 'Jours d’envoi', 'value' => 'Du lundi au vendredi', 'type' => 'text'];
             }

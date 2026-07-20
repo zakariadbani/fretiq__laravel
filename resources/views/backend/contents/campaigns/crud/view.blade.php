@@ -131,6 +131,23 @@
                 </div>
             </div>
 
+            @if($model->sequence_enrollment_mode === 'paced')
+            <div class="col-sm-6 col-xl-4">
+                <div class="card card-flush h-lg-100">
+                    <div class="card-header pt-5">
+                        <div class="card-title d-flex flex-column">
+                            <span class="fs-2hx fw-bold text-gray-900 me-2 lh-1 ls-n2">{{ number_format($enrolledCompanyCount ?? 0) }}</span>
+                            <span class="text-gray-500 pt-1 fw-semibold fs-6">Sociétés inscrites</span>
+                        </div>
+                    </div>
+                    <div class="card-body pt-0 text-muted fs-7">
+                        Jusqu’à {{ $model->pacedDailyCompanyLimit() }} société(s) par jour ouvré.
+                        <div class="mt-1">Prochain lot : {{ $model->next_run_at ? $model->next_run_at->copy()->setTimezone($model->scheduleTimezone())->format('d/m/Y H:i') : 'non défini' }}</div>
+                    </div>
+                </div>
+            </div>
+            @endif
+
         </div>
         @endif
 
@@ -457,20 +474,24 @@
                     const scheduleType = self.dataset.scheduleType || '';
                     const isSequence = scheduleType === 'sequence';
                     const isPaced = scheduleType === 'paced';
+                    const isPacedSequence = isSequence && self.dataset.sequenceEnrollmentMode === 'paced';
                     const dailyCompanyLimit = self.dataset.dailyCompanyLimit || '20';
+                    const nextBatchAt = self.dataset.nextBatchAt || 'date à définir';
                     self.disabled = true;
 
                     previewDispatch(self)
                         .then(function (preview) {
                             return Swal.fire({
-                                title: isSequence ? 'Démarrer la séquence ?' : (isPaced ? 'Envoyer le lot du jour ?' : 'Envoyer maintenant ?'),
-                                html: isPaced
+                                title: isPacedSequence ? 'Activer ou vérifier le lot progressif ?' : (isSequence ? 'Démarrer la séquence ?' : (isPaced ? 'Envoyer le lot du jour ?' : 'Envoyer maintenant ?')),
+                                html: isPacedSequence
+                                    ? 'Cette action traite uniquement le lot arrivé à échéance, limité à <strong>' + dailyCompanyLimit + '</strong> société(s). Tous leurs contacts éligibles commenceront à l’étape 1.<br>Prochain lot planifié : <strong>' + nextBatchAt + '</strong>.'
+                                    : isPaced
                                     ? 'Audience actuelle : <strong>' + preview.company_count + '</strong> société(s), <strong>' + preview.contact_count + '</strong> contact(s).<br>Cette action prépare uniquement le lot du jour, limité à <strong>' + dailyCompanyLimit + '</strong> société(s).'
                                     : 'Audience vérifiée : <strong>' + preview.count + '</strong> destinataire(s) éligible(s).<br>'
                                         + (isSequence ? 'Les contacts déjà inscrits seront ignorés.' : 'La campagne sera envoyée immédiatement. Cette action ne peut pas être annulée.'),
                                 icon: isSequence ? 'question' : 'warning',
                                 showCancelButton: true,
-                                confirmButtonText: isSequence ? 'Démarrer' : 'Envoyer',
+                                confirmButtonText: isPacedSequence ? 'Vérifier le lot' : (isSequence ? 'Démarrer' : 'Envoyer'),
                                 cancelButtonText: 'Annuler',
                                 buttonsStyling: false,
                                 customClass: {

@@ -6,6 +6,7 @@ namespace App\Console\Commands;
 
 use App\Models\Campaign;
 use App\Services\Campaign\CampaignService;
+use App\Services\Campaign\PacedSequenceEnrollmentService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -15,7 +16,7 @@ class CampaignsSyncSequenceEnrollments extends Command
 
     protected $description = 'Inscrit les nouveaux contacts éligibles dans les campagnes séquentielles suivies.';
 
-    public function handle(CampaignService $campaignService): int
+    public function handle(CampaignService $campaignService, PacedSequenceEnrollmentService $pacedService): int
     {
         $campaigns = 0;
         $enrolled = 0;
@@ -26,23 +27,30 @@ class CampaignsSyncSequenceEnrollments extends Command
             ->where('schedule_type', 'sequence')
             ->where('sequence_auto_enroll_enabled', true)
             ->with(['segment', 'senderIdentity', 'sequence'])
-            ->chunkById(100, function ($batch) use ($campaignService, &$campaigns, &$enrolled, &$skipped, &$blocked): void {
+            ->chunkById(100, function ($batch) use ($campaignService, $pacedService, &$campaigns, &$enrolled, &$skipped, &$blocked): void {
                 foreach ($batch as $campaign) {
                     $campaigns++;
 
                     try {
-                        $preflight = $campaignService->dispatchPreflight($campaign);
-                        if (! $preflight['ok']) {
-                            $blocked++;
-                            Log::warning('[CampaignSequenceAutoEnroll] Campaign skipped by preflight.', [
-                                'campaign_id' => $campaign->id,
-                                'messages' => $preflight['messages'],
-                            ]);
+                        $isPaced = $campaign->sequence_enrollment_mode === 'paced';
+                        if ($isPaced) {
+                            // The locked paced service checks configuration and due
+                            // state before resolving the potentially large audience.
+                            $result = $pacedService->evaluateDue($campaign, now());
+                        } else {
+                            $preflight = $campaignService->dispatchPreflight($campaign);
+                            if (! $preflight['ok']) {
+                                $blocked++;
+                                Log::warning('[CampaignSequenceAutoEnroll] Campaign skipped by preflight.', [
+                                    'campaign_id' => $campaign->id,
+                                    'messages' => $preflight['messages'],
+                                ]);
 
-                            continue;
+                                continue;
+                            }
+
+                            $result = $campaignService->launchSequence($campaign);
                         }
-
-                        $result = $campaignService->launchSequence($campaign);
                         $enrolled += $result['enrolled'];
                         $skipped += $result['skipped'];
                     } catch (\Throwable $e) {

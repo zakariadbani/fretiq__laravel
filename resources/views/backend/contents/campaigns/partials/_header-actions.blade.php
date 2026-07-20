@@ -56,14 +56,22 @@
                 id="btn-send-now"
                 data-campaign-id="{{ $model->id }}"
                 data-schedule-type="{{ $model->schedule_type }}"
+                data-sequence-enrollment-mode="{{ $model->sequence_enrollment_mode }}"
                 data-daily-company-limit="{{ $model->pacedDailyCompanyLimit() }}"
+                data-next-batch-at="{{ $model->next_run_at ? $model->next_run_at->copy()->setTimezone($model->scheduleTimezone())->format('d/m/Y H:i') : '' }}"
                 data-url="{{ route('admin.campaigns.sendNow', $model->id) }}"
                 data-preview-url="{{ route('admin.campaigns.dispatchPreview', $model->id) }}">
             @if($model->schedule_type === 'paced')
                 <i class="bi bi-send me-1"></i>
                 Envoyer le lot du jour
             @elseif($model->schedule_type === 'sequence')
-                @if($model->sequence_auto_enroll_enabled)
+                @if($model->sequence_enrollment_mode === 'paced' && $model->sequence_auto_enroll_enabled)
+                    <i class="bi bi-calendar2-check me-1"></i>
+                    Vérifier le lot · {{ $model->next_run_at ? $model->next_run_at->copy()->setTimezone($model->scheduleTimezone())->format('d/m H:i') : 'date à définir' }}
+                @elseif($model->sequence_enrollment_mode === 'paced')
+                    <i class="bi bi-play-circle me-1"></i>
+                    Activer l’inscription progressive
+                @elseif($model->sequence_auto_enroll_enabled)
                     <i class="bi bi-arrow-repeat me-1"></i>
                     Synchroniser maintenant
                 @else

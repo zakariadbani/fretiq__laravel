@@ -297,7 +297,7 @@
                             </div>
                         </div>
 
-                        {{-- Fuseau horaire (hidden in sequence mode — drip ignores timezone) --}}
+                        {{-- Fuseau horaire (used by scheduled sends and progressive sequences) --}}
                         <div class="col-lg-4" id="field-timezone-wrapper">
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Fuseau horaire</label>
@@ -455,7 +455,7 @@
 
                                 <div class="form-text text-muted mt-1 fs-7">
                                     <i class="bi bi-info-circle me-1"></i>
-                                    Au premier lancement, le suivi continu du segment est activé. Chaque nouveau contact éligible commence à l'étape 1 ; l'envoi suit ensuite les délais de la séquence.
+                                    La séquence détermine les étapes et leurs délais. Le mode d’inscription ci-contre détermine quand les contacts éligibles commencent l’étape 1.
                                 </div>
 
                                 {{-- Edit mode: enrolled count hint (consultant F5) --}}
@@ -484,6 +484,48 @@
                                     </div>
                                 </div>
 
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Mode d’inscription</label>
+                                <select name="sequence_enrollment_mode"
+                                        id="sequence_enrollment_mode"
+                                        class="form-select form-select-solid"
+                                        data-control="select2"
+                                        data-hide-search="true">
+                                    <option value="immediate" {{ old('sequence_enrollment_mode', $model->sequence_enrollment_mode ?? 'immediate') === 'immediate' ? 'selected' : '' }}>Tous immédiatement</option>
+                                    <option value="paced" {{ old('sequence_enrollment_mode', $model->sequence_enrollment_mode ?? 'immediate') === 'paced' ? 'selected' : '' }}>Progressif</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div id="fields-sequence-paced" class="row" style="display:none;">
+                                <div class="col-lg-4">
+                                    <div class="fv-row mb-7">
+                                        <label class="required fw-semibold fs-6 mb-2">Premier lot</label>
+                                        <input type="text"
+                                               name="sequence_first_batch_at"
+                                               id="sequence_first_batch_at"
+                                               class="form-control form-control-solid"
+                                               placeholder="Date du premier lot..."
+                                               value="{{ old('sequence_first_batch_at', isset($model) && $model->schedule_type === 'sequence' && $model->sequence_enrollment_mode === 'paced' && $model->next_run_at ? $model->next_run_at->copy()->setTimezone($model->scheduleTimezone())->format('Y-m-d H:i') : '') }}"
+                                               autocomplete="off" />
+                                    </div>
+                                </div>
+                                <div class="col-lg-4">
+                                    <div class="fv-row mb-7">
+                                        <label class="required fw-semibold fs-6 mb-2">Sociétés par jour</label>
+                                        <input type="number"
+                                               name="sequence_daily_company_limit"
+                                               class="form-control form-control-solid"
+                                               min="1"
+                                               value="{{ old('sequence_daily_company_limit', isset($model) && $model->schedule_type === 'sequence' && $model->sequence_enrollment_mode === 'paced' ? ($model->daily_company_limit ?? 20) : 20) }}" />
+                                        <div class="form-text text-muted mt-1 fs-7">
+                                            Chaque jour ouvré, toutes les personnes éligibles des sociétés retenues commencent ensemble à l’étape 1.
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -834,6 +876,17 @@
                 });
             }
 
+            const sequenceFirstBatchInput = document.getElementById('sequence_first_batch_at');
+            if (sequenceFirstBatchInput && typeof flatpickr !== 'undefined') {
+                flatpickr(sequenceFirstBatchInput, {
+                    enableTime: true,
+                    dateFormat: 'Y-m-d H:i',
+                    time_24hr: true,
+                    locale: 'fr',
+                    minDate: 'today',
+                });
+            }
+
             // ── Schedule type switcher ───────────────────────────────
             const scheduleTypeSelect   = document.getElementById('schedule_type_select');
             const fieldsOneShotEl      = document.getElementById('fields-one-shot');
@@ -843,6 +896,17 @@
             const fieldTemplateWrapper = document.getElementById('field-template-wrapper');
             const fieldSubjectWrapper  = document.getElementById('field-subject-wrapper');
             const fieldTimezoneWrapper = document.getElementById('field-timezone-wrapper');
+            const sequenceModeSelect = document.getElementById('sequence_enrollment_mode');
+            const fieldsSequencePacedEl = document.getElementById('fields-sequence-paced');
+
+            function applySequenceEnrollmentMode() {
+                const isPacedSequence = scheduleTypeSelect?.value === 'sequence'
+                    && sequenceModeSelect?.value === 'paced';
+                if (fieldsSequencePacedEl) fieldsSequencePacedEl.style.display = isPacedSequence ? '' : 'none';
+                if (fieldTimezoneWrapper && scheduleTypeSelect?.value === 'sequence') {
+                    fieldTimezoneWrapper.style.display = isPacedSequence ? '' : 'none';
+                }
+            }
 
             function applyScheduleMode(value) {
                 if (!fieldsOneShotEl || !fieldsRecurringEl || !fieldsPacedEl || !fieldsSequenceEl) return;
@@ -856,6 +920,12 @@
                 if (fieldTemplateWrapper) fieldTemplateWrapper.style.display = isSequence ? 'none' : '';
                 if (fieldSubjectWrapper)  fieldSubjectWrapper.style.display  = isSequence ? 'none' : '';
                 if (fieldTimezoneWrapper) fieldTimezoneWrapper.style.display = isSequence ? 'none' : '';
+                applySequenceEnrollmentMode();
+            }
+
+            if (sequenceModeSelect) {
+                sequenceModeSelect.addEventListener('change', applySequenceEnrollmentMode);
+                applySequenceEnrollmentMode();
             }
 
             if (scheduleTypeSelect) {

@@ -143,7 +143,10 @@ class CampaignService
             }
         }
 
-        if ($campaign->schedule_type === 'paced' && $this->usesZohoDriver($campaign)) {
+        $isPacedSequence = $campaign->schedule_type === 'sequence'
+            && $campaign->sequence_enrollment_mode === 'paced';
+
+        if (($campaign->schedule_type === 'paced' || $isPacedSequence) && $this->usesZohoDriver($campaign)) {
             $messages[] = 'L’envoi progressif est indisponible avec le pilote Zoho tant que l’envoi par lot n’a pas été vérifié.';
         } elseif ($this->usesZohoDriver($campaign)) {
             $listKey = trim((string) ($campaign->zoho_list_key ?: config('services.zoho.campaigns.list_key')));
@@ -198,6 +201,10 @@ class CampaignService
      */
     public function launchSequence(Campaign $campaign): array
     {
+        if ($campaign->sequence_enrollment_mode === 'paced') {
+            throw new \InvalidArgumentException('Une séquence progressive doit être traitée par lots planifiés.');
+        }
+
         // ── Guard: sequence must be attached ──────────────────────────────────
         $sequence = $campaign->sequence;
 

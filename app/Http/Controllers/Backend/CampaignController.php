@@ -21,6 +21,7 @@ use App\Models\Setting;
 use App\Services\Campaign\CampaignService;
 use App\Services\Campaign\CampaignZohoListSyncService;
 use App\Services\Campaign\PacedCampaignBatchService;
+use App\Services\Campaign\PacedSequenceEnrollmentService;
 use App\Services\Campaign\SegmentService;
 use App\Services\Demande\DemandeCaptureService;
 use App\Services\Translation\LanguageResolver;
@@ -174,6 +175,11 @@ class CampaignController extends BackendController
 
         $viewConfig    = CampaignViewConfig::make($campaign, $stats, $recipientsTotal, $currentAudience->count(), $executedRuns->count());
         $enrolledCount = SequenceEnrollment::where('campaign_id', $campaign->id)->count();
+        $enrolledCompanyCount = SequenceEnrollment::query()
+            ->where('sequence_enrollments.campaign_id', $campaign->id)
+            ->join('contacts', 'contacts.id', '=', 'sequence_enrollments.contact_id')
+            ->distinct()
+            ->count('contacts.company_id');
 
         return $this->getView('backend.contents.campaigns.crud.view')
             ->with('model', $campaign)
@@ -187,6 +193,7 @@ class CampaignController extends BackendController
             ->with('chipCounts', $chipCounts)
             ->with('viewConfig', $viewConfig)
             ->with('enrolledCount', $enrolledCount)
+            ->with('enrolledCompanyCount', $enrolledCompanyCount)
             ->with('pacedProgress', $pacedProgress)
             ->with('schedulerHealth', $this->schedulerHealth());
     }
@@ -498,10 +505,19 @@ class CampaignController extends BackendController
     protected function beforeSave($id = null): array
     {
         $attributes = $this->currentRequest->all();
+        $currentCampaign = $id !== null ? Campaign::find((int) $id) : null;
+
+        // This operational flag is controlled exclusively by send-campaigns
+        // endpoints. Ordinary create/edit payloads must never toggle it.
+        unset($attributes['sequence_auto_enroll_enabled']);
 
         // NOTE: beforeSave() runs BEFORE model validation (Crudable trait behavior).
         // Defensive checks must not assume validated input.
         $scheduleType = $attributes['schedule_type'] ?? 'one_shot';
+        $sequenceMode = $scheduleType === 'sequence'
+            ? ($attributes['sequence_enrollment_mode'] ?? 'immediate')
+            : 'immediate';
+        $attributes['sequence_enrollment_mode'] = $sequenceMode;
 
         if ($scheduleType === 'recurring') {
             $recurrence = [
@@ -525,6 +541,12 @@ class CampaignController extends BackendController
                 : $dailyLimit;
             $attributes['scheduled_at'] = null;
             $attributes['recurrence'] = null;
+        } elseif ($scheduleType === 'sequence' && $sequenceMode === 'paced') {
+            $attributes['next_run_at'] = $attributes['sequence_first_batch_at'] ?? null;
+            $dailyLimit = $attributes['sequence_daily_company_limit'] ?? null;
+            $attributes['daily_company_limit'] = $dailyLimit;
+            $attributes['scheduled_at'] = null;
+            $attributes['recurrence'] = null;
         } elseif ($scheduleType === 'one_shot') {
             $attributes['daily_company_limit'] = null;
             $attributes['next_run_at'] = null;
@@ -532,6 +554,11 @@ class CampaignController extends BackendController
         } elseif ($scheduleType === 'recurring') {
             $attributes['daily_company_limit'] = null;
             $attributes['scheduled_at'] = null;
+        } elseif ($scheduleType === 'sequence') {
+            $attributes['daily_company_limit'] = null;
+            $attributes['scheduled_at'] = null;
+            $attributes['next_run_at'] = null;
+            $attributes['recurrence'] = null;
         } else {
             $attributes['daily_company_limit'] = null;
             $attributes['scheduled_at'] = null;
@@ -540,13 +567,15 @@ class CampaignController extends BackendController
         }
 
         // Remove flat recurring helper fields that are not model columns
-        unset($attributes['recurrence_frequency'], $attributes['recurrence_interval'], $attributes['recurrence_until'], $attributes['paced_first_send_at']);
+        unset($attributes['recurrence_frequency'], $attributes['recurrence_interval'], $attributes['recurrence_until'], $attributes['paced_first_send_at'], $attributes['sequence_first_batch_at'], $attributes['sequence_daily_company_limit']);
 
         // For non-sequence schedule types, null out sequence_id — prevents stale
         // sequence associations from a previous edit that changed the schedule type.
         if ($scheduleType !== 'sequence') {
             $attributes['sequence_id'] = null;
-            $attributes['sequence_auto_enroll_enabled'] = false;
+            if ($currentCampaign?->sequence_auto_enroll_enabled) {
+                $attributes['sequence_auto_enroll_enabled'] = false;
+            }
         }
 
         // For sequence schedule type, null out template_id — sequence campaigns carry
@@ -555,16 +584,17 @@ class CampaignController extends BackendController
         if ($scheduleType === 'sequence') {
             $attributes['template_id'] = null;
 
-            if ($id !== null && isset($attributes['sequence_id'])) {
-                $currentSequenceId = Campaign::whereKey((int) $id)->value('sequence_id');
-                if ((int) $currentSequenceId !== (int) $attributes['sequence_id']) {
+            if ($currentCampaign !== null) {
+                $sequenceChanged = (int) $currentCampaign->sequence_id !== (int) ($attributes['sequence_id'] ?? 0);
+                $modeChanged = $currentCampaign->sequence_enrollment_mode !== $sequenceMode;
+                if ($sequenceChanged || $modeChanged) {
                     $attributes['sequence_auto_enroll_enabled'] = false;
                 }
             }
         }
 
         $timezone = $attributes['timezone'] ?? 'Europe/Paris';
-        if ($timezone === '') {
+        if ($timezone === '' && ! ($scheduleType === 'sequence' && $sequenceMode === 'paced')) {
             $timezone = 'Europe/Paris';
         }
 
@@ -806,8 +836,8 @@ class CampaignController extends BackendController
         $validated = $request->validate([
             'action' => ['nullable', 'in:schedule,send'],
         ]);
-        $allowEmptyAudience = $campaign->schedule_type === 'paced'
-            && ($validated['action'] ?? null) === 'schedule';
+        $allowEmptyAudience = ($campaign->schedule_type === 'paced' && ($validated['action'] ?? null) === 'schedule')
+            || ($campaign->schedule_type === 'sequence' && $campaign->sequence_enrollment_mode === 'paced');
         $preflight = app(CampaignService::class)->dispatchPreflight($campaign, null, $allowEmptyAudience);
 
         return response()->json([
@@ -961,13 +991,31 @@ class CampaignController extends BackendController
         $campaign = Campaign::with('sequence')->findOrFail((int) $id);
 
         // ── Sequence-type branch ───────────────────────────────────────────────
-        $preflight = app(CampaignService::class)->dispatchPreflight($campaign);
+        $isPacedSequence = $campaign->schedule_type === 'sequence'
+            && $campaign->sequence_enrollment_mode === 'paced';
+        $preflight = app(CampaignService::class)->dispatchPreflight($campaign, null, $isPacedSequence);
         if (! $preflight['ok']) {
             return $this->blockedPreflightResponse($campaign, $preflight);
         }
         if ($campaign->schedule_type === 'sequence') {
             try {
-                $result   = app(CampaignService::class)->launchSequence($campaign);
+                if ($isPacedSequence) {
+                    $result = app(PacedSequenceEnrollmentService::class)->activate($campaign, now());
+                    $next = $result['next_run_at']?->copy()->setTimezone($campaign->scheduleTimezone())->format('d/m/Y H:i');
+                    $successText = $result['processed_due']
+                        ? "Lot progressif traité : {$result['companies']} société(s), {$result['enrolled']} contact(s) inscrit(s), {$result['skipped']} déjà suivi(s). Prochain lot : {$next}."
+                        : "Séquence progressive activée — prochain lot le {$next}.";
+                    session()->flash('success', $successText);
+
+                    return response()->json([
+                        'message' => 'success',
+                        'text' => $successText,
+                        'result' => $result,
+                        'redirect' => route('admin.campaigns.view', $id),
+                    ]);
+                }
+
+                $result = app(CampaignService::class)->launchSequence($campaign);
                 $campaign->update(['sequence_auto_enroll_enabled' => true]);
                 $enrolled = $result['enrolled'];
                 $skipped  = $result['skipped'];
@@ -1073,7 +1121,8 @@ class CampaignController extends BackendController
         }
 
         $service = app(CampaignService::class);
-        $preflight = $service->dispatchPreflight($campaign);
+        $isPacedSequence = $campaign->sequence_enrollment_mode === 'paced';
+        $preflight = $service->dispatchPreflight($campaign, null, $isPacedSequence);
         if (! $preflight['ok']) {
             return response()->json([
                 'success' => false,
@@ -1082,6 +1131,16 @@ class CampaignController extends BackendController
         }
 
         try {
+            if ($isPacedSequence) {
+                $result = app(PacedSequenceEnrollmentService::class)->activate($campaign, now());
+                $next = $result['next_run_at']?->copy()->setTimezone($campaign->scheduleTimezone())->format('d/m/Y H:i');
+                $message = $result['processed_due']
+                    ? "Lot traité ({$result['companies']} société(s), {$result['enrolled']} inscrit(s), {$result['skipped']} déjà suivi(s)). Prochain lot : {$next}."
+                    : "Inscription progressive active — prochain lot le {$next}.";
+
+                return response()->json(['success' => true, 'msg' => $message, 'result' => $result]);
+            }
+
             $result = $service->launchSequence($campaign);
             $campaign->update(['sequence_auto_enroll_enabled' => true]);
 
