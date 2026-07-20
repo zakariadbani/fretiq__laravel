@@ -143,6 +143,63 @@ class SequenceProcessTest extends TestCase
     }
 
     /**
+     * A step subject containing {{contact.first_name}} must be rendered in the
+     * sent mailable's envelope subject — not leaked as a literal token.
+     */
+    public function test_step_subject_renders_contact_first_name_merge_tag(): void
+    {
+        $seq = Sequence::create([
+            'name'          => 'Seq merge-tag sujet',
+            'is_active'     => true,
+            'stop_on_reply' => false,
+        ]);
+
+        $tpl = $this->makeTemplate('Merge Tag Tpl');
+        SequenceStep::create([
+            'sequence_id' => $seq->id,
+            'step_no'     => 1,
+            'delay_days'  => 0,
+            'template_id' => $tpl->id,
+            'subject'     => 'Bonjour {{contact.first_name}}, une question',
+        ]);
+
+        // Contact name is multi-word so the first-name split is exercised.
+        $co = Company::create([
+            'name'                 => 'Acme',
+            'relationship'         => 'client',
+            'source'               => 'manual',
+            'qualification_status' => 'pending',
+        ]);
+
+        $contact = Contact::create([
+            'company_id'  => $co->id,
+            'email'       => 'karim@acme.test',
+            'name'        => 'Karim Bennani',
+            'status'      => 'new',
+            'source'      => 'manual',
+            'legal_basis' => 'relationship',
+            'email_kind'  => 'role',
+        ]);
+
+        $service    = app(SequenceService::class);
+        $enrollment = $service->enroll($seq, $contact);
+
+        $service->sendStep($enrollment);
+
+        Mail::assertSent(SequenceStepMailable::class, function (SequenceStepMailable $mail) {
+            $subject = $mail->envelope()->subject;
+
+            $this->assertStringNotContainsString(
+                '{{contact.first_name}}',
+                $subject,
+                'Merge tag must not leak into the subject'
+            );
+
+            return $subject === 'Bonjour Karim, une question';
+        });
+    }
+
+    /**
      * Sending step 1 then step 2 (with next_send_at set to the past between sends)
      * results in enrollment.status='completed' and next_send_at=null after step 2.
      */

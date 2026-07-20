@@ -20,7 +20,7 @@ return [
     //---------------------------------------------------------------------------
     'company_relationships' => [
         'prospect' => ['label' => 'Prospect',  'color' => 'info'],
-        'client'   => ['label' => 'Client',    'color' => 'success'],
+        'client' => ['label' => 'Client',    'color' => 'success'],
     ],
 
     //---------------------------------------------------------------------------
@@ -28,17 +28,17 @@ return [
     //---------------------------------------------------------------------------
     'company_sources' => [
         'discovered' => ['label' => 'Découverte auto', 'color' => 'info'],
-        'zoho'       => ['label' => 'Import Zoho',     'color' => 'primary'],
-        'manual'     => ['label' => 'Saisie manuelle', 'color' => 'secondary'],
+        'zoho' => ['label' => 'Import Zoho',     'color' => 'primary'],
+        'manual' => ['label' => 'Saisie manuelle', 'color' => 'secondary'],
     ],
 
     //---------------------------------------------------------------------------
     // Entreprises — statut de qualification
     //---------------------------------------------------------------------------
     'company_qualification_statuses' => [
-        'pending'   => ['label' => 'En attente',   'color' => 'warning'],
+        'pending' => ['label' => 'En attente',   'color' => 'warning'],
         'qualified' => ['label' => 'Qualifiée',    'color' => 'success'],
-        'rejected'  => ['label' => 'Rejetée',      'color' => 'danger'],
+        'rejected' => ['label' => 'Rejetée',      'color' => 'danger'],
     ],
 
     //---------------------------------------------------------------------------
@@ -47,44 +47,46 @@ return [
     // A NULL column value means « Non tenté » — see company_enrichment_status_null.
     //---------------------------------------------------------------------------
     'company_enrichment_statuses' => [
-        'enriched'            => ['label' => 'Enrichi',                  'color' => 'success'],
-        'hunter_empty'        => ['label' => 'Aucun email trouvé',       'color' => 'warning'],
-        'hunter_failed'       => ['label' => 'Échec du fournisseur',     'color' => 'danger'],
-        'skipped_low_score'   => ['label' => 'Score insuffisant',        'color' => 'warning'],
-        'skipped_enrich_off'  => ['label' => 'Enrichissement désactivé', 'color' => 'warning'],
-        'skipped_budget'      => ['label' => 'Quota contacts atteint',   'color' => 'warning'],
-        'skipped_excluded'    => ['label' => 'Exclu (concurrent)',       'color' => 'warning'],
+        'enriched' => ['label' => 'Enrichi',                         'color' => 'success'],
+        'hunter_empty' => ['label' => 'Aucun email trouvé',              'color' => 'warning'],
+        'hunter_failed' => ['label' => 'Échec Hunter — à réessayer',      'color' => 'danger'],
+        'enriching' => ['label' => 'Recherche Hunter en cours',        'color' => 'primary'],
+        'skipped_low_score' => ['label' => 'Score insuffisant',               'color' => 'warning'],
+        'skipped_enrich_off' => ['label' => 'Enrichissement désactivé',        'color' => 'secondary'],
+        'skipped_budget' => ['label' => 'Reporté — quota Hunter',          'color' => 'warning'],
+        'skipped_provider_unavailable' => ['label' => 'Reporté — Hunter indisponible',   'color' => 'warning'],
+        'skipped_excluded' => ['label' => 'Exclue de l’enrichissement',      'color' => 'secondary'],
     ],
 
     // Rendered when companies.enrichment_status IS NULL (never attempted).
-    'company_enrichment_status_null' => ['label' => 'Non tenté', 'color' => 'secondary'],
+    'company_enrichment_status_null' => ['label' => 'Hunter non tenté', 'color' => 'secondary'],
 
     //---------------------------------------------------------------------------
     // Contacts — statut
     //---------------------------------------------------------------------------
     'contact_statuses' => [
-        'new'          => ['label' => 'Nouveau',      'color' => 'secondary'],
-        'contacted'    => ['label' => 'Contacté',     'color' => 'primary'],
-        'qualified'    => ['label' => 'Qualifié',     'color' => 'success'],
-        'unqualified'  => ['label' => 'Non qualifié', 'color' => 'dark'],
-        'converted'    => ['label' => 'Converti',     'color' => 'success'],
+        'new' => ['label' => 'Nouveau',      'color' => 'secondary'],
+        'contacted' => ['label' => 'Contacté',     'color' => 'primary'],
+        'qualified' => ['label' => 'Qualifié',     'color' => 'success'],
+        'unqualified' => ['label' => 'Non qualifié', 'color' => 'dark'],
+        'converted' => ['label' => 'Converti',     'color' => 'success'],
     ],
 
     //---------------------------------------------------------------------------
     // Contacts — base légale RGPD
     //---------------------------------------------------------------------------
     'contact_legal_bases' => [
-        'relationship'          => ['label' => 'Relation contractuelle',   'color' => 'success'],
-        'legitimate_interest'   => ['label' => 'Intérêt légitime',         'color' => 'primary'],
-        'consent'               => ['label' => 'Consentement',             'color' => 'info'],
-        'unknown'               => ['label' => 'Inconnu',                  'color' => 'secondary'],
+        'relationship' => ['label' => 'Relation contractuelle',   'color' => 'success'],
+        'legitimate_interest' => ['label' => 'Intérêt légitime',         'color' => 'primary'],
+        'consent' => ['label' => 'Consentement',             'color' => 'info'],
+        'unknown' => ['label' => 'Inconnu',                  'color' => 'secondary'],
     ],
 
     //---------------------------------------------------------------------------
     // Contacts — type d'e-mail
     //---------------------------------------------------------------------------
     'contact_email_kinds' => [
-        'role'     => ['label' => 'Professionnel', 'color' => 'warning'],
+        'role' => ['label' => 'Professionnel', 'color' => 'warning'],
         'personal' => ['label' => 'Personnel',   'color' => 'info'],
     ],
 
@@ -93,54 +95,54 @@ return [
     //---------------------------------------------------------------------------
     'contact_sources' => [
         'discovered' => ['label' => 'Découverte auto', 'color' => 'info'],
-        'zoho'       => ['label' => 'Import Zoho',     'color' => 'primary'],
-        'manual'     => ['label' => 'Saisie manuelle', 'color' => 'secondary'],
+        'zoho' => ['label' => 'Import Zoho',     'color' => 'primary'],
+        'manual' => ['label' => 'Saisie manuelle', 'color' => 'secondary'],
     ],
 
     //---------------------------------------------------------------------------
     // Campagnes — type de planification
     //---------------------------------------------------------------------------
     'schedule_types' => [
-        'one_shot'  => ['label' => 'Ponctuel',   'color' => 'secondary'],
+        'one_shot' => ['label' => 'Ponctuel',   'color' => 'secondary'],
         'recurring' => ['label' => 'Récurrent',  'color' => 'info'],
-        'sequence'  => ['label' => 'Séquence',   'color' => 'primary'],
+        'sequence' => ['label' => 'Séquence',   'color' => 'primary'],
     ],
 
     //---------------------------------------------------------------------------
     // Exécutions de campagne — statut
     //---------------------------------------------------------------------------
     'campaign_run_statuses' => [
-        'prepared'  => ['label' => 'Audience préparée', 'color' => 'secondary'],
+        'prepared' => ['label' => 'Audience préparée', 'color' => 'secondary'],
         'scheduled' => ['label' => 'Planifiée',   'color' => 'info'],
-        'sending'   => ['label' => 'En cours',    'color' => 'primary'],
-        'sent'      => ['label' => 'Envoyée',     'color' => 'success'],
-        'failed'    => ['label' => 'Échec',       'color' => 'danger'],
-        'canceled'  => ['label' => 'Annulée',     'color' => 'secondary'],
+        'sending' => ['label' => 'En cours',    'color' => 'primary'],
+        'sent' => ['label' => 'Envoyée',     'color' => 'success'],
+        'failed' => ['label' => 'Échec',       'color' => 'danger'],
+        'canceled' => ['label' => 'Annulée',     'color' => 'secondary'],
     ],
 
     //---------------------------------------------------------------------------
     // Découvertes — statut d'exécution
     //---------------------------------------------------------------------------
     'discovery_run_statuses' => [
-        'pending'   => ['label' => 'En attente', 'color' => 'secondary'],
-        'running'   => ['label' => 'En cours',   'color' => 'primary'],
+        'pending' => ['label' => 'En attente', 'color' => 'secondary'],
+        'running' => ['label' => 'En cours',   'color' => 'primary'],
         'completed' => ['label' => 'Terminée',   'color' => 'success'],
-        'failed'    => ['label' => 'Échouée',    'color' => 'danger'],
+        'failed' => ['label' => 'Échouée',    'color' => 'danger'],
     ],
 
     //---------------------------------------------------------------------------
     // Destinataires de campagne — statut
     //---------------------------------------------------------------------------
     'campaign_recipient_statuses' => [
-        'queued'       => ['label' => 'En file',       'color' => 'secondary'],
-        'sent'         => ['label' => 'Envoyé',        'color' => 'info'],
-        'delivered'    => ['label' => 'Délivré',       'color' => 'primary'],
-        'opened'       => ['label' => 'Ouvert',        'color' => 'success'],
-        'clicked'      => ['label' => 'Cliqué',        'color' => 'success'],
-        'bounced'      => ['label' => 'Rejeté',        'color' => 'danger'],
-        'replied'      => ['label' => 'Répondu',       'color' => 'success'],
+        'queued' => ['label' => 'En file',       'color' => 'secondary'],
+        'sent' => ['label' => 'Envoyé',        'color' => 'info'],
+        'delivered' => ['label' => 'Délivré',       'color' => 'primary'],
+        'opened' => ['label' => 'Ouvert',        'color' => 'success'],
+        'clicked' => ['label' => 'Cliqué',        'color' => 'success'],
+        'bounced' => ['label' => 'Rejeté',        'color' => 'danger'],
+        'replied' => ['label' => 'Répondu',       'color' => 'success'],
         'unsubscribed' => ['label' => 'Désinscrit',    'color' => 'warning'],
-        'skipped'      => ['label' => 'Ignoré',        'color' => 'dark'],
+        'skipped' => ['label' => 'Ignoré',        'color' => 'dark'],
     ],
 
     //---------------------------------------------------------------------------
@@ -149,9 +151,9 @@ return [
     'suppression_reasons' => [
         'hard_bounce' => ['label' => 'Rebond permanent', 'color' => 'danger'],
         'unsubscribe' => ['label' => 'Désinscription',   'color' => 'warning'],
-        'manual'      => ['label' => 'Manuel',           'color' => 'secondary'],
-        'spam'        => ['label' => 'Spam',             'color' => 'danger'],
-        'complaint'   => ['label' => 'Plainte',          'color' => 'danger'],
+        'manual' => ['label' => 'Manuel',           'color' => 'secondary'],
+        'spam' => ['label' => 'Spam',             'color' => 'danger'],
+        'complaint' => ['label' => 'Plainte',          'color' => 'danger'],
     ],
 
     //---------------------------------------------------------------------------
@@ -160,37 +162,37 @@ return [
     'suppression_sources' => [
         'campaign' => ['label' => 'Campagne', 'color' => 'primary'],
         'sequence' => ['label' => 'Séquence', 'color' => 'info'],
-        'import'   => ['label' => 'Import',   'color' => 'secondary'],
-        'manual'   => ['label' => 'Manuel',   'color' => 'secondary'],
+        'import' => ['label' => 'Import',   'color' => 'secondary'],
+        'manual' => ['label' => 'Manuel',   'color' => 'secondary'],
     ],
 
     //---------------------------------------------------------------------------
     // Demandes — statut
     //---------------------------------------------------------------------------
     'demande_statuses' => [
-        'pending'   => ['label' => 'En attente', 'color' => 'warning'],
+        'pending' => ['label' => 'En attente', 'color' => 'warning'],
         'in_review' => ['label' => 'En revue',   'color' => 'primary'],
-        'accepted'  => ['label' => 'Acceptée',   'color' => 'success'],
-        'rejected'  => ['label' => 'Rejetée',    'color' => 'danger'],
+        'accepted' => ['label' => 'Acceptée',   'color' => 'success'],
+        'rejected' => ['label' => 'Rejetée',    'color' => 'danger'],
     ],
 
     //---------------------------------------------------------------------------
     // Séquences — statut d'inscription
     //---------------------------------------------------------------------------
     'sequence_enrollment_statuses' => [
-        'active'    => ['label' => 'Active',     'color' => 'success'],
-        'paused'    => ['label' => 'En pause',   'color' => 'warning'],
+        'active' => ['label' => 'Active',     'color' => 'success'],
+        'paused' => ['label' => 'En pause',   'color' => 'warning'],
         'completed' => ['label' => 'Terminée',   'color' => 'dark'],
-        'stopped'   => ['label' => 'Stoppée',    'color' => 'danger'],
+        'stopped' => ['label' => 'Stoppée',    'color' => 'danger'],
     ],
 
     //---------------------------------------------------------------------------
     // Séquences — statut d'envoi par étape
     //---------------------------------------------------------------------------
     'sequence_step_statuses' => [
-        'queued'  => ['label' => 'En file',  'color' => 'secondary'],
-        'sent'    => ['label' => 'Envoyé',   'color' => 'info'],
-        'opened'  => ['label' => 'Ouvert',   'color' => 'success'],
+        'queued' => ['label' => 'En file',  'color' => 'secondary'],
+        'sent' => ['label' => 'Envoyé',   'color' => 'info'],
+        'opened' => ['label' => 'Ouvert',   'color' => 'success'],
         'skipped' => ['label' => 'Ignoré',   'color' => 'dark'],
     ],
 
@@ -198,8 +200,8 @@ return [
     // Campagnes récurrentes — fréquences
     //---------------------------------------------------------------------------
     'recurrence_frequencies' => [
-        'daily'   => 'Quotidien',
-        'weekly'  => 'Hebdomadaire',
+        'daily' => 'Quotidien',
+        'weekly' => 'Hebdomadaire',
         'monthly' => 'Mensuel',
     ],
 
@@ -208,8 +210,8 @@ return [
     //---------------------------------------------------------------------------
     'segment_scopes' => [
         'prospect' => ['label' => 'Prospects', 'color' => 'info'],
-        'client'   => ['label' => 'Clients',   'color' => 'success'],
-        'mixed'    => ['label' => 'Mixte',     'color' => 'primary'],
+        'client' => ['label' => 'Clients',   'color' => 'success'],
+        'mixed' => ['label' => 'Mixte',     'color' => 'primary'],
     ],
 
     //---------------------------------------------------------------------------
@@ -433,6 +435,22 @@ return [
         'Vins & Spiritueux',
         'Machines & Équipements industriels',
         'Maritime & Portuaire',
+        'Informatique',
+        'Matériel médical',
+        'Laboratoires pharmaceutiques',
+        'Équipementiers aéronautique',
+        'Instruments de mesure',
+        'Dentaire',
+        'Optique',
+        'Matériel industriel',
+        'Isolation thermique & panneaux sandwich',
+        'Équipementiers automobiles',
+        'Climatisation',
+        'Mobilier',
+        'Électroménager',
+        'Lubrifiants & pétrole',
+        'Traitement des eaux',
+        "Matériel d'hôtellerie",
     ],
 
     //---------------------------------------------------------------------------
@@ -491,22 +509,22 @@ return [
     // Prospection — tailles d'entreprise (buckets discovery)
     //---------------------------------------------------------------------------
     'company_size_buckets' => [
-        '1-10'    => '1–10',
-        '11-50'   => '11–50',
-        '51-200'  => '51–200',
+        '1-10' => '1–10',
+        '11-50' => '11–50',
+        '51-200' => '51–200',
         '201-500' => '201–500',
-        '500+'    => '500+',
+        '500+' => '500+',
     ],
 
     //---------------------------------------------------------------------------
     // Zoho sync — statut de synchronisation
     //---------------------------------------------------------------------------
     'zoho_sync_statuses' => [
-        'idle'    => ['label' => 'En attente', 'color' => 'secondary'],
+        'idle' => ['label' => 'En attente', 'color' => 'secondary'],
         'running' => ['label' => 'En cours',   'color' => 'info'],
         'success' => ['label' => 'Succès',     'color' => 'success'],
         'partial' => ['label' => 'Partiel',    'color' => 'warning'],
-        'error'   => ['label' => 'Erreur',     'color' => 'danger'],
+        'error' => ['label' => 'Erreur',     'color' => 'danger'],
     ],
 
     //---------------------------------------------------------------------------

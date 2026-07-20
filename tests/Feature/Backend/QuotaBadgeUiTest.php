@@ -14,13 +14,8 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
-// NOTE (finding #7): The quota badge renders "Recherches SerpAPI :" (not "Entreprises :").
-// Pre-existing tests test_index_shows_credits_badge_when_limited_package_assigned,
-// test_view_page_shows_credits_badge, and test_index_shows_one_unlimited_one_limited_badge
-// all assert 'Entreprises :' which does NOT match the blade output.
-// This is documented here for reference; those pre-existing test assertions reflect
-// the old label and will fail until updated. The new test cases below use the
-// correct "Recherches SerpAPI :" label from the current blade.
+// The full index strip and compact view-page badges use provider-neutral labels
+// for company discovery and contact enrichment.
 
 /**
  * QuotaBadgeUiTest — HTTP render tests for the client-facing quota badge.
@@ -49,7 +44,7 @@ class QuotaBadgeUiTest extends TestCase
 
         $this->superadmin = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $this->superadmin->assignRole('superadmin');
     }
@@ -62,14 +57,14 @@ class QuotaBadgeUiTest extends TestCase
     private function assignPackage(int $dailyCredits): Package
     {
         $package = Package::create([
-            'name'          => 'Test Pack ' . $dailyCredits,
+            'name' => 'Test Pack '.$dailyCredits,
             'daily_credits' => $dailyCredits,
-            'is_active'     => true,
-            'sort_order'    => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
 
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -85,11 +80,11 @@ class QuotaBadgeUiTest extends TestCase
         $assignment = PackageAssignment::orderByDesc('id')->first();
 
         DiscoveryRun::create([
-            'prospect_criteria_id'  => $criteria->id,
-            'status'                => 'completed',
-            'credits_reserved'      => $package->daily_credits,
-            'consumed'              => $package->daily_credits,
-            'quota_date'            => Carbon::today()->toDateString(),
+            'prospect_criteria_id' => $criteria->id,
+            'status' => 'completed',
+            'credits_reserved' => $package->daily_credits,
+            'consumed' => $package->daily_credits,
+            'quota_date' => Carbon::today()->toDateString(),
             'package_assignment_id' => $assignment?->id,
         ]);
     }
@@ -97,19 +92,19 @@ class QuotaBadgeUiTest extends TestCase
     // ── Test 1: limited package with credits remaining ────────────────────────
 
     /**
-     * With both meters limited, the index page renders "Recherches SerpAPI :" and "Contacts :" badges.
+     * With both meters limited, the index page renders the two provider-neutral meters.
      */
     public function test_index_shows_credits_badge_when_limited_package_assigned(): void
     {
         $package = Package::create([
-            'name'                  => 'Test Pack Both Limited',
-            'daily_credits'         => 10,
+            'name' => 'Test Pack Both Limited',
+            'daily_credits' => 10,
             'daily_contact_credits' => 5,
-            'is_active'             => true,
-            'sort_order'            => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -117,8 +112,10 @@ class QuotaBadgeUiTest extends TestCase
             ->get('/admin/prospect_criteria');
 
         $response->assertStatus(200);
-        $response->assertSee('Recherches SerpAPI :', false);
-        $response->assertSee('Contacts :', false);
+        $response->assertSee('Recherches d’entreprises', false);
+        $response->assertSee('Tentatives d’enrichissement', false);
+        $response->assertDontSee('SerpAPI', false);
+        $response->assertDontSee('Hunter', false);
     }
 
     // ── Test 2: solde exhausted — button disabled ─────────────────────────────
@@ -132,11 +129,11 @@ class QuotaBadgeUiTest extends TestCase
      */
     public function test_index_renders_200_when_quota_exhausted(): void
     {
-        $package  = $this->assignPackage(10);
+        $package = $this->assignPackage(10);
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Quota Épuisé',
+            'name' => 'Critère Quota Épuisé',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $this->exhaustQuota($package, $criteria);
@@ -154,11 +151,11 @@ class QuotaBadgeUiTest extends TestCase
      */
     public function test_datatable_discover_button_disabled_when_quota_exhausted(): void
     {
-        $package  = $this->assignPackage(10);
+        $package = $this->assignPackage(10);
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Quota Épuisé DT',
+            'name' => 'Critère Quota Épuisé DT',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $this->exhaustQuota($package, $criteria);
@@ -166,9 +163,9 @@ class QuotaBadgeUiTest extends TestCase
         $response = $this->actingAs($this->superadmin)
             ->get(
                 '/admin/prospect_criteria'
-                . '?draw=1&start=0&length=25'
-                . '&columns[0][data]=id&columns[0][name]=id'
-                . '&order[0][column]=0&order[0][dir]=asc',
+                .'?draw=1&start=0&length=25'
+                .'&columns[0][data]=id&columns[0][name]=id'
+                .'&order[0][column]=0&order[0][dir]=asc',
                 ['X-Requested-With' => 'XMLHttpRequest', 'Accept' => 'application/json']
             );
 
@@ -227,45 +224,47 @@ class QuotaBadgeUiTest extends TestCase
     public function test_view_page_shows_credits_badge(): void
     {
         $package = Package::create([
-            'name'                  => 'Test Pack View Both',
-            'daily_credits'         => 50,
+            'name' => 'Test Pack View Both',
+            'daily_credits' => 50,
             'daily_contact_credits' => 20,
-            'is_active'             => true,
-            'sort_order'            => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère View Badge',
+            'name' => 'Critère View Badge',
             'daily_limit' => 20,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id);
+            ->get('/admin/prospect_criteria/'.$criteria->id);
 
         $response->assertStatus(200);
-        $response->assertSee('Recherches SerpAPI :', false);
-        $response->assertSee('Contacts :', false);
+        $response->assertSee('Recherches d’entreprises', false);
+        $response->assertSee('Tentatives d’enrichissement', false);
+        $response->assertDontSee('SerpAPI', false);
+        $response->assertDontSee('Hunter', false);
     }
 
     /**
-     * Company limited + contact unlimited → "Recherches SerpAPI :" badge AND "∞ Illimité" for contacts.
+     * Search limited + unlimited enrichment package still advertises the per-run cap.
      */
     public function test_index_shows_one_unlimited_one_limited_badge(): void
     {
         $package = Package::create([
-            'name'                  => 'Test Pack Company Limited Only',
-            'daily_credits'         => 10,
+            'name' => 'Test Pack Company Limited Only',
+            'daily_credits' => 10,
             'daily_contact_credits' => null,
-            'is_active'             => true,
-            'sort_order'            => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -273,29 +272,29 @@ class QuotaBadgeUiTest extends TestCase
             ->get('/admin/prospect_criteria');
 
         $response->assertStatus(200);
-        // Company meter is limited → shows "Recherches SerpAPI :" span
-        $response->assertSee('Recherches SerpAPI :', false);
-        // Contact meter is unlimited and now labels the numerator semantics.
-        $response->assertSee('Utilisé + réservé : Illimité', false);
+        $response->assertSee('Recherches d’entreprises', false);
+        $response->assertSee('Tentatives d’enrichissement', false);
+        $response->assertSee('Quota package illimité · max. 20 par exécution', false);
+        $response->assertDontSee('SerpAPI', false);
+        $response->assertDontSee('Hunter', false);
     }
 
     // ── Test 5 (finding #7): Relabel + monthly figure + zero-cap no crash ────────
 
     /**
-     * Finding #7a: The badge renders "Recherches SerpAPI :" (not "Entreprises :") for the
-     * company meter label. Assert the index page shows the current blade label.
+     * The index strip names both independent meters without exposing providers.
      */
-    public function test_badge_shows_serpapi_searches_label_not_entreprises(): void
+    public function test_badge_shows_provider_neutral_discovery_and_enrichment_labels(): void
     {
         $package = Package::create([
-            'name'                  => 'Test Pack Recherches SerpAPI Label',
-            'daily_credits'         => 10,
+            'name' => 'Test Pack Libellés Génériques',
+            'daily_credits' => 10,
             'daily_contact_credits' => 5,
-            'is_active'             => true,
-            'sort_order'            => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -303,10 +302,10 @@ class QuotaBadgeUiTest extends TestCase
             ->get('/admin/prospect_criteria');
 
         $response->assertStatus(200);
-        // Blade renders "Recherches SerpAPI :" for the company meter — finding #7 relabel assertion.
-        $response->assertSee('Recherches SerpAPI :', false);
-        // Contact meter still shows "Contacts :".
-        $response->assertSee('Contacts :', false);
+        $response->assertSee('Recherches d’entreprises', false);
+        $response->assertSee('Tentatives d’enrichissement', false);
+        $response->assertDontSee('SerpAPI', false);
+        $response->assertDontSee('Hunter', false);
     }
 
     /**
@@ -316,17 +315,17 @@ class QuotaBadgeUiTest extends TestCase
     public function test_badge_shows_monthly_figure_when_monthly_cap_set(): void
     {
         $package = Package::create([
-            'name'                    => 'Test Pack Monthly Figure',
-            'daily_credits'           => 10,
-            'monthly_credits'         => 50,
-            'daily_contact_credits'   => 5,
+            'name' => 'Test Pack Monthly Figure',
+            'daily_credits' => 10,
+            'monthly_credits' => 50,
+            'daily_contact_credits' => 5,
             'monthly_contact_credits' => 20,
-            'quota_anchor_date'       => Carbon::today()->toDateString(),
-            'is_active'               => true,
-            'sort_order'              => 0,
+            'quota_anchor_date' => Carbon::today()->toDateString(),
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -335,7 +334,7 @@ class QuotaBadgeUiTest extends TestCase
 
         $response->assertStatus(200);
         // The monthly suffix "ce mois" must appear when monthly_credits is set.
-        $response->assertSee('Ce mois', false);
+        $response->assertSee('ce mois', false);
     }
 
     /**
@@ -347,17 +346,17 @@ class QuotaBadgeUiTest extends TestCase
     {
         // monthly_credits=0 and monthly_contact_credits=0 — triggers the severity edge case.
         $package = Package::create([
-            'name'                    => 'Test Pack Zero Monthly',
-            'daily_credits'           => 5,
-            'monthly_credits'         => 0,
-            'daily_contact_credits'   => 3,
+            'name' => 'Test Pack Zero Monthly',
+            'daily_credits' => 5,
+            'monthly_credits' => 0,
+            'daily_contact_credits' => 3,
             'monthly_contact_credits' => 0,
-            'quota_anchor_date'       => Carbon::today()->toDateString(),
-            'is_active'               => true,
-            'sort_order'              => 0,
+            'quota_anchor_date' => Carbon::today()->toDateString(),
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -368,7 +367,7 @@ class QuotaBadgeUiTest extends TestCase
         $response->assertStatus(200);
         // Badge renders in danger state (0/0 cap) — page must still return valid HTML.
         // "ce mois" confirms the monthly suffix rendered (even at 0/0).
-        $response->assertSee('Ce mois', false);
+        $response->assertSee('ce mois', false);
     }
 
     // ── Test 6 (UX consistency): monthly exhausted, daily remaining ─────────────
@@ -382,33 +381,33 @@ class QuotaBadgeUiTest extends TestCase
     private function assignMonthlyExhaustedPackage(): ProspectCriteria
     {
         $package = Package::create([
-            'name'              => 'Test Pack Monthly Exhausted',
-            'daily_credits'     => 100,
-            'monthly_credits'   => 10,
+            'name' => 'Test Pack Monthly Exhausted',
+            'daily_credits' => 100,
+            'monthly_credits' => 10,
             'quota_anchor_date' => Carbon::today()->toDateString(),
-            'is_active'         => true,
-            'sort_order'        => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Mensuel Épuisé',
+            'name' => 'Critère Mensuel Épuisé',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $assignment = PackageAssignment::orderByDesc('id')->first();
         // Single completed run consumes the full monthly cap (10) today:
         // daily 100→90 (room), monthly 10→0 (exhausted).
         DiscoveryRun::create([
-            'prospect_criteria_id'  => $criteria->id,
-            'status'                => 'completed',
-            'credits_reserved'      => 10,
-            'consumed'              => 10,
-            'quota_date'            => Carbon::today()->toDateString(),
+            'prospect_criteria_id' => $criteria->id,
+            'status' => 'completed',
+            'credits_reserved' => 10,
+            'consumed' => 10,
+            'quota_date' => Carbon::today()->toDateString(),
             'package_assignment_id' => $assignment?->id,
         ]);
 
@@ -427,9 +426,9 @@ class QuotaBadgeUiTest extends TestCase
         $response = $this->actingAs($this->superadmin)
             ->get(
                 '/admin/prospect_criteria'
-                . '?draw=1&start=0&length=25'
-                . '&columns[0][data]=id&columns[0][name]=id'
-                . '&order[0][column]=0&order[0][dir]=asc',
+                .'?draw=1&start=0&length=25'
+                .'&columns[0][data]=id&columns[0][name]=id'
+                .'&order[0][column]=0&order[0][dir]=asc',
                 ['X-Requested-With' => 'XMLHttpRequest', 'Accept' => 'application/json']
             );
 
@@ -463,7 +462,7 @@ class QuotaBadgeUiTest extends TestCase
         $criteria = $this->assignMonthlyExhaustedPackage();
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id);
+            ->get('/admin/prospect_criteria/'.$criteria->id);
 
         $response->assertStatus(200);
         // 'Solde épuisé' appears only in the disabled-button tooltip, not the badge.
@@ -481,21 +480,21 @@ class QuotaBadgeUiTest extends TestCase
         $this->assignPackage(15);
 
         ProspectCriteria::create([
-            'name'        => 'Critère Overbook A',
+            'name' => 'Critère Overbook A',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
         ProspectCriteria::create([
-            'name'        => 'Critère Overbook B',
+            'name' => 'Critère Overbook B',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
             ->get('/admin/prospect_criteria');
 
         $response->assertStatus(200);
-        $response->assertSee('Sur-reservation priorisee', false);
+        $response->assertSee('Sur-réservation priorisée', false);
     }
 
     /**
@@ -506,21 +505,21 @@ class QuotaBadgeUiTest extends TestCase
         $this->assignPackage(50);
 
         ProspectCriteria::create([
-            'name'        => 'Critère Dans Quota A',
+            'name' => 'Critère Dans Quota A',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
         ProspectCriteria::create([
-            'name'        => 'Critère Dans Quota B',
+            'name' => 'Critère Dans Quota B',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
             ->get('/admin/prospect_criteria');
 
         $response->assertStatus(200);
-        $response->assertDontSee('Sur-reservation priorisee', false);
+        $response->assertDontSee('Sur-réservation priorisée', false);
     }
 
     /**
@@ -533,15 +532,15 @@ class QuotaBadgeUiTest extends TestCase
         Package::query()->delete();
 
         ProspectCriteria::create([
-            'name'        => 'Critère Illimité A',
+            'name' => 'Critère Illimité A',
             'daily_limit' => 500,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
             ->get('/admin/prospect_criteria');
 
         $response->assertStatus(200);
-        $response->assertDontSee('Sur-reservation priorisee', false);
+        $response->assertDontSee('Sur-réservation priorisée', false);
     }
 }

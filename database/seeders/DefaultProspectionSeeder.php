@@ -60,10 +60,6 @@ nous pouvons vous apporter de la valeur ?</p>
 
 <p>Cordialement,<br>
 L'équipe TCL France</p>
-
-<p style="font-size:11px;color:#888;">
-Pour ne plus recevoir nos messages : <a href="{{unsubscribe_url}}">se désabonner</a>.
-</p>
 HTML,
             ],
         );

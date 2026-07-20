@@ -30,7 +30,7 @@ class CompanyDiscoveryServiceTest extends TestCase
         // Most historical tests exercise the organic adapter in isolation. Tests
         // covering global defaults/cross-products set their own engine selection.
         Setting::set('decouverte.discovery_engines', ['google']);
-        $this->service = new CompanyDiscoveryService();
+        $this->service = new CompanyDiscoveryService;
     }
 
     /**
@@ -38,20 +38,21 @@ class CompanyDiscoveryServiceTest extends TestCase
      */
     private function makeCriteria(array $attributes): ProspectCriteria
     {
-        $criteria = new ProspectCriteria();
+        $criteria = new ProspectCriteria;
         $criteria->fill($attributes);
+
         return $criteria;
     }
 
     private function makePersistedCriteria(array $overrides = []): ProspectCriteria
     {
         return ProspectCriteria::create(array_merge([
-            'name'        => 'Pagination ' . uniqid(),
-            'ai_queries'  => [['q' => 'transitaire France', 'enabled' => true]],
-            'sectors'     => [],
-            'countries'   => [],
+            'name' => 'Pagination '.uniqid(),
+            'ai_queries' => [['q' => 'transitaire France', 'enabled' => true]],
+            'sectors' => [],
+            'countries' => [],
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ], $overrides));
     }
 
@@ -59,20 +60,20 @@ class CompanyDiscoveryServiceTest extends TestCase
     {
         return DiscoveryRun::create([
             'prospect_criteria_id' => $criteria->id,
-            'type'                 => 'discovery',
-            'status'               => 'running',
-            'credits_reserved'     => 10,
-            'consumed'             => 0,
-            'searches_reserved'    => 10,
-            'searches_consumed'    => 0,
+            'type' => 'discovery',
+            'status' => 'running',
+            'credits_reserved' => 10,
+            'consumed' => 0,
+            'searches_reserved' => 10,
+            'searches_consumed' => 0,
         ]);
     }
 
     private function serpResult(string $domain): array
     {
         return [
-            'title'   => ucfirst(str_replace('.', ' ', $domain)),
-            'link'    => 'https://' . $domain . '/about',
+            'title' => ucfirst(str_replace('.', ' ', $domain)),
+            'link' => 'https://'.$domain.'/about',
             'snippet' => 'Fixture result',
         ];
     }
@@ -101,12 +102,12 @@ class CompanyDiscoveryServiceTest extends TestCase
     {
         return array_merge([
             'position' => 1,
-            'title'    => 'YB company',
-            'type'     => 'Fabrique de textile',
-            'address'  => '26 Rue Lahcen El Basri, Casablanca',
-            'country'  => 'MA',
-            'phone'    => '+212 522-24-18-40',
-            'website'  => $website,
+            'title' => 'YB company',
+            'type' => 'Fabrique de textile',
+            'address' => '26 Rue Lahcen El Basri, Casablanca',
+            'country' => 'MA',
+            'phone' => '+212 522-24-18-40',
+            'website' => $website,
         ], $overrides);
     }
 
@@ -116,14 +117,14 @@ class CompanyDiscoveryServiceTest extends TestCase
         return collect(range(1, $count))
             ->map(fn ($i) => $this->mapsResult("https://{$prefix}-{$i}.test/", [
                 'position' => $i,
-                'title'    => "{$prefix} {$i}",
+                'title' => "{$prefix} {$i}",
             ]))
             ->all();
     }
 
     private function mapsQueryKey(string $query): string
     {
-        return md5('google_maps:' . $query);
+        return md5('google_maps:'.$query);
     }
 
     private function mapsCriteria(string $query = 'fabricant textile Casablanca'): ProspectCriteria
@@ -140,7 +141,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_maps_results_are_normalised_to_the_candidate_contract(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -152,18 +153,18 @@ class CompanyDiscoveryServiceTest extends TestCase
                 'local_results' => [
                     $this->mapsResult('http://www.ybcompany.ma/'),
                     $this->mapsResult('http://www.socomatex.com/', [
-                        'title'   => 'SOCOMATEX',
-                        'type'    => 'Filature de coton',
+                        'title' => 'SOCOMATEX',
+                        'type' => 'Filature de coton',
                         'address' => 'Zone Industrielle, Casablanca',
                         'country' => 'ma',
-                        'phone'   => '+212 522-60-11-22',
+                        'phone' => '+212 522-60-11-22',
                     ]),
                 ],
             ], 200);
         });
 
         $criteria = $this->mapsCriteria();
-        $snapshot = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 1);
+        $snapshot = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 1)->candidates;
 
         // Request shape: engine=google_maps&type=search&hl=fr, and none of the organic params.
         $params = $this->requestQuery($requests[0]);
@@ -177,14 +178,14 @@ class CompanyDiscoveryServiceTest extends TestCase
         $this->assertSame(['ybcompany.ma', 'socomatex.com'], array_column($snapshot, 'domain'));
 
         $this->assertSame([
-            'domain'          => 'ybcompany.ma',
-            'title'           => 'YB company',
-            'snippet'         => 'Fabrique de textile — 26 Rue Lahcen El Basri, Casablanca',
-            'url'             => 'http://www.ybcompany.ma/',
+            'domain' => 'ybcompany.ma',
+            'title' => 'YB company',
+            'snippet' => 'Fabrique de textile — 26 Rue Lahcen El Basri, Casablanca',
+            'url' => 'http://www.ybcompany.ma/',
             'discovery_query' => 'fabricant textile Casablanca',
-            'phone'           => '+212 522-24-18-40',
-            'country'         => 'MA',
-            'sector_hint'     => 'Fabrique de textile',
+            'phone' => '+212 522-24-18-40',
+            'country' => 'MA',
+            'sector_hint' => 'Fabrique de textile',
         ], $snapshot[0]);
 
         // Lowercase ISO-2 from the provider is uppercased.
@@ -195,7 +196,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_maps_results_without_a_website_are_skipped(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -210,7 +211,7 @@ class CompanyDiscoveryServiceTest extends TestCase
         ]);
 
         $criteria = $this->mapsCriteria();
-        $snapshot = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 1);
+        $snapshot = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 1)->candidates;
 
         $this->assertSame(['vraie-usine.test'], array_column($snapshot, 'domain'));
     }
@@ -218,7 +219,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_maps_results_with_a_blocklisted_website_are_skipped(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -235,7 +236,7 @@ class CompanyDiscoveryServiceTest extends TestCase
         ]);
 
         $criteria = $this->mapsCriteria();
-        $snapshot = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 1);
+        $snapshot = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 1)->candidates;
 
         $this->assertSame(['vraie-usine.test'], array_column($snapshot, 'domain'));
     }
@@ -243,14 +244,14 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_maps_optional_keys_are_omitted_when_the_provider_omits_them(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
         Http::fake([
             '*' => Http::response([
                 'local_results' => [[
-                    'title'   => 'Minimal SARL',
+                    'title' => 'Minimal SARL',
                     'website' => 'https://minimal.test/',
                     'country' => 'Maroc', // not an ISO-2 code — must be dropped, not stored
                 ]],
@@ -258,7 +259,7 @@ class CompanyDiscoveryServiceTest extends TestCase
         ]);
 
         $criteria = $this->mapsCriteria();
-        $snapshot = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 1);
+        $snapshot = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 1)->candidates;
 
         $this->assertCount(1, $snapshot);
         $this->assertArrayNotHasKey('phone', $snapshot[0]);
@@ -272,7 +273,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_maps_cursor_advances_by_twenty_and_organic_by_ten(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -281,13 +282,13 @@ class CompanyDiscoveryServiceTest extends TestCase
 
             if (($params['engine'] ?? null) === 'google_maps') {
                 return Http::response([
-                    'local_results'      => $this->mapsResults('maps-page', 20),
+                    'local_results' => $this->mapsResults('maps-page', 20),
                     'serpapi_pagination' => ['next' => 'https://serpapi.test/next?start=20'],
                 ], 200);
             }
 
             return Http::response([
-                'organic_results'    => $this->serpResults('organic-page', 10),
+                'organic_results' => $this->serpResults('organic-page', 10),
                 'serpapi_pagination' => ['next' => 'https://serpapi.test/next?start=10'],
             ], 200);
         });
@@ -297,9 +298,10 @@ class CompanyDiscoveryServiceTest extends TestCase
 
         $this->assertSame(20, (int) data_get(
             $mapsCriteria->refresh()->discovery_cursors,
-            $this->mapsQueryKey('usine agroalimentaire Agadir') . '.start'
+            $this->mapsQueryKey('usine agroalimentaire Agadir').'.start'
         ));
 
+        Setting::set('decouverte.discovery_engines', ['google']);
         $organicCriteria = $this->makePersistedCriteria([
             'ai_queries' => [['q' => 'transitaire Tanger', 'enabled' => true]],
         ]);
@@ -307,14 +309,14 @@ class CompanyDiscoveryServiceTest extends TestCase
 
         $this->assertSame(10, (int) data_get(
             $organicCriteria->refresh()->discovery_cursors,
-            md5('transitaire Tanger') . '.start'
+            md5('transitaire Tanger').'.start'
         ));
     }
 
     public function test_maps_second_run_resumes_at_start_twenty(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -322,10 +324,11 @@ class CompanyDiscoveryServiceTest extends TestCase
         Http::fake(function ($request) use (&$requests) {
             $requests[] = $request;
             $prefix = count($requests) === 1 ? 'maps-a' : 'maps-b';
+            $nextStart = count($requests) === 1 ? 20 : 40;
 
             return Http::response([
-                'local_results'      => $this->mapsResults($prefix, 20),
-                'serpapi_pagination' => ['next' => 'https://serpapi.test/next?start=40'],
+                'local_results' => $this->mapsResults($prefix, 20),
+                'serpapi_pagination' => ['next' => "https://serpapi.test/next?start={$nextStart}"],
             ], 200);
         });
 
@@ -338,26 +341,26 @@ class CompanyDiscoveryServiceTest extends TestCase
         $this->assertSame('20', (string) $this->requestQuery($requests[1])['start']);
         $this->assertSame(40, (int) data_get(
             $criteria->refresh()->discovery_cursors,
-            $this->mapsQueryKey('fabricant textile Casablanca') . '.start'
+            $this->mapsQueryKey('fabricant textile Casablanca').'.start'
         ));
     }
 
     public function test_maps_empty_local_results_marks_the_query_exhausted(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
         Http::fake([
             '*' => Http::response([
-                'local_results'      => [],
+                'local_results' => [],
                 'serpapi_pagination' => ['next' => 'https://serpapi.test/next'],
             ], 200),
         ]);
 
         $criteria = $this->mapsCriteria();
-        $snapshot = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 3);
+        $snapshot = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 3)->candidates;
 
         $this->assertSame([], $snapshot);
 
@@ -373,7 +376,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_mixed_google_and_google_maps_queries_run_on_their_own_engines(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
         Setting::set('decouverte.discovery_engines', ['google', 'google_maps']);
@@ -402,7 +405,7 @@ class CompanyDiscoveryServiceTest extends TestCase
             ],
         ]);
 
-        $snapshot = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 5);
+        $snapshot = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 5)->candidates;
 
         $this->assertSame([
             ['google', 'transitaire Maroc'],
@@ -414,17 +417,20 @@ class CompanyDiscoveryServiceTest extends TestCase
         $this->assertSame(['organic-hit.test', 'maps-hit.test'], array_column($snapshot, 'domain'));
 
         $cursors = $criteria->refresh()->discovery_cursors;
-        // Organic keeps legacy md5(q); every other stream is engine-scoped.
-        $this->assertSame(10, (int) $cursors[md5('transitaire Maroc')]['start']);
-        $this->assertSame(20, (int) $cursors[$this->mapsQueryKey('transitaire Maroc')]['start']);
-        $this->assertSame(10, (int) $cursors[md5('fabricant textile Casablanca')]['start']);
-        $this->assertSame(20, (int) $cursors[$this->mapsQueryKey('fabricant textile Casablanca')]['start']);
+        // No provider `next` URL means each stream is terminal. The cursor keeps
+        // its last requested start while the exhausted flag prevents a replay.
+        $this->assertSame(0, (int) $cursors[md5('transitaire Maroc')]['start']);
+        $this->assertSame(0, (int) $cursors[$this->mapsQueryKey('transitaire Maroc')]['start']);
+        $this->assertSame(0, (int) $cursors[md5('fabricant textile Casablanca')]['start']);
+        $this->assertSame(0, (int) $cursors[$this->mapsQueryKey('fabricant textile Casablanca')]['start']);
+        $this->assertTrue($cursors[md5('transitaire Maroc')]['exhausted']);
+        $this->assertTrue($cursors[$this->mapsQueryKey('transitaire Maroc')]['exhausted']);
     }
 
     public function test_same_query_text_on_both_engines_paginates_independently(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
         Setting::set('decouverte.discovery_engines', ['google', 'google_maps']);
@@ -434,11 +440,11 @@ class CompanyDiscoveryServiceTest extends TestCase
 
             return $params['engine'] === 'google_maps'
                 ? Http::response([
-                    'local_results'      => [$this->mapsResult('https://maps-dual.test/')],
+                    'local_results' => [$this->mapsResult('https://maps-dual.test/')],
                     'serpapi_pagination' => ['next' => 'https://serpapi.test/next?start=20'],
                 ], 200)
                 : Http::response([
-                    'organic_results'    => [$this->serpResult('organic-dual.test')],
+                    'organic_results' => [$this->serpResult('organic-dual.test')],
                     'serpapi_pagination' => ['next' => 'https://serpapi.test/next?start=10'],
                 ], 200);
         });
@@ -522,7 +528,7 @@ class CompanyDiscoveryServiceTest extends TestCase
         $run = $this->makeRun($criteria);
         $run->update(['searches_reserved' => 2]);
 
-        $this->assertSame([], $this->service->discoverForRun($criteria, $run, 2));
+        $this->assertSame([], $this->service->discoverForRun($criteria, $run, 2)->candidates);
         $this->assertSame(['google', 'bing'], $seen);
         $this->assertSame(2, $run->refresh()->searches_consumed);
     }
@@ -602,12 +608,12 @@ class CompanyDiscoveryServiceTest extends TestCase
         Setting::set('decouverte.discovery_engines', ['google', 'google_maps']);
 
         $criteria = $this->makePersistedCriteria();
-        $candidates = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 5);
+        $candidates = $this->service->discoverForRun($criteria, $this->makeRun($criteria), 5)->candidates;
 
         $domains = array_column($candidates, 'domain');
 
         // Legacy organic fixture entries still come first and unchanged.
-        $this->assertSame('bollore transport & logistics — transitaire international', strtolower($candidates[0]['title']));
+        $this->assertSame('bolloré transport & logistics — transitaire international', strtolower($candidates[0]['title']));
         $this->assertContains('bolloretransport.com', $domains);
 
         // Maps fixture entries are appended with the extra optional keys.
@@ -640,7 +646,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_live_discovery_call_budget_one_search_can_return_page_size_candidates(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -653,21 +659,21 @@ class CompanyDiscoveryServiceTest extends TestCase
 
         $criteria = $this->makePersistedCriteria([
             'daily_limit' => 1,
-            'ai_queries'  => [['q' => 'budget query', 'enabled' => true]],
+            'ai_queries' => [['q' => 'budget query', 'enabled' => true]],
         ]);
         $run = $this->makeRun($criteria);
 
-        $snapshot = $this->service->discoverForRun($criteria, $run, 1);
+        $snapshot = $this->service->discoverForRun($criteria, $run, 1)->candidates;
 
         Http::assertSentCount(1);
         $this->assertCount(10, $snapshot);
-        $this->assertSame(10, (int) data_get($criteria->refresh()->discovery_cursors, md5('budget query') . '.start'));
+        $this->assertSame(10, (int) data_get($criteria->refresh()->discovery_cursors, md5('budget query').'.start'));
     }
 
     public function test_live_discovery_call_budget_two_searches_can_append_two_pages(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -686,15 +692,15 @@ class CompanyDiscoveryServiceTest extends TestCase
 
         $criteria = $this->makePersistedCriteria([
             'daily_limit' => 2,
-            'ai_queries'  => [['q' => 'budget query', 'enabled' => true]],
+            'ai_queries' => [['q' => 'budget query', 'enabled' => true]],
         ]);
         $run = $this->makeRun($criteria);
 
-        $snapshot = $this->service->discoverForRun($criteria, $run, 2);
+        $snapshot = $this->service->discoverForRun($criteria, $run, 2)->candidates;
 
         Http::assertSentCount(2);
         $this->assertCount(20, $snapshot);
-        $this->assertSame(20, (int) data_get($criteria->refresh()->discovery_cursors, md5('budget query') . '.start'));
+        $this->assertSame(20, (int) data_get($criteria->refresh()->discovery_cursors, md5('budget query').'.start'));
         $this->assertSame('10', (string) $this->requestQuery($requests[1])['start']);
     }
 
@@ -707,7 +713,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     {
         $criteria = $this->makeCriteria([
             'countries' => ['FR'],
-            'sectors'   => [],
+            'sectors' => [],
         ]);
 
         $queries = $this->service->buildQueries($criteria);
@@ -726,13 +732,13 @@ class CompanyDiscoveryServiceTest extends TestCase
     {
         $criteria = $this->makeCriteria([
             'countries' => ['DE'],
-            'sectors'   => [],
+            'sectors' => [],
         ]);
 
         $queries = $this->service->buildQueries($criteria);
 
         $this->assertNotEmpty($queries);
-        $allemagne = array_filter($queries, fn($q) => str_contains($q, 'Allemagne'));
+        $allemagne = array_filter($queries, fn ($q) => str_contains($q, 'Allemagne'));
         $this->assertNotEmpty($allemagne, 'ISO "DE" should map to "Allemagne"');
     }
 
@@ -743,16 +749,16 @@ class CompanyDiscoveryServiceTest extends TestCase
     {
         $criteria = $this->makeCriteria([
             'countries' => ['FR', 'MA'],
-            'sectors'   => [],
+            'sectors' => [],
         ]);
 
         $queries = $this->service->buildQueries($criteria);
 
-        $hasFrance = (bool) array_filter($queries, fn($q) => str_contains($q, 'France'));
-        $hasMaroc  = (bool) array_filter($queries, fn($q) => str_contains($q, 'Maroc'));
+        $hasFrance = (bool) array_filter($queries, fn ($q) => str_contains($q, 'France'));
+        $hasMaroc = (bool) array_filter($queries, fn ($q) => str_contains($q, 'Maroc'));
 
         $this->assertTrue($hasFrance, 'FR should map to France');
-        $this->assertTrue($hasMaroc,  'MA should map to Maroc');
+        $this->assertTrue($hasMaroc, 'MA should map to Maroc');
     }
 
     // ── Legacy free-text passthrough ──────────────────────────────────────────
@@ -764,13 +770,13 @@ class CompanyDiscoveryServiceTest extends TestCase
     {
         $criteria = $this->makeCriteria([
             'countries' => ['France'],
-            'sectors'   => [],
+            'sectors' => [],
         ]);
 
         $queries = $this->service->buildQueries($criteria);
 
         $this->assertNotEmpty($queries);
-        $hasFrance = (bool) array_filter($queries, fn($q) => str_contains($q, 'France'));
+        $hasFrance = (bool) array_filter($queries, fn ($q) => str_contains($q, 'France'));
         $this->assertTrue($hasFrance, 'Legacy "France" string should pass through unchanged');
     }
 
@@ -781,14 +787,14 @@ class CompanyDiscoveryServiceTest extends TestCase
     {
         $criteria = $this->makeCriteria([
             'countries' => ['JUNK_COUNTRY_XYZ'],
-            'sectors'   => [],
+            'sectors' => [],
         ]);
 
         // Should not throw
         $queries = $this->service->buildQueries($criteria);
 
         $this->assertNotEmpty($queries);
-        $hasJunk = (bool) array_filter($queries, fn($q) => str_contains($q, 'JUNK_COUNTRY_XYZ'));
+        $hasJunk = (bool) array_filter($queries, fn ($q) => str_contains($q, 'JUNK_COUNTRY_XYZ'));
         $this->assertTrue($hasJunk, 'Junk token should pass through unchanged');
     }
 
@@ -801,17 +807,17 @@ class CompanyDiscoveryServiceTest extends TestCase
     {
         $criteria = $this->makeCriteria([
             'countries' => [],
-            'sectors'   => [],
+            'sectors' => [],
         ]);
 
         $queries = $this->service->buildQueries($criteria);
 
         $this->assertNotEmpty($queries);
-        $hasFrance = (bool) array_filter($queries, fn($q) => str_contains($q, 'France'));
-        $hasMaroc  = (bool) array_filter($queries, fn($q) => str_contains($q, 'Maroc'));
+        $hasFrance = (bool) array_filter($queries, fn ($q) => str_contains($q, 'France'));
+        $hasMaroc = (bool) array_filter($queries, fn ($q) => str_contains($q, 'Maroc'));
 
         $this->assertTrue($hasFrance, 'Empty countries should fall back to France');
-        $this->assertTrue($hasMaroc,  'Empty countries should fall back to Maroc');
+        $this->assertTrue($hasMaroc, 'Empty countries should fall back to Maroc');
     }
 
     /**
@@ -827,7 +833,7 @@ class CompanyDiscoveryServiceTest extends TestCase
         $queries = $this->service->buildQueries($criteria);
 
         $this->assertNotEmpty($queries);
-        $hasFrance = (bool) array_filter($queries, fn($q) => str_contains($q, 'France'));
+        $hasFrance = (bool) array_filter($queries, fn ($q) => str_contains($q, 'France'));
         $this->assertTrue($hasFrance, 'Null countries should fall back to France');
     }
 
@@ -843,11 +849,11 @@ class CompanyDiscoveryServiceTest extends TestCase
 
         $criteria = $this->makeCriteria([
             'countries' => $eu27,         // 27 countries
-            'sectors'   => $allSectors,   // 16 sectors
+            'sectors' => $allSectors,   // 16 sectors
         ]);
 
         $queries = $this->service->buildQueries($criteria);
-        $budget  = (int) config('services.serpapi.max_queries_per_run', 40);
+        $budget = (int) config('services.serpapi.max_queries_per_run', 40);
 
         $this->assertLessThanOrEqual(
             $budget,
@@ -863,11 +869,11 @@ class CompanyDiscoveryServiceTest extends TestCase
     {
         $criteria = $this->makeCriteria([
             'countries' => ['FR'],
-            'sectors'   => ['Transport & Logistique'],
+            'sectors' => ['Transport & Logistique'],
         ]);
 
         $queries = $this->service->buildQueries($criteria);
-        $budget  = (int) config('services.serpapi.max_queries_per_run', 40);
+        $budget = (int) config('services.serpapi.max_queries_per_run', 40);
 
         // 1 country × (2 sector queries + 6 freight keywords) = 8 queries — well under budget
         $this->assertLessThanOrEqual($budget, count($queries));
@@ -884,12 +890,12 @@ class CompanyDiscoveryServiceTest extends TestCase
     {
         $criteria = $this->makeCriteria([
             'countries' => ['FR'],
-            'sectors'   => ['Agroalimentaire'],
+            'sectors' => ['Agroalimentaire'],
         ]);
 
         $queries = $this->service->buildQueries($criteria);
 
-        $sectorQuery = array_filter($queries, fn($q) => str_contains($q, 'Agroalimentaire'));
+        $sectorQuery = array_filter($queries, fn ($q) => str_contains($q, 'Agroalimentaire'));
         $this->assertNotEmpty($sectorQuery, 'Sector should appear in sector-specific queries');
     }
 
@@ -900,7 +906,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     {
         $criteria = $this->makeCriteria([
             'countries' => ['FR'],
-            'sectors'   => [],
+            'sectors' => [],
         ]);
 
         $queries = $this->service->buildQueries($criteria);
@@ -918,7 +924,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_live_discovery_advances_start_for_single_query_between_runs(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -962,7 +968,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_live_discovery_does_not_append_page_when_expected_start_mismatches(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -977,8 +983,8 @@ class CompanyDiscoveryServiceTest extends TestCase
             $criteria->forceFill([
                 'discovery_cursors' => [
                     $key => [
-                        'q'         => $query,
-                        'start'     => 10,
+                        'q' => $query,
+                        'start' => 10,
                         'exhausted' => false,
                     ],
                     '_rotation' => $key,
@@ -1003,7 +1009,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_live_discovery_rotates_to_next_query_each_run(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -1013,7 +1019,7 @@ class CompanyDiscoveryServiceTest extends TestCase
             $queriesSeen[] = $params['q'];
 
             return Http::response([
-                'organic_results' => [$this->serpResult('rotation-' . count($queriesSeen) . '.test')],
+                'organic_results' => [$this->serpResult('rotation-'.count($queriesSeen).'.test')],
                 'serpapi_pagination' => ['next' => 'https://serpapi.test/next'],
             ], 200);
         });
@@ -1035,7 +1041,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_live_discovery_marks_last_page_exhausted_and_failed_response_advances_nothing(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -1062,14 +1068,14 @@ class CompanyDiscoveryServiceTest extends TestCase
         $failMode = true;
 
         $failedCriteria = $this->makePersistedCriteria([
-            'name' => 'Failed SerpAPI ' . uniqid(),
+            'name' => 'Failed SerpAPI '.uniqid(),
             'ai_queries' => [['q' => 'failed query', 'enabled' => true]],
         ]);
         $failedRun = $this->makeRun($failedCriteria);
 
         $this->assertSame([], $this->service->discover($failedCriteria, $failedRun, 1));
         $failedCursors = $failedCriteria->refresh()->discovery_cursors;
-        $this->assertSame(0, (int) data_get($failedCursors, md5('failed query') . '.start'));
+        $this->assertSame(0, (int) data_get($failedCursors, md5('failed query').'.start'));
         $this->assertSame(md5('failed query'), $failedCursors['_rotation']);
         $this->assertNull($failedRun->refresh()->candidates_snapshot);
     }
@@ -1077,32 +1083,32 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_live_discovery_filters_visible_and_same_criteria_rejected_domains_only(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
         $criteria = $this->makePersistedCriteria();
-        $otherCriteria = $this->makePersistedCriteria(['name' => 'Other ' . uniqid()]);
+        $otherCriteria = $this->makePersistedCriteria(['name' => 'Other '.uniqid()]);
 
         Company::create([
             'criteria_id' => $otherCriteria->id,
-            'name'        => 'Visible',
-            'domain'      => 'visible.test',
-            'source'      => 'discovered',
+            'name' => 'Visible',
+            'domain' => 'visible.test',
+            'source' => 'discovered',
         ]);
         Company::create([
-            'criteria_id'           => $criteria->id,
-            'name'                  => 'Rejected here',
-            'domain'                => 'same-rejected.test',
-            'source'                => 'discovered',
-            'qualification_status'  => 'rejected',
+            'criteria_id' => $criteria->id,
+            'name' => 'Rejected here',
+            'domain' => 'same-rejected.test',
+            'source' => 'discovered',
+            'qualification_status' => 'rejected',
         ]);
         Company::create([
-            'criteria_id'           => $otherCriteria->id,
-            'name'                  => 'Rejected elsewhere',
-            'domain'                => 'other-rejected.test',
-            'source'                => 'discovered',
-            'qualification_status'  => 'rejected',
+            'criteria_id' => $otherCriteria->id,
+            'name' => 'Rejected elsewhere',
+            'domain' => 'other-rejected.test',
+            'source' => 'discovered',
+            'qualification_status' => 'rejected',
         ]);
 
         Http::fake([
@@ -1124,7 +1130,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_live_discovery_filters_social_network_domains_without_false_positives(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -1132,8 +1138,8 @@ class CompanyDiscoveryServiceTest extends TestCase
             '*' => Http::response([
                 'organic_results' => [
                     [
-                        'title'   => 'LinkedIn profile',
-                        'link'    => 'https://fr.linkedin.com/in/example',
+                        'title' => 'LinkedIn profile',
+                        'link' => 'https://fr.linkedin.com/in/example',
                         'snippet' => 'Profile result',
                     ],
                     $this->serpResult('linkedin-logistics.com'),
@@ -1145,7 +1151,7 @@ class CompanyDiscoveryServiceTest extends TestCase
         $criteria = $this->makePersistedCriteria();
         $run = $this->makeRun($criteria);
 
-        $snapshot = $this->service->discoverForRun($criteria, $run, 1);
+        $snapshot = $this->service->discoverForRun($criteria, $run, 1)->candidates;
         $expected = ['linkedin-logistics.com', 'valid-company.test'];
 
         $this->assertSame($expected, array_column($snapshot, 'domain'));
@@ -1155,7 +1161,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_live_discovery_drops_media_directory_gov_and_document_hosts(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -1175,7 +1181,7 @@ class CompanyDiscoveryServiceTest extends TestCase
         $criteria = $this->makePersistedCriteria();
         $run = $this->makeRun($criteria);
 
-        $snapshot = $this->service->discoverForRun($criteria, $run, 1);
+        $snapshot = $this->service->discoverForRun($criteria, $run, 1)->candidates;
 
         $this->assertSame(['valid-company.test'], array_column($snapshot, 'domain'));
     }
@@ -1183,7 +1189,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_live_discovery_drops_document_urls(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -1191,13 +1197,13 @@ class CompanyDiscoveryServiceTest extends TestCase
             '*' => Http::response([
                 'organic_results' => [
                     [
-                        'title'   => 'Rapport annuel',
-                        'link'    => 'https://rapport-host.test/docs/rapport-2025.pdf',
+                        'title' => 'Rapport annuel',
+                        'link' => 'https://rapport-host.test/docs/rapport-2025.pdf',
                         'snippet' => 'PDF result',
                     ],
                     [
-                        'title'   => 'Tableau logistique',
-                        'link'    => 'https://tableur-host.test/data/export.xlsx?v=2',
+                        'title' => 'Tableau logistique',
+                        'link' => 'https://tableur-host.test/data/export.xlsx?v=2',
                         'snippet' => 'Spreadsheet result',
                     ],
                     $this->serpResult('valid-company.test'),
@@ -1208,7 +1214,7 @@ class CompanyDiscoveryServiceTest extends TestCase
         $criteria = $this->makePersistedCriteria();
         $run = $this->makeRun($criteria);
 
-        $snapshot = $this->service->discoverForRun($criteria, $run, 1);
+        $snapshot = $this->service->discoverForRun($criteria, $run, 1)->candidates;
 
         $this->assertSame(['valid-company.test'], array_column($snapshot, 'domain'));
     }
@@ -1216,7 +1222,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_blocked_domains_setting_overrides_the_built_in_list(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 
@@ -1235,7 +1241,7 @@ class CompanyDiscoveryServiceTest extends TestCase
         $criteria = $this->makePersistedCriteria();
         $run = $this->makeRun($criteria);
 
-        $snapshot = (new CompanyDiscoveryService())->discoverForRun($criteria, $run, 1);
+        $snapshot = (new CompanyDiscoveryService)->discoverForRun($criteria, $run, 1)->candidates;
 
         $this->assertSame(['lesechos.fr', 'valid-company.test'], array_column($snapshot, 'domain'));
     }
@@ -1243,7 +1249,7 @@ class CompanyDiscoveryServiceTest extends TestCase
     public function test_live_discovery_stops_at_search_cap(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
         ]);
 

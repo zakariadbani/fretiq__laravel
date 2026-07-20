@@ -265,11 +265,9 @@ class CampaignController extends BackendController
     /**
      * Build the base scope query (rollup OR run-scope) with optional search applied.
      *
-     * Rollup uses a window subquery aliased 'campaign_recipients' so that
-     * whereHas('contact') correlates correctly via the real table name.
-     *
-     * CRITICAL window spec: only ROW_NUMBER carries ORDER BY id DESC.
-     * Aggregate windows (COUNT/MAX) are PARTITION BY only — no ORDER BY.
+     * Rollup uses a MySQL 5.7-compatible grouped aggregate subquery. Its
+     * MAX(id) identifies the latest recipient row to expose for each contact,
+     * while the other aggregates retain history across all executed runs.
      *
      * @param  \Illuminate\Support\Collection<int, int> $runIds
      * @param  array    $filters   From recipientFilters().
@@ -285,19 +283,29 @@ class CampaignController extends BackendController
             $query = CampaignRecipient::where('campaign_run_id', $run->id);
         } else {
             // Rollup scope: one row per contact = latest recipient row + per-contact aggregates.
-            $sub = CampaignRecipient::query()
+            $rollup = CampaignRecipient::query()
                 ->whereIn('campaign_run_id', $runIds)
-                ->select('campaign_recipients.*')
-                ->selectRaw('ROW_NUMBER() OVER (PARTITION BY contact_id ORDER BY id DESC) AS rn')
-                ->selectRaw('COUNT(*) OVER (PARTITION BY contact_id) AS envois')
-                ->selectRaw('MAX(sent_at) OVER (PARTITION BY contact_id) AS max_sent_at')
-                ->selectRaw('MAX(opened_at) OVER (PARTITION BY contact_id) AS max_opened_at')
-                ->selectRaw('MAX(clicked_at) OVER (PARTITION BY contact_id) AS max_clicked_at')
-                ->selectRaw("MAX(CASE WHEN status = 'replied' THEN 1 ELSE 0 END) OVER (PARTITION BY contact_id) AS has_replied");
+                ->select('contact_id')
+                ->selectRaw('MAX(id) AS latest_id')
+                ->selectRaw('COUNT(*) AS envois')
+                ->selectRaw('MAX(sent_at) AS max_sent_at')
+                ->selectRaw('MAX(opened_at) AS max_opened_at')
+                ->selectRaw('MAX(clicked_at) AS max_clicked_at')
+                ->selectRaw("MAX(CASE WHEN status = 'replied' THEN 1 ELSE 0 END) AS has_replied")
+                ->groupBy('contact_id');
 
             $query = CampaignRecipient::query()
-                ->fromSub($sub, 'campaign_recipients')
-                ->where('rn', 1)
+                ->select([
+                    'campaign_recipients.*',
+                    'recipient_rollup.envois',
+                    'recipient_rollup.max_sent_at',
+                    'recipient_rollup.max_opened_at',
+                    'recipient_rollup.max_clicked_at',
+                    'recipient_rollup.has_replied',
+                ])
+                ->joinSub($rollup, 'recipient_rollup', function ($join) {
+                    $join->on('campaign_recipients.id', '=', 'recipient_rollup.latest_id');
+                })
                 ->withCasts([
                     'max_sent_at'    => 'datetime',
                     'max_opened_at'  => 'datetime',
@@ -336,8 +344,13 @@ class CampaignController extends BackendController
      */
     private function recipientChipCounts($scopeQuery, bool $isRunScope): array
     {
+        $aggregateQuery = (clone $scopeQuery)
+            ->reorder()
+            ->toBase()
+            ->select([]);
+
         if ($isRunScope) {
-            $row = (clone $scopeQuery)->reorder()->toBase()->selectRaw(
+            $row = $aggregateQuery->selectRaw(
                 "COUNT(*) AS total,
                  COALESCE(SUM(status = 'queued'), 0) AS queued,
                  COALESCE(SUM(sent_at IS NOT NULL), 0) AS sent,
@@ -348,7 +361,7 @@ class CampaignController extends BackendController
                  COALESCE(SUM(status = 'skipped'), 0) AS skipped"
             )->first();
         } else {
-            $row = (clone $scopeQuery)->reorder()->toBase()->selectRaw(
+            $row = $aggregateQuery->selectRaw(
                 "COUNT(*) AS total,
                  COALESCE(SUM(status = 'queued'), 0) AS queued,
                  COALESCE(SUM(max_sent_at IS NOT NULL), 0) AS sent,

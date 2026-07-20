@@ -4,9 +4,19 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 class DiscoveryRun extends Model
 {
+    public const DISPATCH_FAILURE_MESSAGE = 'La découverte n’a pas pu être mise en file. Réessayez dans quelques instants.';
+
+    public const UNEXPECTED_FAILURE_MESSAGE = 'La découverte a échoué après plusieurs tentatives. Consultez les journaux applicatifs puis relancez-la.';
+
+    /** Daily runs may legitimately wait behind a long single-worker queue. */
+    public const PENDING_STALE_AFTER_SECONDS = 86400;
+
+    public const RUNNING_STALE_AFTER_SECONDS = 660;
+
     /**
      * The attributes that are mass assignable.
      *
@@ -28,6 +38,10 @@ class DiscoveryRun extends Model
         'consumed',
         'contact_credits_reserved',
         'contact_consumed',
+        'successful_enrichments_target',
+        'successful_enrichments',
+        'enrichment_batch_id',
+        'hunter_circuit_open',
         'excluded_count',
         'quota_date',
         'package_assignment_id',
@@ -43,23 +57,58 @@ class DiscoveryRun extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'started_at'                => 'datetime',
-        'finished_at'               => 'datetime',
-        'companies_count'           => 'integer',
-        'new_companies_count'       => 'integer',
-        'contacts_count'            => 'integer',
-        'skipped_count'             => 'integer',
-        'low_score_count'           => 'integer',
-        'credits_reserved'          => 'integer',
-        'searches_reserved'         => 'integer',
-        'searches_consumed'         => 'integer',
-        'consumed'                  => 'integer',
-        'contact_credits_reserved'  => 'integer',
-        'contact_consumed'          => 'integer',
-        'excluded_count'            => 'integer',
-        'quota_date'                => 'date',
-        'candidates_snapshot'       => 'array',
+        'started_at' => 'datetime',
+        'finished_at' => 'datetime',
+        'companies_count' => 'integer',
+        'new_companies_count' => 'integer',
+        'contacts_count' => 'integer',
+        'skipped_count' => 'integer',
+        'low_score_count' => 'integer',
+        'credits_reserved' => 'integer',
+        'searches_reserved' => 'integer',
+        'searches_consumed' => 'integer',
+        'consumed' => 'integer',
+        'contact_credits_reserved' => 'integer',
+        'contact_consumed' => 'integer',
+        'successful_enrichments_target' => 'integer',
+        'successful_enrichments' => 'integer',
+        'hunter_circuit_open' => 'boolean',
+        'excluded_count' => 'integer',
+        'quota_date' => 'date',
+        'candidates_snapshot' => 'array',
     ];
+
+    /**
+     * Keep the quota ledger key date-only on every supported database driver.
+     * MySQL truncates a datetime assigned to a DATE column automatically, while
+     * SQLite keeps the time component unless the model normalizes it first.
+     */
+    public function setQuotaDateAttribute(mixed $value): void
+    {
+        $this->attributes['quota_date'] = $value === null || $value === ''
+            ? null
+            : Carbon::parse($value)->toDateString();
+    }
+
+    /**
+     * Mark a dispatch as failed only while the exact discovery run is still queued.
+     * A queue transport can throw after accepting the payload, so a worker-owned or
+     * already completed row must never be regressed by the caller's catch block.
+     */
+    public static function failPendingDispatch(int $runId, int $criteriaId): bool
+    {
+        return static::query()
+            ->whereKey($runId)
+            ->where('prospect_criteria_id', $criteriaId)
+            ->where('type', 'discovery')
+            ->where('status', 'pending')
+            ->update([
+                'status' => 'failed',
+                'error' => self::DISPATCH_FAILURE_MESSAGE,
+                'finished_at' => now(),
+                'updated_at' => now(),
+            ]) === 1;
+    }
 
     // ── Relationships ──────────────────────────────────────────────────────────
 
@@ -92,11 +141,12 @@ class DiscoveryRun extends Model
      * Whether the run appears stale (in-flight but no heartbeat for too long).
      *
      * Two thresholds, matched to the job lifecycle:
-     *   pending  → job was never picked up (worker likely down); flag after 60 s
-     *              on created_at. Short threshold because no work has started yet.
-     *   running  → job is legitimately running up to its $timeout = 300 s; only
-     *              flag after 360 s (> timeout) which matches the lock expireAfter(360)
-     *              margin. Reference: started_at (falling back to created_at).
+     *   pending  → job was never picked up; flag after 24 h on created_at. A
+     *              one-minute threshold is unsafe when a single database worker
+     *              is occupied by another 540-second discovery job.
+     *   running  → flag after 660 s without a heartbeat, beyond the 540-second
+     *              job timeout and 570-second overlap-lock expiry. Reference:
+     *              updated_at (legacy fallback to started_at, then created_at).
      *
      * Carbon 3 note: diffInSeconds() is SIGNED. To get a positive value for a
      * past timestamp, the PAST timestamp must be the receiver:
@@ -113,12 +163,12 @@ class DiscoveryRun extends Model
         if ($this->status === 'pending') {
             // Job was queued but never picked up. Warn quickly (worker-down signal).
             $ref = $this->created_at;
-            $threshold = 60;
+            $threshold = self::PENDING_STALE_AFTER_SECONDS;
         } elseif ($this->status === 'running') {
-            // Job is executing; allow the full job timeout (300 s) plus a buffer
-            // equal to the unique-lock expireAfter margin (360 s total).
-            $ref = $this->started_at ?? $this->created_at;
-            $threshold = 360;
+            // updated_at is refreshed after each resumable unit of work. The
+            // started_at/created_at fallback only exists for legacy null rows.
+            $ref = $this->updated_at ?? $this->started_at ?? $this->created_at;
+            $threshold = self::RUNNING_STALE_AFTER_SECONDS;
         } else {
             return false;
         }
@@ -127,6 +177,6 @@ class DiscoveryRun extends Model
             return false;
         }
 
-        return $ref->diffInSeconds(now()) > $threshold;
+        return $ref->diffInSeconds(now()) >= $threshold;
     }
 }

@@ -26,18 +26,52 @@ use Illuminate\Support\Facades\Log;
  */
 class HunterEnrichmentService
 {
+    private bool $lastSearchSystemicFailure = false;
+
     /**
      * Fetch domain-level data including contact emails.
      *
      * @return array{organization: ?string, industry: ?string, country: ?string, emails: list<mixed>, raw: array}|null
      */
-    public function domainSearch(string $domain, int $limit = 10): ?array
+    public function domainSearch(string $domain, int $limit = 10, ?int $timeoutSeconds = null): ?array
     {
         if ($this->isLocal()) {
             return $this->domainSearchFromFixtures($domain);
         }
 
-        return $this->domainSearchFromHunter($domain, $limit);
+        return $this->domainSearchFromHunter($domain, $limit, $timeoutSeconds);
+    }
+
+    /** @return array{status:'ok'|'empty'|'provider_failed',data:?array} */
+    public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null): array
+    {
+        $this->lastSearchSystemicFailure = false;
+
+        if ($this->isLocal()) {
+            $path = base_path('database/fixtures/discovery/hunter.json');
+            if (! file_exists($path) || ! is_array(json_decode(file_get_contents($path), true))) {
+                return ['status' => 'provider_failed', 'data' => null];
+            }
+        } elseif (! config('services.hunter.api_key')) {
+            return ['status' => 'provider_failed', 'data' => null];
+        }
+
+        $data = $this->domainSearch($domain, $limit, $timeoutSeconds);
+
+        // A systemic failure on either half of the bundle must trip the caller's
+        // circuit breaker even if the other endpoint returned partial metadata.
+        if ($this->lastSearchSystemicFailure) {
+            return ['status' => 'provider_failed', 'data' => $data];
+        }
+
+        if ($data !== null) {
+            return ['status' => 'ok', 'data' => $data];
+        }
+
+        return [
+            'status' => 'empty',
+            'data' => null,
+        ];
     }
 
     /**
@@ -71,23 +105,25 @@ class HunterEnrichmentService
                     Log::warning('[HunterEnrichmentService] Hunter account request failed', [
                         'status' => $response->status(),
                     ]);
+
                     return null;
                 }
 
                 $data = $response->json('data', []);
 
                 return [
-                    'searches_used'           => data_get($data, 'requests.searches.used'),
-                    'searches_available'      => data_get($data, 'requests.searches.available'),
-                    'verifications_used'      => data_get($data, 'requests.verifications.used'),
+                    'searches_used' => data_get($data, 'requests.searches.used'),
+                    'searches_available' => data_get($data, 'requests.searches.available'),
+                    'verifications_used' => data_get($data, 'requests.verifications.used'),
                     'verifications_available' => data_get($data, 'requests.verifications.available'),
-                    'plan_name'               => $data['plan_name'] ?? null,
-                    'reset_date'              => $data['reset_date'] ?? null,
+                    'plan_name' => $data['plan_name'] ?? null,
+                    'reset_date' => $data['reset_date'] ?? null,
                 ];
             } catch (\Throwable $e) {
                 Log::warning('[HunterEnrichmentService] Hunter account call threw an exception', [
                     'error' => $e->getMessage(),
                 ]);
+
                 return null;
             }
         });
@@ -100,6 +136,7 @@ class HunterEnrichmentService
 
         if (! file_exists($path)) {
             Log::warning('[HunterEnrichmentService] Local fixture missing', ['path' => $path]);
+
             return null;
         }
 
@@ -107,14 +144,33 @@ class HunterEnrichmentService
 
         if (! is_array($fixtures)) {
             Log::warning('[HunterEnrichmentService] Local fixture is not a valid JSON object.');
+
             return null;
         }
 
-        // Exact match first; fall back to __default__ so any domain returns data
-        $data = $fixtures[$domain] ?? $fixtures['__default__'] ?? null;
+        // Exact match first; fall back to a domain-scoped generic fixture. The
+        // fallback addresses must be unique to the requested company or local
+        // multi-company runs would manufacture cross-company email collisions.
+        $exact = array_key_exists($domain, $fixtures);
+        $data = $exact ? $fixtures[$domain] : ($fixtures['__default__'] ?? null);
 
         if (! $data) {
             return null;
+        }
+
+        if (! $exact && isset($data['emails']) && is_array($data['emails'])) {
+            $data['emails'] = array_map(function (mixed $email) use ($domain): mixed {
+                if (! is_array($email) || ! is_string($email['value'] ?? null)) {
+                    return $email;
+                }
+
+                $localPart = strstr($email['value'], '@', true);
+                if ($localPart !== false && $localPart !== '') {
+                    $email['value'] = $localPart.'@'.$domain;
+                }
+
+                return $email;
+            }, $data['emails']);
         }
 
         return $this->normalizeHunterData($data);
@@ -122,14 +178,16 @@ class HunterEnrichmentService
 
     // ── Real Hunter driver ────────────────────────────────────────────────────
 
-    private function domainSearchFromHunter(string $domain, int $limit): ?array
+    private function domainSearchFromHunter(string $domain, int $limit, ?int $timeoutSeconds = null): ?array
     {
         $apiKey = config('services.hunter.api_key');
 
         if (! $apiKey) {
+            $this->lastSearchSystemicFailure = true;
             Log::warning('[HunterEnrichmentService] Hunter API key not configured — skipping enrichment.', [
                 'domain' => $domain,
             ]);
+
             return null;
         }
 
@@ -138,16 +196,19 @@ class HunterEnrichmentService
         $domainPromise = null;
         $companyPromise = null;
 
+        $timeout = max(1, $timeoutSeconds ?? 20);
+
         try {
-            $domainPromise = Http::timeout(20)
+            $domainPromise = Http::timeout($timeout)
                 ->acceptJson()
                 ->async()
                 ->get('https://api.hunter.io/v2/domain-search', [
-                    'domain'  => $domain,
+                    'domain' => $domain,
                     'api_key' => $apiKey,
-                    'limit'   => $limit,
+                    'limit' => $limit,
                 ]);
         } catch (\Throwable $e) {
+            $this->lastSearchSystemicFailure = true;
             Log::error('[HunterEnrichmentService] Hunter domain-search threw an exception', [
                 'domain' => $domain,
                 'exception' => $e::class,
@@ -155,7 +216,7 @@ class HunterEnrichmentService
         }
 
         try {
-            $companyPromise = Http::timeout(20)
+            $companyPromise = Http::timeout($timeout)
                 ->acceptJson()
                 ->async()
                 ->get('https://api.hunter.io/v2/companies/find', [
@@ -163,6 +224,7 @@ class HunterEnrichmentService
                     'api_key' => $apiKey,
                 ]);
         } catch (\Throwable $e) {
+            $this->lastSearchSystemicFailure = true;
             Log::error('[HunterEnrichmentService] Hunter company enrichment threw an exception', [
                 'domain' => $domain,
                 'exception' => $e::class,
@@ -174,6 +236,9 @@ class HunterEnrichmentService
                 $domainResponse = $domainPromise->wait();
 
                 if ($domainResponse->failed()) {
+                    if ($this->isSystemicStatus($domainResponse->status())) {
+                        $this->lastSearchSystemicFailure = true;
+                    }
                     Log::warning('[HunterEnrichmentService] Hunter domain-search failed', [
                         'domain' => $domain,
                         'status' => $domainResponse->status(),
@@ -182,6 +247,7 @@ class HunterEnrichmentService
                     $domainSearchData = $domainResponse->json('data', []);
                 }
             } catch (\Throwable $e) {
+                $this->lastSearchSystemicFailure = true;
                 Log::error('[HunterEnrichmentService] Hunter domain-search threw an exception', [
                     'domain' => $domain,
                     'exception' => $e::class,
@@ -194,6 +260,9 @@ class HunterEnrichmentService
                 $companyResponse = $companyPromise->wait();
 
                 if ($companyResponse->failed()) {
+                    if ($this->isSystemicStatus($companyResponse->status())) {
+                        $this->lastSearchSystemicFailure = true;
+                    }
                     Log::warning('[HunterEnrichmentService] Hunter company enrichment failed', [
                         'domain' => $domain,
                         'status' => $companyResponse->status(),
@@ -202,6 +271,7 @@ class HunterEnrichmentService
                     $companyData = $companyResponse->json('data', []);
                 }
             } catch (\Throwable $e) {
+                $this->lastSearchSystemicFailure = true;
                 Log::error('[HunterEnrichmentService] Hunter company enrichment threw an exception', [
                     'domain' => $domain,
                     'exception' => $e::class,
@@ -232,15 +302,20 @@ class HunterEnrichmentService
     {
         return [
             'organization' => $data['organization'] ?? null,
-            'industry'     => $data['industry']     ?? null,
-            'country'      => $data['country']       ?? null,
-            'emails'       => $data['emails']        ?? [],
-            'raw'          => $data,
+            'industry' => $data['industry'] ?? null,
+            'country' => $data['country'] ?? null,
+            'emails' => $data['emails'] ?? [],
+            'raw' => $data,
         ];
     }
 
     private function isLocal(): bool
     {
         return config('services.hunter.driver', 'local') === 'local';
+    }
+
+    private function isSystemicStatus(int $status): bool
+    {
+        return in_array($status, [401, 403, 408, 425, 429], true) || $status >= 500;
     }
 }

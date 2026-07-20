@@ -60,7 +60,7 @@
             <div class="card-header border-0 pt-6">
                 <div class="card-title">
                     <div>
-                        <h3 class="card-label fw-bold fs-4 mb-0">Découverte</h3>
+                        <h3 class="card-label fw-bold fs-4 mb-0">Découverte · SerpAPI</h3>
                         <div class="text-muted fs-7 mt-1">Requêtes de découverte</div>
                     </div>
                 </div>
@@ -133,8 +133,8 @@
             <div class="card-header border-0 pt-6">
                 <div class="card-title">
                     <div>
-                        <h3 class="card-label fw-bold fs-4 mb-0">Enrichissement contacts</h3>
-                        <div class="text-muted fs-7 mt-1">Contacts</div>
+                        <h3 class="card-label fw-bold fs-4 mb-0">Enrichissement contacts · Hunter</h3>
+                        <div class="text-muted fs-7 mt-1">Recherches d'entreprises, distinctes des contacts créés</div>
                     </div>
                 </div>
             </div>

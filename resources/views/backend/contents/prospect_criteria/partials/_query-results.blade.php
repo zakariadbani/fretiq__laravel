@@ -1,6 +1,6 @@
 {{--
     Per-query results — discovered companies grouped by the SerpAPI query that
-    found them (§6). Each query row shows trouvées/gardées/exclues counts,
+    found them (§6). Each query row shows registered/non-excluded/excluded counts,
     expandable to the company rows. The audit toggle (?audit=1) reveals rejected
     (AI-excluded competitor) companies via Company::withRejected().
 
@@ -29,7 +29,10 @@
                 Résultats par requête de découverte
             </h3>
             <div class="text-muted fs-7 mt-2">
-                {{ number_format($totalFound) }} candidat(s) trouvé(s) · {{ number_format($totalKept) }} entreprise(s) gardée(s) · {{ number_format($totalExcluded) }} exclue(s) par l'IA.
+                {{ number_format($totalFound) }} entreprise(s) enregistrée(s) · {{ number_format($totalKept) }} non exclue(s) · {{ number_format($totalExcluded) }} exclue(s) par l'IA.
+            </div>
+            <div class="text-muted fs-8 mt-1">
+                Les résultats bruts SerpAPI ne sont pas affichés : seuls les domaines exploitables enregistrés après normalisation apparaissent ici.
             </div>
         </div>
         <div class="card-toolbar">
@@ -71,8 +74,8 @@
                             @endif
                         </div>
                         <div class="d-flex align-items-center">
-                            <span class="badge badge-light-primary me-2">{{ $group['found'] }} candidat(s)</span>
-                            <span class="badge badge-light-success me-2">{{ $group['kept'] }} gardée(s)</span>
+                            <span class="badge badge-light-primary me-2">{{ $group['found'] }} enregistrée(s)</span>
+                            <span class="badge badge-light-success me-2">{{ $group['kept'] }} non exclue(s)</span>
                             @if($group['excluded'] > 0)
                                 <span class="badge badge-light-danger me-3">{{ $group['excluded'] }} exclue(s)</span>
                             @endif
@@ -129,8 +132,10 @@
                                                 <td>
                                                     @if($isRejected)
                                                         <span class="badge badge-light-danger" title="{{ $company->ai_explanation }}">Exclue (IA)</span>
+                                                    @elseif($company->enrichment_status === 'skipped_low_score')
+                                                        <span class="badge badge-light-warning">Sous le seuil Hunter</span>
                                                     @else
-                                                        <span class="badge badge-light-success">Gardée</span>
+                                                        <span class="badge badge-light-success">Non exclue</span>
                                                     @endif
                                                 </td>
                                             </tr>

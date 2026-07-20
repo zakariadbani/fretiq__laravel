@@ -14,7 +14,6 @@ use App\Models\ProspectCriteria;
 use App\Services\Quota\DiscoveryQuotaService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 
 /**
  * ProspectAutoDiscover — hourly scheduler tick for per-criteria auto-discovery.
@@ -69,7 +68,7 @@ class ProspectAutoDiscover extends Command
     public function handle(DiscoveryQuotaService $quotaService): int
     {
         $currentHour = $quotaService->currentHour();
-        $today       = $quotaService->today()->toDateString();
+        $today = $quotaService->today()->toDateString();
 
         $due = ProspectCriteria::query()
             ->where('is_active', true)
@@ -82,41 +81,42 @@ class ProspectAutoDiscover extends Command
             ->get();
 
         $dispatched = 0;
-        $skipped    = 0;
+        $skipped = 0;
 
         foreach ($due as $criteria) {
             try {
-                $run = $quotaService->reserveRun($criteria);
+                $run = $quotaService->reserveRun($criteria, true);
             } catch (QuotaExhaustedException $e) {
                 $this->warn("  criteria {$criteria->id}: solde épuisé, skipped.");
                 $skipped++;
+
                 continue;
             } catch (DiscoveryRunInFlightException|CriteriaInactiveException $e) {
                 $this->info("  criteria {$criteria->id}: {$e->getMessage()}");
                 $skipped++;
+
                 continue;
             } catch (QuotaLockUnavailableException $e) {
                 $this->warn("  criteria {$criteria->id}: quota lock unavailable, skipped.");
                 $skipped++;
+
                 continue;
             }
 
             try {
                 RunDiscoveryPipelineJob::dispatch($criteria->id, $run->id);
             } catch (\Throwable $e) {
-                DiscoveryRun::where('id', $run->id)->update([
-                    'status'      => 'failed',
-                    'error'       => Str::limit('Échec de mise en file : ' . $e->getMessage(), 1000),
-                    'finished_at' => now(),
-                ]);
+                $markedFailed = DiscoveryRun::failPendingDispatch((int) $run->id, (int) $criteria->id);
 
                 Log::error('[ProspectAutoDiscover] Dispatch failed — run marked failed.', [
                     'criteria_id' => $criteria->id,
-                    'run_id'      => $run->id,
-                    'error'       => $e->getMessage(),
+                    'run_id' => $run->id,
+                    'run_marked_failed' => $markedFailed,
+                    'exception_class' => $e::class,
                 ]);
 
                 $skipped++;
+
                 continue;
             }
 

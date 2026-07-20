@@ -35,9 +35,6 @@ class SequenceSeeder extends Seeder
 <p>Ce mois-ci, nous mettons en avant notre service de <strong>groupage</strong> — une solution souple et économique pour vos envois à volume variable.</p>
 <p>Un sujet vous intéresse ou vous avez une question sur vos flux ? Répondez simplement à ce message, nous serons ravis d'échanger.</p>
 <p>Bonne lecture,<br>L'équipe TCL France</p>
-<p style="font-size:11px;color:#888;">
-Pour ne plus recevoir nos messages : <a href="{{unsubscribe_url}}">se désabonner</a>.
-</p>
 HTML,
             ],
         );
@@ -53,9 +50,6 @@ HTML,
 <p>Vos besoins en transport et logistique ont peut-être évolué depuis. Où en êtes-vous aujourd'hui sur vos flux import / export et votre affrètement ?</p>
 <p>Je serais ravi de refaire le point avec vous et de voir comment <strong>TCL France</strong> peut vous accompagner.</p>
 <p>Cordialement,<br>L'équipe TCL France</p>
-<p style="font-size:11px;color:#888;">
-Pour ne plus recevoir nos messages : <a href="{{unsubscribe_url}}">se désabonner</a>.
-</p>
 HTML,
             ],
         );
@@ -70,9 +64,6 @@ HTML,
 <p>Je me permets de revenir vers vous : pour faciliter la reprise de notre collaboration, nous vous proposons un <strong>audit logistique gratuit</strong> de vos flux et une grille tarifaire revue sur vos axes prioritaires.</p>
 <p>15 minutes suffisent pour identifier les premières optimisations. Seriez-vous disponible cette semaine ?</p>
 <p>Cordialement,<br>L'équipe TCL France</p>
-<p style="font-size:11px;color:#888;">
-Pour ne plus recevoir nos messages : <a href="{{unsubscribe_url}}">se désabonner</a>.
-</p>
 HTML,
             ],
         );
@@ -88,9 +79,6 @@ HTML,
 <p>Chez <strong>TCL France</strong>, nous accompagnons des entreprises comme la vôtre sur l'optimisation de leurs flux de fret — import, export, groupage et affrètement — avec un suivi personnalisé.</p>
 <p>Je vous propose un court échange pour approfondir les points abordés. Quel créneau vous conviendrait ?</p>
 <p>Cordialement,<br>L'équipe TCL France</p>
-<p style="font-size:11px;color:#888;">
-Pour ne plus recevoir nos messages : <a href="{{unsubscribe_url}}">se désabonner</a>.
-</p>
 HTML,
             ],
         );
@@ -105,9 +93,6 @@ HTML,
 <p>Je reviens vers vous suite à notre rencontre sur le salon. Je n'ai pas encore eu votre retour et je comprends que votre agenda soit chargé.</p>
 <p>Seriez-vous disponible pour un échange de 15 minutes dans les prochains jours ? Je m'adapte à vos disponibilités.</p>
 <p>Cordialement,<br>L'équipe TCL France</p>
-<p style="font-size:11px;color:#888;">
-Pour ne plus recevoir nos messages : <a href="{{unsubscribe_url}}">se désabonner</a>.
-</p>
 HTML,
             ],
         );
@@ -122,9 +107,6 @@ HTML,
 <p>N'ayant pas eu de retour, je ne souhaite pas vous solliciter davantage pour le moment.</p>
 <p>La porte reste ouverte : dès que vous aurez un besoin de transport ou de logistique, n'hésitez pas à me recontacter — ce sera un plaisir de vous accompagner.</p>
 <p>Bien cordialement,<br>L'équipe TCL France</p>
-<p style="font-size:11px;color:#888;">
-Pour ne plus recevoir nos messages : <a href="{{unsubscribe_url}}">se désabonner</a>.
-</p>
 HTML,
             ],
         );
@@ -140,9 +122,6 @@ HTML,
 <p>Au programme : départs hebdomadaires, délais maîtrisés, prise en charge douane et suivi de bout en bout. Une solution idéale pour fiabiliser vos flux sur cet axe.</p>
 <p>Vous expédiez ou importez sur le Maroc ? Répondez à ce message, nous vous communiquons les conditions détaillées.</p>
 <p>Cordialement,<br>L'équipe TCL France</p>
-<p style="font-size:11px;color:#888;">
-Pour ne plus recevoir nos messages : <a href="{{unsubscribe_url}}">se désabonner</a>.
-</p>
 HTML,
             ],
         );

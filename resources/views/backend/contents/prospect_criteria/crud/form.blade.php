@@ -37,6 +37,11 @@
     {{-- ── Edit mode: shared hero + tab nav ──────────────────────────── --}}
     @if(isset($model) && $model->id)
 
+        @include('backend.contents.prospect_criteria.partials._discovery-status', [
+            'model' => $model,
+            'discoveryContext' => 'edit',
+        ])
+
         @include('backend.contents.prospect_criteria.partials._header-with-tabs', [
             'model'       => $model,
             'currentPage' => 'edit',
@@ -105,9 +110,9 @@
                         {{-- Right column --}}
                         <div class="col-lg-6">
 
-                            {{-- Recherches SerpAPI / jour --}}
+                            {{-- Recherches d’entreprises / jour --}}
                             <div class="fv-row mb-7">
-                                <label class="required fw-semibold fs-6 mb-2">Requêtes de découverte / jour</label>
+                                <label class="required fw-semibold fs-6 mb-2">Recherches d’entreprises / jour</label>
                                 <div class="input-group input-group-solid">
                                     <input type="number"
                                            name="daily_limit"
@@ -115,7 +120,7 @@
                                            value="{{ old('daily_limit', $model->daily_limit ?? 20) }}"
                                            min="1"
                                            max="500" />
-                                    <span class="input-group-text fw-semibold text-gray-500">requêtes / jour</span>
+                                    <span class="input-group-text fw-semibold text-gray-500">recherches d’entreprises / jour</span>
                                 </div>
                                 @php
                                     $overbooked = ($quotaPackage?->daily_credits !== null) && (($activeDailyLimitSum ?? 0) > $quotaPackage->daily_credits);
@@ -124,7 +129,7 @@
                                     Sur-réservation = priorité demandée, pas réservation garantie : le premier lancement consomme le quota disponible, les suivants attendent.
                                 </div>
                                 <div class="form-text mt-1 {{ $overbooked ? 'text-warning' : 'text-muted' }}">
-                                    Quota package : {{ $quotaPackage?->daily_credits ?? '∞' }} requêtes de découverte/j &middot; {{ $quotaPackage?->daily_contact_credits ?? '∞' }} contacts/j. Priorité demandée par les critères actifs : {{ $activeDailyLimitSum ?? 0 }} requêtes/j. Une requête retourne jusqu'à {{ \App\Services\Discovery\CompanyDiscoveryService::MAX_PAGE_SIZE }} résultats selon les sources, avant filtrage IA.
+                                    Quota package : {{ $quotaPackage?->daily_credits ?? '∞' }} recherches d’entreprises/j &middot; {{ $quotaPackage?->daily_contact_credits ?? '∞' }} tentatives d’enrichissement/j. Priorité demandée par les critères actifs : {{ $activeDailyLimitSum ?? 0 }} recherches d’entreprises/j. Une recherche d’entreprise retourne jusqu'à {{ \App\Services\Discovery\CompanyDiscoveryService::MAX_PAGE_SIZE }} résultats selon les sources, avant filtrage IA.
                                 </div>
                             </div>
 
@@ -287,6 +292,33 @@
                 </div>
             </div>
 
+            {{-- Discovery query preview (edit mode only — needs persisted record) --}}
+            @if(isset($model) && $model->id)
+            <div class="card mb-5" id="card-query-preview">
+                <div class="card-header border-0 pt-5">
+                    <h3 class="card-title fw-bolder m-0">
+                        <i class="bi bi-search text-warning fs-3 me-2"></i>
+                        Aperçu des requêtes de découverte
+                    </h3>
+                    <div class="card-toolbar">
+                        <span class="text-muted fs-7 me-3">Activez/désactivez chaque requête</span>
+                        <button type="button" class="btn btn-sm btn-light-primary" id="btn-generate-ai">
+                            <i class="bi bi-stars me-1"></i>
+                            Générer avec l'IA
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body border-top p-9">
+                    <div id="query-preview-content">
+                        <div class="text-muted fs-7">
+                            <i class="bi bi-hourglass-split me-1"></i>
+                            Chargement des requêtes…
+                        </div>
+                    </div>
+                </div>
+            </div>
+            @endif
+
         </div>
         {{-- end Général --}}
 
@@ -350,16 +382,27 @@
 
                             {{-- contact_limit --}}
                             <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Contacts max / exécution</label>
+                                <label class="fw-semibold fs-6 mb-2">Enrichissements réussis / exécution</label>
+                                @php
+                                    // Keep an invalid submitted value visible for correction, but
+                                    // cap legacy persisted values at the runtime maximum.
+                                    $storedContactLimit = isset($model) && $model->contact_limit !== null
+                                        ? min(20, max(1, (int) $model->contact_limit))
+                                        : '';
+                                    $displayContactLimit = old('contact_limit', $storedContactLimit);
+                                @endphp
                                 <div class="input-group input-group-solid">
                                     <input type="number"
                                            name="contact_limit"
                                            class="form-control form-control-solid"
-                                           value="{{ old('contact_limit', $model->contact_limit ?? '') }}"
-                                           placeholder="Illimité (borné par le quota package)"
+                                           value="{{ $displayContactLimit }}"
+                                           placeholder="20 par défaut"
                                            min="1"
-                                           max="500" />
-                                    <span class="input-group-text fw-semibold text-gray-500">contacts / exécution</span>
+                                           max="20" />
+                                    <span class="input-group-text fw-semibold text-gray-500">entreprises enrichies</span>
+                                </div>
+                                <div class="form-text text-muted mt-1">
+                                    Vide = 20 enrichissements réussis. Les appels d’enrichissement sans résultat ou en échec consomment quand même le quota package. Chaque exécution est limitée à 20 tentatives maximum et peut s’arrêter plus tôt si le quota est atteint ou si aucun candidat éligible ne reste.
                                 </div>
                             </div>
 
@@ -379,7 +422,7 @@
                                        min="0"
                                        max="100" />
                                 <div class="form-text text-muted mt-1">
-                                    Seules les entreprises dont le score dépasse ce seuil sont enrichies automatiquement. Vide = valeur globale.
+                                    Ce seuil s’applique uniquement lorsque le scoring automatique est activé. Vide = valeur globale.
                                 </div>
                             </div>
 
@@ -412,33 +455,6 @@
 
     </div>
     {{-- end tab-content --}}
-
-    {{-- ── Discovery query preview (edit mode only — needs persisted record) ── --}}
-    @if(isset($model) && $model->id)
-    <div class="card mb-5" id="card-query-preview">
-        <div class="card-header border-0 pt-5">
-            <h3 class="card-title fw-bolder m-0">
-                <i class="bi bi-search text-warning fs-3 me-2"></i>
-                Aperçu des requêtes de découverte
-            </h3>
-            <div class="card-toolbar">
-                <span class="text-muted fs-7 me-3">Activez/désactivez chaque requête</span>
-                <button type="button" class="btn btn-sm btn-light-primary" id="btn-generate-ai">
-                    <i class="bi bi-stars me-1"></i>
-                    Générer avec l'IA
-                </button>
-            </div>
-        </div>
-        <div class="card-body border-top p-9">
-            <div id="query-preview-content">
-                <div class="text-muted fs-7">
-                    <i class="bi bi-hourglass-split me-1"></i>
-                    Chargement des requêtes…
-                </div>
-            </div>
-        </div>
-    </div>
-    @endif
 
     {{-- Sticky save bar — shared partial (mirrors top toolbar) --}}
     @include('backend.elements.form-actions', ['variant' => 'sticky', 'backRoute' => 'admin.prospect_criteria.index'])

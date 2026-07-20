@@ -156,13 +156,15 @@ class SegmentController extends BackendController
         $segmentScopes   = array_keys(config('global.data.segment_scopes', []));
 
         $validated = $request->validate([
-            'scope'            => 'required|string|in:' . implode(',', $segmentScopes),
-            'filter'           => 'nullable|array',
-            'filter.sector'    => 'nullable|array|max:20',
-            'filter.sector.*'  => 'string|max:100',
-            'filter.country'   => 'nullable|array|max:20',
-            'filter.country.*' => 'string|size:2|in:' . implode(',', $countryCodes),
-            'filter.status'    => 'nullable|string|in:' . implode(',', $contactStatuses),
+            'scope'                => 'required|string|in:' . implode(',', $segmentScopes),
+            'filter'               => 'nullable|array',
+            'filter.sector'        => 'nullable|array|max:20',
+            'filter.sector.*'      => 'string|max:100',
+            'filter.country'       => 'nullable|array|max:20',
+            'filter.country.*'     => 'string|size:2|in:' . implode(',', $countryCodes),
+            'filter.criteria_id'   => ['nullable', 'array'],
+            'filter.criteria_id.*' => ['integer', 'exists:prospect_criteria,id'],
+            'filter.status'        => 'nullable|string|in:' . implode(',', $contactStatuses),
         ]);
 
         return [
@@ -585,6 +587,15 @@ class SegmentController extends BackendController
         $country = array_values(array_filter((array) ($rawFilter['country'] ?? []), fn ($v) => $v !== null && $v !== ''));
         if (! empty($country)) {
             $filter['country'] = $country;
+        }
+
+        // filter.criteria_id — tableau d'ids de prospect_criteria, castés en int.
+        $criteriaId = array_values(array_map(
+            fn ($v) => (int) $v,
+            array_filter((array) ($rawFilter['criteria_id'] ?? []), fn ($v) => $v !== null && $v !== '')
+        ));
+        if (! empty($criteriaId)) {
+            $filter['criteria_id'] = $criteriaId;
         }
 
         $status = trim((string) ($rawFilter['status'] ?? ''));

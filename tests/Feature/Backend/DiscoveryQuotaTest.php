@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\Backend;
 
-use App\Console\Commands\DiscoveryTerminalizeStale;
 use App\Exceptions\QuotaExhaustedException;
 use App\Jobs\RunDiscoveryPipelineJob;
 use App\Models\Company;
@@ -47,17 +46,16 @@ class DiscoveryQuotaTest extends TestCase
         parent::setUp();
         Carbon::setTestNow(app(DiscoveryQuotaService::class)->today()->setTime(12, 0));
 
-
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
         config([
             'services.serpapi.driver' => 'local',
-            'services.hunter.driver'  => 'local',
+            'services.hunter.driver' => 'local',
         ]);
 
         $this->superadmin = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $this->superadmin->assignRole('superadmin');
     }
@@ -71,14 +69,14 @@ class DiscoveryQuotaTest extends TestCase
     private function assignLimitedPackage(int $credits): Package
     {
         $package = Package::create([
-            'name'          => "Pack {$credits}/j",
+            'name' => "Pack {$credits}/j",
             'daily_credits' => $credits,
-            'is_active'     => true,
-            'sort_order'    => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
 
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -91,14 +89,14 @@ class DiscoveryQuotaTest extends TestCase
     private function assignUnlimitedPackage(): Package
     {
         $package = Package::create([
-            'name'          => 'Illimité',
+            'name' => 'Illimité',
             'daily_credits' => null,
-            'is_active'     => true,
-            'sort_order'    => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
 
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -111,11 +109,12 @@ class DiscoveryQuotaTest extends TestCase
     private function makeCriteria(array $overrides = []): ProspectCriteria
     {
         return ProspectCriteria::create(array_merge([
-            'name'        => 'Critère Quota ' . uniqid(),
-            'sectors'     => ['transport'],
-            'countries'   => ['France'],
+            'name' => 'Critère Quota '.uniqid(),
+            'sectors' => ['transport'],
+            'countries' => ['France'],
             'daily_limit' => 10,
-            'is_active'   => true,
+            'auto_enrich' => true,
+            'is_active' => true,
         ], $overrides));
     }
 
@@ -125,17 +124,17 @@ class DiscoveryQuotaTest extends TestCase
     public function test_display_summaries_separate_used_reserved_total_and_remaining(): void
     {
         $package = Package::create([
-            'name'                    => 'Pack affichage',
-            'daily_credits'           => 10,
-            'monthly_credits'         => 20,
-            'daily_contact_credits'   => 5,
+            'name' => 'Pack affichage',
+            'daily_credits' => 10,
+            'monthly_credits' => 20,
+            'daily_contact_credits' => 5,
             'monthly_contact_credits' => 12,
-            'quota_anchor_date'       => Carbon::today()->toDateString(),
-            'is_active'               => true,
-            'sort_order'              => 0,
+            'quota_anchor_date' => Carbon::today()->toDateString(),
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -145,23 +144,23 @@ class DiscoveryQuotaTest extends TestCase
         $today = $service->today();
 
         DiscoveryRun::create([
-            'prospect_criteria_id'     => $criteria->id,
-            'status'                   => 'completed',
-            'credits_reserved'         => 3,
-            'consumed'                 => 3,
+            'prospect_criteria_id' => $criteria->id,
+            'status' => 'completed',
+            'credits_reserved' => 3,
+            'consumed' => 3,
             'contact_credits_reserved' => 1,
-            'contact_consumed'         => 1,
-            'quota_date'               => $today->toDateString(),
+            'contact_consumed' => 1,
+            'quota_date' => $today->toDateString(),
         ]);
 
         DiscoveryRun::create([
-            'prospect_criteria_id'     => $criteria->id,
-            'status'                   => 'pending',
-            'credits_reserved'         => 4,
-            'consumed'                 => 0,
+            'prospect_criteria_id' => $criteria->id,
+            'status' => 'pending',
+            'credits_reserved' => 4,
+            'consumed' => 0,
             'contact_credits_reserved' => 2,
-            'contact_consumed'         => 0,
-            'quota_date'               => $today->toDateString(),
+            'contact_consumed' => 0,
+            'quota_date' => $today->toDateString(),
         ]);
 
         $daily = $service->dailyDisplaySummary();
@@ -184,15 +183,15 @@ class DiscoveryQuotaTest extends TestCase
     private function assignPackageWith(int $companyCredits, ?int $contactCredits): Package
     {
         $package = Package::create([
-            'name'                  => "Pack {$companyCredits}+{$contactCredits}",
-            'daily_credits'         => $companyCredits,
+            'name' => "Pack {$companyCredits}+{$contactCredits}",
+            'daily_credits' => $companyCredits,
             'daily_contact_credits' => $contactCredits,
-            'is_active'             => true,
-            'sort_order'            => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
 
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -211,11 +210,11 @@ class DiscoveryQuotaTest extends TestCase
         $assignment = PackageAssignment::orderByDesc('id')->first();
 
         return DiscoveryRun::create([
-            'prospect_criteria_id'  => $criteria->id,
-            'status'                => $status,
-            'credits_reserved'      => $consumed,
-            'consumed'              => $consumed,
-            'quota_date'            => $date,
+            'prospect_criteria_id' => $criteria->id,
+            'status' => $status,
+            'credits_reserved' => $consumed,
+            'consumed' => $consumed,
+            'quota_date' => $date,
             'package_assignment_id' => $assignment?->id,
         ]);
     }
@@ -234,13 +233,13 @@ class DiscoveryQuotaTest extends TestCase
         ?string $anchorDate = null
     ): Package {
         $attrs = [
-            'name'                    => 'Pack ' . uniqid(),
-            'daily_credits'           => $dailyCredits,
-            'monthly_credits'         => $monthlyCredits,
-            'daily_contact_credits'   => $dailyContactCredits,
+            'name' => 'Pack '.uniqid(),
+            'daily_credits' => $dailyCredits,
+            'monthly_credits' => $monthlyCredits,
+            'daily_contact_credits' => $dailyContactCredits,
             'monthly_contact_credits' => $monthlyContactCredits,
-            'is_active'               => true,
-            'sort_order'              => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ];
 
         if ($anchorDate !== null) {
@@ -250,7 +249,7 @@ class DiscoveryQuotaTest extends TestCase
         $package = Package::create($attrs);
 
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -271,14 +270,14 @@ class DiscoveryQuotaTest extends TestCase
         $assignment = PackageAssignment::orderByDesc('id')->first();
 
         return DiscoveryRun::create([
-            'prospect_criteria_id'     => $criteria->id,
-            'status'                   => $status,
-            'credits_reserved'         => $consumed,
-            'consumed'                 => $consumed,
+            'prospect_criteria_id' => $criteria->id,
+            'status' => $status,
+            'credits_reserved' => $consumed,
+            'consumed' => $consumed,
             'contact_credits_reserved' => $contactConsumed,
-            'contact_consumed'         => $contactConsumed,
-            'quota_date'               => $date,
-            'package_assignment_id'    => $assignment?->id,
+            'contact_consumed' => $contactConsumed,
+            'quota_date' => $date,
+            'package_assignment_id' => $assignment?->id,
         ]);
     }
 
@@ -289,10 +288,10 @@ class DiscoveryQuotaTest extends TestCase
     {
         return Company::create([
             'criteria_id' => $criteria->id,
-            'domain'      => 'testco-' . uniqid() . '.fr',
-            'name'        => 'TestCo ' . uniqid(),
+            'domain' => 'testco-'.uniqid().'.fr',
+            'name' => 'TestCo '.uniqid(),
             'relationship' => 'prospect',
-            'source'       => 'discovered',
+            'source' => 'discovered',
         ]);
     }
 
@@ -306,7 +305,7 @@ class DiscoveryQuotaTest extends TestCase
     {
         Queue::fake();
 
-        $package  = $this->assignLimitedPackage(10);
+        $package = $this->assignLimitedPackage(10);
         $criteria = $this->makeCriteria(['daily_limit' => 20]);
 
         // Insert a completed run that has consumed all 10 daily credits.
@@ -341,7 +340,7 @@ class DiscoveryQuotaTest extends TestCase
     {
         Queue::fake();
 
-        $package  = $this->assignLimitedPackage(10);
+        $package = $this->assignLimitedPackage(10);
         $criteria = $this->makeCriteria(['daily_limit' => 20]);
 
         // 4 credits already consumed today.
@@ -362,9 +361,9 @@ class DiscoveryQuotaTest extends TestCase
         $this->assertSame(6, $newRun->credits_reserved, 'credits_reserved must be 6 (remaining = 10 - 4)');
 
         $this->assertStringContainsString(
-            '6 recherches SerpAPI possibles aujourd\'hui',
+            '6 recherches d’entreprises possibles aujourd\'hui',
             $response->json('text') ?? '',
-            'Success message must mention the partial SerpAPI search count'
+            'Success message must mention the partial company-search count'
         );
     }
 
@@ -395,11 +394,11 @@ class DiscoveryQuotaTest extends TestCase
         // Criteria A already holds a pending reservation for the full 10 credits.
         $assignmentId = PackageAssignment::orderByDesc('id')->value('id');
         DiscoveryRun::create([
-            'prospect_criteria_id'  => $criteriaA->id,
-            'status'                => 'pending',
-            'credits_reserved'      => 10,
-            'consumed'              => 0,
-            'quota_date'            => Carbon::today()->toDateString(),
+            'prospect_criteria_id' => $criteriaA->id,
+            'status' => 'pending',
+            'credits_reserved' => 10,
+            'consumed' => 0,
+            'quota_date' => Carbon::today()->toDateString(),
             'package_assignment_id' => $assignmentId,
         ]);
 
@@ -436,7 +435,7 @@ class DiscoveryQuotaTest extends TestCase
         // quota_date is pinned to the QUOTA TZ calendar day (not the app's UTC day).
         $this->travelTo($svc->today()->endOfDay()->subMinute());
         $dispatchDay = $svc->today()->toDateString();
-        $run         = $svc->reserveRun($criteria);
+        $run = $svc->reserveRun($criteria);
 
         $this->assertSame(
             $dispatchDay,
@@ -467,15 +466,18 @@ class DiscoveryQuotaTest extends TestCase
     // ── Scenario 5: Crash/retry budget ────────────────────────────────────────
 
     /**
-     * A run with credits_reserved=10 and consumed=7 (a prior partial execution)
-     * must leave a budget of exactly 3 on retry.
+     * A run with searches_reserved=10 and searches_consumed=7 (a prior partial
+     * provider execution) must leave exactly 3 SerpAPI calls on retry. The
+     * `consumed` field is now the candidate cursor and can legitimately exceed
+     * the number of searches because one page yields multiple companies.
      *
      * Tested at two seams:
      *   a) DiscoveryQuotaService arithmetic (unit-style, cheapest).
      *   b) RunDiscoveryPipelineJob's handle() budget computation via a pipeline spy.
      *
      * The pipeline runs in local-fixture mode (no real HTTP) so we let the job
-     * execute synchronously via dispatchSync and assert consumed stays <= credits_reserved.
+     * execute synchronously via dispatchSync and assert provider attempts remain
+     * within their independent reservation.
      */
     public function test_crash_retry_budget_is_reserved_minus_consumed(): void
     {
@@ -483,29 +485,31 @@ class DiscoveryQuotaTest extends TestCase
         $criteria = $this->makeCriteria(['daily_limit' => 10]);
 
         $run = DiscoveryRun::create([
-            'prospect_criteria_id'  => $criteria->id,
-            'status'                => 'running',
-            'credits_reserved'      => 10,
-            'consumed'              => 7,
-            'quota_date'            => Carbon::today()->toDateString(),
+            'prospect_criteria_id' => $criteria->id,
+            'status' => 'running',
+            'credits_reserved' => 10,
+            'searches_reserved' => 10,
+            'searches_consumed' => 7,
+            'consumed' => 0,
+            'quota_date' => Carbon::today()->toDateString(),
             'package_assignment_id' => PackageAssignment::orderByDesc('id')->value('id'),
-            'started_at'            => now()->subSeconds(10),
+            'started_at' => now()->subSeconds(10),
         ]);
 
-        // The job's budget formula: max(0, credits_reserved - consumed) = max(0, 10-7) = 3.
-        $budgetFromJob = max(0, $run->credits_reserved - $run->consumed);
-        $this->assertSame(3, $budgetFromJob, 'Retry budget must be credits_reserved - consumed = 3');
+        // The job's budget formula uses SerpAPI counters, not the company cursor.
+        $budgetFromJob = max(0, $run->searches_reserved - $run->searches_consumed);
+        $this->assertSame(3, $budgetFromJob, 'Retry budget must be searches_reserved - searches_consumed = 3');
 
         // Execute the job synchronously (local fixture driver — no HTTP).
-        // The pipeline has 3 Hunter credits available; consumed must not exceed 10.
+        // Candidate processing may exceed 10 rows, but SerpAPI calls may not exceed 10.
         \App\Jobs\RunDiscoveryPipelineJob::dispatchSync($criteria->id, $run->id);
 
         $run->refresh();
 
         $this->assertLessThanOrEqual(
-            $run->credits_reserved,
-            $run->consumed,
-            'consumed must never exceed credits_reserved'
+            $run->searches_reserved,
+            $run->searches_consumed,
+            'searches_consumed must never exceed searches_reserved'
         );
         $this->assertContains(
             $run->status,
@@ -531,10 +535,10 @@ class DiscoveryQuotaTest extends TestCase
 
         $run = DiscoveryRun::create([
             'prospect_criteria_id' => $criteria->id,
-            'status'               => 'failed',  // already terminated
-            'credits_reserved'     => 5,
-            'consumed'             => 0,
-            'quota_date'           => Carbon::today()->toDateString(),
+            'status' => 'failed',  // already terminated
+            'credits_reserved' => 5,
+            'consumed' => 0,
+            'quota_date' => Carbon::today()->toDateString(),
         ]);
 
         /** @var DiscoveryPipelineService $pipeline */
@@ -567,9 +571,9 @@ class DiscoveryQuotaTest extends TestCase
 
     /**
      * The discovery:terminalize-stale command must:
-     *   - Flip stale pending run (created_at > 60 s ago) → failed with error text and finished_at.
-     *   - Flip stale running run (started_at > 360 s ago) → failed with error text and finished_at.
-     *   - Leave a fresh running run (started_at recently) untouched.
+     *   - Flip stale pending run (created_at > 24 h ago) → failed with error text and finished_at.
+     *   - Flip stale running run (heartbeat >= 660 s ago) → failed with error text and finished_at.
+     *   - Leave a fresh running heartbeat untouched.
      *   - After flipping: usedOn(today) counts the failed runs' consumed (not reservation).
      */
     public function test_terminalizer_flips_stale_runs_and_releases_reservations(): void
@@ -581,54 +585,54 @@ class DiscoveryQuotaTest extends TestCase
         $svc = app(DiscoveryQuotaService::class);
 
         $assignmentId = PackageAssignment::orderByDesc('id')->value('id');
-        $today        = Carbon::today()->toDateString();
+        $today = Carbon::today()->toDateString();
 
-        // Stale pending: created 120 s ago, never picked up.
+        // Stale pending: created 25 h ago, never picked up.
         // Use DB::table() to bypass Eloquent's auto-timestamp override on create().
         $stalePendingId = DB::table('discovery_runs')->insertGetId([
-            'prospect_criteria_id'  => $criteria->id,
-            'status'                => 'pending',
-            'credits_reserved'      => 15,
-            'consumed'              => 0,
-            'quota_date'            => $today,
+            'prospect_criteria_id' => $criteria->id,
+            'status' => 'pending',
+            'credits_reserved' => 15,
+            'consumed' => 0,
+            'quota_date' => $today,
             'package_assignment_id' => $assignmentId,
-            'created_at'            => now()->subSeconds(120)->toDateTimeString(),
-            'updated_at'            => now()->subSeconds(120)->toDateTimeString(),
+            'created_at' => now()->subHours(25)->toDateTimeString(),
+            'updated_at' => now()->subHours(25)->toDateTimeString(),
         ]);
         $stalePending = DiscoveryRun::find($stalePendingId);
 
-        // Stale running: started 400 s ago (> 360 s threshold).
-        // Use DB::table() to set started_at in the past.
+        // Stale running: heartbeat 700 s ago (> 660 s threshold).
+        // Use DB::table() to set the timestamps in the past.
         $staleRunningId = DB::table('discovery_runs')->insertGetId([
-            'prospect_criteria_id'  => $criteria->id,
-            'status'                => 'running',
-            'credits_reserved'      => 10,
-            'consumed'              => 3,   // partial work done
-            'quota_date'            => $today,
+            'prospect_criteria_id' => $criteria->id,
+            'status' => 'running',
+            'credits_reserved' => 10,
+            'consumed' => 3,   // partial work done
+            'quota_date' => $today,
             'package_assignment_id' => $assignmentId,
-            'created_at'            => now()->subSeconds(400)->toDateTimeString(),
-            'updated_at'            => now()->subSeconds(400)->toDateTimeString(),
-            'started_at'            => now()->subSeconds(400)->toDateTimeString(),
+            'created_at' => now()->subSeconds(700)->toDateTimeString(),
+            'updated_at' => now()->subSeconds(700)->toDateTimeString(),
+            'started_at' => now()->subSeconds(700)->toDateTimeString(),
         ]);
         $staleRunning = DiscoveryRun::find($staleRunningId);
 
         // Fresh running: started 10 s ago — must NOT be flipped.
         $freshRunningId = DB::table('discovery_runs')->insertGetId([
-            'prospect_criteria_id'  => $criteria->id,
-            'status'                => 'running',
-            'credits_reserved'      => 8,
-            'consumed'              => 2,
-            'quota_date'            => $today,
+            'prospect_criteria_id' => $criteria->id,
+            'status' => 'running',
+            'credits_reserved' => 8,
+            'consumed' => 2,
+            'quota_date' => $today,
             'package_assignment_id' => $assignmentId,
-            'created_at'            => now()->subSeconds(10)->toDateTimeString(),
-            'updated_at'            => now()->subSeconds(10)->toDateTimeString(),
-            'started_at'            => now()->subSeconds(10)->toDateTimeString(),
+            'created_at' => now()->subSeconds(10)->toDateTimeString(),
+            'updated_at' => now()->subSeconds(10)->toDateTimeString(),
+            'started_at' => now()->subSeconds(10)->toDateTimeString(),
         ]);
         $freshRunning = DiscoveryRun::find($freshRunningId);
 
         // Run the terminalizer command.
         $this->artisan('discovery:terminalize-stale')
-             ->assertExitCode(0);
+            ->assertExitCode(0);
 
         $stalePending->refresh();
         $staleRunning->refresh();
@@ -735,7 +739,7 @@ class DiscoveryQuotaTest extends TestCase
 
         // Start with a 10-credit package, 8 already consumed.
         $package10 = $this->assignLimitedPackage(10);
-        $criteria  = $this->makeCriteria(['daily_limit' => 20]);
+        $criteria = $this->makeCriteria(['daily_limit' => 20]);
         $this->insertConsumedRun($criteria, 8, Carbon::today()->toDateString());
 
         /** @var DiscoveryQuotaService $svc */
@@ -780,9 +784,9 @@ class DiscoveryQuotaTest extends TestCase
 
         $runsBefore = DiscoveryRun::where('prospect_criteria_id', $criteria->id)->count();
 
-        $this->artisan('prospect:discover')
-             ->assertExitCode(0)
-             ->expectsOutputToContain('solde épuisé, skipped');
+        $this->artisan('prospect:discover', ['--criteria' => $criteria->id])
+            ->assertExitCode(0)
+            ->expectsOutputToContain('solde épuisé, skipped');
 
         // No new run should have been created.
         $runsAfter = DiscoveryRun::where('prospect_criteria_id', $criteria->id)->count();
@@ -881,14 +885,14 @@ class DiscoveryQuotaTest extends TestCase
 
         // daily_credits=null (company unlimited), daily_contact_credits=2 (contact limited).
         $package = Package::create([
-            'name'                  => 'Pack Unlimited Company',
-            'daily_credits'         => null,
+            'name' => 'Pack Unlimited Company',
+            'daily_credits' => null,
             'daily_contact_credits' => 2,
-            'is_active'             => true,
-            'sort_order'            => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -917,9 +921,9 @@ class DiscoveryQuotaTest extends TestCase
     // ── Scenario 15: Contact crash/retry budget ───────────────────────────────────
 
     /**
-     * A partially-consumed run (credits_reserved=10, consumed=4, contact_credits_reserved=5,
-     * contact_consumed=2) retried via dispatchSync → contact_consumed stays <= 5,
-     * consumed stays <= 10, and run reaches a terminal state.
+     * A partially-consumed run (10 SerpAPI calls with 4 used, 5 Hunter lookups
+     * with 2 used) retried via dispatchSync keeps both provider meters within
+     * their reservations and reaches a terminal state.
      */
     public function test_contact_crash_retry_budget(): void
     {
@@ -928,15 +932,17 @@ class DiscoveryQuotaTest extends TestCase
 
         // Insert the run directly (simulate a partial crash-resume, skipping reserveRun).
         $run = DiscoveryRun::create([
-            'prospect_criteria_id'     => $criteria->id,
-            'status'                   => 'running',
-            'credits_reserved'         => 10,
-            'consumed'                 => 4,
+            'prospect_criteria_id' => $criteria->id,
+            'status' => 'running',
+            'credits_reserved' => 10,
+            'searches_reserved' => 10,
+            'searches_consumed' => 4,
+            'consumed' => 0,
             'contact_credits_reserved' => 5,
-            'contact_consumed'         => 2,
-            'quota_date'               => Carbon::today()->toDateString(),
-            'package_assignment_id'    => PackageAssignment::orderByDesc('id')->value('id'),
-            'started_at'               => now()->subSeconds(10),
+            'contact_consumed' => 2,
+            'quota_date' => Carbon::today()->toDateString(),
+            'package_assignment_id' => PackageAssignment::orderByDesc('id')->value('id'),
+            'started_at' => now()->subSeconds(10),
         ]);
 
         RunDiscoveryPipelineJob::dispatchSync($criteria->id, $run->id);
@@ -945,8 +951,8 @@ class DiscoveryQuotaTest extends TestCase
 
         $this->assertContains($run->status, ['completed', 'failed'],
             'Run must reach a terminal state after dispatchSync');
-        $this->assertLessThanOrEqual((int) $run->credits_reserved, (int) $run->consumed,
-            'consumed must never exceed credits_reserved');
+        $this->assertLessThanOrEqual((int) $run->searches_reserved, (int) $run->searches_consumed,
+            'searches_consumed must never exceed searches_reserved');
         $this->assertLessThanOrEqual((int) $run->contact_credits_reserved, (int) $run->contact_consumed,
             'contact_consumed must never exceed contact_credits_reserved');
     }
@@ -971,13 +977,13 @@ class DiscoveryQuotaTest extends TestCase
         /** @var DiscoveryQuotaService $svc */
         $svc = app(DiscoveryQuotaService::class);
 
-        $anchor   = Carbon::parse('2026-01-31');
+        $anchor = Carbon::parse('2026-01-31');
         $probeEnd = Carbon::parse('2027-03-31');
-        $probe    = $anchor->copy();
+        $probe = $anchor->copy();
 
         // Track the last window so we can assert contiguity at each boundary.
         $lastWindowStart = null;
-        $lastWindowEnd   = null;
+        $lastWindowEnd = null;
 
         while ($probe->lte($probeEnd)) {
             [$start, $end] = $svc->currentPeriod($probe->copy());
@@ -1008,7 +1014,7 @@ class DiscoveryQuotaTest extends TestCase
             }
 
             $lastWindowStart = $start->copy();
-            $lastWindowEnd   = $end->copy();
+            $lastWindowEnd = $end->copy();
 
             $probe->addDay();
         }
@@ -1067,7 +1073,7 @@ class DiscoveryQuotaTest extends TestCase
         $svc = app(DiscoveryQuotaService::class);
 
         $criteria = $this->makeCriteria(['daily_limit' => 10]);
-        $run      = $svc->reserveRun($criteria);
+        $run = $svc->reserveRun($criteria);
 
         $n = (int) $run->credits_reserved;
         $this->assertSame(8, $n, 'credits_reserved must be 8 (daily cap is binding)');
@@ -1216,14 +1222,14 @@ class DiscoveryQuotaTest extends TestCase
     public function test_current_period_contains_on_when_on_is_before_anchor(): void
     {
         $anchorDate = '2026-06-23';
-        $onDate     = '2026-06-22';   // one day before the anchor
+        $onDate = '2026-06-22';   // one day before the anchor
 
         $this->assignPackageWithMonthly(10, 30, null, null, $anchorDate);
 
         /** @var DiscoveryQuotaService $svc */
         $svc = app(DiscoveryQuotaService::class);
 
-        $on     = Carbon::parse($onDate);
+        $on = Carbon::parse($onDate);
         $anchor = Carbon::parse($anchorDate)->startOfDay();
 
         [$start, $end] = $svc->currentPeriod($on);
@@ -1259,7 +1265,7 @@ class DiscoveryQuotaTest extends TestCase
      * credits_reserved=10 (unaffected — contact_limit only clamps the contact
      * meter) and contact_credits_reserved=3 (min(batch=10, contact_limit=3, contactRemaining=10)).
      */
-    public function test_contact_limit_clamps_reservation(): void
+    public function test_contact_limit_sets_success_target_without_clamping_attempt_reservation(): void
     {
         $this->assignPackageWith(15, 10);
         $criteria = $this->makeCriteria(['daily_limit' => 10, 'contact_limit' => 3]);
@@ -1270,8 +1276,8 @@ class DiscoveryQuotaTest extends TestCase
 
         $this->assertSame(10, (int) $run->credits_reserved,
             'credits_reserved must be unaffected by contact_limit (company meter has room)');
-        $this->assertSame(3, (int) $run->contact_credits_reserved,
-            'contact_credits_reserved must be clamped to contact_limit=3');
+        $this->assertSame(10, (int) $run->contact_credits_reserved);
+        $this->assertSame(3, (int) $run->successful_enrichments_target);
     }
 
     /**
@@ -1290,6 +1296,7 @@ class DiscoveryQuotaTest extends TestCase
         $this->assertSame(10, (int) $run->credits_reserved);
         $this->assertSame(10, (int) $run->contact_credits_reserved,
             'contact_credits_reserved must equal min(batch=10, contactRemaining=10) when contact_limit is null');
+        $this->assertSame(20, (int) $run->successful_enrichments_target);
     }
 
     /**
@@ -1307,6 +1314,7 @@ class DiscoveryQuotaTest extends TestCase
 
         $this->assertSame(5, (int) $run->contact_credits_reserved,
             'contact_credits_reserved must be clamped to the package contact meter (5) even though contact_limit=100');
+        $this->assertSame(20, (int) $run->successful_enrichments_target);
     }
 
     /**
@@ -1325,20 +1333,22 @@ class DiscoveryQuotaTest extends TestCase
 
         $this->assertSame(10, (int) $run->credits_reserved,
             'credits_reserved must be the wanted batch (10) — company meter unlimited');
-        $this->assertSame(2, (int) $run->contact_credits_reserved,
-            'contact_credits_reserved must be clamped to contact_limit=2 on an unlimited package');
+        $this->assertSame(20, (int) $run->contact_credits_reserved);
+        $this->assertSame(2, (int) $run->successful_enrichments_target);
     }
-    public function test_contact_limit_clamps_contact_credits_reserved(): void
+
+    public function test_contact_limit_is_independent_from_contact_credits_reserved(): void
     {
         $this->assignPackageWith(15, 10);
         $criteria = $this->makeCriteria(['daily_limit' => 10, 'contact_limit' => 3]);
 
         /** @var DiscoveryQuotaService $quotaService */
         $quotaService = app(DiscoveryQuotaService::class);
-        $run          = $quotaService->reserveRun($criteria);
+        $run = $quotaService->reserveRun($criteria);
 
         $this->assertSame(10, (int) $run->credits_reserved);
-        $this->assertSame(3, (int) $run->contact_credits_reserved);
+        $this->assertSame(10, (int) $run->contact_credits_reserved);
+        $this->assertSame(3, (int) $run->successful_enrichments_target);
     }
 
     public function test_contact_limit_null_preserves_current_behavior(): void
@@ -1348,7 +1358,7 @@ class DiscoveryQuotaTest extends TestCase
 
         /** @var DiscoveryQuotaService $quotaService */
         $quotaService = app(DiscoveryQuotaService::class);
-        $run          = $quotaService->reserveRun($criteria);
+        $run = $quotaService->reserveRun($criteria);
 
         $this->assertSame(10, (int) $run->contact_credits_reserved);
     }
@@ -1360,7 +1370,7 @@ class DiscoveryQuotaTest extends TestCase
 
         /** @var DiscoveryQuotaService $quotaService */
         $quotaService = app(DiscoveryQuotaService::class);
-        $run          = $quotaService->reserveRun($criteria);
+        $run = $quotaService->reserveRun($criteria);
 
         $this->assertSame(5, (int) $run->contact_credits_reserved);
     }
@@ -1368,15 +1378,15 @@ class DiscoveryQuotaTest extends TestCase
     public function test_contact_limit_applies_when_package_unlimited(): void
     {
         $package = Package::create([
-            'name'                  => 'Illimite complet',
-            'daily_credits'         => null,
+            'name' => 'Illimite complet',
+            'daily_credits' => null,
             'daily_contact_credits' => null,
-            'is_active'             => true,
-            'sort_order'            => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
 
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -1384,10 +1394,11 @@ class DiscoveryQuotaTest extends TestCase
 
         /** @var DiscoveryQuotaService $quotaService */
         $quotaService = app(DiscoveryQuotaService::class);
-        $run          = $quotaService->reserveRun($criteria);
+        $run = $quotaService->reserveRun($criteria);
 
         $this->assertSame(10, (int) $run->credits_reserved);
-        $this->assertSame(2, (int) $run->contact_credits_reserved);
+        $this->assertSame(20, (int) $run->contact_credits_reserved);
+        $this->assertSame(2, (int) $run->successful_enrichments_target);
     }
 
     /**
@@ -1406,12 +1417,150 @@ class DiscoveryQuotaTest extends TestCase
 
         /** @var DiscoveryQuotaService $quotaService */
         $quotaService = app(DiscoveryQuotaService::class);
-        $run          = $quotaService->reserveRun($criteria);
+        $run = $quotaService->reserveRun($criteria);
 
         $this->assertSame(6, (int) $run->credits_reserved,
             'credits_reserved must equal daily_limit=6 when no package assignment exists (unlimited)');
-        $this->assertSame(2, (int) $run->contact_credits_reserved,
-            'contact_credits_reserved must equal contact_limit=2 (only binding contact constraint)');
+        $this->assertSame(20, (int) $run->contact_credits_reserved);
+        $this->assertSame(2, (int) $run->successful_enrichments_target);
     }
 
+    public function test_contact_reservation_is_independent_from_five_search_batch_and_defaults_to_twenty(): void
+    {
+        PackageAssignment::query()->delete();
+        Package::query()->delete();
+
+        $criteria = $this->makeCriteria([
+            'daily_limit' => 5,
+            'contact_limit' => null,
+            'auto_enrich' => true,
+        ]);
+
+        $run = app(DiscoveryQuotaService::class)->reserveRun($criteria);
+
+        $this->assertSame(5, (int) $run->searches_reserved);
+        $this->assertSame(20, (int) $run->contact_credits_reserved);
+        $this->assertSame(20, (int) $run->successful_enrichments_target);
+    }
+
+    public function test_legacy_contact_limit_above_twenty_is_clamped_at_runtime(): void
+    {
+        PackageAssignment::query()->delete();
+        Package::query()->delete();
+
+        $criteria = $this->makeCriteria([
+            'daily_limit' => 5,
+            'contact_limit' => 500,
+            'auto_enrich' => true,
+        ]);
+
+        $run = app(DiscoveryQuotaService::class)->reserveRun($criteria);
+
+        $this->assertSame(20, (int) $run->contact_credits_reserved);
+        $this->assertSame(20, (int) $run->successful_enrichments_target);
+    }
+
+    public function test_auto_enrich_false_reserves_no_hunter_attempts(): void
+    {
+        $criteria = $this->makeCriteria([
+            'daily_limit' => 5,
+            'contact_limit' => null,
+            'auto_enrich' => false,
+        ]);
+
+        $run = app(DiscoveryQuotaService::class)->reserveRun($criteria);
+
+        $this->assertSame(5, (int) $run->searches_reserved);
+        $this->assertSame(0, (int) $run->contact_credits_reserved);
+        $this->assertSame(0, (int) $run->successful_enrichments_target);
+    }
+
+    public function test_manual_run_still_fails_at_zero_search_quota(): void
+    {
+        $this->assignPackageWith(0, 20);
+        $criteria = $this->makeCriteria([
+            'daily_limit' => 5,
+            'auto_enrich' => true,
+        ]);
+
+        $this->expectException(QuotaExhaustedException::class);
+
+        app(DiscoveryQuotaService::class)->reserveRun($criteria);
+    }
+
+    public function test_scheduled_run_can_reserve_contacts_when_search_quota_is_zero(): void
+    {
+        $this->assignPackageWith(0, 20);
+        $criteria = $this->makeCriteria([
+            'daily_limit' => 5,
+            'contact_limit' => null,
+            'auto_enrich' => true,
+        ]);
+
+        $run = app(DiscoveryQuotaService::class)->reserveRun($criteria, true);
+
+        $this->assertSame(0, (int) $run->searches_reserved);
+        $this->assertSame(0, (int) $run->credits_reserved);
+        $this->assertSame(20, (int) $run->contact_credits_reserved);
+    }
+
+    public function test_contact_package_daily_and_monthly_remainders_reduce_twenty_cap(): void
+    {
+        $this->assignPackageWithMonthly(null, null, 17, 9, Carbon::today()->startOfMonth()->toDateString());
+        $criteria = $this->makeCriteria([
+            'daily_limit' => 5,
+            'contact_limit' => null,
+            'auto_enrich' => true,
+        ]);
+
+        $run = app(DiscoveryQuotaService::class)->reserveRun($criteria);
+
+        $this->assertSame(5, (int) $run->searches_reserved);
+        $this->assertSame(9, (int) $run->contact_credits_reserved);
+    }
+
+    public function test_reserving_replacement_terminalizes_stale_parent_atomically(): void
+    {
+        PackageAssignment::query()->delete();
+        Package::query()->delete();
+        $criteria = $this->makeCriteria(['daily_limit' => 1]);
+        $stale = DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'discovery',
+            'status' => 'pending',
+            'credits_reserved' => 1,
+            'searches_reserved' => 1,
+            'searches_consumed' => 0,
+            'consumed' => 0,
+            'contact_credits_reserved' => 0,
+            'contact_consumed' => 0,
+            'quota_date' => app(DiscoveryQuotaService::class)->today()->toDateString(),
+        ]);
+        DB::table('discovery_runs')->where('id', $stale->id)->update([
+            'created_at' => now()->subHours(25),
+            'updated_at' => now()->subHours(25),
+        ]);
+        $claimed = new Company;
+        $claimed->forceFill([
+            'criteria_id' => $criteria->id,
+            'name' => 'Stale replacement claim',
+            'domain' => 'stale-replacement-claim.test',
+            'relationship' => 'prospect',
+            'source' => 'discovered',
+            'qualification_status' => 'pending',
+            'is_active' => true,
+            'enrichment_status' => Company::ENRICHMENT_ENRICHING,
+            'enrichment_claim_run_id' => $stale->id,
+        ])->save();
+
+        $replacement = app(DiscoveryQuotaService::class)->reserveRun($criteria);
+
+        $stale->refresh();
+        $this->assertSame('failed', $stale->status);
+        $this->assertNotNull($stale->finished_at);
+        $this->assertNotSame($stale->id, $replacement->id);
+        $this->assertSame('pending', $replacement->status);
+        $this->assertNull($claimed->fresh()->enrichment_claim_run_id);
+        $this->assertSame(Company::ENRICHMENT_HUNTER_FAILED, $claimed->fresh()->enrichment_status);
+    }
 }

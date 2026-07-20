@@ -99,7 +99,7 @@ class HeuristicScoringDriver implements ScoringDriverInterface
 
     // ── Interface ─────────────────────────────────────────────────────────────
 
-    public function score(array $candidate, ProspectCriteria $criteria): ?array
+    public function score(array $candidate, ProspectCriteria $criteria, ?int $timeoutSeconds = null): ?array
     {
         $domain  = $this->extractDomain($candidate);
         $url     = mb_strtolower($candidate['url'] ?? $candidate['link'] ?? '');

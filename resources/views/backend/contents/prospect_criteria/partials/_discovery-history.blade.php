@@ -1,7 +1,7 @@
 {{--
     ProspectCriteria — Historique des découvertes.
     Lists the 50 most recent discovery launches for the criterion, including
-    SerpAPI search-call counters and throughput counts.
+    separate SerpAPI calls, Hunter company lookups and contacts created.
     Variable: $model (ProspectCriteria).
     Schema::hasTable guard keeps the page safe before the discovery_runs migration.
 --}}
@@ -17,9 +17,22 @@
     $hasSearchCounters = $hasTable
         && Schema::hasColumn('discovery_runs', 'searches_reserved')
         && Schema::hasColumn('discovery_runs', 'searches_consumed');
+    $hasContactCounters = $hasTable
+        && Schema::hasColumn('discovery_runs', 'contact_credits_reserved')
+        && Schema::hasColumn('discovery_runs', 'contact_consumed');
+    $hasSuccessCounters = $hasTable
+        && Schema::hasColumn('discovery_runs', 'successful_enrichments')
+        && Schema::hasColumn('discovery_runs', 'successful_enrichments_target');
     $searchesTotal = $runs->sum(fn ($run) => $hasSearchCounters
         ? (int) ($run->searches_consumed ?? 0)
         : (int) ($run->credits_reserved ?? 0));
+    $hunterAttemptsTotal = $runs->sum(fn ($run) => $hasContactCounters
+        ? (int) ($run->contact_consumed ?? 0)
+        : 0);
+    $contactsCreatedTotal = $runs->sum(fn ($run) => (int) ($run->contacts_count ?? 0));
+    $successfulEnrichmentsTotal = $runs->sum(fn ($run) => $hasSuccessCounters
+        ? (int) ($run->successful_enrichments ?? 0)
+        : 0);
 @endphp
 
 <div class="card">
@@ -30,7 +43,10 @@
                 Historique des lancements ({{ $runsTotal }})
             </h3>
             <div class="text-muted fs-7 mt-2">
-                {{ $runsTotal }} lancement(s) de découverte · {{ number_format($searchesTotal) }} requête(s) de découverte consommée(s).
+                {{ $runsTotal }} lancement(s) · {{ number_format($searchesTotal) }} recherche(s) d’entreprises consommée(s)
+                · {{ number_format($hunterAttemptsTotal) }} tentative(s) d’enrichissement consommée(s)
+                · {{ number_format($successfulEnrichmentsTotal) }} enrichissement(s) réussi(s)
+                · {{ number_format($contactsCreatedTotal) }} contact(s) créé(s).
             </div>
         </div>
     </div>
@@ -47,10 +63,12 @@
                         <tr class="fw-bold text-muted bg-light">
                             <th class="ps-7">Démarrée le</th>
                             <th>Statut</th>
-                            <th>Requêtes de découverte</th>
+                            <th>Recherches d’entreprises</th>
+                            <th>Tentatives d’enrichissement</th>
+                            <th>Enrichissements réussis</th>
                             <th>Traitées</th>
                             <th>Nouvelles</th>
-                            <th>Contacts</th>
+                            <th>Contacts créés</th>
                             <th>Ignorés</th>
                             <th>Sous seuil</th>
                             <th>Durée</th>
@@ -77,6 +95,10 @@
                             $startedDisplay = $run->started_at ?? $run->created_at;
                             $searchesConsumed = $hasSearchCounters ? (int) ($run->searches_consumed ?? 0) : (int) ($run->credits_reserved ?? 0);
                             $searchesReserved = $hasSearchCounters ? (int) ($run->searches_reserved ?? $run->credits_reserved ?? 0) : (int) ($run->credits_reserved ?? 0);
+                            $hunterAttemptsConsumed = $hasContactCounters ? (int) ($run->contact_consumed ?? 0) : 0;
+                            $hunterAttemptsReserved = $hasContactCounters ? (int) ($run->contact_credits_reserved ?? 0) : 0;
+                            $successfulEnrichments = $hasSuccessCounters ? (int) ($run->successful_enrichments ?? 0) : 0;
+                            $successfulEnrichmentsTarget = $hasSuccessCounters ? (int) ($run->successful_enrichments_target ?? 0) : 0;
                         @endphp
                         <tr>
                             <td class="ps-7 fw-semibold">{{ $startedDisplay?->format('d/m/Y H:i') ?? '—' }}</td>
@@ -90,6 +112,14 @@
                             <td>
                                 <span class="fw-semibold">{{ number_format($searchesConsumed) }}</span>
                                 <span class="text-muted fs-8">/ {{ number_format($searchesReserved) }}</span>
+                            </td>
+                            <td>
+                                <span class="fw-semibold">{{ number_format($hunterAttemptsConsumed) }}</span>
+                                <span class="text-muted fs-8">/ {{ number_format($hunterAttemptsReserved) }}</span>
+                            </td>
+                            <td>
+                                <span class="fw-semibold">{{ number_format($successfulEnrichments) }}</span>
+                                <span class="text-muted fs-8">/ {{ number_format($successfulEnrichmentsTarget) }}</span>
                             </td>
                             <td>{{ number_format($run->companies_count) }}</td>
                             <td>{{ is_null($run->new_companies_count) ? '—' : number_format($run->new_companies_count) }}</td>

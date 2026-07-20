@@ -16,6 +16,12 @@
     "Lancer la découverte" preserved in hero actions slot AND as a quick_action.
 --}}
 
+{{-- Permanent progress banner stays visible regardless of the selected tab. --}}
+@include('backend.contents.prospect_criteria.partials._discovery-status', [
+    'model' => $model,
+    'discoveryContext' => 'view',
+])
+
 {{-- Shared hero + tab nav --}}
 @include('backend.contents.prospect_criteria.partials._header-with-tabs', [
     'model'       => $model,
@@ -27,11 +33,6 @@
 
     {{-- ── Tab 1: Aperçu (default active on view) ────────────────────────── --}}
     <div class="tab-pane fade show active" id="criteria_apercu" role="tabpanel">
-        {{-- Live discovery status panel — above the generic aperçu --}}
-        @include('backend.contents.prospect_criteria.partials._discovery-status', [
-            'model' => $model,
-        ])
-
         @include('backend.partials.crud._apercu', [
             'model'  => $model,
             'config' => $viewConfig ?? \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::make($model),

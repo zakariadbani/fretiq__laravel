@@ -41,34 +41,34 @@ return new class extends Migration
         Schema::table('discovery_runs', function (Blueprint $table) {
             // 1. Add low_score_count after skipped_count
             $table->unsignedInteger('low_score_count')
-                  ->default(0)
-                  ->after('skipped_count');
+                ->default(0)
+                ->after('skipped_count');
 
             // 2. Add type column after prospect_criteria_id
             $table->string('type', 20)
-                  ->default('discovery')
-                  ->after('prospect_criteria_id')
-                  ->index();
+                ->default('discovery')
+                ->after('prospect_criteria_id')
+                ->index();
 
             // 3. Add company_id after type
             $table->foreignId('company_id')
-                  ->nullable()
-                  ->after('type')
-                  ->constrained('companies')
-                  ->nullOnDelete();
+                ->nullable()
+                ->after('type')
+                ->constrained('companies')
+                ->nullOnDelete();
         });
 
         // 4. Make prospect_criteria_id nullable — SAFE recipe:
         //    dropForeign → change → re-add foreign
         Schema::table('discovery_runs', function (Blueprint $table) {
-            $table->dropForeign('discovery_runs_prospect_criteria_id_foreign');
+            $table->dropForeign(['prospect_criteria_id']);
             $table->unsignedBigInteger('prospect_criteria_id')->nullable()->change();
         });
 
         Schema::table('discovery_runs', function (Blueprint $table) {
             $table->foreign('prospect_criteria_id', 'discovery_runs_prospect_criteria_id_foreign')
-                  ->references('id')->on('prospect_criteria')
-                  ->cascadeOnDelete();
+                ->references('id')->on('prospect_criteria')
+                ->cascadeOnDelete();
         });
     }
 
@@ -84,14 +84,14 @@ return new class extends Migration
 
         // Re-tighten prospect_criteria_id to NOT NULL — SAFE recipe in reverse
         Schema::table('discovery_runs', function (Blueprint $table) {
-            $table->dropForeign('discovery_runs_prospect_criteria_id_foreign');
+            $table->dropForeign(['prospect_criteria_id']);
             $table->unsignedBigInteger('prospect_criteria_id')->nullable(false)->change();
         });
 
         Schema::table('discovery_runs', function (Blueprint $table) {
             $table->foreign('prospect_criteria_id', 'discovery_runs_prospect_criteria_id_foreign')
-                  ->references('id')->on('prospect_criteria')
-                  ->cascadeOnDelete();
+                ->references('id')->on('prospect_criteria')
+                ->cascadeOnDelete();
         });
 
         Schema::table('discovery_runs', function (Blueprint $table) {

@@ -51,6 +51,21 @@ class HunterEnrichmentServiceTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_local_fallback_scopes_generic_emails_to_requested_domain(): void
+    {
+        config(['services.hunter.driver' => 'local']);
+        Http::fake();
+
+        $result = $this->service()->domainSearch('acme.test');
+
+        $this->assertNotNull($result);
+        $this->assertNotEmpty($result['emails']);
+        foreach ($result['emails'] as $email) {
+            $this->assertStringEndsWith('@acme.test', $email['value']);
+        }
+        Http::assertNothingSent();
+    }
+
     public function test_missing_api_key_returns_null_without_an_http_request(): void
     {
         config(['services.hunter.api_key' => null]);
@@ -256,6 +271,60 @@ class HunterEnrichmentServiceTest extends TestCase
             ->withArgs(function (string $message, array $context): bool {
                 return ! str_contains($message.json_encode($context), self::API_KEY);
             });
+    }
+
+    public function test_status_aware_search_marks_missing_key_as_provider_failure(): void
+    {
+        config(['services.hunter.api_key' => null]);
+        Http::fake();
+
+        $result = $this->service()->domainSearchResult('acme.test');
+
+        $this->assertSame('provider_failed', $result['status']);
+        $this->assertNull($result['data']);
+        Http::assertNothingSent();
+    }
+
+    public function test_status_aware_search_marks_not_found_as_legitimate_empty(): void
+    {
+        $this->fakeResponses(404, 404, [], []);
+
+        $result = $this->service()->domainSearchResult('unknown.test');
+
+        $this->assertSame('empty', $result['status']);
+        $this->assertNull($result['data']);
+    }
+
+    public function test_status_aware_search_marks_rate_or_server_failures_as_provider_failure(): void
+    {
+        $this->fakeResponses(429, 503, [], []);
+
+        $result = $this->service()->domainSearchResult('acme.test');
+
+        $this->assertSame('provider_failed', $result['status']);
+        $this->assertNull($result['data']);
+    }
+
+    public function test_status_aware_search_marks_systemic_domain_failure_even_when_company_metadata_succeeds(): void
+    {
+        $this->fakeResponses(503, 200, [], $this->companyData());
+
+        $result = $this->service()->domainSearchResult('acme.test', 10, 7);
+
+        $this->assertSame('provider_failed', $result['status']);
+        $this->assertNotNull($result['data']);
+        Http::assertSentCount(2);
+    }
+
+    public function test_status_aware_search_marks_timeout_as_provider_failure_even_with_company_metadata(): void
+    {
+        $this->fakeResponses(408, 200, [], $this->companyData());
+
+        $result = $this->service()->domainSearchResult('acme.test');
+
+        $this->assertSame('provider_failed', $result['status']);
+        $this->assertNotNull($result['data']);
+        Http::assertSentCount(2);
     }
 
     private function service(): HunterEnrichmentService

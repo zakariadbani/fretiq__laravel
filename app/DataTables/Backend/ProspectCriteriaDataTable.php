@@ -4,6 +4,7 @@ namespace App\DataTables\Backend;
 
 use App\DataTables\BackendDataTable;
 use App\Models\ProspectCriteria;
+use App\Services\Discovery\DiscoveryProgressPresenter;
 use App\Services\Quota\DiscoveryQuotaService;
 use Illuminate\Http\Request;
 
@@ -41,90 +42,90 @@ class ProspectCriteriaDataTable extends BackendDataTable
         // .min-w-200px div. Without it yajra escapes the markup and the wrapper
         // renders as literal text in the cell.
         'name' => [
-            'title'      => 'Nom',
-            'orderable'  => true,
+            'title' => 'Nom',
+            'orderable' => true,
             'searchable' => true,
-            'raw'        => true,
-            'priority'   => 1,
+            'raw' => true,
+            'priority' => 1,
         ],
         'sectors' => [
-            'title'      => 'Secteurs',
-            'orderable'  => false,
+            'title' => 'Secteurs',
+            'orderable' => false,
             'searchable' => false,
-            'raw'        => true,
-            'priority'   => 4,
+            'raw' => true,
+            'priority' => 4,
         ],
         'countries' => [
-            'title'      => 'Pays',
-            'orderable'  => false,
+            'title' => 'Pays',
+            'orderable' => false,
             'searchable' => false,
-            'raw'        => true,
-            'priority'   => 5,
+            'raw' => true,
+            'priority' => 5,
         ],
         // Required discovery metric. Its strong priority keeps it visible before
         // lower-value Pays/Requêtes/j columns when Responsive needs room.
         'companies_count' => [
-            'title'      => 'Entreprises',
-            'orderable'  => true,
+            'title' => 'Entreprises',
+            'orderable' => true,
             'searchable' => false,
-            'raw'        => true,
-            'priority'   => 3,
+            'raw' => true,
+            'priority' => 3,
         ],
         'contacts_count' => [
-            'title'      => 'Contacts',
-            'orderable'  => true,
+            'title' => 'Contacts',
+            'orderable' => true,
             'searchable' => false,
-            'raw'        => true,
-            'priority'   => 5,
-            'visible'    => false,
+            'raw' => true,
+            'priority' => 5,
+            'visible' => false,
         ],
         'daily_limit' => [
-            'title'      => 'Requêtes/j',
-            'orderable'  => true,
+            'title' => 'Recherches d’entreprises/j',
+            'orderable' => true,
             'searchable' => false,
-            'priority'   => 6,
+            'priority' => 6,
         ],
         'automation' => [
-            'title'      => 'Automat.',
-            'orderable'  => false,
+            'title' => 'Automat.',
+            'orderable' => false,
             'searchable' => false,
-            'raw'        => true,
-            'priority'   => 3,
-            'visible'    => false,
+            'raw' => true,
+            'priority' => 3,
+            'visible' => false,
         ],
         'is_active' => [
-            'title'      => 'Actif',
-            'orderable'  => true,
+            'title' => 'Actif',
+            'orderable' => true,
             'searchable' => false,
-            'switch'     => true,
+            'switch' => true,
             'typetoggle' => 'status',
-            'raw'        => true,
-            'priority'   => 2,
+            'raw' => true,
+            'priority' => 2,
         ],
         'last_discovery' => [
-            'title'      => 'Dern. découverte',
-            'orderable'  => false,
+            'title' => 'Dern. découverte',
+            'orderable' => false,
             'searchable' => false,
-            'raw'        => true,
-            'priority'   => 3,
+            'raw' => true,
+            'priority' => 3,
         ],
         // 'created_at' hidden rather than removed (CompaniesDataTable drops it outright).
         // Keeping the key registered leaves GlobalDataTable's editColumn('created_at')
         // and the export intact; visible(false) only pulls it out of the rendered table.
         'created_at' => [
-            'title'      => 'Créé le',
-            'orderable'  => true,
+            'title' => 'Créé le',
+            'orderable' => true,
             'searchable' => false,
-            'priority'   => 8,
-            'visible'    => false,
+            'priority' => 8,
+            'visible' => false,
         ],
     ];
 
     protected $table_filters = [
         'is_active' => [
-            'type'      => 'int',
+            'type' => 'int',
             'filterKey' => 'is_active',
-            'title'     => 'Actif',
+            'title' => 'Actif',
         ],
     ];
 
@@ -132,20 +133,22 @@ class ProspectCriteriaDataTable extends BackendDataTable
      * Computed once per DataTable render: whether the daily OR monthly company
      * quota is exhausted. null = unlimited or tables not yet migrated;
      * false = credits remain on both meters; true = at least one meter is at 0.
-     *
-     * @var bool|null
      */
     protected ?bool $quotaExhausted = null;
 
-    public function __construct(ProspectCriteria $model, Request $request, DiscoveryQuotaService $quotaService)
-    {
+    public function __construct(
+        ProspectCriteria $model,
+        Request $request,
+        DiscoveryQuotaService $quotaService,
+        protected DiscoveryProgressPresenter $progressPresenter,
+    ) {
         parent::__construct($model, $request);
 
         // Compute quota state once for all rows — avoids N+1 DB reads.
         // Wrapped in QueryException catch so the DataTable still renders
         // when the quota tables do not yet exist (pre-migration dev DB).
         try {
-            $remaining        = $quotaService->remainingTodayForDisplay();
+            $remaining = $quotaService->remainingTodayForDisplay();
             $monthlyRemaining = $quotaService->monthlyRemainingForDisplay();
             // null = unlimited (never exhausted); 0 = exhausted.
             // Disable when EITHER the daily OR the monthly company meter is at 0.
@@ -240,7 +243,7 @@ class ProspectCriteriaDataTable extends BackendDataTable
         // e() is mandatory here: criterion names are user-supplied and the column
         // is registered raw (see $columns['name']['raw']), so yajra no longer escapes.
         $this->datatables->editColumn('name', function (ProspectCriteria $row) {
-            return '<div class="min-w-200px">' . e($row->name ?? '') . '</div>';
+            return '<div class="min-w-200px">'.e($row->name ?? '').'</div>';
         });
 
         $this->datatables->editColumn('sectors', function (ProspectCriteria $row) {
@@ -249,8 +252,8 @@ class ProspectCriteriaDataTable extends BackendDataTable
             // Normalise before slicing so a blank entry cannot consume one of the
             // visible slots or render as an empty badge box.
             $sectors = array_values(array_filter(
-                array_map(static fn($s) => trim((string) $s), $sectors),
-                static fn(string $s) => $s !== ''
+                array_map(static fn ($s) => trim((string) $s), $sectors),
+                static fn (string $s) => $s !== ''
             ));
 
             if (empty($sectors)) {
@@ -258,7 +261,7 @@ class ProspectCriteriaDataTable extends BackendDataTable
             }
 
             $visible = array_slice($sectors, 0, self::SECTOR_BADGE_LIMIT);
-            $hidden  = array_slice($sectors, self::SECTOR_BADGE_LIMIT);
+            $hidden = array_slice($sectors, self::SECTOR_BADGE_LIMIT);
 
             // e() is mandatory on every value emitted here: sector names are
             // user-supplied and this column is registered raw (see
@@ -267,7 +270,7 @@ class ProspectCriteriaDataTable extends BackendDataTable
             // the double-quoted title attribute of the counter chip below.
             $html = '';
             foreach ($visible as $sector) {
-                $html .= '<span class="badge badge-light-primary me-1">' . e($sector) . '</span>';
+                $html .= '<span class="badge badge-light-primary me-1">'.e($sector).'</span>';
             }
 
             if ($hidden !== []) {
@@ -276,9 +279,9 @@ class ProspectCriteriaDataTable extends BackendDataTable
                 // data-bs-toggle="tooltip": native, and needs no JS re-init after a
                 // DataTables redraw swaps the row out.
                 $html .= '<span class="badge badge-light text-muted"'
-                    . ' title="' . e(implode(', ', $hidden)) . '">'
-                    . '+' . count($hidden)
-                    . '</span>';
+                    .' title="'.e(implode(', ', $hidden)).'">'
+                    .'+'.count($hidden)
+                    .'</span>';
             }
 
             return $html;
@@ -291,54 +294,103 @@ class ProspectCriteriaDataTable extends BackendDataTable
             }
             // Map ISO-2 codes → French labels; unknown values pass through unchanged.
             $countryLabels = config('global.data.company_countries', []);
-            $labels = array_map(fn($v) => $countryLabels[$v] ?? $v, $countries);
+            $labels = array_map(fn ($v) => $countryLabels[$v] ?? $v, $countries);
+
             return e(implode(', ', $labels));
         });
 
         $this->datatables->editColumn('companies_count', function (ProspectCriteria $row) {
             $n = (int) ($row->companies_count ?? 0);
             $class = $n > 0 ? 'badge badge-light-primary' : 'badge badge-light text-muted';
-            return '<span class="' . $class . '">' . $n . '</span>';
+
+            return '<span class="'.$class.'">'.$n.'</span>';
         });
 
         $this->datatables->editColumn('contacts_count', function (ProspectCriteria $row) {
             $n = (int) ($row->contacts_count ?? 0);
             $class = $n > 0 ? 'badge badge-light-info' : 'badge badge-light text-muted';
-            return '<span class="' . $class . '">' . $n . '</span>';
+
+            return '<span class="'.$class.'">'.$n.'</span>';
         });
 
         $this->datatables->addColumn('automation', function (ProspectCriteria $row) {
             if ($row->auto_run && $row->run_at_hour !== null) {
-                $html = '<span class="badge badge-light-success">Auto &middot; ' . sprintf('%02d:00', $row->run_at_hour) . '</span>';
+                $html = '<span class="badge badge-light-success">Auto &middot; '.sprintf('%02d:00', $row->run_at_hour).'</span>';
             } else {
                 $html = '<span class="text-muted">Manuel</span>';
             }
-            if ($row->contact_limit !== null) {
-                $html .= '<div class="text-muted fs-8 mt-1">&le; ' . (int) $row->contact_limit . ' contacts</div>';
-            }
+            $hunterLimit = min(20, max(1, (int) ($row->contact_limit ?? 20)));
+            $html .= $row->auto_enrich === false
+                ? '<div class="text-muted fs-8 mt-1">Enrichissement de contacts désactivé</div>'
+                : '<div class="text-muted fs-8 mt-1">Objectif : '.$hunterLimit.' enrichissements réussis</div>';
+
             return $html;
         });
 
         $this->datatables->addColumn('last_discovery', function (ProspectCriteria $row) {
             $run = $row->latestDiscoveryRun;
-            if (!$run) {
-                return '<span class="badge badge-light-secondary">Jamais lancée</span>';
-            }
-            $cfg   = config('global.data.discovery_run_statuses.' . $run->status, []);
-            $label = $cfg['label'] ?? $run->status;
+            $status = $run?->status ?? '';
+            $cfg = config('global.data.discovery_run_statuses.'.$status, []);
+            $label = $cfg['label'] ?? ($run ? $status : 'Jamais lancée');
             $color = $cfg['color'] ?? 'secondary';
-            $html  = '<span class="badge badge-light-' . e($color) . '">' . e($label) . '</span>';
-            $when  = $run->finished_at ?? $run->started_at;
-            if ($when) {
-                $html .= '<div class="text-muted fs-8 mt-1">' . e($when->format('d/m/Y H:i')) . '</div>';
-            }
+            $searchesConsumed = (int) ($run?->searches_consumed ?? 0);
+            $searchesReserved = (int) ($run?->searches_reserved ?? $run?->credits_reserved ?? 0);
+            $contactAttemptsConsumed = (int) ($run?->contact_consumed ?? 0);
+            $contactAttemptsReserved = (int) ($run?->contact_credits_reserved ?? 0);
+            $contactsCreated = (int) ($run?->contacts_count ?? 0);
+            $successfulEnrichments = (int) ($run?->successful_enrichments ?? 0);
+            $successfulEnrichmentsTarget = (int) ($run?->successful_enrichments_target ?? 0);
+            $snapshot = is_array($run?->candidates_snapshot) ? $run->candidates_snapshot : [];
+            $candidateTotal = count(array_filter(
+                $snapshot,
+                static fn ($candidate): bool => is_array($candidate) && ! empty($candidate['domain'])
+            ));
+            $candidateProcessed = (int) ($run?->consumed ?? 0);
+            $runError = $status === 'failed'
+                ? trim((string) ($this->progressPresenter->publicError($run) ?? ''))
+                : '';
+            $candidateTotalFinal = ! $run
+                || in_array($status, ['completed', 'failed'], true)
+                || (int) data_get(
+                    $row->discovery_cursors,
+                    ProspectCriteria::DISCOVERY_COLLECTION_COMPLETE_RUN_KEY,
+                    0,
+                ) === (int) $run?->id
+                || config('services.serpapi.driver', 'local') === 'local';
+            $statusUrl = route('admin.prospect_criteria.discovery_status', array_filter([
+                $row->id,
+                'run_id' => $run?->id,
+            ], static fn ($value) => $value !== null));
+            $active = in_array($status, ['pending', 'running'], true);
+            $initialProgress = $status === 'completed' ? 100 : 0;
+            $progressAria = $active ? '' : ' aria-valuenow="'.$initialProgress.'"';
+
+            $html = '<div class="min-w-175px" data-discovery-tracker data-discovery-context="index" aria-live="polite"'
+                .' data-criteria-id="'.(int) $row->id.'"'
+                .' data-run-id="'.($run ? (int) $run->id : '').'"'
+                .' data-status="'.e($status).'"'
+                .' data-status-url="'.e($statusUrl).'">'
+                .'<div class="d-flex align-items-center gap-2">'
+                .'<span class="badge badge-light-'.e($color).'" data-discovery-status-badge>'.e($label).'</span>'
+                .'<span class="spinner-border spinner-border-sm text-primary'.($active ? '' : ' d-none').'" data-discovery-spinner></span>'
+                .'</div>'
+                .'<div class="progress h-4px mt-2 bg-light-primary">'
+                .'<div class="progress-bar bg-primary'.($active ? ' progress-bar-striped progress-bar-animated' : '').'" data-discovery-progress role="progressbar" aria-label="Progression globale" aria-valuemin="0" aria-valuemax="100" style="width:'.($active ? 100 : $initialProgress).'%"'.$progressAria.'></div>'
+                .'</div>'
+                .'<div class="text-muted fs-8 mt-1">Recherches d’entreprises : <span data-discovery-searches>'.$searchesConsumed.'</span>/<span data-discovery-searches-total>'.$searchesReserved.'</span></div>'
+                .'<div class="text-muted fs-8">Tentatives d’enrichissement : <span data-discovery-contact-attempts>'.$contactAttemptsConsumed.'</span>/<span data-discovery-contact-attempts-total>'.$contactAttemptsReserved.'</span> · Enrichissements réussis : <span data-discovery-successes>'.$successfulEnrichments.'</span>/<span data-discovery-successes-target>'.$successfulEnrichmentsTarget.'</span> · Contacts créés : <span data-discovery-contacts>'.$contactsCreated.'</span></div>'
+                .'<div class="text-muted fs-8">Candidats : <span data-discovery-candidates>'.$candidateProcessed.'</span>/<span data-discovery-candidates-total>'.$candidateTotal.'</span>'
+                .'<span data-discovery-total-growing class="'.($candidateTotalFinal ? 'd-none' : '').'">+</span></div>'
+                .'<div class="text-danger fs-8 mt-1'.($runError === '' ? ' d-none' : '').'" data-discovery-error>'.e($runError).'</div>'
+                .'</div>';
+
             return $html;
         });
 
         // Extend the action column with a "Lancer la découverte" button (permission-gated).
         $this->datatables->editColumn('action', function (ProspectCriteria $row) {
             $user = auth()->user();
-            $id   = (int) $row->id;
+            $id = (int) $row->id;
             $csrf = e(csrf_token());
             $html = '<div class="d-flex justify-content-end flex-shrink-0">';
 
@@ -347,64 +399,72 @@ class ProspectCriteriaDataTable extends BackendDataTable
             // enabled when both meters are unlimited or have credits.
             if ($user?->can('run discovery')) {
                 $quotaExhausted = $this->quotaExhausted === true;
-                $disabledAttr   = $quotaExhausted ? ' disabled' : '';
-                $tooltipTitle   = $quotaExhausted
+                $discoveryInFlight = in_array($row->latestDiscoveryRun?->status, ['pending', 'running'], true);
+                $disabledAttr = ($quotaExhausted || $discoveryInFlight) ? ' disabled' : '';
+                $tooltipTitle = $quotaExhausted
                     ? 'Solde &#233;puis&#233; &#8212; recharge demain &#224; minuit'
-                    : 'Lancer la d&#233;couverte';
-                $onclickAttr    = $quotaExhausted ? '' : ' onclick="launchDiscovery(' . $id . ', \'' . $csrf . '\')"';
+                    : ($discoveryInFlight ? 'D&#233;couverte en cours' : 'Lancer la d&#233;couverte');
+                $launchUrl = e(route('admin.prospect_criteria.discover', $id));
+                $statusUrl = e(route('admin.prospect_criteria.discovery_status', $id));
 
                 $html .= '<button type="button"'
-                    . ' class="btn btn-icon btn-bg-light btn-active-color-success btn-sm me-1"'
-                    . $onclickAttr
-                    . ' data-bs-toggle="tooltip"'
-                    . ' title="' . $tooltipTitle . '"'
-                    . $disabledAttr . '>'
-                    . '<i class="bi bi-play-fill fs-4"></i>'
-                    . '</button>';
+                    .' class="btn btn-icon btn-bg-light btn-active-color-success btn-sm me-1"'
+                    .' data-discovery-launch'
+                    .' data-criteria-id="'.$id.'"'
+                    .' data-launch-url="'.$launchUrl.'"'
+                    .' data-status-url="'.$statusUrl.'"'
+                    .' data-csrf-token="'.$csrf.'"'
+                    .' data-discovery-static-disabled="'.($quotaExhausted ? 'true' : 'false').'"'
+                    .' data-bs-toggle="tooltip"'
+                    .' title="'.$tooltipTitle.'"'
+                    .$disabledAttr.'>'
+                    .'<i class="bi bi-play-fill fs-4"></i>'
+                    .'</button>';
             }
 
             // Duplicate button (create prospect_criteria permission)
             if ($user?->can('create prospect_criteria')) {
                 $duplicateUrl = e(route('admin.prospect_criteria.duplicate', $id));
                 $html .= '<button type="button"'
-                    . ' class="btn btn-icon btn-bg-light btn-active-color-primary btn-sm me-1"'
-                    . ' onclick="submitPostForm(\'' . $duplicateUrl . '\', \'' . $csrf . '\')"'
-                    . ' data-bs-toggle="tooltip"'
-                    . ' title="Dupliquer">'
-                    . '<i class="bi bi-copy fs-4"></i>'
-                    . '</button>';
+                    .' class="btn btn-icon btn-bg-light btn-active-color-primary btn-sm me-1"'
+                    .' onclick="submitPostForm(\''.$duplicateUrl.'\', \''.$csrf.'\')"'
+                    .' data-bs-toggle="tooltip"'
+                    .' title="Dupliquer">'
+                    .'<i class="bi bi-copy fs-4"></i>'
+                    .'</button>';
             }
 
             // Edit button
             if ($user?->can('edit prospect_criteria')) {
-                $html .= '<a href="' . route('admin.prospect_criteria.edit', $id) . '"'
-                    . ' class="btn btn-icon btn-bg-light btn-active-color-primary btn-sm me-1"'
-                    . ' data-bs-toggle="tooltip" title="Modifier">'
-                    . '<i class="bi bi-pencil fs-4"></i>'
-                    . '</a>';
+                $html .= '<a href="'.route('admin.prospect_criteria.edit', $id).'"'
+                    .' class="btn btn-icon btn-bg-light btn-active-color-primary btn-sm me-1"'
+                    .' data-bs-toggle="tooltip" title="Modifier">'
+                    .'<i class="bi bi-pencil fs-4"></i>'
+                    .'</a>';
             }
 
             // View button
             if ($user?->can('view prospect_criteria')) {
-                $html .= '<a href="' . route('admin.prospect_criteria.view', $id) . '"'
-                    . ' class="btn btn-icon btn-bg-light btn-active-color-primary btn-sm me-1"'
-                    . ' data-bs-toggle="tooltip" title="Voir">'
-                    . '<i class="bi bi-eye fs-4"></i>'
-                    . '</a>';
+                $html .= '<a href="'.route('admin.prospect_criteria.view', $id).'"'
+                    .' class="btn btn-icon btn-bg-light btn-active-color-primary btn-sm me-1"'
+                    .' data-bs-toggle="tooltip" title="Voir">'
+                    .'<i class="bi bi-eye fs-4"></i>'
+                    .'</a>';
             }
 
             // Delete button
             if ($user?->can('delete prospect_criteria')) {
                 $html .= '<a href="javascript:void(0);"'
-                    . ' class="btn btn-icon btn-bg-light btn-active-color-danger btn-sm delete-btn"'
-                    . ' data-id="' . $id . '"'
-                    . ' data-url="' . route('admin.prospect_criteria.delete', $id) . '"'
-                    . ' data-bs-toggle="tooltip" title="Supprimer">'
-                    . '<i class="bi bi-trash fs-4"></i>'
-                    . '</a>';
+                    .' class="btn btn-icon btn-bg-light btn-active-color-danger btn-sm delete-btn"'
+                    .' data-id="'.$id.'"'
+                    .' data-url="'.route('admin.prospect_criteria.delete', $id).'"'
+                    .' data-bs-toggle="tooltip" title="Supprimer">'
+                    .'<i class="bi bi-trash fs-4"></i>'
+                    .'</a>';
             }
 
             $html .= '</div>';
+
             return $html;
         });
     }
@@ -431,7 +491,7 @@ class ProspectCriteriaDataTable extends BackendDataTable
         return [
             'toggleSuccess' => 'Statut mis à jour avec succès',
             'deleteConfirm' => 'Êtes-vous sûr de vouloir supprimer ce critère ?',
-            'deleteSuccess'  => 'Critère supprimé avec succès',
+            'deleteSuccess' => 'Critère supprimé avec succès',
         ];
     }
 }

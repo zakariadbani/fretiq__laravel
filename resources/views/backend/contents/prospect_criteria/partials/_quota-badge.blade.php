@@ -18,8 +18,8 @@
 
     // Hero row is tight — short labels only; the strip carries the full wording.
     $quotaShortLabels = [
-        'company'  => 'Découverte',
-        'contacts' => 'Contacts',
+        'company'  => 'Recherches d’entreprises',
+        'contacts' => 'Tentatives d’enrichissement',
     ];
 @endphp
 
@@ -30,9 +30,13 @@
 
         $meterText = ($quotaShortLabels[$meterKey] ?? ($meter['label'] ?? '')) . ' ';
 
-        $meterText .= ($meter['unlimited'] ?? false)
-            ? 'Illimité'
-            : $meterDaily['used_reserved'] . '/' . $meterDaily['total'] . ' j';
+        if (($meter['unlimited'] ?? false) && $meterKey === 'contacts') {
+            $meterText .= 'quota package ∞ · max. 20/exéc.';
+        } else {
+            $meterText .= ($meter['unlimited'] ?? false)
+                ? 'Illimité'
+                : $meterDaily['used_reserved'] . '/' . $meterDaily['total'] . ' j';
+        }
 
         // total === null is the unlimited signal (see displayMeterSummary()).
         if ($meterMonthly['total'] !== null) {

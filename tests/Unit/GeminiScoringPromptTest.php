@@ -3,7 +3,10 @@
 namespace Tests\Unit;
 
 use App\Models\ProspectCriteria;
+use App\Services\Gemini\GeminiClient;
 use App\Services\Scoring\GeminiScoringDriver;
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Http;
 use ReflectionClass;
 use Tests\TestCase;
 
@@ -135,5 +138,37 @@ class GeminiScoringPromptTest extends TestCase
         $this->assertStringContainsString('- Cible: chargeurs textile exportant vers la France', $prompt);
         $this->assertStringContainsString('- À exclure: transitaires et commissionnaires concurrents', $prompt);
         $this->assertStringContainsString('Réponds UNIQUEMENT avec un objet JSON strict', $prompt);
+    }
+
+    public function test_gemini_request_uses_the_timeout_supplied_by_the_pipeline(): void
+    {
+        config(['services.gemini.api_key' => 'fake-key']);
+        Http::fake(['*' => Http::response([
+            'candidates' => [[
+                'content' => ['parts' => [[
+                    'text' => '{"score": 80, "explanation": "Cible pertinente", "exclude": false}',
+                ]]],
+            ]],
+        ])]);
+
+        $client = new class extends GeminiClient {
+            public ?int $seenTimeout = null;
+
+            public function request(string $prompt, int $timeout, array $generationConfig): Response
+            {
+                $this->seenTimeout = $timeout;
+
+                return parent::request($prompt, $timeout, $generationConfig);
+            }
+        };
+
+        $result = (new GeminiScoringDriver($client))->score(
+            $this->baseCandidate(),
+            $this->criteria(),
+            7,
+        );
+
+        $this->assertSame(7, $client->seenTimeout);
+        $this->assertSame(80, $result['score']);
     }
 }

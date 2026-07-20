@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Backend;
 
+use App\Exceptions\DiscoveryRunInFlightException;
 use App\Jobs\RunDiscoveryPipelineJob;
 use App\Models\DiscoveryRun;
 use App\Models\Package;
@@ -38,11 +39,11 @@ class ProspectAutoDiscoverTest extends TestCase
     private function makeCriteria(array $overrides = []): ProspectCriteria
     {
         return ProspectCriteria::create(array_merge([
-            'name'        => 'Auto Critere ' . uniqid(),
-            'sectors'     => ['transport'],
-            'countries'   => ['France'],
+            'name' => 'Auto Critere '.uniqid(),
+            'sectors' => ['transport'],
+            'countries' => ['France'],
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ], $overrides));
     }
 
@@ -50,11 +51,11 @@ class ProspectAutoDiscoverTest extends TestCase
     {
         return DiscoveryRun::create([
             'prospect_criteria_id' => $criteria->id,
-            'type'                 => 'discovery',
-            'status'               => $status,
-            'quota_date'           => Carbon::today()->toDateString(),
-            'credits_reserved'     => 5,
-            'consumed'             => 0,
+            'type' => 'discovery',
+            'status' => $status,
+            'quota_date' => Carbon::today()->toDateString(),
+            'credits_reserved' => 5,
+            'consumed' => 0,
         ]);
     }
 
@@ -64,8 +65,8 @@ class ProspectAutoDiscoverTest extends TestCase
         Queue::fake();
 
         $criteria = $this->makeCriteria([
-            'is_active'   => true,
-            'auto_run'    => true,
+            'is_active' => true,
+            'auto_run' => true,
             'run_at_hour' => 11,
         ]);
 
@@ -73,9 +74,9 @@ class ProspectAutoDiscoverTest extends TestCase
 
         $this->assertDatabaseHas('discovery_runs', [
             'prospect_criteria_id' => $criteria->id,
-            'type'                 => 'discovery',
-            'status'               => 'pending',
-            'quota_date'           => Carbon::today()->toDateString(),
+            'type' => 'discovery',
+            'status' => 'pending',
+            'quota_date' => Carbon::today()->toDateString(),
         ]);
         Queue::assertPushed(RunDiscoveryPipelineJob::class, 1);
     }
@@ -102,8 +103,8 @@ class ProspectAutoDiscoverTest extends TestCase
         Queue::fake();
 
         $criteria = $this->makeCriteria([
-            'is_active'   => true,
-            'auto_run'    => true,
+            'is_active' => true,
+            'auto_run' => true,
             'run_at_hour' => 0,
         ]);
 
@@ -132,7 +133,7 @@ class ProspectAutoDiscoverTest extends TestCase
         // Both reservations (well, the single one) must be pinned to the Paris day.
         $this->assertDatabaseHas('discovery_runs', [
             'prospect_criteria_id' => $criteria->id,
-            'quota_date'           => '2026-01-11',
+            'quota_date' => '2026-01-11',
         ]);
     }
 
@@ -152,8 +153,8 @@ class ProspectAutoDiscoverTest extends TestCase
         Queue::fake();
 
         $criteria = $this->makeCriteria([
-            'is_active'   => true,
-            'auto_run'    => true,
+            'is_active' => true,
+            'auto_run' => true,
             'run_at_hour' => 0,
         ]);
 
@@ -163,7 +164,15 @@ class ProspectAutoDiscoverTest extends TestCase
 
         $this->assertDatabaseHas('discovery_runs', [
             'prospect_criteria_id' => $criteria->id,
-            'quota_date'           => '2026-01-10',
+            'quota_date' => '2026-01-10',
+        ]);
+
+        // Queue::fake() leaves the first run pending forever. In production a
+        // new quota-day run starts only after the preceding parent is terminal;
+        // model that lifecycle so this assertion isolates the UTC boundary.
+        DiscoveryRun::where('prospect_criteria_id', $criteria->id)->update([
+            'status' => 'completed',
+            'finished_at' => Carbon::now(),
         ]);
 
         // Tick 2: 2026-01-11 00:30 UTC — a NEW UTC day (2026-01-11) → allowed to fire again.
@@ -178,7 +187,7 @@ class ProspectAutoDiscoverTest extends TestCase
         Queue::assertPushed(RunDiscoveryPipelineJob::class, 2);
         $this->assertDatabaseHas('discovery_runs', [
             'prospect_criteria_id' => $criteria->id,
-            'quota_date'           => '2026-01-11',
+            'quota_date' => '2026-01-11',
         ]);
     }
 
@@ -188,8 +197,8 @@ class ProspectAutoDiscoverTest extends TestCase
         Queue::fake();
 
         $criteria = $this->makeCriteria([
-            'is_active'   => true,
-            'auto_run'    => true,
+            'is_active' => true,
+            'auto_run' => true,
             'run_at_hour' => 20,
         ]);
 
@@ -241,13 +250,33 @@ class ProspectAutoDiscoverTest extends TestCase
         $this->assertSame(1, DiscoveryRun::where('prospect_criteria_id', $criteria->id)->count());
     }
 
+    public function test_scheduled_reservation_rechecks_same_day_terminal_run_inside_admission_lock(): void
+    {
+        Carbon::setTestNow('2026-07-04 10:00:00');
+        $criteria = $this->makeCriteria([
+            'is_active' => true,
+            'auto_run' => true,
+            'run_at_hour' => 8,
+            'auto_enrich' => true,
+        ]);
+        $existing = $this->createRunToday($criteria, 'completed');
+
+        try {
+            app(DiscoveryQuotaService::class)->reserveRun($criteria, true);
+            $this->fail('A terminal automatic run must still block a second scheduled run that quota day.');
+        } catch (DiscoveryRunInFlightException $exception) {
+            $this->assertSame($existing->id, $exception->existingRun->id);
+            $this->assertSame(1, DiscoveryRun::where('prospect_criteria_id', $criteria->id)->count());
+        }
+    }
+
     public function test_skips_inactive_and_non_auto_run_criteria(): void
     {
         Carbon::setTestNow('2026-07-04 10:00:00');
         Queue::fake();
 
         $inactive = $this->makeCriteria(['is_active' => false, 'auto_run' => true, 'run_at_hour' => 8]);
-        $notAuto  = $this->makeCriteria(['is_active' => true, 'auto_run' => false, 'run_at_hour' => 8]);
+        $notAuto = $this->makeCriteria(['is_active' => true, 'auto_run' => false, 'run_at_hour' => 8]);
 
         $this->artisan('prospect:auto-discover')->assertExitCode(0);
 
@@ -258,14 +287,14 @@ class ProspectAutoDiscoverTest extends TestCase
     public function test_quota_exhausted_criteria_skipped_without_aborting_command(): void
     {
         $package = Package::create([
-            'name'          => 'Pack 0/j',
+            'name' => 'Pack 0/j',
             'daily_credits' => 0,
-            'is_active'     => true,
-            'sort_order'    => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
 
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -277,6 +306,42 @@ class ProspectAutoDiscoverTest extends TestCase
         $this->artisan('prospect:auto-discover')->assertExitCode(0);
 
         Queue::assertNotPushed(RunDiscoveryPipelineJob::class);
+    }
+
+    public function test_search_exhausted_criteria_dispatches_contact_only_scheduled_run(): void
+    {
+        $package = Package::create([
+            'name' => 'Pack contacts only',
+            'daily_credits' => 0,
+            'daily_contact_credits' => 20,
+            'is_active' => true,
+            'sort_order' => 0,
+        ]);
+        PackageAssignment::create([
+            'package_id' => $package->id,
+            'assigned_by' => null,
+        ]);
+
+        Carbon::setTestNow('2026-07-04 10:00:00');
+        Queue::fake();
+
+        $criteria = $this->makeCriteria([
+            'is_active' => true,
+            'auto_run' => true,
+            'run_at_hour' => 8,
+            'auto_enrich' => true,
+            'contact_limit' => null,
+        ]);
+
+        $this->artisan('prospect:auto-discover')->assertExitCode(0);
+
+        $this->assertDatabaseHas('discovery_runs', [
+            'prospect_criteria_id' => $criteria->id,
+            'searches_reserved' => 0,
+            'contact_credits_reserved' => 20,
+            'status' => 'pending',
+        ]);
+        Queue::assertPushed(RunDiscoveryPipelineJob::class, 1);
     }
 
     public function test_runs_again_next_day(): void
@@ -309,7 +374,7 @@ class ProspectAutoDiscoverTest extends TestCase
 
         $superadmin = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $superadmin->assignRole('superadmin');
 

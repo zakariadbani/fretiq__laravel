@@ -129,8 +129,8 @@ class SettingController extends Controller
                     'label'   => 'Budget de temps par tentative d\'exécution (secondes)',
                     'default' => 240,
                     'min'     => 30,
-                    'max'     => 3600,
-                    'help'    => 'Durée maximale passée à traiter des entreprises lors d\'une même tentative. Au-delà, l\'exécution s\'arrête proprement et reprend exactement là où elle s\'est arrêtée à la tentative suivante — aucune entreprise n\'est perdue. Cette valeur DOIT rester inférieure au délai d\'expiration de la tâche en file d\'attente (300 secondes) : sinon la tâche est interrompue brutalement en plein traitement au lieu de se terminer proprement.',
+                    'max'     => 240,
+                    'help'    => 'Durée maximale de toute une tentative (collecte, préchargement et traitement). Dix secondes sont réservées à la sauvegarde et à la reprise propre du job.',
                 ],
                 'scoring_provider' => [
                     'type'  => 'static',
@@ -235,7 +235,7 @@ class SettingController extends Controller
                 'settings.decouverte.homepage_excerpt_chars' => 'nullable|integer|between:500,8000',
                 'settings.decouverte.homepage_cache_days'    => 'nullable|integer|between:1,90',
                 'settings.decouverte.homepage_timeout'       => 'nullable|integer|between:1,30',
-                'settings.decouverte.run_time_budget'        => 'nullable|integer|between:30,3600',
+                'settings.decouverte.run_time_budget'        => 'nullable|integer|between:30,240',
                 'settings.decouverte.discovery_engines'      => 'required|array|min:1',
                 'settings.decouverte.discovery_engines.*'    => [
                     'required',

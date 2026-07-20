@@ -37,7 +37,7 @@ class LeadScoringService
      * @param  array{domain?: string, title?: string, snippet?: string, url?: string, link?: string}  $candidate
      * @return array{score: int, explanation: string, exclude: bool}
      */
-    public function score(array $candidate, ProspectCriteria $criteria): array
+    public function score(array $candidate, ProspectCriteria $criteria, ?int $timeoutSeconds = null): array
     {
         try {
             $hasIntent = trim((string) ($criteria->ai_target ?? '')) !== ''
@@ -53,7 +53,7 @@ class LeadScoringService
             }
 
             if ($driver === 'gemini' || ($hasIntent && $hasGeminiKey)) {
-                $result = $this->gemini->score($candidate, $criteria);
+                $result = $this->gemini->score($candidate, $criteria, $timeoutSeconds);
 
                 if ($result === null) {
                     Log::warning('[LeadScoringService] Gemini indisponible — repli heuristique', [
@@ -62,14 +62,14 @@ class LeadScoringService
                     ]);
 
                     // Heuristic is infallible — no null check needed.
-                    return $this->heuristic->score($candidate, $criteria);
+                    return $this->heuristic->score($candidate, $criteria, $timeoutSeconds);
                 }
 
                 return $result;
             }
 
             // Default: heuristic driver
-            return $this->heuristic->score($candidate, $criteria);
+            return $this->heuristic->score($candidate, $criteria, $timeoutSeconds);
         } catch (\Throwable $e) {
             // Safety net: should never reach here, but we must never throw.
             Log::error('[LeadScoringService] Exception inattendue dans score() — repli heuristique.', [
@@ -79,7 +79,7 @@ class LeadScoringService
             ]);
 
             /** @var array{score: int, explanation: string, exclude: bool} */
-            return $this->heuristic->score($candidate, $criteria) ?? [
+            return $this->heuristic->score($candidate, $criteria, $timeoutSeconds) ?? [
                 'score'       => 0,
                 'explanation' => 'Erreur de scoring — score par défaut.',
                 'exclude'     => false,

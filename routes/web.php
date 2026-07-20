@@ -78,7 +78,7 @@ Route::get('/campaign-runs/{run}/zoho-content', function (CampaignRun $run) {
     abort_unless($run->campaign?->template, 404);
 
     return response(
-        ZohoCampaignsDriver::translateMergeTags($run->campaign->template->html_content),
+        ZohoCampaignsDriver::prepareHtmlContent($run->campaign->template->html_content),
         200,
         ['Content-Type' => 'text/html; charset=UTF-8'],
     );

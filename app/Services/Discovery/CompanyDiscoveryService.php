@@ -2,12 +2,13 @@
 
 namespace App\Services\Discovery;
 
+use App\Exceptions\DiscoveryConfigurationException;
 use App\Models\Company;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Support\DomainBlocklist;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -43,8 +44,11 @@ class CompanyDiscoveryService
     public const MAX_PAGE_SIZE = self::MAPS_PAGE_SIZE;
 
     public const ENGINE_GOOGLE = 'google';
+
     public const ENGINE_GOOGLE_MAPS = 'google_maps';
+
     public const ENGINE_GOOGLE_LOCAL = 'google_local';
+
     public const ENGINE_BING = 'bing';
 
     /** @var list<string> */
@@ -53,9 +57,9 @@ class CompanyDiscoveryService
     private const MAX_SEARCHES_PER_RUN = 15;
 
     public function __construct(
-        private readonly IntentQueryService $intentQuery = new IntentQueryService(),
-        private readonly DomainBlocklist $blocklist = new DomainBlocklist(),
-        private readonly DiscoveryEngineRegistry $engines = new DiscoveryEngineRegistry(),
+        private readonly IntentQueryService $intentQuery = new IntentQueryService,
+        private readonly DomainBlocklist $blocklist = new DomainBlocklist,
+        private readonly DiscoveryEngineRegistry $engines = new DiscoveryEngineRegistry,
     ) {}
 
     /**
@@ -83,25 +87,137 @@ class CompanyDiscoveryService
      * Discover candidates for a queued discovery run using a SerpAPI search-call
      * budget. Unlike discover(..., $run, $need), $searchBudget is the number of
      * provider calls allowed, not the number of companies desired.
-     *
-     * @return list<array{domain: string, title: ?string, snippet: ?string, url: string}>
      */
-    public function discoverForRun(ProspectCriteria $criteria, DiscoveryRun $run, int $searchBudget): array
-    {
+    public function discoverForRun(
+        ProspectCriteria $criteria,
+        DiscoveryRun $run,
+        int $searchBudget,
+        ?float $workDeadlineAt = null,
+    ): DiscoveryCollectionResult {
+        $searchBudget = max(0, $searchBudget);
         $snapshot = $this->snapshot($run);
+        $reserved = (int) ($run->searches_reserved ?? $run->credits_reserved ?? 0);
+        $consumed = (int) ($run->searches_consumed ?? 0);
 
-        if ($searchBudget <= 0 || count($snapshot) > (int) $run->consumed) {
-            return $snapshot;
+        // A run with no durable search reservation is contact-only and its
+        // collection is already complete. Check this before provider configuration:
+        // a retry after its final durable debit must still be able to finalize.
+        if ($consumed >= $reserved) {
+            $this->markCollectionComplete($criteria, $run);
+
+            return new DiscoveryCollectionResult($snapshot, true);
         }
 
         if ($this->isLocal()) {
-            // MAX_PAGE_SIZE (not PAGE_SIZE): a google_maps search yields up to 20 candidates
-            // per call, so sizing this on the organic page size would silently truncate the
-            // local driver below what the live maps path can return for the same budget.
-            return $this->discoverFromFixtures($searchBudget * self::MAX_PAGE_SIZE);
+            // A temporary invocation budget of zero must not load fixtures or
+            // terminalize an outstanding reservation. The same job will resume.
+            if ($searchBudget === 0) {
+                return new DiscoveryCollectionResult($snapshot, false);
+            }
+
+            return $this->collectLocalRun($run);
         }
 
-        return $this->discoverFromSerpApiBySearchBudget($criteria, $run, $searchBudget);
+        $queries = $this->enabledQueries($criteria);
+        $cursors = $this->normaliseCursors($criteria->discovery_cursors ?? [], $queries);
+
+        if ($this->isLiveCollectionTerminal($run, $searchBudget, $queries, $cursors)) {
+            $this->markCollectionComplete($criteria, $run);
+
+            return new DiscoveryCollectionResult($snapshot, true);
+        }
+
+        // Let the pipeline consume durable candidates before collecting another page.
+        if (count($snapshot) > (int) $run->consumed) {
+            return new DiscoveryCollectionResult($snapshot, false);
+        }
+
+        $apiKey = config('services.serpapi.api_key');
+        if (! is_string($apiKey) || trim($apiKey) === '') {
+            throw new DiscoveryConfigurationException(
+                'La découverte d’entreprises ne peut pas démarrer : la clé API du fournisseur de recherche n’est pas configurée.'
+            );
+        }
+
+        if ($queries === []) {
+            throw new DiscoveryConfigurationException(
+                'La découverte d’entreprises ne peut pas démarrer : aucune requête ni aucun moteur de recherche n’est activé.'
+            );
+        }
+
+        if ($searchBudget === 0) {
+            return new DiscoveryCollectionResult($snapshot, false);
+        }
+
+        $snapshot = $this->discoverFromSerpApiBySearchBudget(
+            $criteria,
+            $run,
+            $searchBudget,
+            $apiKey,
+            $queries,
+            $workDeadlineAt,
+        );
+
+        $freshRun = $run->fresh() ?? $run;
+        $freshCriteria = $criteria->fresh() ?? $criteria;
+        $freshCursors = $this->normaliseCursors($freshCriteria->discovery_cursors ?? [], $queries);
+
+        $terminal = $this->isLiveCollectionTerminal($freshRun, $searchBudget, $queries, $freshCursors);
+
+        if ($terminal) {
+            $this->markCollectionComplete($freshCriteria, $freshRun);
+        }
+
+        return new DiscoveryCollectionResult($snapshot, $terminal);
+    }
+
+    /**
+     * Persist collection completion without a schema change. Discovery cursors
+     * already hold durable provider state; tying the marker to the run id keeps
+     * it safe when the same criterion starts a later discovery.
+     */
+    private function markCollectionComplete(ProspectCriteria $criteria, DiscoveryRun $run): void
+    {
+        DB::transaction(function () use ($criteria, $run): void {
+            /** @var ProspectCriteria|null $lockedCriteria */
+            $lockedCriteria = ProspectCriteria::whereKey($criteria->getKey())->lockForUpdate()->first();
+            /** @var DiscoveryRun|null $freshRun */
+            $freshRun = DiscoveryRun::whereKey($run->getKey())->first();
+
+            if (! $lockedCriteria || ! $freshRun || $freshRun->status !== 'running') {
+                return;
+            }
+
+            $cursors = is_array($lockedCriteria->discovery_cursors)
+                ? $lockedCriteria->discovery_cursors
+                : [];
+            $cursors[ProspectCriteria::DISCOVERY_COLLECTION_COMPLETE_RUN_KEY] = (int) $run->getKey();
+            $lockedCriteria->forceFill(['discovery_cursors' => $cursors])->save();
+        });
+    }
+
+    private function collectLocalRun(DiscoveryRun $run): DiscoveryCollectionResult
+    {
+        $snapshot = DB::transaction(function () use ($run): array {
+            /** @var DiscoveryRun|null $lockedRun */
+            $lockedRun = DiscoveryRun::whereKey($run->getKey())->lockForUpdate()->first();
+
+            if (! $lockedRun) {
+                return [];
+            }
+
+            if ($lockedRun->candidates_snapshot === null) {
+                $lockedRun->forceFill([
+                    'candidates_snapshot' => $this->discoverFromFixtures(PHP_INT_MAX),
+                ])->save();
+            } else {
+                $lockedRun->touch();
+            }
+
+            return $this->snapshot($lockedRun);
+        });
+
+        return new DiscoveryCollectionResult($snapshot, true);
     }
 
     /**
@@ -135,23 +251,25 @@ class CompanyDiscoveryService
                     Log::warning('[CompanyDiscoveryService] SerpAPI account request failed', [
                         'status' => $response->status(),
                     ]);
+
                     return null;
                 }
 
                 $json = $response->json();
 
                 return [
-                    'plan_searches_left'  => $json['plan_searches_left']  ?? null,
+                    'plan_searches_left' => $json['plan_searches_left'] ?? null,
                     'total_searches_left' => $json['total_searches_left'] ?? null,
-                    'this_month_usage'    => $json['this_month_usage']    ?? null,
-                    'searches_per_month'  => $json['searches_per_month']  ?? null,
-                    'plan_name'           => $json['plan_name']           ?? null,
-                    'account_email'       => $json['account_email']       ?? null,
+                    'this_month_usage' => $json['this_month_usage'] ?? null,
+                    'searches_per_month' => $json['searches_per_month'] ?? null,
+                    'plan_name' => $json['plan_name'] ?? null,
+                    'account_email' => $json['account_email'] ?? null,
                 ];
             } catch (\Throwable $e) {
                 Log::warning('[CompanyDiscoveryService] SerpAPI account call threw an exception', [
                     'exception_class' => $e::class,
                 ]);
+
                 return null;
             }
         });
@@ -203,7 +321,7 @@ class CompanyDiscoveryService
             : [];
 
         $results = [];
-        $seen    = [];
+        $seen = [];
 
         foreach ($organic as $item) {
             if (count($results) >= $max) {
@@ -214,7 +332,7 @@ class CompanyDiscoveryService
                 continue;
             }
 
-            $url    = $item['link'] ?? $item['url'] ?? null;
+            $url = $item['link'] ?? $item['url'] ?? null;
             $domain = is_string($url) ? $this->extractDomain($url) : null;
 
             if (! $domain || isset($seen[$domain])) {
@@ -222,11 +340,11 @@ class CompanyDiscoveryService
             }
 
             $seen[$domain] = true;
-            $results[]     = [
-                'domain'  => $domain,
-                'title'   => $item['title'] ?? null,
+            $results[] = [
+                'domain' => $domain,
+                'title' => $item['title'] ?? null,
                 'snippet' => $item['snippet'] ?? null,
-                'url'     => $url,
+                'url' => $url,
             ];
         }
 
@@ -252,16 +370,17 @@ class CompanyDiscoveryService
     }
 
     /**
-     * @return array<mixed>|null  null = missing/invalid and the caller should bail
+     * @return array<mixed>|null null = missing/invalid and the caller should bail
      */
     private function readFixture(string $file, bool $warnWhenMissing): ?array
     {
-        $path = base_path('database/fixtures/discovery/' . $file);
+        $path = base_path('database/fixtures/discovery/'.$file);
 
         if (! file_exists($path)) {
             if ($warnWhenMissing) {
                 Log::warning('[CompanyDiscoveryService] Local fixture missing', ['path' => $path]);
             }
+
             return $warnWhenMissing ? null : [];
         }
 
@@ -269,6 +388,7 @@ class CompanyDiscoveryService
 
         if (! is_array($raw)) {
             Log::warning('[CompanyDiscoveryService] Local fixture is not a valid JSON array.', ['path' => $path]);
+
             return $warnWhenMissing ? null : [];
         }
 
@@ -285,6 +405,7 @@ class CompanyDiscoveryService
             Log::warning('[CompanyDiscoveryService] SerpAPI key not configured — skipping discovery.', [
                 'criteria_id' => $criteria->id,
             ]);
+
             return [];
         }
 
@@ -304,7 +425,7 @@ class CompanyDiscoveryService
         }
 
         $cursors = $this->normaliseCursors($criteria->discovery_cursors ?? [], $queries);
-        $order   = $this->rotatedQueryOrder($queries, $cursors);
+        $order = $this->rotatedQueryOrder($queries, $cursors);
         $searches = 0;
 
         foreach ($order as $query) {
@@ -316,7 +437,7 @@ class CompanyDiscoveryService
 
             while (count($snapshot) < $need && $searches < self::MAX_SEARCHES_PER_RUN) {
                 $cursors = $this->normaliseCursors($criteria->fresh()?->discovery_cursors ?? [], $queries);
-                $cursor  = $cursors[$key] ?? $query + ['start' => 0, 'exhausted' => false];
+                $cursor = $cursors[$key] ?? $query + ['start' => 0, 'exhausted' => false];
 
                 if ((bool) ($cursor['exhausted'] ?? false)) {
                     break;
@@ -332,11 +453,12 @@ class CompanyDiscoveryService
                 } catch (\Throwable $e) {
                     Log::warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
                         'criteria_id' => $criteria->id,
-                        'query'       => $query['q'],
-                        'engine'      => $query['engine'],
-                        'start'       => $start,
+                        'query' => $query['q'],
+                        'engine' => $query['engine'],
+                        'start' => $start,
                         'exception_class' => $e::class,
                     ]);
+
                     return $snapshot;
                 }
 
@@ -345,11 +467,12 @@ class CompanyDiscoveryService
                 if ($response->failed()) {
                     Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
                         'criteria_id' => $criteria->id,
-                        'query'       => $query['q'],
-                        'engine'      => $query['engine'],
-                        'start'       => $start,
-                        'status'      => $response->status(),
+                        'query' => $query['q'],
+                        'engine' => $query['engine'],
+                        'start' => $start,
+                        'status' => $response->status(),
                     ]);
+
                     return $snapshot;
                 }
 
@@ -379,26 +502,17 @@ class CompanyDiscoveryService
      * Live SerpAPI run mode where the budget is provider search calls. Each call
      * appends up to PAGE_SIZE new candidates to the durable run snapshot.
      */
-    private function discoverFromSerpApiBySearchBudget(ProspectCriteria $criteria, DiscoveryRun $run, int $searchBudget): array
-    {
-        $apiKey = config('services.serpapi.api_key');
-
-        if (! $apiKey) {
-            Log::warning('[CompanyDiscoveryService] SerpAPI key not configured — skipping discovery.', [
-                'criteria_id' => $criteria->id,
-            ]);
-            return $this->snapshot($run);
-        }
-
-        $queries = $this->enabledQueries($criteria);
-
-        if ($queries === []) {
-            return $this->snapshot($run);
-        }
-
+    private function discoverFromSerpApiBySearchBudget(
+        ProspectCriteria $criteria,
+        DiscoveryRun $run,
+        int $searchBudget,
+        string $apiKey,
+        array $queries,
+        ?float $workDeadlineAt,
+    ): array {
         $snapshot = $this->snapshot($run);
-        $cursors  = $this->normaliseCursors($criteria->discovery_cursors ?? [], $queries);
-        $order    = $this->rotatedQueryOrder($queries, $cursors);
+        $cursors = $this->normaliseCursors($criteria->discovery_cursors ?? [], $queries);
+        $order = $this->rotatedQueryOrder($queries, $cursors);
         $attempts = 0;
         $maxSearches = min($searchBudget, self::MAX_SEARCHES_PER_RUN);
 
@@ -414,7 +528,7 @@ class CompanyDiscoveryService
 
                 $key = $this->queryKey($query);
                 $cursors = $this->normaliseCursors($criteria->fresh()?->discovery_cursors ?? [], $queries);
-                $cursor  = $cursors[$key] ?? $query + ['start' => 0, 'exhausted' => false];
+                $cursor = $cursors[$key] ?? $query + ['start' => 0, 'exhausted' => false];
 
                 if ((bool) ($cursor['exhausted'] ?? false)) {
                     continue;
@@ -422,6 +536,11 @@ class CompanyDiscoveryService
 
                 $start = max(0, (int) ($cursor['start'] ?? 0));
                 $providerParams = is_array($cursor['provider_params'] ?? null) ? $cursor['provider_params'] : [];
+
+                $timeoutSeconds = $this->requestTimeoutSeconds($workDeadlineAt);
+                if ($timeoutSeconds === null) {
+                    return $snapshot;
+                }
 
                 // Debit durably before network I/O. HTTP errors and exceptions still
                 // consume a SerpAPI attempt and retries can never exceed the reservation.
@@ -434,26 +553,28 @@ class CompanyDiscoveryService
                 $this->recordAttemptRotation($criteria, $queries, $query);
 
                 try {
-                    $response = $this->fetchPage($apiKey, $query, $start, $providerParams);
+                    $response = $this->fetchPage($apiKey, $query, $start, $providerParams, $timeoutSeconds);
                 } catch (\Throwable $e) {
                     Log::warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
                         'criteria_id' => $criteria->id,
-                        'query'       => $query['q'],
-                        'engine'      => $query['engine'],
-                        'start'       => $start,
+                        'query' => $query['q'],
+                        'engine' => $query['engine'],
+                        'start' => $start,
                         'exception_class' => $e::class,
                     ]);
+
                     continue;
                 }
 
                 if ($response->failed()) {
                     Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
                         'criteria_id' => $criteria->id,
-                        'query'       => $query['q'],
-                        'engine'      => $query['engine'],
-                        'start'       => $start,
-                        'status'      => $response->status(),
+                        'query' => $query['q'],
+                        'engine' => $query['engine'],
+                        'start' => $start,
+                        'status' => $response->status(),
                     ]);
+
                     continue;
                 }
 
@@ -466,9 +587,7 @@ class CompanyDiscoveryService
 
                 $snapshot = $this->snapshot($run->fresh());
 
-                if (! app()->runningUnitTests()) {
-                    usleep(600_000);
-                }
+                $this->pauseBetweenProviderRequests($workDeadlineAt);
             }
 
             if (! $attemptedThisRound) {
@@ -480,12 +599,73 @@ class CompanyDiscoveryService
     }
 
     /**
-     * @param list<array{q: string, engine: string}> $queries
+     * @param  list<array{q: string, engine: string}>  $queries
+     * @param  array<string, mixed>  $cursors
+     */
+    private function isLiveCollectionTerminal(
+        DiscoveryRun $run,
+        int $searchBudget,
+        array $queries,
+        array $cursors,
+    ): bool {
+        $reserved = (int) ($run->searches_reserved ?? $run->credits_reserved ?? 0);
+        $consumed = (int) ($run->searches_consumed ?? 0);
+
+        if ($consumed >= $reserved) {
+            return true;
+        }
+
+        if ($queries === []) {
+            return false;
+        }
+
+        foreach ($queries as $query) {
+            $cursor = $cursors[$this->queryKey($query)] ?? null;
+            if (! is_array($cursor) || ! (bool) ($cursor['exhausted'] ?? false)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function requestTimeoutSeconds(?float $workDeadlineAt): ?int
+    {
+        if ($workDeadlineAt === null) {
+            return 20;
+        }
+
+        $remaining = (int) floor($workDeadlineAt - microtime(true));
+
+        return $remaining < 1 ? null : min(20, $remaining);
+    }
+
+    private function pauseBetweenProviderRequests(?float $workDeadlineAt): void
+    {
+        if (app()->runningUnitTests()) {
+            return;
+        }
+
+        $delayMicros = 600_000;
+
+        if ($workDeadlineAt !== null) {
+            $remainingMicros = (int) floor(($workDeadlineAt - microtime(true)) * 1_000_000);
+            // Preserve the full second required to start another provider call.
+            $delayMicros = min($delayMicros, max(0, $remainingMicros - 1_000_000));
+        }
+
+        if ($delayMicros > 0) {
+            usleep($delayMicros);
+        }
+    }
+
+    /**
+     * @param  list<array{q: string, engine: string}>  $queries
      */
     private function discoverFromSerpApiWithoutCursor(ProspectCriteria $criteria, string $apiKey, array $queries, int $max): array
     {
         $results = [];
-        $seen    = [];
+        $seen = [];
 
         foreach ($queries as $query) {
             if (count($results) >= $max) {
@@ -498,10 +678,11 @@ class CompanyDiscoveryService
                 if ($response->failed()) {
                     Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
                         'criteria_id' => $criteria->id,
-                        'query'       => $query['q'],
-                        'engine'      => $query['engine'],
-                        'status'      => $response->status(),
+                        'query' => $query['q'],
+                        'engine' => $query['engine'],
+                        'status' => $response->status(),
                     ]);
+
                     continue;
                 }
 
@@ -520,8 +701,8 @@ class CompanyDiscoveryService
             } catch (\Throwable $e) {
                 Log::warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
                     'criteria_id' => $criteria->id,
-                    'query'       => $query['q'],
-                    'engine'      => $query['engine'],
+                    'query' => $query['q'],
+                    'engine' => $query['engine'],
                     'exception_class' => $e::class,
                 ]);
             }
@@ -581,7 +762,7 @@ class CompanyDiscoveryService
      * Maps queries get an engine-prefixed key: the same text on a different engine is a
      * genuinely different result stream and must paginate independently.
      *
-     * @param array{q: string, engine: string} $query
+     * @param  array{q: string, engine: string}  $query
      */
     private function queryKey(array $query): string
     {
@@ -589,7 +770,7 @@ class CompanyDiscoveryService
 
         return $engine === self::ENGINE_GOOGLE
             ? md5($query['q'])
-            : md5($engine . ':' . $query['q']);
+            : md5($engine.':'.$query['q']);
     }
 
     /**
@@ -602,7 +783,7 @@ class CompanyDiscoveryService
     }
 
     /**
-     * @param list<array{q: string, engine: string}> $queries
+     * @param  list<array{q: string, engine: string}>  $queries
      * @return array<string, mixed>
      */
     private function normaliseCursors(?array $stored, array $queries): array
@@ -618,9 +799,9 @@ class CompanyDiscoveryService
             $adapter = $this->engines->get($query['engine']);
 
             $cursors[$key] = [
-                'q'         => $query['q'],
-                'engine'    => $query['engine'],
-                'start'     => max(0, (int) ($existing['start'] ?? 0)),
+                'q' => $query['q'],
+                'engine' => $query['engine'],
+                'start' => max(0, (int) ($existing['start'] ?? 0)),
                 'exhausted' => (bool) ($existing['exhausted'] ?? false),
                 'provider_params' => $adapter->sanitizeCursorParams(
                     is_array($existing['provider_params'] ?? null) ? $existing['provider_params'] : []
@@ -635,9 +816,9 @@ class CompanyDiscoveryService
 
             $storedEngine = $this->normaliseEngine($storedCursor['engine'] ?? null);
             $cursors[$storedKey] = [
-                'q'         => is_string($storedCursor['q'] ?? null) ? $storedCursor['q'] : '',
-                'engine'    => $storedEngine,
-                'start'     => max(0, (int) ($storedCursor['start'] ?? 0)),
+                'q' => is_string($storedCursor['q'] ?? null) ? $storedCursor['q'] : '',
+                'engine' => $storedEngine,
+                'start' => max(0, (int) ($storedCursor['start'] ?? 0)),
                 'exhausted' => (bool) ($storedCursor['exhausted'] ?? false),
                 'provider_params' => $this->engines->get($storedEngine)->sanitizeCursorParams(
                     is_array($storedCursor['provider_params'] ?? null) ? $storedCursor['provider_params'] : []
@@ -654,8 +835,8 @@ class CompanyDiscoveryService
     }
 
     /**
-     * @param list<array{q: string, engine: string}> $queries
-     * @param array<string, mixed> $cursors
+     * @param  list<array{q: string, engine: string}>  $queries
+     * @param  array<string, mixed>  $cursors
      * @return list<array{q: string, engine: string}>
      */
     private function rotatedQueryOrder(array $queries, array $cursors): array
@@ -686,14 +867,19 @@ class CompanyDiscoveryService
      *   country, type, types, rating, reviews, gps_coordinates, website.
      *   serpapi_pagination.next advances &start by 20.
      *
-     * @param array{q: string, engine: string} $query
+     * @param  array{q: string, engine: string}  $query
      */
-    private function fetchPage(string $apiKey, array $query, int $start, array $providerParams = [])
-    {
+    private function fetchPage(
+        string $apiKey,
+        array $query,
+        int $start,
+        array $providerParams = [],
+        int $timeoutSeconds = 20,
+    ) {
         $engine = $this->normaliseEngine($query['engine'] ?? null);
         $params = ['api_key' => $apiKey] + $this->engines->get($engine)->params($query['q'], $start, $providerParams);
 
-        return Http::timeout(20)
+        return Http::timeout(max(1, min(20, $timeoutSeconds)))
             ->acceptJson()
             ->get('https://serpapi.com/search.json', $params);
     }
@@ -701,7 +887,7 @@ class CompanyDiscoveryService
     /**
      * Turn a fetched page into filtered candidates + the exhausted flag.
      *
-     * @param array{q: string, engine: string} $query
+     * @param  array{q: string, engine: string}  $query
      * @return array{0: list<array<string, mixed>>, 1: bool, 2: ?int, 3: array<string, string>}
      */
     private function parsePage(ProspectCriteria $criteria, array $query, $response, array $snapshot): array
@@ -718,7 +904,7 @@ class CompanyDiscoveryService
     /**
      * Engine-specific normalisation into the candidate contract. No dedup, no DB.
      *
-     * @param array{q: string, engine: string} $query
+     * @param  array{q: string, engine: string}  $query
      * @return list<array<string, mixed>>
      */
     private function rawPageCandidates(array $query, $response): array
@@ -767,21 +953,21 @@ class CompanyDiscoveryService
             }
 
             $website = trim($website);
-            $domain  = $this->extractDomain($website);
+            $domain = $this->extractDomain($website);
 
             if (! $domain) {
                 continue;
             }
 
-            $type    = is_string($item['type'] ?? null) ? trim($item['type']) : '';
+            $type = is_string($item['type'] ?? null) ? trim($item['type']) : '';
             $address = is_string($item['address'] ?? null) ? trim($item['address']) : '';
             $snippet = trim(implode(' — ', array_filter([$type, $address], fn ($v) => $v !== '')));
 
             $candidate = [
-                'domain'          => $domain,
-                'title'           => is_string($item['title'] ?? null) ? $item['title'] : null,
-                'snippet'         => $snippet !== '' ? $snippet : null,
-                'url'             => $website,
+                'domain' => $domain,
+                'title' => is_string($item['title'] ?? null) ? $item['title'] : null,
+                'snippet' => $snippet !== '' ? $snippet : null,
+                'url' => $website,
                 'discovery_query' => $query,
             ];
 
@@ -824,7 +1010,7 @@ class CompanyDiscoveryService
      * Drop candidates whose domain already appears in the run snapshot or earlier in
      * the same page.
      *
-     * @param list<array<string, mixed>> $page
+     * @param  list<array<string, mixed>>  $page
      * @return list<array<string, mixed>>
      */
     private function dedupeAgainstSnapshot(array $page, array $snapshot): array
@@ -857,7 +1043,7 @@ class CompanyDiscoveryService
      * Drop candidates that are already a visible Company, or already rejected under
      * THIS criteria. Shared by the organic and google_maps paths.
      *
-     * @param list<array<string, mixed>> $page
+     * @param  list<array<string, mixed>>  $page
      * @return list<array<string, mixed>>
      */
     private function rejectKnownDomains(ProspectCriteria $criteria, array $page): array
@@ -888,9 +1074,9 @@ class CompanyDiscoveryService
     }
 
     /**
-     * @param list<array{q: string, engine: string}> $queries
-     * @param array{q: string, engine: string} $query
-     * @param list<array<string, mixed>> $pageCandidates
+     * @param  list<array{q: string, engine: string}>  $queries
+     * @param  array{q: string, engine: string}  $query
+     * @param  list<array<string, mixed>>  $pageCandidates
      */
     private function appendPage(
         ProspectCriteria $criteria,
@@ -909,7 +1095,7 @@ class CompanyDiscoveryService
             /** @var DiscoveryRun|null $lockedRun */
             $lockedRun = DiscoveryRun::whereKey($run->id)->lockForUpdate()->first();
 
-            if (! $lockedCriteria || ! $lockedRun) {
+            if (! $lockedCriteria || ! $lockedRun || $lockedRun->status !== 'running') {
                 return false;
             }
 
@@ -942,9 +1128,9 @@ class CompanyDiscoveryService
             // SerpAPI's next URL is authoritative. Bing page sizes vary, so adding
             // a fixed page size would overlap or skip results.
             $cursors[$key] = [
-                'q'         => $query['q'],
-                'engine'    => $query['engine'],
-                'start'     => $nextStart ?? $expectedStart,
+                'q' => $query['q'],
+                'engine' => $query['engine'],
+                'start' => $nextStart ?? $expectedStart,
                 'exhausted' => $exhausted,
                 'provider_params' => $this->engines->get($query['engine'])->sanitizeCursorParams($nextParams),
             ];
@@ -976,7 +1162,7 @@ class CompanyDiscoveryService
     {
         return DB::transaction(function () use ($run): bool {
             $locked = DiscoveryRun::whereKey($run->id)->lockForUpdate()->first();
-            if (! $locked) {
+            if (! $locked || $locked->status !== 'running') {
                 return false;
             }
 
@@ -998,8 +1184,8 @@ class CompanyDiscoveryService
      * cursor is left untouched so a failed stream retries the same provider page,
      * while the next invocation starts from the following stream.
      *
-     * @param list<array{q: string, engine: string}> $queries
-     * @param array{q: string, engine: string} $query
+     * @param  list<array{q: string, engine: string}>  $queries
+     * @param  array{q: string, engine: string}  $query
      */
     private function recordAttemptRotation(ProspectCriteria $criteria, array $queries, array $query): void
     {
@@ -1027,12 +1213,11 @@ class CompanyDiscoveryService
      *
      * Result is sliced to config('services.serpapi.max_queries_per_run', 40) — D10.
      *
-     * @param  ProspectCriteria  $criteria
      * @return list<string>
      */
     public function buildQueries(ProspectCriteria $criteria): array
     {
-        $sectors   = $criteria->sectors   ?? [];
+        $sectors = $criteria->sectors ?? [];
         $countries = $criteria->countries ?? [];
 
         // TCL France context: freight-forwarding defaults
@@ -1050,7 +1235,7 @@ class CompanyDiscoveryService
         // ISO-2 → French label mapping (D10 / D12).
         // Legacy free-text ("France") and unknown codes pass through unchanged.
         $labels = config('global.data.company_countries', []);
-        $raw    = ! empty($countries) ? $countries : ['France', 'Maroc'];
+        $raw = ! empty($countries) ? $countries : ['France', 'Maroc'];
 
         $countryTokens = array_map(function ($v) use ($labels) {
             if (isset($labels[$v])) {
@@ -1064,6 +1249,7 @@ class CompanyDiscoveryService
                     'token' => $v,
                 ]);
             }
+
             return $v;
         }, $raw);
 
@@ -1085,15 +1271,15 @@ class CompanyDiscoveryService
         // D10: budget slice — cap query list to avoid 700+ queries from UE-27 × sectors.
         // 27 countries × (6 keywords + 2×sectors) can exceed 700 × 600 ms.
         // daily_limit caps results, not queries; the budget caps API consumption.
-        $budget  = (int) config('services.serpapi.max_queries_per_run', 40);
-        $total   = count($queries);
+        $budget = (int) config('services.serpapi.max_queries_per_run', 40);
+        $total = count($queries);
         if ($total > $budget) {
             $dropped = $total - $budget;
             Log::info('[CompanyDiscoveryService] Query budget exceeded — dropping queries.', [
                 'criteria_id' => $criteria->id,
-                'total'       => $total,
-                'budget'      => $budget,
-                'dropped'     => $dropped,
+                'total' => $total,
+                'budget' => $budget,
+                'dropped' => $dropped,
             ]);
             $queries = array_slice($queries, 0, $budget);
         }

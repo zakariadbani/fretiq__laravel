@@ -20,8 +20,9 @@ use Illuminate\Support\Facades\URL;
  *   - NEVER Mail::raw() — this class is the only allowed send path for sequences.
  *   - Embeds the tracking pixel (1×1 GIF via APP_URL/track/open/{token}).
  *   - Adds RFC 8058 List-Unsubscribe + List-Unsubscribe-Post headers.
- *   - Variable substitution: {{contact.name}}, {{contact.email}}, {{company.name}},
- *     {{unsubscribe_url}}.
+ *   - Variable substitution (subject AND body): {{contact.name}},
+ *     {{contact.first_name}}, {{contact.email}}, {{company.name}},
+ *     {{company.sector}}, {{unsubscribe_url}}.
  *   - From address falls back to the app default (config mail.from) when the
  *     sequence step has no sender identity; override in the service layer when needed.
  *
@@ -58,12 +59,12 @@ class SequenceStepMailable extends Mailable
                     $this->senderIdentity->email,
                     $this->senderIdentity->name ?? '',
                 ),
-                subject: $this->subjectLine,
+                subject: self::renderMergeTags($this->subjectLine, $this->contact, $this->unsubscribeUrl),
             );
         }
 
         return new Envelope(
-            subject: $this->subjectLine,
+            subject: self::renderMergeTags($this->subjectLine, $this->contact, $this->unsubscribeUrl),
         );
     }
 

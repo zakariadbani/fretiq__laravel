@@ -75,11 +75,11 @@ class DiscoveryPipelineTimeBudgetTest extends TestCase
 
     // ── runTimeBudget(): defensive setting resolution ─────────────────────────
 
-    public function test_a_valid_setting_is_honoured(): void
+    public function test_a_setting_above_the_safe_maximum_is_clamped(): void
     {
         $this->primeSettings(['decouverte.run_time_budget' => 600]);
 
-        $this->assertSame(600, $this->invoke('runTimeBudget', []));
+        $this->assertSame(240, $this->invoke('runTimeBudget', []));
     }
 
     public function test_a_numeric_string_setting_is_honoured(): void
@@ -87,6 +87,13 @@ class DiscoveryPipelineTimeBudgetTest extends TestCase
         $this->primeSettings(['decouverte.run_time_budget' => '120']);
 
         $this->assertSame(120, $this->invoke('runTimeBudget', []));
+    }
+
+    public function test_a_setting_below_the_safe_minimum_is_clamped(): void
+    {
+        $this->primeSettings(['decouverte.run_time_budget' => 12]);
+
+        $this->assertSame(30, $this->invoke('runTimeBudget', []));
     }
 
     /**

@@ -23,9 +23,10 @@ class ContactUpsertService
      * Upsert contacts for a company from Hunter enrichment data.
      *
      * @param  Company  $company  The company these contacts belong to.
-     * @param  string   $domain   Used as source_url.
-     * @param  array    $emails   Hunter emails array (each entry has value, type, first_name, …).
-     * @return int Number of contacts processed (created or updated).
+     * @param  string  $domain  Used as source_url.
+     * @param  array  $emails  Hunter emails array (each entry has value, type, first_name, …).
+     * @return int Number of contacts newly created. Updates are idempotent and
+     *             do not inflate discovery-run contact creation statistics.
      */
     public function upsertFromHunter(Company $company, string $domain, array $emails): int
     {
@@ -38,9 +39,9 @@ class ContactUpsertService
                 continue;
             }
 
-            $firstName  = $emailData['first_name']  ?? '';
-            $lastName   = $emailData['last_name']   ?? '';
-            $name       = trim("{$firstName} {$lastName}");
+            $firstName = $emailData['first_name'] ?? '';
+            $lastName = $emailData['last_name'] ?? '';
+            $name = trim("{$firstName} {$lastName}");
 
             if ($name === '') {
                 // Fall back to the local-part of the address
@@ -51,40 +52,53 @@ class ContactUpsertService
 
             $verificationResult = data_get($emailData, 'verification.result');
 
-            /** @var Contact|null $existing */
-            $existing = Contact::where('email', $emailAddress)->first();
+            $capturedAt = now();
+            $shared = [
+                'company_id' => $company->id,
+                'name' => $name,
+                'position' => $emailData['position'] ?? null,
+                'source' => 'discovered',
+                'legal_basis' => 'legitimate_interest',
+                'email_kind' => $emailKind,
+                'source_url' => $domain,
+                'source_captured_at' => $capturedAt,
+                'email_verification_status' => $verificationResult,
+                'updated_at' => $capturedAt,
+            ];
 
-            if ($existing) {
-                // Idempotent update — keep existing status
-                $existing->fill([
-                    'company_id'               => $company->id,
-                    'name'                     => $name,
-                    'position'                 => $emailData['position'] ?? $existing->position,
-                    'source'                   => 'discovered',
-                    'legal_basis'              => 'legitimate_interest',
-                    'email_kind'               => $emailKind,
-                    'source_url'               => $domain,
-                    'source_captured_at'       => now(),
-                    'email_verification_status'=> $verificationResult,
-                ]);
-                $existing->save();
-            } else {
-                Contact::create([
-                    'company_id'               => $company->id,
-                    'email'                    => $emailAddress,
-                    'name'                     => $name,
-                    'position'                 => $emailData['position'] ?? null,
-                    'source'                   => 'discovered',
-                    'status'                   => 'new',
-                    'legal_basis'              => 'legitimate_interest',
-                    'email_kind'               => $emailKind,
-                    'source_url'               => $domain,
-                    'source_captured_at'       => now(),
-                    'email_verification_status'=> $verificationResult,
-                ]);
+            // The unique email index is the concurrency arbiter. Exactly one
+            // worker can insert and count the contact; racing workers fall
+            // through to the live-row update without inflating created totals.
+            $inserted = Contact::query()->insertOrIgnore([
+                ...$shared,
+                'email' => $emailAddress,
+                'status' => 'new',
+                'created_at' => $capturedAt,
+                'deleted_at' => null,
+            ]);
+
+            if ($inserted === 1) {
+                $count++;
+
+                continue;
             }
 
-            $count++;
+            // Preserve the existing lifecycle status. The SoftDeletes global
+            // scope deliberately excludes tombstones: a unique conflict with a
+            // soft-deleted address is not silently resurrected or reassigned.
+            if (($emailData['position'] ?? null) === null) {
+                unset($shared['position']);
+            }
+
+            // Global email uniqueness must never move a contact from another
+            // company. On a conflict, enrich only the row already owned by this
+            // company; an address attached elsewhere is ignored.
+            unset($shared['company_id']);
+
+            Contact::query()
+                ->where('email', $emailAddress)
+                ->where('company_id', $company->id)
+                ->update($shared);
         }
 
         return $count;

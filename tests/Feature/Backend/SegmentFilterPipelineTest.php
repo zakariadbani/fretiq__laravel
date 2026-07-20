@@ -4,6 +4,7 @@ namespace Tests\Feature\Backend;
 
 use App\Models\Company;
 use App\Models\Contact;
+use App\Models\ProspectCriteria;
 use App\Models\Segment;
 use App\Models\Suppression;
 use App\Services\Campaign\SegmentService;
@@ -83,6 +84,14 @@ class SegmentFilterPipelineTest extends TestCase
         ], $extra));
     }
 
+    private function makeCriteria(string $name): ProspectCriteria
+    {
+        return ProspectCriteria::create([
+            'name'      => $name,
+            'is_active' => true,
+        ]);
+    }
+
     // ── Stage 1: Scope filter ──────────────────────────────────────────────────
 
     public function test_scope_client_excludes_prospects(): void
@@ -160,6 +169,137 @@ class SegmentFilterPipelineTest extends TestCase
 
         $this->assertSame(2, $stats['matched'], 'Both companies match the multi-sector whereIn filter');
         $this->assertSame(2, $stats['final']);
+    }
+
+    // ── Stage 2: criteria_id filter + sector OR criteria_id union ─────────────
+
+    /**
+     * criteria_id alone matches only companies tagged with that criteria.
+     */
+    public function test_filter_criteria_id_only_matches_tagged_company(): void
+    {
+        config(['prospecting.cold_send_enabled' => false]);
+
+        $criteria = $this->makeCriteria('Critère A');
+        $this->companyA->update(['criteria_id' => $criteria->id]);
+
+        $this->makeContact($this->companyA, 'a@acme.test');
+
+        $stats = $this->service->resolveWithStats('client', ['criteria_id' => [$criteria->id]]);
+
+        $this->assertSame(1, $stats['matched'], 'Company tagged with the criteria must match');
+        $this->assertSame(1, $stats['final']);
+    }
+
+    /**
+     * A criteria_id that no company carries yields zero matches.
+     */
+    public function test_filter_criteria_id_without_match_yields_zero(): void
+    {
+        config(['prospecting.cold_send_enabled' => false]);
+
+        $criteria = $this->makeCriteria('Critère orphelin');
+
+        $this->makeContact($this->companyA, 'a@acme.test');
+
+        $stats = $this->service->resolveWithStats('client', ['criteria_id' => [$criteria->id]]);
+
+        $this->assertSame(0, $stats['matched'], 'No company carries this criteria_id');
+        $this->assertSame(0, $stats['final']);
+    }
+
+    /**
+     * When BOTH sector and criteria_id are present they are ORed: a company that
+     * matches only the sector AND a company that matches only the criteria_id
+     * must both resolve.
+     */
+    public function test_filter_sector_or_criteria_id_returns_the_union(): void
+    {
+        // Gate open so the prospect company can be matched too.
+        config(['prospecting.cold_send_enabled' => true]);
+
+        $criteria = $this->makeCriteria('Critère union');
+
+        // companyA matches by sector only (Transport, no criteria_id).
+        // companyB matches by criteria_id only (sector=Logistics is NOT in the filter).
+        $this->companyB->update(['criteria_id' => $criteria->id]);
+
+        $this->makeContact($this->companyA, 'a@acme.test');
+        $this->makeContact($this->companyB, 'b@prospect.test');
+
+        $stats = $this->service->resolveWithStats('mixed', [
+            'sector'      => ['Transport'],
+            'criteria_id' => [$criteria->id],
+        ]);
+
+        $this->assertSame(2, $stats['matched'], 'sector OR criteria_id must return the union of both');
+        $this->assertSame(2, $stats['final']);
+    }
+
+    /**
+     * country stays ANDed with the sector/criteria_id OR-group: a company matching
+     * the criteria_id but sitting in the wrong country must be excluded.
+     */
+    public function test_filter_country_still_anded_with_criteria_id(): void
+    {
+        config(['prospecting.cold_send_enabled' => true]);
+
+        $criteria = $this->makeCriteria('Critère pays');
+
+        // Both companies carry the criteria, but only companyA is in FR.
+        $this->companyA->update(['criteria_id' => $criteria->id]);   // FR
+        $this->companyB->update(['criteria_id' => $criteria->id]);   // BE
+
+        $this->makeContact($this->companyA, 'a@acme.test');
+        $this->makeContact($this->companyB, 'b@prospect.test');
+
+        $stats = $this->service->resolveWithStats('mixed', [
+            'criteria_id' => [$criteria->id],
+            'country'     => ['FR'],
+        ]);
+
+        $this->assertSame(1, $stats['matched'], 'BE company must be excluded by the ANDed country filter');
+        $this->assertSame(1, $stats['final']);
+    }
+
+    /**
+     * country is ANDed with the whole OR-group, not just one branch: a company
+     * matching the sector branch but in the wrong country is still excluded.
+     */
+    public function test_filter_country_anded_with_the_whole_or_group(): void
+    {
+        config(['prospecting.cold_send_enabled' => true]);
+
+        $criteria = $this->makeCriteria('Critère et pays');
+
+        $this->companyB->update(['criteria_id' => $criteria->id]);   // BE, criteria branch
+
+        $this->makeContact($this->companyA, 'a@acme.test');          // FR, sector branch
+        $this->makeContact($this->companyB, 'b@prospect.test');
+
+        $stats = $this->service->resolveWithStats('mixed', [
+            'sector'      => ['Transport'],
+            'criteria_id' => [$criteria->id],
+            'country'     => ['FR'],
+        ]);
+
+        $this->assertSame(1, $stats['matched'], 'Only the FR company survives the ANDed country filter');
+        $this->assertSame(1, $stats['final']);
+    }
+
+    /**
+     * A criteria_id array that cleans down to empty is treated as absent.
+     */
+    public function test_filter_empty_criteria_id_array_treated_as_absent(): void
+    {
+        config(['prospecting.cold_send_enabled' => false]);
+
+        $this->makeContact($this->companyA, 'a@acme.test');
+
+        $statsNoFilter = $this->service->resolveWithStats('client', []);
+        $statsEmpty    = $this->service->resolveWithStats('client', ['criteria_id' => [null, '']]);
+
+        $this->assertSame($statsNoFilter['final'], $statsEmpty['final']);
     }
 
     public function test_unknown_filter_keys_ignored(): void

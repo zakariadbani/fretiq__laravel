@@ -153,12 +153,9 @@
                             <span class="badge badge-light-primary">
                                 <code class="fs-8">@verbatim{{company.name}}@endverbatim</code> — Société
                             </span>
-                            <span class="badge badge-light-warning">
-                                <code class="fs-8">@verbatim{{unsubscribe_url}}@endverbatim</code> — Lien désabonnement
-                            </span>
                         </div>
                         <div class="form-text text-muted mt-2 fs-8">
-                            Envoi via Zoho : ces variables sont converties automatiquement en merge tags Zoho.
+                            Les variables de personnalisation sont converties automatiquement par le driver d'envoi.
                         </div>
                     </div>
                 </div>
@@ -176,7 +173,8 @@
                                   required>{{ old('html_content', $model->html_content ?? '') }}</textarea>
 
                         <div class="form-text text-muted mt-1">
-                            HTML complet de l'email. Insérez <code>@verbatim{{unsubscribe_url}}@endverbatim</code> dans le lien de désabonnement.
+                            HTML complet de l'email. Le lien de désabonnement est ajouté automatiquement lors de l'envoi.
+                            Le placeholder historique <code>@verbatim{{unsubscribe_url}}@endverbatim</code> reste accepté pour conserver un placement personnalisé existant.
                             Bouton <code>&lt;/&gt;</code> de la barre d'outils pour éditer le code source.
                         </div>
                     </div>

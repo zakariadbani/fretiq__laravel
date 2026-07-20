@@ -2,10 +2,15 @@
 
 namespace App\Services\Discovery;
 
+use App\Exceptions\CriteriaCompanyNoLongerEligibleException;
+use App\Exceptions\EnrichmentInFlightException;
+use App\Exceptions\QuotaExhaustedException;
+use App\Exceptions\QuotaLockUnavailableException;
 use App\Models\Company;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Models\Setting;
+use App\Services\Quota\DiscoveryQuotaService;
 use App\Services\Scoring\LeadScoringService;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -54,6 +59,8 @@ use Illuminate\Support\Facades\Log;
  */
 class DiscoveryPipelineService
 {
+    private const SCORE_CHECKPOINT_KEY = '_discovery_score_checkpoint';
+
     /**
      * Over-fetch multiplier applied to the kept budget when discovering candidates,
      * so a competitor-heavy intent (many rejects) still has enough scanned candidates
@@ -82,52 +89,54 @@ class DiscoveryPipelineService
      * ISO-2 country code map. Reused from ZohoCrmSyncService; inlined for isolation.
      */
     private const COUNTRY_MAP = [
-        'france'          => 'FR',
-        'maroc'           => 'MA',
-        'morocco'         => 'MA',
-        'espagne'         => 'ES',
-        'spain'           => 'ES',
-        'belgique'        => 'BE',
-        'belgium'         => 'BE',
-        'allemagne'       => 'DE',
-        'germany'         => 'DE',
-        'italie'          => 'IT',
-        'italy'           => 'IT',
-        'portugal'        => 'PT',
-        'pays-bas'        => 'NL',
-        'netherlands'     => 'NL',
-        'suisse'          => 'CH',
-        'switzerland'     => 'CH',
-        'sénégal'         => 'SN',
-        'senegal'         => 'SN',
-        "côte d'ivoire"   => 'CI',
-        'ivory coast'     => 'CI',
-        'tunisie'         => 'TN',
-        'tunisia'         => 'TN',
-        'algérie'         => 'DZ',
-        'algeria'         => 'DZ',
-        'chine'           => 'CN',
-        'china'           => 'CN',
-        'états-unis'      => 'US',
-        'united states'   => 'US',
-        'usa'             => 'US',
-        'royaume-uni'     => 'GB',
-        'united kingdom'  => 'GB',
-        'uk'              => 'GB',
-        'turquie'         => 'TR',
-        'turkey'          => 'TR',
-        'pologne'         => 'PL',
-        'poland'          => 'PL',
-        'roumanie'        => 'RO',
-        'romania'         => 'RO',
+        'france' => 'FR',
+        'maroc' => 'MA',
+        'morocco' => 'MA',
+        'espagne' => 'ES',
+        'spain' => 'ES',
+        'belgique' => 'BE',
+        'belgium' => 'BE',
+        'allemagne' => 'DE',
+        'germany' => 'DE',
+        'italie' => 'IT',
+        'italy' => 'IT',
+        'portugal' => 'PT',
+        'pays-bas' => 'NL',
+        'netherlands' => 'NL',
+        'suisse' => 'CH',
+        'switzerland' => 'CH',
+        'sénégal' => 'SN',
+        'senegal' => 'SN',
+        "côte d'ivoire" => 'CI',
+        'ivory coast' => 'CI',
+        'tunisie' => 'TN',
+        'tunisia' => 'TN',
+        'algérie' => 'DZ',
+        'algeria' => 'DZ',
+        'chine' => 'CN',
+        'china' => 'CN',
+        'états-unis' => 'US',
+        'united states' => 'US',
+        'usa' => 'US',
+        'royaume-uni' => 'GB',
+        'united kingdom' => 'GB',
+        'uk' => 'GB',
+        'turquie' => 'TR',
+        'turkey' => 'TR',
+        'pologne' => 'PL',
+        'poland' => 'PL',
+        'roumanie' => 'RO',
+        'romania' => 'RO',
     ];
 
     public function __construct(
-        private readonly CompanyDiscoveryService  $discovery,
-        private readonly HunterEnrichmentService  $hunter,
-        private readonly LeadScoringService       $scoring,
-        private readonly ContactUpsertService     $contactUpsert,
-        private readonly HomepageSnapshotService  $homepage,
+        private readonly CompanyDiscoveryService $discovery,
+        private readonly HunterEnrichmentService $hunter,
+        private readonly LeadScoringService $scoring,
+        private readonly ContactUpsertService $contactUpsert,
+        private readonly HomepageSnapshotService $homepage,
+        private readonly ?DiscoveryQuotaService $quota = null,
+        private readonly ?CompanyEnrichmentService $companyEnrichment = null,
     ) {}
 
     /**
@@ -137,17 +146,32 @@ class DiscoveryPipelineService
      * Counts are persisted incrementally via CAS UPDATE — job completion no longer
      * writes counts.
      *
-     * @param  ProspectCriteria  $criteria
-     * @param  int|null          $cap        External company cap (credits_reserved − consumed) from RunDiscoveryPipelineJob.
-     *                                       null = no external cap; use criteria daily_limit only.
-     * @param  DiscoveryRun|null $run        Live run row; consumed is the resume cursor.
-     * @param  int|null          $contactCap External contact-enrichment cap. null = unlimited (skip Hunter gate).
-     *                                       When set, Hunter is only called while $contactSpent < $contactCap.
-     *                                       Invariant: for discovery rows contact_consumed <= consumed; manual rows differ.
-     * @return array{companies: int, contacts: int, skipped: int, low_score: int, contacts_consumed: int, excluded: int}
+     * @param  int|null  $cap  External company cap (credits_reserved − consumed) from RunDiscoveryPipelineJob.
+     *                         null = no external cap; use criteria daily_limit only.
+     * @param  DiscoveryRun|null  $run  Live run row; consumed is the resume cursor.
+     * @param  int|null  $contactCap  External contact-enrichment cap. null = unlimited (skip Hunter gate).
+     *                                When set, Hunter is only called while $contactSpent < $contactCap.
+     *                                Invariant: for discovery rows contact_consumed <= consumed; manual rows differ.
+     * @param  float|null  $attemptStartedAt  Absolute attempt start used by direct/legacy callers.
+     * @param  DiscoveryExecutionDeadline|null  $attemptDeadline  Exact deadline already shared with
+     *                                                            the queue job's backlog phase.
      */
-    public function run(ProspectCriteria $criteria, ?int $cap = null, ?DiscoveryRun $run = null, ?int $contactCap = null): array
-    {
+    public function run(
+        ProspectCriteria $criteria,
+        ?int $cap = null,
+        ?DiscoveryRun $run = null,
+        ?int $contactCap = null,
+        ?float $attemptStartedAt = null,
+        bool $providerUnavailable = false,
+        ?DiscoveryExecutionDeadline $attemptDeadline = null,
+    ): DiscoveryPipelineResult {
+        // Queued runs receive the exact immutable deadline already used by their
+        // backlog phase. Direct callers still get a locally configured deadline.
+        $deadline = $attemptDeadline ?? new DiscoveryExecutionDeadline(
+            $attemptStartedAt ?? microtime(true),
+            $this->runTimeBudget(),
+        );
+
         // $cap is a SerpAPI search-call budget, not a kept-company budget.
         // One search returns up to a full page of candidates, and page size is
         // engine-dependent (google organic = 10, google_maps = 20).
@@ -165,7 +189,8 @@ class DiscoveryPipelineService
         // Contact budget: how many Hunter calls are allowed in this attempt.
         // PHP_INT_MAX means unlimited (no contactCap set).
         $contactBudget = $contactCap ?? PHP_INT_MAX;
-        $contactSpent  = 0;
+        $contactSpent = 0;
+        $providerCircuitOpen = $providerUnavailable;
 
         $stats = ['companies' => 0, 'contacts' => 0, 'skipped' => 0, 'low_score' => 0, 'new' => 0, 'contacts_consumed' => 0, 'excluded' => 0];
 
@@ -174,8 +199,8 @@ class DiscoveryPipelineService
         // Product decision: enrichment is opted into PER CRITERIA. The global toggle is
         // only the « Hérité » fallback, and its code-level default is false so a missing
         // settings row can never silently turn Hunter on for every criteria.
-        $autoEnrich  = $criteria->auto_enrich ?? (bool) Setting::get('decouverte.auto_enrich', false);
-        $minScore    = (int) ($criteria->min_score_enrich ?? Setting::get('decouverte.min_score_enrich', 50));
+        $autoEnrich = $criteria->auto_enrich ?? (bool) Setting::get('decouverte.auto_enrich', false);
+        $minScore = (int) ($criteria->min_score_enrich ?? Setting::get('decouverte.min_score_enrich', 50));
 
         // Resume cursor: $offset = number of candidates already processed (scanned, not just kept).
         $offset = ($run !== null) ? (int) $run->consumed : 0;
@@ -184,79 +209,99 @@ class DiscoveryPipelineService
         $isDiscoveryRun = $run !== null && ($run->type ?? 'discovery') === 'discovery';
 
         if ($isDiscoveryRun) {
-            $allCandidates = $this->discovery->discoverForRun($criteria, $run, $searchBudget);
+            $collection = $this->discovery->discoverForRun(
+                $criteria,
+                $run,
+                $searchBudget,
+                $deadline->workDeadlineAt(),
+            );
+            $allCandidates = $collection->candidates;
+            $collectionComplete = $collection->terminal;
         } else {
             $allCandidates = $this->discovery->discover($criteria, $candidateLimit);
+            $collectionComplete = true;
         }
 
         $candidates = array_slice($allCandidates, $offset);
 
-        // ── Homepage prefetch ────────────────────────────────────────────────
-        // The scorer is the only consumer of excerpt(), so this is pure waste when
-        // scoring is off. When it is on, one pooled burst collapses N × timeout of
-        // serial homepage latency into ceil(N / POOL_CHUNK) × timeout — the whole
-        // difference between an attempt that finishes inside the job timeout and one
-        // killed mid-candidate. prefetch() already no-ops when
-        // `decouverte.fetch_homepage` is off, already skips domains that are cached,
-        // and never throws — so no extra guarding belongs here.
-        // After this, the per-candidate excerpt() call below is a cache hit.
-        if ($autoScoring) {
-            $prefetchDomains = [];
-
-            foreach ($candidates as $candidate) {
-                $prefetchDomain = $candidate['domain'] ?? null;
-
-                if (is_string($prefetchDomain) && $prefetchDomain !== '') {
-                    $prefetchDomains[] = $prefetchDomain;
-                }
-            }
-
-            $this->homepage->prefetch($prefetchDomains);
-        }
-
         $completedThisAttempt = 0; // kept rows only — stats/logging only; not a budget gate anymore
-        $scannedThisAttempt   = 0; // every processed candidate (kept + rejected)
-        $scanTarget           = count($candidates);
-
-        // Wall-clock deadline for this attempt. Homepages are pooled above, but Gemini
-        // stays serial (~1.5 s per candidate), so a large slice can still outlive the
-        // queue job timeout.
-        $startedAt  = microtime(true);
-        $timeBudget = $this->runTimeBudget();
+        $scannedThisAttempt = 0; // every processed candidate (kept + rejected)
+        $scanTarget = count($candidates);
 
         foreach ($candidates as $candidate) {
             if ($scannedThisAttempt >= $scanTarget) {
                 break;
             }
 
-            // Checked BEFORE any scoring/Hunter work so we never abandon a candidate
-            // half-processed. `consumed` is CAS-persisted per candidate, so the next
-            // attempt resumes at exactly this position — breaking here is a clean
-            // pause, not lost work, and falls through to the normal return below.
-            if ($this->timeBudgetExceeded($startedAt, $timeBudget)) {
+            // Checked before starting a candidate. If scoring itself consumes the
+            // remaining work window, its result is checkpointed in the run snapshot
+            // below before this attempt pauses, so continuation never pays for the
+            // same score twice.
+            if ($deadline->isExhausted()) {
                 Log::info('[DiscoveryPipelineService] Time budget exhausted — stopping this attempt; the run resumes from the same cursor on the next attempt.', [
-                    'run_id'            => $run?->id,
-                    'criteria_id'       => $criteria->id,
-                    'consumed'          => $offset + $scannedThisAttempt,
-                    'scanned'           => $scannedThisAttempt,
-                    'elapsed_seconds'   => round(microtime(true) - $startedAt, 1),
-                    'budget_seconds'    => $timeBudget,
-                    'unscanned'         => $scanTarget - $scannedThisAttempt,
+                    'run_id' => $run?->id,
+                    'criteria_id' => $criteria->id,
+                    'consumed' => $offset + $scannedThisAttempt,
+                    'scanned' => $scannedThisAttempt,
+                    'remaining_seconds' => round($deadline->remaining(), 1),
+                    'unscanned' => $scanTarget - $scannedThisAttempt,
                 ]);
 
                 break;
             }
 
+            // Warm only the next resumable slice. A large all-at-once prefetch used
+            // to consume the whole queue timeout before candidate #1. If a wave
+            // cannot start within the shared deadline, nothing is cached for the
+            // untouched domains and the same cursor resumes on the next attempt.
+            if ($autoScoring && $scannedThisAttempt % 10 === 0) {
+                $prefetchDomains = [];
+
+                foreach (array_slice($candidates, $scannedThisAttempt, 10) as $prefetchCandidate) {
+                    $prefetchDomain = $prefetchCandidate['domain'] ?? null;
+
+                    if (is_string($prefetchDomain) && $prefetchDomain !== '') {
+                        $prefetchDomains[] = $prefetchDomain;
+                    }
+                }
+
+                if (! $this->homepage->prefetch($prefetchDomains, $deadline->workDeadlineAt())) {
+                    break;
+                }
+
+                if (! $this->touchHeartbeat($run)) {
+                    return new DiscoveryPipelineResult($stats, $collectionComplete, false);
+                }
+            }
+
             $domain = $candidate['domain'] ?? null;
 
-            // Dead branch: CompanyDiscoveryService filters no-domain results in both
-            // drivers; this guard is kept for safety only.
+            // Defensive branch for a corrupted legacy snapshot. Advancing the cursor
+            // prevents one invalid row from forcing endless continuations.
             if (! $domain) {
+                if ($run !== null) {
+                    $advanced = DiscoveryRun::where('id', $run->id)
+                        ->where('status', 'running')
+                        ->where('consumed', $offset + $scannedThisAttempt)
+                        ->update([
+                            'consumed' => DB::raw('consumed + 1'),
+                            'skipped_count' => DB::raw('skipped_count + 1'),
+                            'updated_at' => now(),
+                        ]);
+
+                    if ($advanced === 0) {
+                        return new DiscoveryPipelineResult($stats, $collectionComplete, false);
+                    }
+                }
+
+                $stats['skipped']++;
+                $scannedThisAttempt++;
+
                 continue;
             }
 
             // CAS expected position: consumed must equal this value for our UPDATE to land.
-            $expected    = $offset + $scannedThisAttempt;
+            $expected = $offset + $scannedThisAttempt;
             $hunterCalled = false; // declared before try so catch can read it
 
             try {
@@ -276,43 +321,68 @@ class DiscoveryPipelineService
                             ->where('status', 'running')
                             ->where('consumed', $expected)
                             ->update([
-                                'consumed'       => DB::raw('consumed + 1'),
+                                'consumed' => DB::raw('consumed + 1'),
                                 'excluded_count' => DB::raw('excluded_count + 1'),
+                                'updated_at' => now(),
                             ]);
 
                         if ($advanced === 0) {
                             Log::info('[DiscoveryPipelineService] CAS debit blocked — run terminalized or cursor mismatch; returning partial stats.', [
-                                'run_id'      => $run->id,
+                                'run_id' => $run->id,
                                 'criteria_id' => $criteria->id,
-                                'expected'    => $expected,
+                                'expected' => $expected,
                             ]);
-                            return $stats;
+
+                            return new DiscoveryPipelineResult($stats, $collectionComplete, false);
                         }
                     }
 
                     $stats['excluded']++;
                     $scannedThisAttempt++;
+
                     continue;
                 }
 
                 // ── Step 1: Scoring gate ─────────────────────────────────────
-                $score       = null;
+                $score = null;
                 $explanation = null;
                 $excludeFlag = false;
+                $checkpointedCompanyWasNew = false;
 
                 if ($autoScoring) {
-                    // Feed the real homepage text to the scorer, not just the SERP
-                    // snippet — an article ABOUT freight reads like a shipper otherwise.
-                    // Enrich a LOCAL copy only: $candidate stays untouched for upsertCompany().
-                    $scoringCandidate = $candidate;
-                    $excerpt          = $this->homepage->excerpt($domain);
+                    $scoreResult = $isDiscoveryRun
+                        ? $this->scoringCheckpoint($candidate)
+                        : null;
 
-                    if ($excerpt !== null) {
-                        $scoringCandidate['homepage_excerpt'] = $excerpt;
+                    if ($scoreResult !== null) {
+                        $checkpointedCompanyWasNew = (bool) ($scoreResult['company_was_new'] ?? false);
                     }
 
-                    $scoreResult = $this->scoring->score($scoringCandidate, $criteria);
-                    $score       = $scoreResult['score'];
+                    if ($scoreResult === null) {
+                        // Feed the real homepage text to the scorer, not just the SERP
+                        // snippet — an article ABOUT freight reads like a shipper otherwise.
+                        // Enrich a LOCAL copy only: $candidate stays untouched for upsertCompany().
+                        $scoringCandidate = $candidate;
+                        // prefetch() is the only network-capable homepage operation in
+                        // this pipeline and is bounded by the shared deadline. Reading
+                        // here must stay cache-only so eviction cannot trigger a late,
+                        // unbounded serial request.
+                        $excerpt = $this->homepage->cachedExcerpt($domain);
+
+                        if ($excerpt !== null) {
+                            $scoringCandidate['homepage_excerpt'] = $excerpt;
+                        }
+
+                        $scoringTimeout = $deadline->timeout(20);
+
+                        if ($scoringTimeout === null) {
+                            break;
+                        }
+
+                        $scoreResult = $this->scoring->score($scoringCandidate, $criteria, $scoringTimeout);
+                    }
+
+                    $score = $scoreResult['score'];
                     $explanation = $scoreResult['explanation'];
                     $excludeFlag = $scoreResult['exclude'] ?? false;
                 }
@@ -324,24 +394,15 @@ class DiscoveryPipelineService
                 // score passes the gate, AND the per-attempt contact budget has not been exhausted.
                 // Once contactBudget is spent, companies continue being discovered but Hunter is skipped.
                 $budgetExhausted = $contactSpent >= $contactBudget;
+                $alreadyEmpty = $existingForDomain?->enrichment_status === Company::ENRICHMENT_HUNTER_EMPTY;
+                $passesEnrichmentGate = ! $excluded
+                    && ! $alreadyEmpty
+                    && $autoEnrich
+                    && (! $autoScoring || $score >= $minScore);
+                $shouldEnrich = $passesEnrichmentGate
+                    && ! $budgetExhausted
+                    && ! $providerCircuitOpen;
 
-                $shouldEnrich = ! $excluded && $autoEnrich && (! $autoScoring || $score >= $minScore) && ! $budgetExhausted;
-
-                // ── Step 3: Hunter enrichment (if gate passed) ───────────────
-                // $hunterCalled tracks whether Hunter was actually invoked for this candidate.
-                // We debit the contact budget immediately after the call so the gate reflects
-                // calls already made even if a subsequent upsert throws.
-                $hunterCalled = $shouldEnrich;
-                $enrichment   = $shouldEnrich ? $this->hunter->domainSearch($domain) : null;
-                if ($hunterCalled) {
-                    $contactSpent++;
-                }
-
-                // ── Step 3b: Resolve the enrichment audit status ─────────────
-                // Computed BEFORE the company upsert so it rides along in the same
-                // write — no second UPDATE per candidate. The usable-email count is
-                // derived from the Hunter payload with the same "must have a value"
-                // rule ContactUpsertService applies, so it matches $contactCount.
                 $enrichmentStatus = $this->resolveEnrichmentStatus(
                     $excluded,
                     $autoEnrich,
@@ -349,21 +410,142 @@ class DiscoveryPipelineService
                     $score,
                     $minScore,
                     $budgetExhausted,
-                    $hunterCalled,
-                    $enrichment
+                    false,
+                    null,
+                    $providerCircuitOpen,
                 );
 
-                // ── Step 4: Upsert Company + Contacts ────────────────────────
+                // Persist the candidate before attempting to claim it. Automatic
+                // eligibility and the contact debit are then checked against this
+                // durable row under the quota service's admission lock.
                 $company = $this->upsertCompany(
-                    $criteria, $domain, $candidate, $enrichment,
+                    $criteria, $domain, $candidate, null,
                     $score, $explanation, $autoScoring, $excluded, $enrichmentStatus
                 );
 
-                $isNew = $company->wasRecentlyCreated;
+                // A paid score may have been checkpointed after this run inserted
+                // the company but before its candidate cursor could advance. Keep
+                // that run-scoped fact so the continuation reports the new row once.
+                $isNew = $company->wasRecentlyCreated || $checkpointedCompanyWasNew;
+                $contactCount = 0;
+                $enrichment = null;
 
-                $contactCount = ($enrichment !== null)
-                    ? $this->contactUpsert->upsertFromHunter($company, $domain, $enrichment['emails'] ?? [])
-                    : 0;
+                // ── Step 3: Hunter enrichment (if gate passed) ───────────────
+                $hunterTimeout = $shouldEnrich ? $deadline->timeout(20) : null;
+
+                if ($shouldEnrich && $hunterTimeout === null) {
+                    if ($isDiscoveryRun
+                        && $autoScoring
+                        && $this->scoringCheckpoint($candidate) === null
+                        && ! $this->persistScoringCheckpoint($run, $expected, $domain, $scoreResult, $isNew)
+                    ) {
+                        return new DiscoveryPipelineResult($stats, $collectionComplete, false);
+                    }
+
+                    break;
+                }
+
+                if ($shouldEnrich && $run !== null) {
+                    $claimed = null;
+                    try {
+                        $claimed = $this->quotaService()->claimAutomaticEnrichment($company->id, $run);
+                    } catch (QuotaExhaustedException) {
+                        $this->markUnclaimedEnrichmentStatus(
+                            $company,
+                            Company::ENRICHMENT_SKIPPED_BUDGET,
+                        );
+                    } catch (QuotaLockUnavailableException) {
+                        // Admission was never decided, so consuming this cursor
+                        // would permanently strand a candidate without a Hunter
+                        // debit or call. Preserve any paid score and let the parent
+                        // job release this exact candidate for a later attempt.
+                        if ($isDiscoveryRun
+                            && $autoScoring
+                            && $this->scoringCheckpoint($candidate) === null
+                            && ! $this->persistScoringCheckpoint($run, $expected, $domain, $scoreResult, $isNew)
+                        ) {
+                            return new DiscoveryPipelineResult($stats, $collectionComplete, false);
+                        }
+
+                        Log::warning('[DiscoveryPipelineService] Quota admission lock unavailable — candidate retained for retry.', [
+                            'domain' => $domain,
+                            'criteria_id' => $criteria->id,
+                            'run_id' => $run->id,
+                        ]);
+
+                        return new DiscoveryPipelineResult($stats, $collectionComplete, false);
+                    } catch (CriteriaCompanyNoLongerEligibleException|EnrichmentInFlightException) {
+                        // A concurrent/manual owner or a fresh eligibility change won.
+                        // It owns the status and provider decision; discovery still
+                        // advances its candidate cursor without another Hunter call.
+                    }
+
+                    if ($claimed !== null) {
+                        $hunterCalled = true;
+                        $contactSpent++;
+
+                        $outcome = $this->enrichmentService()->enrichClaimed(
+                            $claimed,
+                            $run,
+                            $hunterTimeout,
+                        );
+                        $contactCount = $outcome['contacts_count'];
+
+                        if ($outcome['outcome'] === 'provider_failed') {
+                            $providerCircuitOpen = true;
+                        }
+                    }
+                } elseif ($shouldEnrich) {
+                    // Compatibility path for direct service callers that do not own
+                    // a durable discovery run. Queued production runs always use the
+                    // claimed branch above.
+                    $hunterCalled = true;
+                    $contactSpent++;
+                    $hunterResult = $this->hunter->domainSearchResult($domain, 10, $hunterTimeout);
+
+                    if ($hunterResult['status'] === 'provider_failed') {
+                        $providerCircuitOpen = true;
+                        $directStatus = Company::ENRICHMENT_HUNTER_FAILED;
+                    } else {
+                        $enrichment = $hunterResult['data'] ?? [
+                            'organization' => null,
+                            'industry' => null,
+                            'country' => null,
+                            'emails' => [],
+                            'raw' => [],
+                        ];
+                        $directStatus = $this->resolveEnrichmentStatus(
+                            $excluded,
+                            $autoEnrich,
+                            $autoScoring,
+                            $score,
+                            $minScore,
+                            false,
+                            true,
+                            $enrichment,
+                        );
+                    }
+
+                    $company = $this->upsertCompany(
+                        $criteria,
+                        $domain,
+                        $candidate,
+                        $enrichment,
+                        $score,
+                        $explanation,
+                        $autoScoring,
+                        $excluded,
+                        $directStatus,
+                    );
+
+                    $contactCount = $enrichment !== null
+                        ? $this->contactUpsert->upsertFromHunter(
+                            $company,
+                            $domain,
+                            $enrichment['emails'] ?? [],
+                        )
+                        : 0;
+                }
 
                 // ── Step 5: Determine low-score flag ────────────────────────
                 // A candidate is "low score" when not excluded, auto_enrich is on, scoring is on,
@@ -379,25 +561,26 @@ class DiscoveryPipelineService
                         ->where('status', 'running')
                         ->where('consumed', $expected)
                         ->update($excluded ? [
-                            'consumed'       => DB::raw('consumed + 1'),
+                            'consumed' => DB::raw('consumed + 1'),
                             'excluded_count' => DB::raw('excluded_count + 1'),
+                            'updated_at' => now(),
                         ] : [
-                            'consumed'            => DB::raw('consumed + 1'),
-                            'companies_count'     => DB::raw('companies_count + 1'),
-                            'new_companies_count' => DB::raw('COALESCE(new_companies_count, 0) + ' . ($isNew ? 1 : 0)),
-                            'contacts_count'      => DB::raw('contacts_count + ' . (int) $contactCount),
-                            'low_score_count'     => DB::raw('low_score_count + ' . ($isLowScore ? 1 : 0)),
-                            'contact_consumed'    => DB::raw('contact_consumed + ' . ($hunterCalled ? 1 : 0)),
+                            'consumed' => DB::raw('consumed + 1'),
+                            'companies_count' => DB::raw('companies_count + 1'),
+                            'new_companies_count' => DB::raw('COALESCE(new_companies_count, 0) + '.($isNew ? 1 : 0)),
+                            'low_score_count' => DB::raw('low_score_count + '.($isLowScore ? 1 : 0)),
+                            'updated_at' => now(),
                         ]);
 
                     if ($advanced === 0) {
                         // Run was terminalized or a concurrent process owns the cursor.
                         Log::info('[DiscoveryPipelineService] CAS debit blocked — run terminalized or cursor mismatch; returning partial stats.', [
-                            'run_id'      => $run->id,
+                            'run_id' => $run->id,
                             'criteria_id' => $criteria->id,
-                            'expected'    => $expected,
+                            'expected' => $expected,
                         ]);
-                        return $stats;
+
+                        return new DiscoveryPipelineResult($stats, $collectionComplete, false);
                     }
                 }
 
@@ -420,19 +603,16 @@ class DiscoveryPipelineService
             } catch (\Throwable $e) {
                 if ($e instanceof QueryException && $this->isDuplicateCompanyDomainKey($e)) {
                     Log::info('[DiscoveryPipelineService] Duplicate company domain race - advancing cursor only', [
-                        'domain'      => $domain,
+                        'domain' => $domain,
                         'criteria_id' => $criteria->id,
-                        'run_id'      => $run?->id,
+                        'run_id' => $run?->id,
                     ]);
 
                     if ($run !== null) {
                         $update = [
                             'consumed' => DB::raw('consumed + 1'),
+                            'updated_at' => now(),
                         ];
-
-                        if ($hunterCalled) {
-                            $update['contact_consumed'] = DB::raw('contact_consumed + 1');
-                        }
 
                         $advanced = DiscoveryRun::where('id', $run->id)
                             ->where('status', 'running')
@@ -440,7 +620,7 @@ class DiscoveryPipelineService
                             ->update($update);
 
                         if ($advanced === 0) {
-                            return $stats;
+                            return new DiscoveryPipelineResult($stats, $collectionComplete, false);
                         }
                     }
 
@@ -449,13 +629,14 @@ class DiscoveryPipelineService
                     }
 
                     $scannedThisAttempt++;
+
                     continue;
                 }
 
                 Log::warning('[DiscoveryPipelineService] Domain processing failed — skipping', [
-                    'domain'      => $domain,
+                    'domain' => $domain,
                     'criteria_id' => $criteria->id,
-                    'error'       => $e->getMessage(),
+                    'error' => $e->getMessage(),
                 ]);
 
                 // CAS advance with skipped: consumed still +1 (failing candidate
@@ -466,18 +647,19 @@ class DiscoveryPipelineService
                         ->where('status', 'running')
                         ->where('consumed', $expected)
                         ->update([
-                            'consumed'         => DB::raw('consumed + 1'),
-                            'skipped_count'    => DB::raw('skipped_count + 1'),
-                            'contact_consumed' => DB::raw('contact_consumed + ' . ($hunterCalled ? 1 : 0)),
+                            'consumed' => DB::raw('consumed + 1'),
+                            'skipped_count' => DB::raw('skipped_count + 1'),
+                            'updated_at' => now(),
                         ]);
 
                     if ($advanced === 0) {
-                        return $stats;
+                        return new DiscoveryPipelineResult($stats, $collectionComplete, false);
                     }
                 }
 
                 $stats['skipped']++;
                 $scannedThisAttempt++;
+
                 continue;
             }
 
@@ -487,7 +669,123 @@ class DiscoveryPipelineService
             }
         }
 
-        return $stats;
+        return new DiscoveryPipelineResult(
+            $stats,
+            $collectionComplete,
+            ($offset + $scannedThisAttempt) >= count($allCandidates),
+        );
+    }
+
+    /**
+     * Keep active-run updated_at as the observable heartbeat. Returning false means
+     * another actor terminalized the run, so this attempt must stop immediately.
+     */
+    private function touchHeartbeat(?DiscoveryRun $run): bool
+    {
+        if ($run === null) {
+            return true;
+        }
+
+        return DiscoveryRun::whereKey($run->id)
+            ->where('status', 'running')
+            ->update(['updated_at' => now()]) === 1;
+    }
+
+    /**
+     * Read a scorer result previously paid for by this run. Provider candidates
+     * cannot bypass scoring because checkpoints are only consumed on durable runs
+     * and discovery normalisation never emits this private key.
+     *
+     * @param  array<string, mixed>  $candidate
+     * @return array{score: int, explanation: string, exclude: bool, company_was_new: bool}|null
+     */
+    private function scoringCheckpoint(array $candidate): ?array
+    {
+        $checkpoint = $candidate[self::SCORE_CHECKPOINT_KEY] ?? null;
+
+        if (! is_array($checkpoint)
+            || ! is_numeric($checkpoint['score'] ?? null)
+            || ! is_string($checkpoint['explanation'] ?? null)
+        ) {
+            return null;
+        }
+
+        return [
+            'score' => (int) $checkpoint['score'],
+            'explanation' => $checkpoint['explanation'],
+            'exclude' => (bool) ($checkpoint['exclude'] ?? false),
+            'company_was_new' => (bool) ($checkpoint['company_was_new'] ?? false),
+        ];
+    }
+
+    /**
+     * Persist the paid scoring result when its attempt cannot safely start Hunter.
+     * The cursor guard ties the checkpoint to the exact unconsumed candidate and
+     * the row lock prevents collection append/terminalisation from overwriting it.
+     *
+     * @param  array{score: int, explanation: string, exclude?: bool}  $scoreResult
+     */
+    private function persistScoringCheckpoint(
+        DiscoveryRun $run,
+        int $expected,
+        string $domain,
+        array $scoreResult,
+        bool $companyWasNew,
+    ): bool {
+        return DB::transaction(function () use ($run, $expected, $domain, $scoreResult, $companyWasNew): bool {
+            /** @var DiscoveryRun|null $lockedRun */
+            $lockedRun = DiscoveryRun::whereKey($run->id)->lockForUpdate()->first();
+
+            if ($lockedRun === null
+                || $lockedRun->status !== 'running'
+                || (int) $lockedRun->consumed !== $expected
+            ) {
+                return false;
+            }
+
+            $snapshot = $lockedRun->candidates_snapshot;
+            $candidate = is_array($snapshot) ? ($snapshot[$expected] ?? null) : null;
+
+            if (! is_array($candidate) || ($candidate['domain'] ?? null) !== $domain) {
+                return false;
+            }
+
+            $snapshot[$expected][self::SCORE_CHECKPOINT_KEY] = [
+                'score' => (int) $scoreResult['score'],
+                'explanation' => (string) $scoreResult['explanation'],
+                'exclude' => (bool) ($scoreResult['exclude'] ?? false),
+                'company_was_new' => $companyWasNew,
+            ];
+
+            $lockedRun->forceFill(['candidates_snapshot' => array_values($snapshot)])->save();
+
+            return true;
+        });
+    }
+
+    private function quotaService(): DiscoveryQuotaService
+    {
+        return $this->quota ?? app(DiscoveryQuotaService::class);
+    }
+
+    private function enrichmentService(): CompanyEnrichmentService
+    {
+        return $this->companyEnrichment ?? app(CompanyEnrichmentService::class);
+    }
+
+    /**
+     * Record a deferral only while no run owns the company. This prevents a
+     * losing discovery worker from overwriting an active manual/automatic claim.
+     */
+    private function markUnclaimedEnrichmentStatus(Company $company, string $status): void
+    {
+        Company::withRejected()
+            ->whereKey($company->id)
+            ->whereNull('enrichment_claim_run_id')
+            ->update([
+                'enrichment_status' => $status,
+                'updated_at' => now(),
+            ]);
     }
 
     /**
@@ -531,7 +829,7 @@ class DiscoveryPipelineService
             return self::DEFAULT_RUN_TIME_BUDGET;
         }
 
-        return (int) $value;
+        return max(30, min(240, (int) $value));
     }
 
     /**
@@ -540,9 +838,9 @@ class DiscoveryPipelineService
      * $now is injectable so the decision can be unit-tested without simulating a
      * multi-minute run.
      *
-     * @param  float      $startedAt Monotonic-ish start from microtime(true).
-     * @param  int        $budget    Budget in seconds (already defaulted).
-     * @param  float|null $now       Defaults to the current microtime(true).
+     * @param  float  $startedAt  Monotonic-ish start from microtime(true).
+     * @param  int  $budget  Budget in seconds (already defaulted).
+     * @param  float|null  $now  Defaults to the current microtime(true).
      */
     private function timeBudgetExceeded(float $startedAt, int $budget, ?float $now = null): bool
     {
@@ -563,15 +861,17 @@ class DiscoveryPipelineService
      * exact negation of $shouldEnrich), so branches 5–7 only ever run when
      * $hunterCalled is true.
      *
-     * @param  bool       $excluded        Scorer flagged the candidate as a competitor.
-     * @param  bool       $autoEnrich      Resolved per-criteria enrichment toggle.
-     * @param  bool       $autoScoring     Whether scoring ran.
-     * @param  int|null   $score           AI score (null when scoring disabled).
-     * @param  int        $minScore        Enrich threshold.
-     * @param  bool       $budgetExhausted Per-run contact budget was already spent.
-     * @param  bool       $hunterCalled    Whether Hunter was actually invoked.
-     * @param  array|null $enrichment      Hunter payload (null = provider failure).
-     * @return string One of the Company::ENRICHMENT_* constants.
+     * @param  bool  $excluded  Scorer flagged the candidate as a competitor.
+     * @param  bool  $autoEnrich  Resolved per-criteria enrichment toggle.
+     * @param  bool  $autoScoring  Whether scoring ran.
+     * @param  int|null  $score  AI score (null when scoring disabled).
+     * @param  int  $minScore  Enrich threshold.
+     * @param  bool  $budgetExhausted  Per-run contact budget was already spent.
+     * @param  bool  $hunterCalled  Whether Hunter was actually invoked.
+     * @param  array|null  $enrichment  Hunter payload (null = provider failure).
+     * @param  bool  $providerUnavailable  Hunter circuit was already open.
+     * @return string|null One of the Company::ENRICHMENT_* constants, or null
+     *                     while an eligible candidate is awaiting its claim.
      */
     private function resolveEnrichmentStatus(
         bool $excluded,
@@ -581,8 +881,9 @@ class DiscoveryPipelineService
         int $minScore,
         bool $budgetExhausted,
         bool $hunterCalled,
-        ?array $enrichment
-    ): string {
+        ?array $enrichment,
+        bool $providerUnavailable = false,
+    ): ?string {
         if ($excluded) {
             return Company::ENRICHMENT_SKIPPED_EXCLUDED;
         }
@@ -595,8 +896,16 @@ class DiscoveryPipelineService
             return Company::ENRICHMENT_SKIPPED_LOW_SCORE;
         }
 
+        if ($providerUnavailable) {
+            return Company::ENRICHMENT_SKIPPED_PROVIDER_UNAVAILABLE;
+        }
+
         if ($budgetExhausted) {
             return Company::ENRICHMENT_SKIPPED_BUDGET;
+        }
+
+        if (! $hunterCalled) {
+            return null;
         }
 
         // Hunter ran but the provider gave us nothing at all (no API key, or both
@@ -663,16 +972,13 @@ class DiscoveryPipelineService
      * discovery_query is only set on first insert — a domain deduped across multiple
      * queries keeps the query that first found it (enables per-request results grouping).
      *
-     * @param  ProspectCriteria $criteria
-     * @param  string           $domain
-     * @param  array            $candidate      SerpAPI-normalised candidate.
-     * @param  array|null       $enrichment     Hunter enrichment data (null when gate skipped).
-     * @param  int|null         $score          AI/heuristic score (null when scoring disabled).
-     * @param  string|null      $explanation    Score explanation (null when scoring disabled).
-     * @param  bool             $scored         Whether scoring ran for this candidate.
-     * @param  bool             $excluded       Whether the scorer flagged this candidate for rejection.
-     * @param  string|null      $enrichmentStatus Enrichment audit status (null = do not touch the column).
-     * @return Company
+     * @param  array  $candidate  SerpAPI-normalised candidate.
+     * @param  array|null  $enrichment  Hunter enrichment data (null when gate skipped).
+     * @param  int|null  $score  AI/heuristic score (null when scoring disabled).
+     * @param  string|null  $explanation  Score explanation (null when scoring disabled).
+     * @param  bool  $scored  Whether scoring ran for this candidate.
+     * @param  bool  $excluded  Whether the scorer flagged this candidate for rejection.
+     * @param  string|null  $enrichmentStatus  Enrichment audit status (null = do not touch the column).
      */
     private function upsertCompany(
         ProspectCriteria $criteria,
@@ -696,9 +1002,9 @@ class DiscoveryPipelineService
         // Forward-compatible candidate metadata (Google Maps discovery source).
         // FALLBACKS ONLY — used when Hunter supplied nothing for the field AND the
         // existing row is empty for it. Never overwrites data we already hold.
-        $candidateSector  = $candidate['sector_hint'] ?? null;
+        $candidateSector = $candidate['sector_hint'] ?? null;
         $candidateCountry = $this->mapIso2($candidate['country'] ?? null);
-        $candidatePhone   = $candidate['phone'] ?? null;
+        $candidatePhone = $candidate['phone'] ?? null;
 
         if ($enrichedSector === null && $candidateSector !== null && empty($existing?->sector)) {
             $enrichedSector = $candidateSector;
@@ -711,10 +1017,10 @@ class DiscoveryPipelineService
         // Build attributes to set / update
         $attributes = [
             'criteria_id' => $criteria->id,
-            'name'        => $enrichment['organization']
+            'name' => $enrichment['organization']
                 ?? $candidate['title']
                 ?? $domain,
-            'source'      => 'discovered',
+            'source' => 'discovered',
         ];
 
         // phone has no Hunter equivalent — only ever filled when the row is empty.
@@ -745,7 +1051,7 @@ class DiscoveryPipelineService
         // Only write scoring fields when scoring actually ran — do not wipe
         // existing scores when auto_scoring is disabled.
         if ($scored) {
-            $attributes['ai_score']       = $score;
+            $attributes['ai_score'] = $score;
             $attributes['ai_explanation'] = $explanation;
         }
 
@@ -775,7 +1081,7 @@ class DiscoveryPipelineService
 
         // New company — discovery_query is only ever set here (first insert).
         return Company::create(array_merge($attributes, [
-            'domain'          => $domain,
+            'domain' => $domain,
             'discovery_query' => $candidate['discovery_query'] ?? null,
         ]));
     }

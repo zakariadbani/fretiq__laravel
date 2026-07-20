@@ -24,7 +24,7 @@ class GeminiScoringDriver implements ScoringDriverInterface
         private readonly GeminiClient $gemini = new GeminiClient(),
     ) {}
 
-    public function score(array $candidate, ProspectCriteria $criteria): ?array
+    public function score(array $candidate, ProspectCriteria $criteria, ?int $timeoutSeconds = null): ?array
     {
         if (! $this->gemini->hasApiKey()) {
             Log::warning('[GeminiScoringDriver] Clé API Gemini non configurée — scoring Gemini ignoré.', [
@@ -36,7 +36,7 @@ class GeminiScoringDriver implements ScoringDriverInterface
         $prompt = $this->buildPrompt($candidate, $criteria);
 
         try {
-            $response = $this->gemini->request($prompt, 20, [
+            $response = $this->gemini->request($prompt, max(1, $timeoutSeconds ?? 20), [
                 'response_mime_type' => 'application/json',
             ]);
 

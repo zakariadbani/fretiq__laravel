@@ -403,41 +403,50 @@ class SegmentService
      * Apply a best-effort structured filter to the contact query.
      *
      * Supported keys:
-     *   sector   → companies.sector  (exact match; scalar or array → where / whereIn)
-     *   country  → companies.country (exact match, 2-char ISO; scalar or array)
-     *   status   → contacts.status   (exact match; scalar only)
+     *   sector      → companies.sector      (exact match; scalar or array → where / whereIn)
+     *   criteria_id → companies.criteria_id (exact match; scalar or array of ints)
+     *   country     → companies.country     (exact match, 2-char ISO; scalar or array)
+     *   status      → contacts.status       (exact match; scalar only)
+     *
+     * Boolean semantics inside the company whereHas:
+     *   sector OR criteria_id  — when BOTH are present they are ORed with each other,
+     *                            so a company matching either one qualifies. This lets a
+     *                            segment target "these sectors, plus whatever this
+     *                            discovery criteria found" in a single filter.
+     *   AND country            — country is always ANDed with the sector/criteria group.
+     *   When only one of sector / criteria_id is present it is applied directly (AND).
      *
      * Unknown keys are silently ignored to be defensive against future schema changes.
      * Multi-value upgrade (D3.4): arrays are passed as whereIn; scalars as where.
-     * Empty values inside arrays are dropped via array_filter.
+     * Empty values inside arrays are dropped via array_filter; a key whose cleaned
+     * array is empty is treated as absent.
      *
      * @param  Builder               $query
      * @param  array<string, mixed>  $filter
      */
     private function applyJsonFilter(Builder $query, array $filter): void
     {
-        $companyFilters = [];
+        $sector    = $this->cleanFilterValue($filter['sector'] ?? null);
+        $criteria  = $this->cleanFilterValue($filter['criteria_id'] ?? null);
+        $country   = $this->cleanFilterValue($filter['country'] ?? null);
 
-        if (! empty($filter['sector'])) {
-            $companyFilters['sector'] = $filter['sector'];
-        }
+        if ($sector !== null || $criteria !== null || $country !== null) {
+            $query->whereHas('company', function (Builder $q) use ($sector, $criteria, $country) {
+                // country is always ANDed.
+                if ($country !== null) {
+                    $this->applyColumnFilter($q, 'country', $country);
+                }
 
-        if (! empty($filter['country'])) {
-            $companyFilters['country'] = $filter['country'];
-        }
-
-        if (! empty($companyFilters)) {
-            $query->whereHas('company', function (Builder $q) use ($companyFilters) {
-                foreach ($companyFilters as $column => $value) {
-                    if (is_array($value)) {
-                        // Drop empty strings / nulls inside the array.
-                        $cleaned = array_values(array_filter($value, fn ($v) => $v !== null && $v !== ''));
-                        if (! empty($cleaned)) {
-                            $q->whereIn($column, $cleaned);
-                        }
-                    } else {
-                        $q->where($column, $value);
-                    }
+                // sector OR criteria_id when both are present; otherwise plain AND.
+                if ($sector !== null && $criteria !== null) {
+                    $q->where(function (Builder $sub) use ($sector, $criteria) {
+                        $this->applyColumnFilter($sub, 'sector', $sector, orMode: false);
+                        $this->applyColumnFilter($sub, 'criteria_id', $criteria, orMode: true);
+                    });
+                } elseif ($sector !== null) {
+                    $this->applyColumnFilter($q, 'sector', $sector);
+                } elseif ($criteria !== null) {
+                    $this->applyColumnFilter($q, 'criteria_id', $criteria);
                 }
             });
         }
@@ -445,6 +454,44 @@ class SegmentService
         if (! empty($filter['status'])) {
             // status is always a scalar — plain string match on contacts.status.
             $query->where('status', $filter['status']);
+        }
+    }
+
+    /**
+     * Normalise one raw filter value into either a scalar, a non-empty list, or null.
+     *
+     * Arrays are run through array_filter (dropping null / '') then re-indexed; an
+     * array that cleans down to empty is treated as absent (null), as is any empty
+     * scalar. Preserves the pre-existing `! empty()` semantics of the caller.
+     *
+     * @param  mixed  $value
+     * @return mixed|null  Scalar, non-empty array, or null when the key is absent.
+     */
+    private function cleanFilterValue(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            $cleaned = array_values(array_filter($value, fn ($v) => $v !== null && $v !== ''));
+
+            return empty($cleaned) ? null : $cleaned;
+        }
+
+        return empty($value) ? null : $value;
+    }
+
+    /**
+     * Apply one cleaned company-column filter to $q as where / whereIn.
+     *
+     * @param  Builder       $q
+     * @param  string        $column   Company column name.
+     * @param  mixed         $value    Cleaned scalar or non-empty array.
+     * @param  bool          $orMode   When true, use orWhere / orWhereIn instead of AND.
+     */
+    private function applyColumnFilter(Builder $q, string $column, mixed $value, bool $orMode = false): void
+    {
+        if (is_array($value)) {
+            $orMode ? $q->orWhereIn($column, $value) : $q->whereIn($column, $value);
+        } else {
+            $orMode ? $q->orWhere($column, $value) : $q->where($column, $value);
         }
     }
 }

@@ -37,11 +37,12 @@ class DiscoveryScoringGateTest extends TestCase
 
         config([
             'services.serpapi.driver' => 'local',
-            'services.hunter.driver'  => 'local',
+            'services.hunter.driver' => 'local',
         ]);
 
         // Reset settings to defaults before each test to prevent leakage.
         app(\App\Services\Settings\SettingService::class)->clearCache();
+        Setting::set('decouverte.discovery_engines', ['google']);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -49,11 +50,11 @@ class DiscoveryScoringGateTest extends TestCase
     private function makeCriteria(array $overrides = []): ProspectCriteria
     {
         return ProspectCriteria::create(array_merge([
-            'name'        => 'Gate Test ' . uniqid(),
-            'sectors'     => ['transport'],
-            'countries'   => ['France'],
+            'name' => 'Gate Test '.uniqid(),
+            'sectors' => ['transport'],
+            'countries' => ['France'],
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ], $overrides));
     }
 
@@ -64,12 +65,16 @@ class DiscoveryScoringGateTest extends TestCase
     {
         return DiscoveryRun::create([
             'prospect_criteria_id' => $criteria->id,
-            'type'                 => 'discovery',
-            'status'               => 'running',
-            'credits_reserved'     => $reserved,
-            'consumed'             => $consumed,
-            'quota_date'           => Carbon::today()->toDateString(),
-            'started_at'           => now(),
+            'type' => 'discovery',
+            'status' => 'running',
+            'credits_reserved' => $reserved,
+            'consumed' => $consumed,
+            'contact_credits_reserved' => $reserved,
+            'contact_consumed' => 0,
+            'successful_enrichments_target' => min(20, max(1, (int) ($criteria->contact_limit ?? 20))),
+            'successful_enrichments' => 0,
+            'quota_date' => Carbon::today()->toDateString(),
+            'started_at' => now(),
         ]);
     }
 
@@ -87,7 +92,7 @@ class DiscoveryScoringGateTest extends TestCase
         Setting::set('decouverte.min_score_enrich', 50);
 
         $criteria = $this->makeCriteria(['daily_limit' => 6]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -124,7 +129,7 @@ class DiscoveryScoringGateTest extends TestCase
         Setting::set('decouverte.min_score_enrich', 0);
 
         $criteria = $this->makeCriteria(['daily_limit' => 6]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -163,7 +168,7 @@ class DiscoveryScoringGateTest extends TestCase
         Setting::set('decouverte.min_score_enrich', 101);  // above max possible score
 
         $criteria = $this->makeCriteria(['daily_limit' => 6]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -198,7 +203,7 @@ class DiscoveryScoringGateTest extends TestCase
         Setting::set('decouverte.min_score_enrich', 50);
 
         $criteria = $this->makeCriteria(['daily_limit' => 6]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -235,15 +240,15 @@ class DiscoveryScoringGateTest extends TestCase
 
         // Pre-create the first fixture domain with enrichment data
         $existingCompany = Company::create([
-            'name'            => 'Pre-Existing Company',
-            'domain'          => 'bolloretransport.com',
+            'name' => 'Pre-Existing Company',
+            'domain' => 'bolloretransport.com',
             'enrichment_data' => $preExistingEnrichment,
-            'source'          => 'zoho',
-            'relationship'    => 'prospect',
+            'source' => 'zoho',
+            'relationship' => 'prospect',
         ]);
 
         $criteria = $this->makeCriteria(['daily_limit' => 6]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -300,13 +305,17 @@ class DiscoveryScoringGateTest extends TestCase
         // Now simulate a retry: new run with consumed=2 pre-set, budget=4
         $run2 = DiscoveryRun::create([
             'prospect_criteria_id' => $criteria->id,
-            'type'                 => 'discovery',
-            'status'               => 'running',
-            'credits_reserved'     => 6,
-            'consumed'             => 2,
-            'companies_count'      => 2,  // already persisted from the first run
-            'quota_date'           => Carbon::today()->toDateString(),
-            'started_at'           => now(),
+            'type' => 'discovery',
+            'status' => 'running',
+            'credits_reserved' => 6,
+            'consumed' => 2,
+            'companies_count' => 2,  // already persisted from the first run
+            'contact_credits_reserved' => 6,
+            'contact_consumed' => 0,
+            'successful_enrichments_target' => min(20, max(1, (int) ($criteria->contact_limit ?? 20))),
+            'successful_enrichments' => 0,
+            'quota_date' => Carbon::today()->toDateString(),
+            'started_at' => now(),
         ]);
 
         // Pass cap=4 — pipeline slices from offset=2 and processes 4 candidates
@@ -344,22 +353,22 @@ class DiscoveryScoringGateTest extends TestCase
         // Create the run row with consumed=5 in the DB
         $run = DiscoveryRun::create([
             'prospect_criteria_id' => $criteria->id,
-            'type'                 => 'discovery',
-            'status'               => 'running',
-            'credits_reserved'     => 10,
-            'consumed'             => 5,
-            'companies_count'      => 5,
-            'quota_date'           => Carbon::today()->toDateString(),
-            'started_at'           => now(),
+            'type' => 'discovery',
+            'status' => 'running',
+            'credits_reserved' => 10,
+            'consumed' => 5,
+            'companies_count' => 5,
+            'quota_date' => Carbon::today()->toDateString(),
+            'started_at' => now(),
         ]);
 
         // Create a stale model with consumed=0 (as if loaded before DB was updated)
-        $staleRun          = DiscoveryRun::find($run->id);
+        $staleRun = DiscoveryRun::find($run->id);
         $staleRun->consumed = 0;  // mutate in-memory only (do not save to DB)
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
-        $stats    = $pipeline->run($criteria, 5, $staleRun);
+        $stats = $pipeline->run($criteria, 5, $staleRun);
 
         // Pipeline must return early because CAS fails (DB consumed=5, expected=0)
         $this->assertSame(0, $stats['companies'],
@@ -430,7 +439,7 @@ class DiscoveryScoringGateTest extends TestCase
         Setting::set('decouverte.min_score_enrich', 50);
 
         $criteria = $this->makeCriteria(['daily_limit' => 6]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -466,7 +475,7 @@ class DiscoveryScoringGateTest extends TestCase
         Setting::set('decouverte.min_score_enrich', 0);  // global: all pass
 
         $criteria = $this->makeCriteria(['daily_limit' => 6, 'min_score_enrich' => 101]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -491,7 +500,7 @@ class DiscoveryScoringGateTest extends TestCase
         Setting::set('decouverte.min_score_enrich', 0);  // global: all pass
 
         $criteria = $this->makeCriteria(['daily_limit' => 6, 'min_score_enrich' => null]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -516,7 +525,7 @@ class DiscoveryScoringGateTest extends TestCase
         Setting::set('decouverte.min_score_enrich', 0);
 
         $criteria = $this->makeCriteria(['daily_limit' => 6, 'auto_enrich' => false]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -541,7 +550,7 @@ class DiscoveryScoringGateTest extends TestCase
         Setting::set('decouverte.min_score_enrich', 0);
 
         $criteria = $this->makeCriteria(['daily_limit' => 6, 'auto_enrich' => true]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -564,7 +573,7 @@ class DiscoveryScoringGateTest extends TestCase
         Setting::set('decouverte.min_score_enrich', 0);
 
         $criteria = $this->makeCriteria(['daily_limit' => 6, 'auto_enrich' => null]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -575,6 +584,7 @@ class DiscoveryScoringGateTest extends TestCase
         $this->assertSame(0, (int) $run->contacts_count,
             'contacts_count must be 0 — null override falls back to the restrictive global auto_enrich=false');
     }
+
     public function test_criteria_min_score_null_falls_back_to_global(): void
     {
         Setting::set('decouverte.auto_scoring', true);
@@ -582,7 +592,7 @@ class DiscoveryScoringGateTest extends TestCase
         Setting::set('decouverte.min_score_enrich', 101);
 
         $criteria = $this->makeCriteria(['daily_limit' => 6, 'min_score_enrich' => null]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -614,7 +624,7 @@ class DiscoveryScoringGateTest extends TestCase
         );
 
         $criteria = $this->makeCriteria(['daily_limit' => 6, 'auto_enrich' => null]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -639,7 +649,7 @@ class DiscoveryScoringGateTest extends TestCase
         Setting::set('decouverte.min_score_enrich', 0);
 
         $criteria = $this->makeCriteria(['daily_limit' => 6, 'auto_enrich' => null]);
-        $run      = $this->makeRunningRun($criteria, 6);
+        $run = $this->makeRunningRun($criteria, 6);
 
         /** @var DiscoveryPipelineService $pipeline */
         $pipeline = app(DiscoveryPipelineService::class);
@@ -663,12 +673,20 @@ class DiscoveryScoringGateTest extends TestCase
     {
         $this->app->instance(
             \App\Services\Discovery\HunterEnrichmentService::class,
-            new class ($payload) extends \App\Services\Discovery\HunterEnrichmentService {
+            new class($payload) extends \App\Services\Discovery\HunterEnrichmentService
+            {
                 public function __construct(private readonly ?array $payload) {}
 
-                public function domainSearch(string $domain, int $limit = 10): ?array
+                public function domainSearch(string $domain, int $limit = 10, ?int $timeoutSeconds = null): ?array
                 {
                     return $this->payload;
+                }
+
+                public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null): array
+                {
+                    return $this->payload === null
+                        ? ['status' => 'provider_failed', 'data' => null]
+                        : ['status' => 'ok', 'data' => $this->payload];
                 }
             }
         );
@@ -682,10 +700,11 @@ class DiscoveryScoringGateTest extends TestCase
     {
         $this->app->instance(
             \App\Services\Scoring\LeadScoringService::class,
-            new class extends \App\Services\Scoring\LeadScoringService {
+            new class extends \App\Services\Scoring\LeadScoringService
+            {
                 public function __construct() {}
 
-                public function score(array $candidate, \App\Models\ProspectCriteria $criteria): array
+                public function score(array $candidate, \App\Models\ProspectCriteria $criteria, ?int $timeoutSeconds = null): array
                 {
                     return ['score' => 95, 'explanation' => 'Concurrent direct', 'exclude' => true];
                 }
@@ -736,7 +755,14 @@ class DiscoveryScoringGateTest extends TestCase
         $criteria = $this->makeCriteria(['daily_limit' => 6]);
         app(DiscoveryPipelineService::class)->run($criteria, 6, $this->makeRunningRun($criteria, 6));
 
-        $this->assertSame([Company::ENRICHMENT_HUNTER_FAILED], $this->statusesOf());
+        $this->assertEqualsCanonicalizing([
+            Company::ENRICHMENT_HUNTER_FAILED,
+            Company::ENRICHMENT_SKIPPED_PROVIDER_UNAVAILABLE,
+        ], $this->statusesOf());
+        $this->assertSame(1, Company::where(
+            'enrichment_status',
+            Company::ENRICHMENT_HUNTER_FAILED,
+        )->count(), 'The provider circuit must stop Hunter after its first systemic failure.');
     }
 
     public function test_enrichment_status_skipped_low_score_below_threshold(): void
@@ -814,13 +840,13 @@ class DiscoveryScoringGateTest extends TestCase
         $criteria = $this->makeCriteria(['daily_limit' => 6]);
 
         $rejected = Company::create([
-            'name'                 => 'Known Competitor',
-            'domain'               => 'bolloretransport.com',
-            'criteria_id'          => $criteria->id,
+            'name' => 'Known Competitor',
+            'domain' => 'bolloretransport.com',
+            'criteria_id' => $criteria->id,
             'qualification_status' => 'rejected',
-            'enrichment_status'    => Company::ENRICHMENT_ENRICHED,
-            'relationship'         => 'prospect',
-            'source'               => 'discovered',
+            'enrichment_status' => Company::ENRICHMENT_ENRICHED,
+            'relationship' => 'prospect',
+            'source' => 'discovered',
         ]);
 
         app(DiscoveryPipelineService::class)->run($criteria, 6, $this->makeRunningRun($criteria, 6));
@@ -841,10 +867,10 @@ class DiscoveryScoringGateTest extends TestCase
     public function test_manually_created_company_keeps_null_enrichment_status(): void
     {
         $manual = Company::create([
-            'name'         => 'Manual Entry',
-            'domain'       => 'manual-only.test',
+            'name' => 'Manual Entry',
+            'domain' => 'manual-only.test',
             'relationship' => 'prospect',
-            'source'       => 'manual',
+            'source' => 'manual',
         ]);
 
         Setting::set('decouverte.auto_scoring', false);
@@ -857,5 +883,4 @@ class DiscoveryScoringGateTest extends TestCase
 
         $this->assertNull($manual->enrichment_status);
     }
-
 }

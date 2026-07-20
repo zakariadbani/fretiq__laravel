@@ -20,8 +20,11 @@ class ProviderQuotaPageTest extends TestCase
     use RefreshDatabase;
 
     private User $superadmin;
+
     private User $admin;
+
     private User $commercial;
+
     private User $backendOnly;
 
     protected function setUp(): void
@@ -34,25 +37,25 @@ class ProviderQuotaPageTest extends TestCase
 
         $this->superadmin = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $this->superadmin->assignRole('superadmin');
 
         $this->admin = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $this->admin->assignRole('admin');
 
         $this->commercial = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $this->commercial->assignRole('commercial');
 
         $this->backendOnly = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $this->backendOnly->givePermissionTo('backend.access');
     }
@@ -101,23 +104,23 @@ class ProviderQuotaPageTest extends TestCase
     {
         $serp = Mockery::mock(CompanyDiscoveryService::class);
         $serp->shouldReceive('accountUsage')->andReturn([
-            'plan_searches_left'  => 700,
+            'plan_searches_left' => 700,
             'total_searches_left' => 743,
-            'this_month_usage'    => 257,
-            'searches_per_month'  => 1000,
-            'plan_name'           => 'Starter',
-            'account_email'       => 'ops@tcl.test',
+            'this_month_usage' => 257,
+            'searches_per_month' => 1000,
+            'plan_name' => 'Starter',
+            'account_email' => 'ops@tcl.test',
         ]);
         $this->instance(CompanyDiscoveryService::class, $serp);
 
         $hunter = Mockery::mock(HunterEnrichmentService::class);
         $hunter->shouldReceive('accountUsage')->andReturn([
-            'searches_used'           => 120,
-            'searches_available'      => 380,
-            'verifications_used'      => 30,
+            'searches_used' => 120,
+            'searches_available' => 380,
+            'verifications_used' => 30,
             'verifications_available' => 70,
-            'plan_name'               => 'Starter',
-            'reset_date'              => '2026-08-01',
+            'plan_name' => 'Starter',
+            'reset_date' => '2026-08-01',
         ]);
         $this->instance(HunterEnrichmentService::class, $hunter);
 
@@ -128,7 +131,7 @@ class ProviderQuotaPageTest extends TestCase
         $response->assertSeeText('120 / 500');
         $response->assertSeeText('30 / 100');
         $response->assertSeeText('Disponible / Total : 380 / 500');
-        $response->assertSeeText("Bundles d’enrichissement réservés aujourd’hui : 0");
+        $response->assertSeeText('Bundles d’enrichissement réservés aujourd’hui : 0');
         $response->assertSee('Starter');
         $response->assertSee('Utilisé / Total', false);
         $response->assertSee('Réservé / Total', false);
@@ -158,12 +161,12 @@ class ProviderQuotaPageTest extends TestCase
 
         $hunter = Mockery::mock(HunterEnrichmentService::class);
         $hunter->shouldReceive('accountUsage')->andReturn([
-            'searches_used'           => $searchesUsed,
-            'searches_available'      => $searchesAvailable,
-            'verifications_used'      => $verificationsUsed,
+            'searches_used' => $searchesUsed,
+            'searches_available' => $searchesAvailable,
+            'verifications_used' => $verificationsUsed,
             'verifications_available' => $verificationsAvailable,
-            'plan_name'               => 'Starter',
-            'reset_date'              => '2026-08-01',
+            'plan_name' => 'Starter',
+            'reset_date' => '2026-08-01',
         ]);
         $this->instance(HunterEnrichmentService::class, $hunter);
 
@@ -174,7 +177,7 @@ class ProviderQuotaPageTest extends TestCase
         $response->assertSee('Vérifications - Utilisé / Total', false);
         $response->assertSeeText($expectedSearches);
         $response->assertSeeText('Disponible / Total : '.$expectedSearchesAvailable);
-        $response->assertSeeText("Bundles d’enrichissement réservés aujourd’hui : ".$searchesReserved);
+        $response->assertSeeText('Bundles d’enrichissement réservés aujourd’hui : '.$searchesReserved);
         $response->assertSeeText($expectedVerifications);
         $response->assertDontSeeText('Réservé / Total');
         $response->assertDontSeeText('Restant / Total');
@@ -210,12 +213,12 @@ class ProviderQuotaPageTest extends TestCase
 
         $hunter = Mockery::mock(HunterEnrichmentService::class);
         $hunter->shouldReceive('accountUsage')->andReturn([
-            'searches_used'           => null,
-            'searches_available'      => null,
-            'verifications_used'      => null,
+            'searches_used' => null,
+            'searches_available' => null,
+            'verifications_used' => null,
             'verifications_available' => null,
-            'plan_name'               => null,
-            'reset_date'              => null,
+            'plan_name' => null,
+            'reset_date' => null,
         ]);
         $this->instance(HunterEnrichmentService::class, $hunter);
 
@@ -223,7 +226,7 @@ class ProviderQuotaPageTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertSeeText('Disponible / Total : —');
-        $response->assertSeeText("Bundles d’enrichissement réservés aujourd’hui : 7");
+        $response->assertSeeText('Bundles d’enrichissement réservés aujourd’hui : 7');
         $response->assertDontSeeText('Réservé / Total');
         $response->assertDontSeeText('Restant / Total');
         $response->assertDontSeeText('Surquota');
@@ -235,12 +238,12 @@ class ProviderQuotaPageTest extends TestCase
 
         $serp = Mockery::mock(CompanyDiscoveryService::class);
         $serp->shouldReceive('accountUsage')->andReturn([
-            'plan_searches_left'  => 0,
+            'plan_searches_left' => 0,
             'total_searches_left' => 3,
-            'this_month_usage'    => 997,
-            'searches_per_month'  => 1000,
-            'plan_name'           => 'Starter',
-            'account_email'       => 'ops@tcl.test',
+            'this_month_usage' => 997,
+            'searches_per_month' => 1000,
+            'plan_name' => 'Starter',
+            'account_email' => 'ops@tcl.test',
         ]);
         $this->instance(CompanyDiscoveryService::class, $serp);
 
@@ -268,23 +271,23 @@ class ProviderQuotaPageTest extends TestCase
         }
 
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Provider Quota '.uniqid(),
-            'sectors'     => ['transport'],
-            'countries'   => ['France'],
+            'name' => 'Critère Provider Quota '.uniqid(),
+            'sectors' => ['transport'],
+            'countries' => ['France'],
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         DiscoveryRun::create([
-            'prospect_criteria_id'     => $criteria->id,
-            'status'                   => 'pending',
-            'credits_reserved'         => $serpapiSearches,
-            'searches_reserved'        => $serpapiSearches,
-            'searches_consumed'        => 0,
-            'consumed'                 => 0,
+            'prospect_criteria_id' => $criteria->id,
+            'status' => 'pending',
+            'credits_reserved' => $serpapiSearches,
+            'searches_reserved' => $serpapiSearches,
+            'searches_consumed' => 0,
+            'consumed' => 0,
             'contact_credits_reserved' => $hunterSearches,
-            'contact_consumed'         => 0,
-            'quota_date'               => Carbon::today()->toDateString(),
+            'contact_consumed' => 0,
+            'quota_date' => Carbon::today()->toDateString(),
         ]);
     }
 }

@@ -1,128 +1,151 @@
-{{--
-    ProspectCriteria — Dernière découverte panel.
-
-    Variables: $model (ProspectCriteria)
-
-    Data attributes on #discovery-status-panel drive the JS polling loop defined
-    in view.blade.php @push('scripts'):
-        data-status         Current run status (or empty string when no run).
-        data-status-url     Polling endpoint: admin.prospect_criteria.discovery_status
-        data-companies-route  admin.companies.index (base URL for the CTA link)
-        data-criteria-id    Criteria primary key
-
-    The Schema::hasTable guard prevents fatals when the discovery_runs migration
-    has not yet been executed.
---}}
-
+{{-- Permanent discovery-progress banner shared by the detail and edit pages. --}}
 @php
+    use App\Services\Discovery\DiscoveryProgressPresenter;
     use Illuminate\Support\Facades\Schema;
 
-    $run = (Schema::hasTable('discovery_runs')) ? $model->latestDiscoveryRun : null;
-
-    // Resolve label + color from the config map; fall back gracefully.
-    if ($run) {
-        $statusCfg   = config('global.data.discovery_run_statuses.' . $run->status, []);
-        $statusLabel = $statusCfg['label'] ?? $run->status;
-        $statusColor = $statusCfg['color'] ?? 'secondary';
-    } else {
-        $statusLabel = 'Jamais lancée';
-        $statusColor = 'secondary';
-    }
-
-    // CTA N: all-time attributed total (companies with this criteria_id).
-    // NEVER the run's companies_count — those are throughput counters for a
-    // single execution, not the total attributed to the criterion.
-    $companiesTotal = $model->companies()->count();
-
-    // Worker-down warning: show without d-none when the run is stale.
-    $workerWarnClass = ($run && $run->isStale()) ? '' : ' d-none';
+    $run = Schema::hasTable('discovery_runs') ? $model->latestDiscoveryRun : null;
+    $progress = app(DiscoveryProgressPresenter::class)->present(
+        $model,
+        $run,
+        $model->companies()->count(),
+        config('services.serpapi.driver', 'local') === 'local',
+    );
+    $statusCfg = config('global.data.discovery_run_statuses.' . ($progress['status'] ?? ''), []);
+    $statusLabel = $statusCfg['label'] ?? ($run ? $run->status : 'Jamais lancée');
+    $statusColor = $statusCfg['color'] ?? 'secondary';
+    $statusUrl = route('admin.prospect_criteria.discovery_status', array_filter([
+        $model->id,
+        'run_id' => $progress['run_id'],
+    ], static fn ($value) => $value !== null));
+    $context = $discoveryContext ?? 'view';
+    $isActive = in_array($progress['status'], ['pending', 'running'], true);
+    $isCompact = $progress['status'] === 'completed';
+    $discoveryTimezone = config('app.timezone', 'UTC');
+    $renderedProgress = $progress['status'] === 'completed' ? 100 : (int) ($progress['progress_percent'] ?? 0);
+    $progressIndeterminate = $isActive && $progress['progress_percent'] === null;
+    $heartbeatAt = $run?->updated_at?->copy()->timezone($discoveryTimezone)->format('d/m/Y H:i:s');
 @endphp
 
-<div class="card mb-6">
-    <div class="card-header">
-        <div class="card-title fs-5 fw-bold">
-            <i class="bi bi-arrow-repeat me-2 text-primary"></i>
-            Dernière découverte
+<div class="card mb-6 border border-dashed {{ $isCompact ? 'border-gray-300' : 'border-primary' }}"
+     data-discovery-tracker
+     data-discovery-context="{{ $context }}"
+     data-criteria-id="{{ (int) $model->id }}"
+     data-run-id="{{ $progress['run_id'] ?? '' }}"
+     data-status="{{ $progress['status'] ?? '' }}"
+     data-status-url="{{ $statusUrl }}"
+     data-companies-route="{{ route('admin.companies.index') }}">
+    <div class="card-body py-3{{ $isCompact ? '' : ' d-none' }}" data-discovery-summary>
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <div class="d-flex flex-wrap align-items-center gap-3">
+                <span class="fw-semibold text-gray-700">
+                    <i class="bi bi-check-circle text-success me-2"></i>Dernière découverte
+                </span>
+                <span class="badge badge-light-{{ $statusColor }}">{{ $statusLabel }}</span>
+                <span class="text-muted fs-8">
+                    {{ number_format($progress['companies_count']) }} entreprise(s) enregistrée(s)
+                    · {{ number_format($progress['successful_enrichments']) }}/{{ number_format($progress['successful_enrichments_target']) }} enrichissement(s) réussi(s)
+                    · {{ number_format($progress['contacts_count']) }} contact(s) créé(s)
+                </span>
+            </div>
+
+            @can('view companies')
+                <a href="{{ route('admin.companies.index') }}?criteria_id={{ (int) $model->id }}"
+                   class="btn btn-sm btn-light-primary flex-shrink-0">
+                    Voir les <span>{{ $progress['companies_total'] }}</span> entreprises
+                </a>
+            @endcan
         </div>
     </div>
 
-    <div class="card-body">
-        <div
-            id="discovery-status-panel"
-            data-status="{{ $run?->status ?? '' }}"
-            data-status-url="{{ route('admin.prospect_criteria.discovery_status', $model->id) }}"
-            data-companies-route="{{ route('admin.companies.index') }}"
-            data-criteria-id="{{ $model->id }}"
-        >
-
-            @if($run === null)
-                {{-- Empty state: no run has ever been launched --}}
-                <div class="d-flex align-items-center gap-3 mb-4">
-                    <span id="discovery-status-badge" class="badge badge-light-secondary">
-                        Jamais lancée
+    <div class="card-body py-5{{ $isCompact ? ' d-none' : '' }}" data-discovery-active-panel>
+        <div class="d-flex flex-wrap align-items-start justify-content-between gap-4">
+            <div class="flex-grow-1 min-w-250px">
+                <div class="d-flex align-items-center flex-wrap gap-3 mb-3">
+                    <span class="fw-bold text-gray-900">
+                        <i class="bi bi-arrow-repeat text-primary me-2"></i>Progression de la découverte
                     </span>
-                </div>
-                <p class="text-muted fs-7 mb-0">
-                    Données disponibles après la première découverte.
-                </p>
-            @else
-                {{-- Run exists: show status + throughput + timestamp --}}
-                <div class="d-flex align-items-center flex-wrap gap-3 mb-5">
-                    <span id="discovery-status-badge" class="badge badge-light-{{ $statusColor }}">
-                        {{ $statusLabel }}
+                    <span class="badge badge-light-{{ $statusColor }}" data-discovery-status-badge>{{ $statusLabel }}</span>
+                    <span class="text-muted fs-8" data-discovery-phase aria-live="polite">
+                        {{ $isActive ? 'Travail en cours…' : ($run ? 'Dernière exécution' : 'Prête à être lancée') }}
                     </span>
                 </div>
 
-                <div class="fs-7 text-gray-700 mb-2">
-                    Cette exécution :
-                    <strong><span id="discovery-run-companies">{{ $run->companies_count ?? 0 }}</span></strong>
-                    entreprises traitées
-                    &middot;
-                    <strong><span id="discovery-run-contacts">{{ $run->contacts_count ?? 0 }}</span></strong>
-                    contacts
-                    &middot;
-                    <strong><span id="discovery-run-lowscore">{{ $run->low_score_count ?? 0 }}</span></strong>
-                    sous le seuil de score
+                <div class="progress h-8px mb-4 bg-light-primary">
+                    <div class="progress-bar bg-primary{{ $progressIndeterminate ? ' progress-bar-striped progress-bar-animated' : '' }}"
+                         data-discovery-progress
+                         role="progressbar"
+                         aria-label="Progression globale"
+                         style="width: {{ $progressIndeterminate ? 100 : $renderedProgress }}%"
+                         @unless($progressIndeterminate) aria-valuenow="{{ $renderedProgress }}" @endunless
+                         aria-valuemin="0" aria-valuemax="100"></div>
                 </div>
 
-                <div class="fs-7 text-muted mb-4">
-                    Dernière fin :
-                    <span id="discovery-finished-at">
-                        {{ optional($run->finished_at)->format('d/m/Y H:i') ?? '—' }}
+                <div class="row g-3">
+                    <div class="col-xl-3 col-md-6">
+                        <div class="rounded bg-light-info p-3 h-100">
+                            <div class="text-muted fs-8 text-uppercase fw-semibold">Recherches d’entreprises</div>
+                            <div class="fw-bold text-gray-800">
+                                <span data-discovery-searches>{{ $progress['searches_consumed'] }}</span>
+                                / <span data-discovery-searches-total>{{ $progress['searches_reserved'] }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-3 col-md-6">
+                        <div class="rounded bg-light-primary p-3 h-100">
+                            <div class="text-muted fs-8 text-uppercase fw-semibold">Domaines exploitables</div>
+                            <div class="fw-bold text-gray-800">
+                                <span data-discovery-domains>{{ $progress['candidates_total'] }}</span>
+                                <span class="text-muted fs-8{{ $progress['candidates_total_final'] ? ' d-none' : '' }}" data-discovery-total-growing>(total en cours)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-3 col-md-6">
+                        <div class="rounded bg-light-success p-3 h-100">
+                            <div class="text-muted fs-8 text-uppercase fw-semibold">Domaines analysés par l’IA</div>
+                            <div class="fw-bold text-gray-800">
+                                <span data-discovery-candidates>{{ $progress['candidates_processed'] }}</span>
+                                / <span data-discovery-candidates-total>{{ $progress['candidates_total'] }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-3 col-md-6">
+                        <div class="rounded bg-light-warning p-3 h-100">
+                            <div class="text-muted fs-8 text-uppercase fw-semibold">Tentatives d’enrichissement</div>
+                            <div class="fw-bold text-gray-800">
+                                <span data-discovery-contact-attempts>{{ $progress['contact_attempts_consumed'] }}</span>
+                                / <span data-discovery-contact-attempts-total>{{ $progress['contact_attempts_reserved'] }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="text-muted fs-8 mt-3">
+                    Résultats de cette exécution :
+                    <strong data-discovery-companies>{{ $progress['companies_count'] }}</strong> entreprise(s) enregistrée(s),
+                    <strong data-discovery-low-score>{{ $progress['low_score_count'] }}</strong> sous le seuil d’enrichissement,
+                    <strong data-discovery-successes>{{ $progress['successful_enrichments'] }}</strong>/<strong data-discovery-successes-target>{{ $progress['successful_enrichments_target'] }}</strong> enrichissement(s) réussi(s),
+                    <strong data-discovery-contacts>{{ $progress['contacts_count'] }}</strong> contacts créé(s),
+                    <strong data-discovery-excluded>{{ $progress['excluded_count'] }}</strong> exclue(s),
+                    <strong data-discovery-skipped>{{ $progress['skipped_count'] }}</strong> ignorée(s).
+                    <span class="ms-2" data-discovery-heartbeat>
+                        @if($heartbeatAt)Dernière activité ({{ $discoveryTimezone }}) : {{ $heartbeatAt }}@endif
                     </span>
                 </div>
-            @endif
 
-            @if($run === null)
-                {{-- Keep the IDs in the DOM even in empty state so the JS can update them --}}
-                <span id="discovery-run-companies" class="d-none">0</span>
-                <span id="discovery-run-contacts" class="d-none">0</span>
-                <span id="discovery-run-lowscore" class="d-none">0</span>
-                <span id="discovery-finished-at" class="d-none">—</span>
-            @endif
-
-            {{-- CTA: links to the companies listing filtered by this criterion.
-                 N = companies()->count() (attributed total), not run throughput. --}}
-            @can('view companies')
-                <a
-                    id="discovery-view-companies"
-                    href="{{ route('admin.companies.index') }}?criteria_id={{ $model->id }}"
-                    class="btn btn-sm btn-light-primary"
-                >
-                    Voir les
-                    <span id="discovery-companies-total">{{ $companiesTotal }}</span>
-                    entreprises
-                </a>
-            @endcan
-
-            {{-- Worker-down warning — visible when run is stale (in-flight but no
-                 progress since >60s), hidden otherwise. JS polling adds/removes
-                 d-none based on the `stale` field from the status endpoint. --}}
-            <div id="discovery-worker-warning" class="alert alert-warning mt-3{{ $workerWarnClass }}">
-                &#9888; Le worker de file d'attente est peut-être arrêté &mdash; lancez
-                <code>php artisan queue:work</code>.
+                <div class="alert alert-danger mt-3 mb-0{{ $progress['error'] ? '' : ' d-none' }}" data-discovery-error role="alert">
+                    {{ $progress['error'] ?? '' }}
+                </div>
+                <div class="alert alert-warning mt-3 mb-0{{ $progress['stale'] ? '' : ' d-none' }}" data-discovery-worker-warning>
+                    Le worker de file d’attente ne répond peut-être plus. Vérifiez <code>php artisan queue:work</code>.
+                </div>
             </div>
 
-        </div>{{-- #discovery-status-panel --}}
+            @can('view companies')
+                <a href="{{ route('admin.companies.index') }}?criteria_id={{ (int) $model->id }}"
+                   class="btn btn-sm btn-light-primary flex-shrink-0">
+                    Voir les <span data-discovery-companies-total>{{ $progress['companies_total'] }}</span> entreprises
+                </a>
+            @endcan
+        </div>
     </div>
 </div>

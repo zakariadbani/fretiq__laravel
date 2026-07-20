@@ -2,8 +2,6 @@
 
 namespace App\Models;
 
-use App\Models\Company;
-use App\Models\Contact;
 use App\Models\Traits\Validator;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -13,6 +11,12 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 class ProspectCriteria extends Model
 {
     use Validator;
+
+    /**
+     * Durable metadata stored alongside provider cursors. The run id prevents a
+     * completed collection from a previous discovery from finalising a newer run.
+     */
+    public const DISCOVERY_COLLECTION_COMPLETE_RUN_KEY = '_collection_complete_run_id';
 
     /**
      * The table associated with the model.
@@ -51,19 +55,19 @@ class ProspectCriteria extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'ai_queries'       => 'array',
+        'ai_queries' => 'array',
         'discovery_cursors' => 'array',
-        'sectors'          => 'array',
-        'countries'        => 'array',
-        'company_sizes'    => 'array',
+        'sectors' => 'array',
+        'countries' => 'array',
+        'company_sizes' => 'array',
         'target_positions' => 'array',
-        'daily_limit'      => 'integer',
-        'auto_run'         => 'boolean',
-        'run_at_hour'      => 'integer',
-        'contact_limit'    => 'integer',
+        'daily_limit' => 'integer',
+        'auto_run' => 'boolean',
+        'run_at_hour' => 'integer',
+        'contact_limit' => 'integer',
         'min_score_enrich' => 'integer',
-        'auto_enrich'      => 'boolean',
-        'is_active'        => 'boolean',
+        'auto_enrich' => 'boolean',
+        'is_active' => 'boolean',
     ];
 
     /**
@@ -75,6 +79,7 @@ class ProspectCriteria extends Model
     {
         if ($value === null) {
             $this->attributes['ai_queries'] = null;
+
             return;
         }
 
@@ -170,29 +175,29 @@ class ProspectCriteria extends Model
     public function rules(): array
     {
         return [
-            'name'               => 'required|string|max:100',
-            'ai_target'          => 'nullable|string|max:2000',
-            'ai_exclude'         => 'nullable|string|max:2000',
+            'name' => 'required|string|max:100',
+            'ai_target' => 'nullable|string|max:2000',
+            'ai_exclude' => 'nullable|string|max:2000',
             // Discovery engines are selected globally in Settings. Criteria rows
             // intentionally contain only the query text and its enabled flag.
-            'ai_queries'           => 'nullable|array',
-            'ai_queries.*.q'       => 'required|string|max:500',
+            'ai_queries' => 'nullable|array',
+            'ai_queries.*.q' => 'required|string|max:500',
             'ai_queries.*.enabled' => 'boolean',
-            'sectors'            => 'nullable|array|max:50',
-            'sectors.*'          => 'string|max:100',
-            'countries'          => 'nullable|array|max:50',
-            'countries.*'        => 'string|max:10',
-            'company_sizes'      => 'nullable|array|max:20',
-            'company_sizes.*'    => 'string|max:20',
-            'target_positions'   => 'nullable|array|max:50',
+            'sectors' => 'nullable|array|max:50',
+            'sectors.*' => 'string|max:100',
+            'countries' => 'nullable|array|max:50',
+            'countries.*' => 'string|max:10',
+            'company_sizes' => 'nullable|array|max:20',
+            'company_sizes.*' => 'string|max:20',
+            'target_positions' => 'nullable|array|max:50',
             'target_positions.*' => 'string|max:100',
-            'daily_limit'        => 'nullable|integer|min:1|max:500',
-            'auto_run'           => 'boolean',
-            'run_at_hour'        => 'nullable|integer|between:0,23|required_if:auto_run,1',
-            'contact_limit'      => 'nullable|integer|min:1|max:500',
-            'min_score_enrich'   => 'nullable|integer|between:0,100',
-            'auto_enrich'        => 'nullable|boolean',
-            'is_active'          => 'boolean',
+            'daily_limit' => 'nullable|integer|min:1|max:500',
+            'auto_run' => 'boolean',
+            'run_at_hour' => 'nullable|integer|between:0,23|required_if:auto_run,1',
+            'contact_limit' => 'nullable|integer|min:1|max:20',
+            'min_score_enrich' => 'nullable|integer|between:0,100',
+            'auto_enrich' => 'nullable|boolean',
+            'is_active' => 'boolean',
         ];
     }
 }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Backend;
 
 use App\DataTables\Backend\CompaniesDataTable;
 use App\Exceptions\EnrichmentInFlightException;
+use App\Exceptions\InvalidEnrichmentDomainException;
 use App\Exceptions\QuotaExhaustedException;
 use App\Exceptions\QuotaLockUnavailableException;
 use App\Http\Controllers\Traits\Crudable;
@@ -11,15 +12,9 @@ use App\Http\Controllers\Traits\Datatableable;
 use App\Models\CampaignRecipient;
 use App\Models\Company;
 use App\Models\Demande;
-use App\Models\DiscoveryRun;
-use App\Services\Discovery\CompanyDiscoveryService;
-use App\Services\Discovery\ContactUpsertService;
-use App\Services\Discovery\HunterEnrichmentService;
-use App\Services\Quota\DiscoveryQuotaService;
+use App\Services\Discovery\CompanyEnrichmentService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 
 class CompanyController extends BackendController
 {
@@ -44,28 +39,28 @@ class CompanyController extends BackendController
         $this->middleware('permission:enrich companies')->only(['enrich']);
 
         $this->listTitle = 'Entreprises';
-        $this->title     = 'name';
+        $this->title = 'name';
 
         $this->bootResource(new BackendResource(
-            modelClass:      Company::class,
-            modelName:       'companies',
-            dataTableClass:  CompaniesDataTable::class,
+            modelClass: Company::class,
+            modelName: 'companies',
+            dataTableClass: CompaniesDataTable::class,
             permissionEntity: 'companies',
-            prefixName:      'admin',
-            titleField:      'name',
+            prefixName: 'admin',
+            titleField: 'name',
         ));
     }
 
     // ── Metronic semantic colour → hex (used server-side to build chart payloads) ──
 
     private const SEMANTIC_HEX = [
-        'primary'   => '#009EF7',
+        'primary' => '#009EF7',
         'secondary' => '#E1E3EA',
-        'success'   => '#50CD89',
-        'info'      => '#7239EA',
-        'warning'   => '#FFC700',
-        'danger'    => '#F1416C',
-        'dark'      => '#181C32',
+        'success' => '#50CD89',
+        'info' => '#7239EA',
+        'warning' => '#FFC700',
+        'danger' => '#F1416C',
+        'dark' => '#181C32',
     ];
 
     /**
@@ -74,7 +69,7 @@ class CompanyController extends BackendController
      * where 'secondary' grey is invisible and qualified/converted would collide.
      */
     private const STATUS_CHART_HEX = [
-        'new'       => '#A1A5B7', // visible grey (gray-500) instead of near-white secondary
+        'new' => '#A1A5B7', // visible grey (gray-500) instead of near-white secondary
         'converted' => '#00A3A3', // distinct teal — config 'success' would collide with qualified
     ];
 
@@ -87,6 +82,7 @@ class CompanyController extends BackendController
 
         if ($model === null) {
             session()->flash('error', trans('app.not_found'));
+
             return redirect(route('admin.companies.index'));
         }
 
@@ -107,7 +103,7 @@ class CompanyController extends BackendController
         $contactIds = $company->contacts->pluck('id');
 
         // ── KPI scalars ───────────────────────────────────────────────────────
-        $contactsTotal     = $company->contacts->count();
+        $contactsTotal = $company->contacts->count();
         $contactsQualified = $company->contacts
             ->whereIn('status', ['qualified', 'converted'])
             ->count();
@@ -117,16 +113,16 @@ class CompanyController extends BackendController
             ? CampaignRecipient::whereIn('contact_id', $contactIds)->get()
             : collect();
 
-        $emailsSent  = $recipients->filter(fn ($r) => !is_null($r->sent_at))->count();
+        $emailsSent = $recipients->filter(fn ($r) => ! is_null($r->sent_at))->count();
 
         // Funnel — stages that have a *_at column: sent, opened, clicked, replied
         // "Délivrés" has no delivered_at column → status-based fallback
         $funnelSeries = [
             $emailsSent,
             $recipients->whereIn('status', ['delivered', 'opened', 'clicked', 'replied'])->count(),
-            $recipients->filter(fn ($r) => !is_null($r->opened_at))->count(),
-            $recipients->filter(fn ($r) => !is_null($r->clicked_at))->count(),
-            $recipients->filter(fn ($r) => !is_null($r->replied_at))->count(),
+            $recipients->filter(fn ($r) => ! is_null($r->opened_at))->count(),
+            $recipients->filter(fn ($r) => ! is_null($r->clicked_at))->count(),
+            $recipients->filter(fn ($r) => ! is_null($r->replied_at))->count(),
         ];
 
         // ── Demandes (single query) ───────────────────────────────────────────
@@ -135,7 +131,7 @@ class CompanyController extends BackendController
             : 0;
 
         // ── Contacts donut (config-ordered, zero-excluded) ────────────────────
-        $statusCounts   = $company->contacts->countBy('status');
+        $statusCounts = $company->contacts->countBy('status');
         $contactStatuses = config('global.data.contact_statuses', []);
         $donutSeries = [];
         $donutLabels = [];
@@ -151,7 +147,7 @@ class CompanyController extends BackendController
         }
 
         // ── Contacts over time (last 12 months, zero-filled) ──────────────────
-        $now      = Carbon::now();
+        $now = Carbon::now();
         $skeleton = [];  // 'Y-m' => 0
 
         for ($i = 11; $i >= 0; $i--) {
@@ -175,21 +171,21 @@ class CompanyController extends BackendController
         }
 
         return [
-            'contacts_total'      => $contactsTotal,
-            'contacts_qualified'  => $contactsQualified,
-            'emails_sent'         => $emailsSent,
-            'demandes_total'      => $demandesTotal,
-            'ai_score'            => $company->ai_score,
-            'contacts_donut'      => [
+            'contacts_total' => $contactsTotal,
+            'contacts_qualified' => $contactsQualified,
+            'emails_sent' => $emailsSent,
+            'demandes_total' => $demandesTotal,
+            'ai_score' => $company->ai_score,
+            'contacts_donut' => [
                 'series' => $donutSeries,
                 'labels' => $donutLabels,
                 'colors' => $donutColors,
             ],
-            'funnel'              => [
+            'funnel' => [
                 'labels' => ['Envoyés', 'Délivrés', 'Ouverts', 'Cliqués', 'Répondus'],
                 'series' => $funnelSeries,
             ],
-            'contacts_over_time'  => [
+            'contacts_over_time' => [
                 'labels' => $otLabels,
                 'series' => array_values($skeleton),
             ],
@@ -206,6 +202,7 @@ class CompanyController extends BackendController
 
         if ($model === null) {
             session()->flash('error', trans('app.not_found'));
+
             return redirect(route('admin.companies.index'));
         }
 
@@ -243,10 +240,10 @@ class CompanyController extends BackendController
         return $this->currentDataTable->render(
             'backend.contents.companies.crud.index',
             [
-                'listTitle'       => $isArchive ? 'Rejetées / Archives' : $this->listTitle,
+                'listTitle' => $isArchive ? 'Rejetées / Archives' : $this->listTitle,
                 'dataTableConfig' => $this->currentDataTable->getIndexConfig(),
-                'isArchive'       => $isArchive,
-                'rejectedCount'   => Company::rejected()->count(),
+                'isArchive' => $isArchive,
+                'rejectedCount' => Company::rejected()->count(),
             ]
         );
     }
@@ -267,8 +264,8 @@ class CompanyController extends BackendController
     {
         if ($model instanceof Company && $model->qualification_status === 'rejected') {
             return response()->json([
-                'message'  => 'success',
-                'model'    => $model,
+                'message' => 'success',
+                'model' => $model,
                 'redirect' => route('admin.companies.archive'),
             ]);
         }
@@ -280,11 +277,11 @@ class CompanyController extends BackendController
     protected function getViewVars(): array
     {
         return [
-            'relationships'          => config('global.data.company_relationships', []),
-            'sources'                => config('global.data.company_sources', []),
-            'qualificationStatuses'  => config('global.data.company_qualification_statuses', []),
-            'sizeBuckets'            => config('global.data.company_size_buckets', []),
-            'countries'              => config('global.data.company_countries', []),
+            'relationships' => config('global.data.company_relationships', []),
+            'sources' => config('global.data.company_sources', []),
+            'qualificationStatuses' => config('global.data.company_qualification_statuses', []),
+            'sizeBuckets' => config('global.data.company_size_buckets', []),
+            'countries' => config('global.data.company_countries', []),
         ];
     }
 
@@ -295,144 +292,58 @@ class CompanyController extends BackendController
      * Debits 1 credit before calling Hunter (debit-before-call semantics).
      * No path may leave the DiscoveryRun row in status='running'.
      *
-     * @param  int                   $id
-     * @param  DiscoveryQuotaService $quotaService
-     * @param  HunterEnrichmentService $hunterService
-     * @param  ContactUpsertService  $contactUpsert
+     * @param  int  $id
      * @return \Illuminate\Http\JsonResponse
      */
-    public function enrich(
-        $id,
-        CompanyDiscoveryService $discoveryService,
-        DiscoveryQuotaService $quotaService,
-        HunterEnrichmentService $hunterService,
-        ContactUpsertService $contactUpsert
-    ) {
+    public function enrich($id, CompanyEnrichmentService $service)
+    {
         /** @var Company $company */
         $company = Company::findOrFail((int) $id);
 
-        // Guard: domain is required for Hunter enrichment.
-        if (empty($company->domain)) {
-            return response()->json([
-                'message' => 'error',
-                'text'    => "Cette entreprise n'a pas de domaine — enrichissement impossible.",
-            ], 422);
-        }
-
-        if ($discoveryService->isBlockedDomain($company->domain)) {
-            return response()->json([
-                'message' => 'error',
-                'text'    => "Ce domaine appartient \u{00E0} un r\u{00E9}seau social \u{2014} renseignez le domaine du site de l'entreprise.",
-            ], 422);
-        }
-
-        // Reserve the run (quota guard + in-flight guard inside the lock).
         try {
-            $run = $quotaService->reserveManualEnrichment($company);
+            $result = $service->enrich($company);
+        } catch (InvalidEnrichmentDomainException $e) {
+            $text = $e->reason === InvalidEnrichmentDomainException::BLOCKED
+                ? "Ce domaine appartient \u{00E0} un r\u{00E9}seau social \u{2014} renseignez le domaine du site de l'entreprise."
+                : "Cette entreprise n'a pas de domaine — enrichissement impossible.";
+
+            return response()->json(['message' => 'error', 'text' => $text], 422);
         } catch (QuotaExhaustedException $e) {
             return response()->json([
                 'message' => 'error',
-                'text'    => 'Solde du jour épuisé — recharge demain à minuit.',
+                'text' => 'Solde du jour épuisé — recharge demain à minuit.',
             ], 422);
         } catch (EnrichmentInFlightException $e) {
             return response()->json([
                 'message' => 'error',
-                'text'    => 'Enrichissement déjà en cours pour cette entreprise.',
+                'text' => 'Enrichissement déjà en cours pour cette entreprise.',
             ], 409);
         } catch (QuotaLockUnavailableException $e) {
             return response()->json([
                 'message' => 'error',
-                'text'    => 'Système occupé — réessayez dans quelques secondes.',
+                'text' => 'Système occupé — réessayez dans quelques secondes.',
             ], 409);
-        }
-
-        // Everything after reservation must finalize the run (no 'running' orphans).
-        try {
-            $enrichment = $hunterService->domainSearch($company->domain);
-
-            if ($enrichment !== null) {
-                // Update company: enrichment_data + sector/country.
-                // NEVER touch: relationship, source, criteria_id, ai_score, ai_explanation.
-                $updateAttrs = [
-                    'enrichment_data' => $enrichment['raw'] ?? null,
-                ];
-
-                if (! empty($enrichment['industry'])) {
-                    $updateAttrs['sector'] = $enrichment['industry'];
-                }
-
-                if (! empty($enrichment['country'])) {
-                    $raw = $enrichment['country'];
-                    // Apply same ISO-2 mapping idiom as DiscoveryPipelineService.
-                    $updateAttrs['country'] = $this->mapIso2($raw);
-                }
-
-                // Mirror DiscoveryPipelineService's audit statuses: Hunter answered,
-                // so the only two outcomes here are "enriched" or "found nothing".
-                $usableEmails = 0;
-                foreach (($enrichment['emails'] ?? []) as $emailData) {
-                    if (! empty($emailData['value'] ?? null)) {
-                        $usableEmails++;
-                    }
-                }
-
-                $updateAttrs['enrichment_status'] = $usableEmails > 0
-                    ? Company::ENRICHMENT_ENRICHED
-                    : Company::ENRICHMENT_HUNTER_EMPTY;
-
-                $company->fill($updateAttrs);
-                $company->save();
-
-                $count = $contactUpsert->upsertFromHunter($company, $company->domain, $enrichment['emails'] ?? []);
-
-                // Finalize run as completed.
-                DiscoveryRun::where('id', $run->id)->update([
-                    'status'         => 'completed',
-                    'contacts_count' => $count,
-                    'companies_count'=> 0,
-                    'finished_at'    => now(),
-                ]);
-
-                return response()->json([
-                    'message'        => 'success',
-                    'text'           => "{$count} contact(s) récupéré(s) — 1 crédit contact consommé.",
-                    'contacts_count' => $count,
-                ], 200);
-            }
-
-            // Hunter returned null — provider failure (no API key / all calls failed).
-            $company->forceFill(['enrichment_status' => Company::ENRICHMENT_HUNTER_FAILED])->save();
-
-            DiscoveryRun::where('id', $run->id)->update([
-                'status'         => 'completed',
-                'contacts_count' => 0,
-                'companies_count'=> 0,
-                'finished_at'    => now(),
-            ]);
-
-            return response()->json([
-                'message' => 'success',
-                'text'    => 'Aucun contact trouvé pour ce domaine — 1 crédit consommé.',
-            ], 200);
-
         } catch (\Throwable $e) {
-            Log::error('[CompanyController::enrich] Enrichment failed', [
-                'company_id' => $company->id,
-                'domain'     => $company->domain,
-                'error'      => $e->getMessage(),
-            ]);
-
-            DiscoveryRun::where('id', $run->id)->update([
-                'status'      => 'failed',
-                'error'       => Str::limit($e->getMessage(), 1000),
-                'finished_at' => now(),
-            ]);
-
             return response()->json([
                 'message' => 'error',
-                'text'    => "Erreur lors de l'enrichissement — réessayez.",
+                'text' => "Erreur lors de l'enrichissement — réessayez.",
             ], 500);
         }
+
+        if ($result['outcome'] === 'provider_failed') {
+            return response()->json([
+                'message' => 'success',
+                'text' => 'Aucun contact trouvé pour ce domaine — 1 crédit consommé.',
+            ], 200);
+        }
+
+        $count = $result['contacts_count'];
+
+        return response()->json([
+            'message' => 'success',
+            'text' => "{$count} contact(s) récupéré(s) — 1 crédit contact consommé.",
+            'contacts_count' => $count,
+        ], 200);
     }
 
     /**
@@ -454,64 +365,5 @@ class CompanyController extends BackendController
         Company::whereKey($company->id)->update(['ai_explanation' => $text]);
 
         return response()->json(['message' => 'success', 'text' => 'Récapitulatif IA généré.', 'explanation' => $text], 200);
-    }
-
-    /**
-     * Map a country name or code to an ISO-3166-1 alpha-2 code.
-     * Bare 2-char inputs that are already a code pass through uppercased.
-     * Mirrors DiscoveryPipelineService::mapIso2() — inlined to avoid coupling.
-     */
-    private function mapIso2(?string $country): ?string
-    {
-        if ($country === null || $country === '') {
-            return null;
-        }
-
-        if (strlen($country) === 2) {
-            return strtoupper($country);
-        }
-
-        $map = [
-            'france'          => 'FR',
-            'maroc'           => 'MA',
-            'morocco'         => 'MA',
-            'espagne'         => 'ES',
-            'spain'           => 'ES',
-            'belgique'        => 'BE',
-            'belgium'         => 'BE',
-            'allemagne'       => 'DE',
-            'germany'         => 'DE',
-            'italie'          => 'IT',
-            'italy'           => 'IT',
-            'portugal'        => 'PT',
-            'pays-bas'        => 'NL',
-            'netherlands'     => 'NL',
-            'suisse'          => 'CH',
-            'switzerland'     => 'CH',
-            'sénégal'         => 'SN',
-            'senegal'         => 'SN',
-            "côte d'ivoire"   => 'CI',
-            'ivory coast'     => 'CI',
-            'tunisie'         => 'TN',
-            'tunisia'         => 'TN',
-            'algérie'         => 'DZ',
-            'algeria'         => 'DZ',
-            'chine'           => 'CN',
-            'china'           => 'CN',
-            'états-unis'      => 'US',
-            'united states'   => 'US',
-            'usa'             => 'US',
-            'royaume-uni'     => 'GB',
-            'united kingdom'  => 'GB',
-            'uk'              => 'GB',
-            'turquie'         => 'TR',
-            'turkey'          => 'TR',
-            'pologne'         => 'PL',
-            'poland'          => 'PL',
-            'roumanie'        => 'RO',
-            'romania'         => 'RO',
-        ];
-
-        return $map[strtolower(trim($country))] ?? null;
     }
 }

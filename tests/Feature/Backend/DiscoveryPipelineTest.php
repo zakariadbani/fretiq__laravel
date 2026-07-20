@@ -2,18 +2,22 @@
 
 namespace Tests\Feature\Backend;
 
+use App\Exceptions\QuotaLockUnavailableException;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Models\Setting;
+use App\Services\Discovery\CompanyEnrichmentService;
 use App\Services\Discovery\ContactUpsertService;
 use App\Services\Discovery\DiscoveryPipelineService;
 use App\Services\Discovery\HomepageSnapshotService;
+use App\Services\Quota\DiscoveryQuotaService;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -55,6 +59,7 @@ class DiscoveryPipelineTest extends TestCase
         // The pipeline service uses Company/Contact models which require a clean DB.
         // ACL seeders are not needed here (no auth).
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
+        Setting::set('decouverte.discovery_engines', ['google']);
     }
 
     // ── Helper ────────────────────────────────────────────────────────────────
@@ -62,11 +67,12 @@ class DiscoveryPipelineTest extends TestCase
     private function makeCriteria(array $overrides = []): ProspectCriteria
     {
         return ProspectCriteria::create(array_merge([
-            'name'        => 'Test Criteria ' . uniqid(),
-            'sectors'     => ['transport'],
-            'countries'   => ['France'],
+            'name' => 'Test Criteria '.uniqid(),
+            'sectors' => ['transport'],
+            'countries' => ['France'],
             'daily_limit' => 10,
-            'is_active'   => true,
+            'auto_enrich' => true,
+            'is_active' => true,
         ], $overrides));
     }
 
@@ -128,7 +134,7 @@ class DiscoveryPipelineTest extends TestCase
         // All fixture emails are at corporate domains → domain-based classifier
         // assigns email_kind='role' to every one of them. No free-webmail domains
         // appear in hunter.json, so personal count must be 0.
-        $roleCount     = $discoveredContacts->where('email_kind', 'role')->count();
+        $roleCount = $discoveredContacts->where('email_kind', 'role')->count();
         $personalCount = $discoveredContacts->where('email_kind', 'personal')->count();
 
         $this->assertGreaterThan(0, $roleCount, 'All fixture contacts are on corporate domains → must have email_kind=role');
@@ -183,10 +189,10 @@ class DiscoveryPipelineTest extends TestCase
     {
         // Pre-create the company as a client from Zoho
         $clientCompany = Company::create([
-            'name'         => 'Bolloré Transport & Logistics (pre-existing)',
-            'domain'       => self::FIXTURE_DOMAIN_CLIENT,
+            'name' => 'Bolloré Transport & Logistics (pre-existing)',
+            'domain' => self::FIXTURE_DOMAIN_CLIENT,
             'relationship' => 'client',
-            'source'       => 'zoho',
+            'source' => 'zoho',
             'qualification_status' => 'qualified',
         ]);
 
@@ -233,10 +239,11 @@ class DiscoveryPipelineTest extends TestCase
 
     public function test_pipeline_reuses_sufficient_candidates_snapshot_without_serpapi_http(): void
     {
+        Setting::set('decouverte.auto_scoring', false);
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
-            'services.hunter.driver'   => 'local',
+            'services.hunter.driver' => 'local',
         ]);
 
         Http::fake();
@@ -247,22 +254,22 @@ class DiscoveryPipelineTest extends TestCase
         ]);
 
         $snapshot = collect(range(0, 3))->map(fn ($i) => [
-            'domain'          => "snapshot-{$i}.test",
-            'title'           => "Snapshot {$i}",
-            'snippet'         => 'Snapshot candidate',
-            'url'             => "https://snapshot-{$i}.test",
+            'domain' => "snapshot-{$i}.test",
+            'title' => "Snapshot {$i}",
+            'snippet' => 'Snapshot candidate',
+            'url' => "https://snapshot-{$i}.test",
             'discovery_query' => 'snapshot query',
         ])->all();
 
         $run = DiscoveryRun::create([
             'prospect_criteria_id' => $criteria->id,
-            'type'                 => 'discovery',
-            'status'               => 'running',
-            'credits_reserved'     => 10,
-            'consumed'             => 1,
-            'companies_count'      => 0,
-            'candidates_snapshot'  => $snapshot,
-            'started_at'           => now(),
+            'type' => 'discovery',
+            'status' => 'running',
+            'credits_reserved' => 10,
+            'consumed' => 1,
+            'companies_count' => 0,
+            'candidates_snapshot' => $snapshot,
+            'started_at' => now(),
         ]);
 
         /** @var DiscoveryPipelineService $pipeline */
@@ -280,23 +287,24 @@ class DiscoveryPipelineTest extends TestCase
 
     public function test_pipeline_extends_insufficient_candidates_snapshot_with_serpapi_page(): void
     {
+        Setting::set('decouverte.auto_scoring', false);
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
-            'services.hunter.driver'   => 'local',
+            'services.hunter.driver' => 'local',
         ]);
 
         Http::fake([
             '*' => Http::response([
                 'organic_results' => [
                     [
-                        'title'   => 'Fresh One',
-                        'link'    => 'https://fresh-one.test/about',
+                        'title' => 'Fresh One',
+                        'link' => 'https://fresh-one.test/about',
                         'snippet' => 'Fresh candidate',
                     ],
                     [
-                        'title'   => 'Fresh Two',
-                        'link'    => 'https://fresh-two.test/about',
+                        'title' => 'Fresh Two',
+                        'link' => 'https://fresh-two.test/about',
                         'snippet' => 'Fresh candidate',
                     ],
                 ],
@@ -306,24 +314,24 @@ class DiscoveryPipelineTest extends TestCase
         $criteria = $this->makeCriteria([
             'daily_limit' => 10,
             'auto_enrich' => false,
-            'ai_queries'  => [['q' => 'snapshot query', 'enabled' => true]],
+            'ai_queries' => [['q' => 'snapshot query', 'enabled' => true]],
         ]);
 
         $run = DiscoveryRun::create([
             'prospect_criteria_id' => $criteria->id,
-            'type'                 => 'discovery',
-            'status'               => 'running',
-            'credits_reserved'     => 10,
-            'consumed'             => 1,
-            'companies_count'      => 0,
-            'candidates_snapshot'  => [[
-                'domain'          => 'snapshot-only.test',
-                'title'           => 'Snapshot Only',
-                'snippet'         => 'Existing candidate',
-                'url'             => 'https://snapshot-only.test',
+            'type' => 'discovery',
+            'status' => 'running',
+            'credits_reserved' => 10,
+            'consumed' => 1,
+            'companies_count' => 0,
+            'candidates_snapshot' => [[
+                'domain' => 'snapshot-only.test',
+                'title' => 'Snapshot Only',
+                'snippet' => 'Existing candidate',
+                'url' => 'https://snapshot-only.test',
                 'discovery_query' => 'snapshot query',
             ]],
-            'started_at'           => now(),
+            'started_at' => now(),
         ]);
 
         /** @var DiscoveryPipelineService $pipeline */
@@ -337,29 +345,30 @@ class DiscoveryPipelineTest extends TestCase
         $key = md5('snapshot query');
 
         $this->assertCount(3, $run->candidates_snapshot);
-        $this->assertSame(10, (int) data_get($criteria->discovery_cursors, "{$key}.start"));
+        $this->assertSame(0, (int) data_get($criteria->discovery_cursors, "{$key}.start"));
         $this->assertTrue((bool) data_get($criteria->discovery_cursors, "{$key}.exhausted"));
     }
 
     public function test_duplicate_domain_query_exception_advances_cursor_without_aborting_run(): void
     {
         config([
-            'services.serpapi.driver'  => 'serpapi',
+            'services.serpapi.driver' => 'serpapi',
             'services.serpapi.api_key' => 'test-key',
-            'services.hunter.driver'   => 'local',
+            'services.hunter.driver' => 'local',
         ]);
 
         Http::fake([
             '*' => Http::response([
                 'organic_results' => [[
-                    'title'   => 'Race Domain',
-                    'link'    => 'https://race-domain.test/about',
+                    'title' => 'Race Domain',
+                    'link' => 'https://race-domain.test/about',
                     'snippet' => 'Fresh candidate',
                 ]],
             ], 200),
         ]);
 
-        $this->app->bind(ContactUpsertService::class, fn () => new class extends ContactUpsertService {
+        $this->app->bind(ContactUpsertService::class, fn () => new class extends ContactUpsertService
+        {
             public function upsertFromHunter(Company $company, string $domain, array $emails): int
             {
                 throw new QueryException(
@@ -372,21 +381,24 @@ class DiscoveryPipelineTest extends TestCase
         });
 
         $criteria = $this->makeCriteria([
-            'daily_limit'       => 10,
-            'auto_enrich'       => true,
-            'min_score_enrich'  => 0,
-            'ai_queries'        => [['q' => 'duplicate query', 'enabled' => true]],
+            'daily_limit' => 10,
+            'auto_enrich' => true,
+            'min_score_enrich' => 0,
+            'ai_queries' => [['q' => 'duplicate query', 'enabled' => true]],
         ]);
 
         $run = DiscoveryRun::create([
             'prospect_criteria_id' => $criteria->id,
-            'type'                 => 'discovery',
-            'status'               => 'running',
-            'credits_reserved'     => 10,
-            'consumed'             => 0,
-            'companies_count'      => 0,
-            'contact_consumed'     => 0,
-            'started_at'           => now(),
+            'type' => 'discovery',
+            'status' => 'running',
+            'credits_reserved' => 10,
+            'consumed' => 0,
+            'companies_count' => 0,
+            'contact_consumed' => 0,
+            'contact_credits_reserved' => 1,
+            'successful_enrichments_target' => 1,
+            'successful_enrichments' => 0,
+            'started_at' => now(),
         ]);
 
         /** @var DiscoveryPipelineService $pipeline */
@@ -401,36 +413,135 @@ class DiscoveryPipelineTest extends TestCase
         $this->assertSame(1, $stats['contacts_consumed']);
     }
 
+    public function test_quota_lock_failure_keeps_candidate_cursor_for_retry_without_hunter_debit(): void
+    {
+        Setting::set('decouverte.auto_scoring', false);
+        $criteria = $this->makeCriteria(['daily_limit' => 1, 'auto_enrich' => true]);
+        $run = DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'discovery',
+            'status' => 'running',
+            'credits_reserved' => 1,
+            'searches_reserved' => 1,
+            'searches_consumed' => 0,
+            'consumed' => 0,
+            'contact_credits_reserved' => 1,
+            'contact_consumed' => 0,
+            'successful_enrichments_target' => 1,
+            'successful_enrichments' => 0,
+            'started_at' => now(),
+        ]);
+
+        $this->app->instance(DiscoveryQuotaService::class, new class extends DiscoveryQuotaService
+        {
+            public function claimAutomaticEnrichment(int $companyId, DiscoveryRun $run): Company
+            {
+                throw new QuotaLockUnavailableException;
+            }
+        });
+        $enrichment = \Mockery::mock(CompanyEnrichmentService::class);
+        $enrichment->shouldNotReceive('enrichClaimed');
+        $this->app->instance(CompanyEnrichmentService::class, $enrichment);
+
+        $result = app(DiscoveryPipelineService::class)->run($criteria, 1, $run, 1);
+
+        $run->refresh();
+        $this->assertFalse($result->isComplete());
+        $this->assertSame(0, (int) $run->consumed);
+        $this->assertSame(0, (int) $run->skipped_count);
+        $this->assertSame(0, (int) $run->contact_consumed);
+    }
+
+    public function test_contact_upsert_preserves_status_and_never_resurrects_soft_deleted_email(): void
+    {
+        $criteria = $this->makeCriteria();
+        $originalCompany = Company::create([
+            'criteria_id' => $criteria->id,
+            'name' => 'Original contact owner',
+            'domain' => 'original-owner.test',
+            'relationship' => 'prospect',
+            'source' => 'discovered',
+            'qualification_status' => 'pending',
+            'is_active' => true,
+        ]);
+        $otherCompany = Company::create([
+            'criteria_id' => $criteria->id,
+            'name' => 'Other contact owner',
+            'domain' => 'other-owner.test',
+            'relationship' => 'prospect',
+            'source' => 'discovered',
+            'qualification_status' => 'pending',
+            'is_active' => true,
+        ]);
+        $contact = Contact::create([
+            'company_id' => $originalCompany->id,
+            'email' => 'atomic@example.test',
+            'name' => 'Before',
+            'status' => 'qualified',
+        ]);
+        DB::table('contacts')->where('id', $contact->id)->update(['updated_at' => now()->subDay()]);
+        $previousUpdatedAt = $contact->fresh()->updated_at;
+        $service = app(ContactUpsertService::class);
+        $email = [[
+            'value' => 'atomic@example.test',
+            'first_name' => 'After',
+            'last_name' => 'Update',
+            'position' => 'Direction',
+        ]];
+
+        $this->assertSame(0, $service->upsertFromHunter($originalCompany, $originalCompany->domain, $email));
+        $contact->refresh();
+        $this->assertSame('qualified', $contact->status);
+        $this->assertSame('After Update', $contact->name);
+        $this->assertTrue($contact->updated_at->greaterThan($previousUpdatedAt));
+
+        $this->assertSame(0, $service->upsertFromHunter($otherCompany, $otherCompany->domain, $email));
+        $contact->refresh();
+        $this->assertSame($originalCompany->id, $contact->company_id);
+        $this->assertSame('After Update', $contact->name);
+
+        $contact->delete();
+        $this->assertSame(0, $service->upsertFromHunter($otherCompany, $otherCompany->domain, $email));
+        $this->assertFalse(Contact::where('email', 'atomic@example.test')->exists());
+        $tombstone = Contact::withTrashed()->where('email', 'atomic@example.test')->firstOrFail();
+        $this->assertNotNull($tombstone->deleted_at);
+        $this->assertSame($originalCompany->id, $tombstone->company_id);
+    }
+
     // ── Homepage prefetch wiring ──────────────────────────────────────────────
 
     /**
-     * The candidate loop scores serially, and excerpt() costs a full HTTP timeout on
+     * The candidate loop scores serially, and an uncached excerpt costs a full HTTP timeout on
      * every uncached domain — measured at ~3.5 s average and 14 s for a dead domain.
      * Serially that alone outlives RunDiscoveryPipelineJob's 300 s timeout on a full
-     * ~100-candidate slice, so the run MUST warm the cache in one pooled burst before
-     * the loop starts. This test pins that ordering: prefetch() runs exactly once,
-     * carries the candidate domains, and lands before the first excerpt() call.
+     * slice, so the run MUST warm each small resumable batch before its first
+     * cache read. This pins the ordering and the ten-domain batch ceiling.
      */
     public function test_homepage_prefetch_runs_once_with_candidate_domains_before_any_scoring(): void
     {
         $criteria = $this->makeCriteria(['auto_enrich' => false]);
 
-        $prefetched   = null;
+        $prefetched = [];
         $excerptCalls = [];
 
         $homepage = \Mockery::mock(HomepageSnapshotService::class);
 
         $homepage->shouldReceive('prefetch')
-            ->once()
-            ->andReturnUsing(function (array $domains) use (&$prefetched): void {
-                $prefetched = $domains;
+            ->atLeast()->once()
+            ->andReturnUsing(function (array $domains, float $deadlineAt) use (&$prefetched): bool {
+                $this->assertLessThanOrEqual(10, count($domains));
+                $this->assertGreaterThan(microtime(true), $deadlineAt);
+                $prefetched = [...$prefetched, ...$domains];
+
+                return true;
             });
 
-        $homepage->shouldReceive('excerpt')
+        $homepage->shouldReceive('cachedExcerpt')
             ->andReturnUsing(function (string $domain) use (&$prefetched, &$excerptCalls): ?string {
-                $this->assertNotNull(
+                $this->assertContains(
+                    $domain,
                     $prefetched,
-                    "excerpt({$domain}) ran before prefetch() — the pooled warm-up must precede the loop."
+                    "cachedExcerpt({$domain}) ran before prefetch() — the pooled warm-up must precede the loop."
                 );
                 $excerptCalls[] = $domain;
 
@@ -441,7 +552,6 @@ class DiscoveryPipelineTest extends TestCase
 
         app(DiscoveryPipelineService::class)->run($criteria);
 
-        $this->assertIsArray($prefetched);
         $this->assertNotEmpty($prefetched, 'prefetch() must receive the candidate domains, not an empty list.');
 
         foreach ($prefetched as $domain) {
@@ -451,10 +561,10 @@ class DiscoveryPipelineTest extends TestCase
 
         // Every domain the scorer asked for must have been warmed — that is the whole
         // point: each excerpt() below is then a pure cache hit, not an HTTP round-trip.
-        $this->assertNotEmpty($excerptCalls, 'Scoring is on, so excerpt() must have been consulted.');
+        $this->assertNotEmpty($excerptCalls, 'Scoring is on, so cachedExcerpt() must have been consulted.');
 
         foreach ($excerptCalls as $domain) {
-            $this->assertContains($domain, $prefetched, "excerpt({$domain}) was not warmed by prefetch().");
+            $this->assertContains($domain, $prefetched, "cachedExcerpt({$domain}) was not warmed by prefetch().");
         }
     }
 
@@ -468,7 +578,7 @@ class DiscoveryPipelineTest extends TestCase
 
         $homepage = \Mockery::mock(HomepageSnapshotService::class);
         $homepage->shouldNotReceive('prefetch');
-        $homepage->shouldNotReceive('excerpt');
+        $homepage->shouldNotReceive('cachedExcerpt');
 
         $this->app->instance(HomepageSnapshotService::class, $homepage);
 

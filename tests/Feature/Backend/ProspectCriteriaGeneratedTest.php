@@ -4,6 +4,7 @@ namespace Tests\Feature\Backend;
 
 use App\Exceptions\DiscoveryRunInFlightException;
 use App\Exceptions\QuotaExhaustedException;
+use App\Exceptions\QuotaLockUnavailableException;
 use App\Jobs\RunDiscoveryPipelineJob;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
@@ -52,6 +53,7 @@ class ProspectCriteriaGeneratedTest extends TestCase
     use RefreshDatabase;
 
     private User $superadmin;
+
     private User $commercial;
 
     protected function setUp(): void
@@ -63,13 +65,13 @@ class ProspectCriteriaGeneratedTest extends TestCase
 
         $this->superadmin = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $this->superadmin->assignRole('superadmin');
 
         $this->commercial = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $this->commercial->assignRole('commercial');
     }
@@ -82,11 +84,11 @@ class ProspectCriteriaGeneratedTest extends TestCase
     private function makeCriteria(array $overrides = []): ProspectCriteria
     {
         return ProspectCriteria::create(array_merge([
-            'name'        => 'Critère Test ' . uniqid(),
-            'sectors'     => ['Transport'],
-            'countries'   => ['FR'],
+            'name' => 'Critère Test '.uniqid(),
+            'sectors' => ['Transport'],
+            'countries' => ['FR'],
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ], $overrides));
     }
 
@@ -109,7 +111,7 @@ class ProspectCriteriaGeneratedTest extends TestCase
     {
         $user = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         // Give only backend.access — no `view prospect_criteria`.
         $user->givePermissionTo('backend.access');
@@ -130,7 +132,7 @@ class ProspectCriteriaGeneratedTest extends TestCase
         $criteria = $this->makeCriteria();
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id);
+            ->get('/admin/prospect_criteria/'.$criteria->id);
 
         $response->assertStatus(200);
         // criteria name is rendered in the <title> section and the breadcrumb span.
@@ -150,10 +152,10 @@ class ProspectCriteriaGeneratedTest extends TestCase
         $response = $this->actingAs($this->superadmin)
             ->postJson('/admin/prospect_criteria', [
                 // name intentionally omitted
-                'sectors'     => ['Transport'],
-                'countries'   => ['FR'],
+                'sectors' => ['Transport'],
+                'countries' => ['FR'],
                 'daily_limit' => 10,
-                'is_active'   => 1,
+                'is_active' => 1,
             ]);
 
         $response->assertStatus(406);
@@ -173,18 +175,18 @@ class ProspectCriteriaGeneratedTest extends TestCase
         $criteria = $this->makeCriteria(['name' => 'Nom Original']);
 
         $response = $this->actingAs($this->superadmin)
-            ->put('/admin/prospect_criteria/' . $criteria->id, [
-                'name'        => 'Nom Modifié',
-                'sectors'     => ['Logistique'],
-                'countries'   => ['FR'],
+            ->put('/admin/prospect_criteria/'.$criteria->id, [
+                'name' => 'Nom Modifié',
+                'sectors' => ['Logistique'],
+                'countries' => ['FR'],
                 'daily_limit' => 20,
-                'is_active'   => 1,
+                'is_active' => 1,
             ]);
 
         $response->assertStatus(200);
         $response->assertJson(['message' => 'success']);
         $this->assertDatabaseHas('prospect_criteria', [
-            'id'   => $criteria->id,
+            'id' => $criteria->id,
             'name' => 'Nom Modifié',
         ]);
     }
@@ -197,10 +199,10 @@ class ProspectCriteriaGeneratedTest extends TestCase
     public function test_delete_removes_criteria(): void
     {
         $criteria = $this->makeCriteria();
-        $id       = $criteria->id;
+        $id = $criteria->id;
 
         $response = $this->actingAs($this->superadmin)
-            ->delete('/admin/prospect_criteria/' . $id);
+            ->delete('/admin/prospect_criteria/'.$id);
 
         $response->assertStatus(200);
         $response->assertJson(['success' => true]);
@@ -217,7 +219,7 @@ class ProspectCriteriaGeneratedTest extends TestCase
         $criteria = $this->makeCriteria();
 
         $response = $this->actingAs($this->commercial)
-            ->delete('/admin/prospect_criteria/' . $criteria->id);
+            ->delete('/admin/prospect_criteria/'.$criteria->id);
 
         $response->assertStatus(403);
         // The row must still exist.
@@ -237,7 +239,7 @@ class ProspectCriteriaGeneratedTest extends TestCase
         $criteria = $this->makeCriteria(['is_active' => 0]);
 
         $response = $this->actingAs($this->superadmin)
-            ->put('/admin/prospect_criteria/executeSwitch/' . $criteria->id, [
+            ->put('/admin/prospect_criteria/executeSwitch/'.$criteria->id, [
                 'field' => 'is_active',
                 'state' => '1',
             ]);
@@ -256,7 +258,7 @@ class ProspectCriteriaGeneratedTest extends TestCase
         $criteria = $this->makeCriteria(['is_active' => 1]);
 
         $response = $this->actingAs($this->superadmin)
-            ->put('/admin/prospect_criteria/executeSwitch/' . $criteria->id, [
+            ->put('/admin/prospect_criteria/executeSwitch/'.$criteria->id, [
                 'field' => 'is_active',
                 'state' => '0',
             ]);
@@ -276,7 +278,7 @@ class ProspectCriteriaGeneratedTest extends TestCase
         $criteria = $this->makeCriteria();
 
         $response = $this->actingAs($this->superadmin)
-            ->put('/admin/prospect_criteria/executeSwitch/' . $criteria->id, [
+            ->put('/admin/prospect_criteria/executeSwitch/'.$criteria->id, [
                 'field' => 'name',   // not in toggleableFields
                 'state' => '1',
             ]);
@@ -299,14 +301,14 @@ class ProspectCriteriaGeneratedTest extends TestCase
 
         $noDiscoveryUser = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $noDiscoveryUser->givePermissionTo('view prospect_criteria');
         $noDiscoveryUser->givePermissionTo('backend.access');
         // deliberately NOT granting 'run discovery'
 
         $response = $this->actingAs($noDiscoveryUser)
-            ->post('/admin/prospect_criteria/' . $criteria->id . '/discover');
+            ->post('/admin/prospect_criteria/'.$criteria->id.'/discover');
 
         $response->assertStatus(403);
     }
@@ -327,29 +329,34 @@ class ProspectCriteriaGeneratedTest extends TestCase
         // Create a pre-existing pending run to pass as the existingRun.
         $existingRun = DiscoveryRun::create([
             'prospect_criteria_id' => $criteria->id,
-            'type'                 => 'discovery',
-            'status'               => 'pending',
-            'credits_reserved'     => 10,
-            'consumed'             => 0,
-            'quota_date'           => now()->toDateString(),
+            'type' => 'discovery',
+            'status' => 'pending',
+            'credits_reserved' => 10,
+            'consumed' => 0,
+            'quota_date' => now()->toDateString(),
         ]);
 
         // Bind a mock DiscoveryQuotaService that throws DiscoveryRunInFlightException.
         $this->app->bind(DiscoveryQuotaService::class, function () use ($existingRun) {
             $mock = $this->createMock(DiscoveryQuotaService::class);
             $mock->method('reserveRun')
-                 ->willThrowException(new DiscoveryRunInFlightException($existingRun));
+                ->willThrowException(new DiscoveryRunInFlightException($existingRun));
+
             return $mock;
         });
 
         $response = $this->actingAs($this->superadmin)
-            ->post('/admin/prospect_criteria/' . $criteria->id . '/discover');
+            ->post('/admin/prospect_criteria/'.$criteria->id.'/discover');
 
         $response->assertStatus(409);
         $response->assertJson([
             'message' => 'error',
-            'run_id'  => $existingRun->id,
-            'status'  => 'pending',
+            'run_id' => $existingRun->id,
+            'status' => 'pending',
+            'status_url' => route('admin.prospect_criteria.discovery_status', [
+                'id' => $criteria->id,
+                'run_id' => $existingRun->id,
+            ]),
         ]);
 
         // The job must NOT have been dispatched — no duplicate runs.
@@ -370,15 +377,42 @@ class ProspectCriteriaGeneratedTest extends TestCase
         $this->app->bind(DiscoveryQuotaService::class, function () {
             $mock = $this->createMock(DiscoveryQuotaService::class);
             $mock->method('reserveRun')
-                 ->willThrowException(new QuotaExhaustedException());
+                ->willThrowException(new QuotaExhaustedException);
+
             return $mock;
         });
 
         $response = $this->actingAs($this->superadmin)
-            ->post('/admin/prospect_criteria/' . $criteria->id . '/discover');
+            ->post('/admin/prospect_criteria/'.$criteria->id.'/discover');
 
         $response->assertStatus(422);
         $response->assertJson(['message' => 'error']);
+
+        Queue::assertNotPushed(RunDiscoveryPipelineJob::class);
+    }
+
+    public function test_discover_quota_lock_conflict_has_no_run_or_status_url(): void
+    {
+        Queue::fake();
+
+        $criteria = $this->makeCriteria(['is_active' => true]);
+
+        $this->app->bind(DiscoveryQuotaService::class, function () {
+            $mock = $this->createMock(DiscoveryQuotaService::class);
+            $mock->method('reserveRun')
+                ->willThrowException(new QuotaLockUnavailableException);
+
+            return $mock;
+        });
+
+        $response = $this->actingAs($this->superadmin)
+            ->post('/admin/prospect_criteria/'.$criteria->id.'/discover');
+
+        $response->assertStatus(409);
+        $payload = $response->json();
+        $this->assertArrayNotHasKey('run_id', $payload);
+        $this->assertArrayNotHasKey('status', $payload);
+        $this->assertArrayNotHasKey('status_url', $payload);
 
         Queue::assertNotPushed(RunDiscoveryPipelineJob::class);
     }
@@ -398,48 +432,89 @@ class ProspectCriteriaGeneratedTest extends TestCase
         $criteria = $this->makeCriteria(['is_active' => true]);
 
         // Seed a completed discovery run for this criteria.
-        DiscoveryRun::create([
+        $run = DiscoveryRun::create([
             'prospect_criteria_id' => $criteria->id,
-            'type'                 => 'discovery',
-            'status'               => 'completed',
-            'companies_count'      => 5,
-            'contacts_count'       => 12,
-            'skipped_count'        => 2,
-            'low_score_count'      => 1,
-            'credits_reserved'     => 10,
-            'consumed'             => 5,
-            'quota_date'           => now()->toDateString(),
-            'started_at'           => now()->subMinutes(3),
-            'finished_at'          => now()->subMinute(),
+            'type' => 'discovery',
+            'status' => 'completed',
+            'companies_count' => 5,
+            'contacts_count' => 12,
+            'skipped_count' => 2,
+            'low_score_count' => 1,
+            'excluded_count' => 3,
+            'credits_reserved' => 10,
+            'searches_reserved' => 10,
+            'searches_consumed' => 4,
+            'consumed' => 2,
+            'candidates_snapshot' => [
+                ['domain' => 'first.test'],
+                ['domain' => ''],
+                ['title' => 'No domain'],
+                ['domain' => 'second.test'],
+            ],
+            'quota_date' => now()->toDateString(),
+            'started_at' => now()->subMinutes(3),
+            'finished_at' => now()->subMinute(),
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id . '/discovery-status');
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/discovery-status');
 
         $response->assertStatus(200);
 
-        // Verify the response shape matches the controller's exact JSON structure.
-        $response->assertJsonStructure([
+        // Verify the response has the exact old + progress key set.
+        $this->assertSame([
             'status',
             'companies_count',
             'contacts_count',
+            'successful_enrichments',
+            'successful_enrichments_target',
+            'contact_attempts_reserved',
+            'contact_attempts_consumed',
             'skipped_count',
             'low_score_count',
+            'excluded_count',
             'finished_at',
             'companies_total',
             'stale',
             'error',
-        ]);
+            'run_id',
+            'prospect_criteria_id',
+            'phase',
+            'searches_consumed',
+            'searches_reserved',
+            'candidates_processed',
+            'candidates_total',
+            'candidates_total_final',
+            'progress_percent',
+            'heartbeat_at',
+        ], array_keys($response->json()));
 
         // Verify the values reflect the seeded run.
-        $response->assertJson([
-            'status'          => 'completed',
+        $response->assertExactJson([
+            'status' => 'completed',
             'companies_count' => 5,
-            'contacts_count'  => 12,
-            'skipped_count'   => 2,
+            'contacts_count' => 12,
+            'successful_enrichments' => 0,
+            'successful_enrichments_target' => 0,
+            'contact_attempts_reserved' => 0,
+            'contact_attempts_consumed' => 0,
+            'skipped_count' => 2,
             'low_score_count' => 1,
-            'stale'           => false,
-            'error'           => null,
+            'excluded_count' => 3,
+            'finished_at' => $run->finished_at->toIso8601String(),
+            'companies_total' => 0,
+            'stale' => false,
+            'error' => null,
+            'run_id' => $run->id,
+            'prospect_criteria_id' => $criteria->id,
+            'phase' => 'completed',
+            'searches_consumed' => 4,
+            'searches_reserved' => 10,
+            'candidates_processed' => 2,
+            'candidates_total' => 2,
+            'candidates_total_final' => true,
+            'progress_percent' => 100,
+            'heartbeat_at' => $run->updated_at->toIso8601String(),
         ]);
 
         // Cache-Control: no-store must be present (prevents stale AJAX polling).
@@ -456,20 +531,136 @@ class ProspectCriteriaGeneratedTest extends TestCase
         // No DiscoveryRun rows — latestDiscoveryRun will be null.
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id . '/discovery-status');
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/discovery-status');
 
         $response->assertStatus(200);
         $response->assertJson([
-            'status'          => null,
+            'status' => null,
             'companies_count' => 0,
-            'contacts_count'  => 0,
-            'skipped_count'   => 0,
+            'contacts_count' => 0,
+            'skipped_count' => 0,
             'low_score_count' => 0,
-            'finished_at'     => null,
+            'excluded_count' => 0,
+            'finished_at' => null,
             'companies_total' => 0,
-            'stale'           => false,
-            'error'           => null,
+            'stale' => false,
+            'error' => null,
+            'run_id' => null,
+            'prospect_criteria_id' => $criteria->id,
+            'phase' => 'idle',
+            'searches_consumed' => 0,
+            'searches_reserved' => 0,
+            'candidates_processed' => 0,
+            'candidates_total' => 0,
+            'candidates_total_final' => true,
+            'progress_percent' => null,
+            'heartbeat_at' => null,
         ]);
+    }
+
+    public function test_discovery_status_selects_the_requested_run_and_defaults_to_latest_discovery_run(): void
+    {
+        $criteria = $this->makeCriteria(['is_active' => true]);
+
+        $requestedRun = DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'discovery',
+            'status' => 'failed',
+            'companies_count' => 2,
+            'credits_reserved' => 2,
+            'consumed' => 1,
+            'quota_date' => now()->toDateString(),
+        ]);
+        $latestRun = DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'discovery',
+            'status' => 'completed',
+            'companies_count' => 8,
+            'credits_reserved' => 8,
+            'consumed' => 8,
+            'quota_date' => now()->toDateString(),
+        ]);
+        DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'manual',
+            'status' => 'completed',
+            'companies_count' => 99,
+            'credits_reserved' => 0,
+            'consumed' => 0,
+            'quota_date' => now()->toDateString(),
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/discovery-status')
+            ->assertOk()
+            ->assertJson([
+                'run_id' => $latestRun->id,
+                'companies_count' => 8,
+            ]);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/discovery-status?run_id='.$requestedRun->id)
+            ->assertOk()
+            ->assertJson([
+                'run_id' => $requestedRun->id,
+                'companies_count' => 2,
+                'phase' => 'failed',
+            ]);
+    }
+
+    public function test_discovery_status_rejects_a_run_from_another_criteria(): void
+    {
+        $criteria = $this->makeCriteria();
+        $foreignCriteria = $this->makeCriteria();
+        $foreignRun = DiscoveryRun::create([
+            'prospect_criteria_id' => $foreignCriteria->id,
+            'type' => 'discovery',
+            'status' => 'completed',
+            'credits_reserved' => 1,
+            'consumed' => 1,
+            'quota_date' => now()->toDateString(),
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/discovery-status?run_id='.$foreignRun->id)
+            ->assertNotFound();
+    }
+
+    public function test_discovery_status_rejects_a_manual_run(): void
+    {
+        $criteria = $this->makeCriteria();
+        $manualRun = DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'manual',
+            'status' => 'completed',
+            'credits_reserved' => 0,
+            'consumed' => 0,
+            'quota_date' => now()->toDateString(),
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/discovery-status?run_id='.$manualRun->id)
+            ->assertNotFound();
+    }
+
+    public function test_discovery_status_rejects_a_missing_run(): void
+    {
+        $criteria = $this->makeCriteria();
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/discovery-status?run_id=999999999')
+            ->assertNotFound();
+    }
+
+    public function test_discovery_status_rejects_a_non_scalar_or_non_positive_run_id(): void
+    {
+        $criteria = $this->makeCriteria();
+
+        foreach (['run_id[]=1', 'run_id=0', 'run_id=1abc'] as $query) {
+            $this->actingAs($this->superadmin)
+                ->get('/admin/prospect_criteria/'.$criteria->id.'/discovery-status?'.$query)
+                ->assertNotFound();
+        }
     }
 
     /**
@@ -482,12 +673,12 @@ class ProspectCriteriaGeneratedTest extends TestCase
 
         $noViewUser = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $noViewUser->givePermissionTo('backend.access');
 
         $response = $this->actingAs($noViewUser)
-            ->get('/admin/prospect_criteria/' . $criteria->id . '/discovery-status');
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/discovery-status');
 
         $response->assertStatus(403);
     }
@@ -495,21 +686,10 @@ class ProspectCriteriaGeneratedTest extends TestCase
     // ── New quota surface ─────────────────────────────────────────────────────
 
     /**
-     * discover() returns 200 with "(enrichissement limité à N)" when the contact-
-     * enrichment quota is capped lower than the company batch.
-     *
-     * The controller appends the note at line:
-     *   if (! $quotaService->contactIsUnlimited() && $run->contact_credits_reserved < $run->credits_reserved)
-     *
-     * We mock reserveRun() to return a real DiscoveryRun row so that
-     * RunDiscoveryPipelineJob::dispatch() has a valid run id. We also mock
-     * contactIsUnlimited() → false so the note branch is taken.
-     * Queue::fake() ensures no actual job dispatch occurs.
-     *
-     * Scenario: daily_limit=20, credits_reserved=20 (full batch), contact_credits_reserved=5
-     * → success text must contain "(enrichissement limité à 5)".
+     * The launch response names enrichment attempts independently from company
+     * searches and from the number of contacts the run may eventually create.
      */
-    public function test_discover_success_appends_contact_quota_cap_note(): void
+    public function test_discover_success_reports_reserved_enrichment_attempts(): void
     {
         Queue::fake();
 
@@ -518,14 +698,14 @@ class ProspectCriteriaGeneratedTest extends TestCase
         // Create the DiscoveryRun row inline so the mocked reserveRun() returns a
         // persisted model with a real id (required by RunDiscoveryPipelineJob::dispatch).
         $run = DiscoveryRun::create([
-            'prospect_criteria_id'     => $criteria->id,
-            'type'                     => 'discovery',
-            'status'                   => 'pending',
-            'credits_reserved'         => 20,
-            'consumed'                 => 0,
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'discovery',
+            'status' => 'pending',
+            'credits_reserved' => 20,
+            'consumed' => 0,
             'contact_credits_reserved' => 5,
-            'contact_consumed'         => 0,
-            'quota_date'               => now()->toDateString(),
+            'contact_consumed' => 0,
+            'quota_date' => now()->toDateString(),
         ]);
 
         $this->app->bind(DiscoveryQuotaService::class, function () use ($run) {
@@ -535,20 +715,27 @@ class ProspectCriteriaGeneratedTest extends TestCase
             // isUnlimited() → false: keeps the partial-batch check alive but
             // credits_reserved(20) == wantedBatch(20) so isPartial stays false.
             $mock->method('isUnlimited')->willReturn(false);
-            // contactIsUnlimited() → false: triggers the enrichment-limit note.
-            $mock->method('contactIsUnlimited')->willReturn(false);
+
             return $mock;
         });
 
         $response = $this->actingAs($this->superadmin)
-            ->post('/admin/prospect_criteria/' . $criteria->id . '/discover');
+            ->post('/admin/prospect_criteria/'.$criteria->id.'/discover');
 
         $response->assertStatus(200);
         $response->assertJson(['message' => 'success']);
+        $this->assertSame(
+            route('admin.prospect_criteria.discovery_status', [
+                'id' => $criteria->id,
+                'run_id' => $run->id,
+            ]),
+            $response->json('status_url')
+        );
 
         $text = $response->json('text');
-        $this->assertStringContainsString('enrichissement limité à 5', $text,
-            'Success text should contain the contact cap note when contact quota is capped.');
+        $this->assertStringContainsString('5 tentatives d’enrichissement réservées', $text);
+        $this->assertStringNotContainsString('SerpAPI', $text);
+        $this->assertStringNotContainsString('Hunter', $text);
 
         Queue::assertPushed(RunDiscoveryPipelineJob::class);
     }
@@ -571,6 +758,7 @@ class ProspectCriteriaGeneratedTest extends TestCase
             $mock->method('contactRemainingTodayForDisplay')->willReturn(10);
             $mock->method('monthlyRemainingForDisplay')->willReturn(200);
             $mock->method('monthlyContactRemainingForDisplay')->willReturn(50);
+
             return $mock;
         });
 
@@ -602,11 +790,12 @@ class ProspectCriteriaGeneratedTest extends TestCase
             $mock->method('contactRemainingTodayForDisplay')->willReturn(3);
             $mock->method('monthlyRemainingForDisplay')->willReturn(90);
             $mock->method('monthlyContactRemainingForDisplay')->willReturn(20);
+
             return $mock;
         });
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id);
+            ->get('/admin/prospect_criteria/'.$criteria->id);
 
         $response->assertStatus(200);
         $response->assertViewHas('quotaRemaining', 15);
@@ -640,15 +829,16 @@ class ProspectCriteriaGeneratedTest extends TestCase
             $mock->method('activePackage')->willReturn(null);
             $mock->method('contactRemainingTodayForDisplay')->willReturn(5);
             $mock->method('monthlyContactRemainingForDisplay')->willReturn(0);
+
             return $mock;
         });
 
         $response = $this->actingAs($this->superadmin)
             ->get(
                 '/admin/prospect_criteria'
-                . '?draw=1&start=0&length=10'
-                . '&columns[0][data]=id&columns[0][name]=id'
-                . '&order[0][column]=0&order[0][dir]=asc',
+                .'?draw=1&start=0&length=10'
+                .'&columns[0][data]=id&columns[0][name]=id'
+                .'&order[0][column]=0&order[0][dir]=asc',
                 ['X-Requested-With' => 'XMLHttpRequest', 'Accept' => 'application/json']
             );
 
@@ -687,15 +877,16 @@ class ProspectCriteriaGeneratedTest extends TestCase
             $mock->method('activePackage')->willReturn(null);
             $mock->method('contactRemainingTodayForDisplay')->willReturn(0);
             $mock->method('monthlyContactRemainingForDisplay')->willReturn(50);
+
             return $mock;
         });
 
         $response = $this->actingAs($this->superadmin)
             ->get(
                 '/admin/prospect_criteria'
-                . '?draw=1&start=0&length=10'
-                . '&columns[0][data]=id&columns[0][name]=id'
-                . '&order[0][column]=0&order[0][dir]=asc',
+                .'?draw=1&start=0&length=10'
+                .'&columns[0][data]=id&columns[0][name]=id'
+                .'&order[0][column]=0&order[0][dir]=asc',
                 ['X-Requested-With' => 'XMLHttpRequest', 'Accept' => 'application/json']
             );
 

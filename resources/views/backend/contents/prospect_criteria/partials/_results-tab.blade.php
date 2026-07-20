@@ -42,24 +42,25 @@
             <h3 class="card-title fw-bolder m-0">
                 <i class="bi bi-building-check text-primary fs-3 me-2"></i>
                 @if(request()->boolean('audit'))
-                    Entreprises — gardées + exclues ({{ $resultCompanies->total() }})
+                    Entreprises enregistrées — non exclues + exclues ({{ $resultCompanies->total() }})
                 @else
-                    Entreprises gardées ({{ $resultCompanies->total() }})
+                    Entreprises enregistrées non exclues ({{ $resultCompanies->total() }})
                 @endif
             </h3>
             <div class="text-muted fs-7 mt-2">
                 @if(request()->boolean('audit'))
-                    Liste des entreprises gardées et exclues par le filtrage IA.
+                    Liste des entreprises enregistrées, non exclues ou exclues par le filtrage IA.
                 @else
-                    Liste des entreprises conservées après filtrage IA.
+                    Liste des entreprises enregistrées qui ne sont pas exclues par le filtrage IA.
                 @endif
                 Cliquez sur un en-tête pour trier la table. Les exclusions se consultent dans « Résultats par requête de découverte ».
+                Les résultats bruts SerpAPI ne sont pas affichés dans cette liste.
             </div>
         </div>
         <div class="card-toolbar">
             <a href="{{ route('admin.companies.index') . '?criteria_id=' . $model->id }}"
                class="btn btn-sm btn-light-primary">
-                Voir les entreprises gardées
+                Voir les entreprises enregistrées
                 <i class="bi bi-arrow-right ms-1"></i>
             </a>
         </div>
@@ -76,10 +77,23 @@
                     <i class="bi bi-building fs-2x mb-3 d-block"></i>
                     Aucune entreprise découverte pour ce critère.
                     @can('run discovery')
+                        @php
+                            $resultsDiscoveryInFlight = \Illuminate\Support\Facades\Schema::hasTable('discovery_runs')
+                                && in_array(optional($model->latestDiscoveryRun)->status, ['pending', 'running'], true);
+                            $resultsQuotaExhausted = (isset($quotaRemaining) && $quotaRemaining === 0)
+                                || (isset($monthlyRemaining) && $monthlyRemaining === 0);
+                            $resultsLaunchDisabled = $resultsDiscoveryInFlight || $resultsQuotaExhausted;
+                        @endphp
                         <div class="mt-4">
                             <button type="button"
                                     class="btn btn-sm btn-light-success"
-                                    onclick="launchDiscovery({{ $model->id }}, '{{ csrf_token() }}')">
+                                    data-discovery-launch
+                                    data-criteria-id="{{ (int) $model->id }}"
+                                    data-launch-url="{{ route('admin.prospect_criteria.discover', $model->id) }}"
+                                    data-status-url="{{ route('admin.prospect_criteria.discovery_status', $model->id) }}"
+                                    data-csrf-token="{{ csrf_token() }}"
+                                    data-discovery-static-disabled="{{ $resultsQuotaExhausted ? 'true' : 'false' }}"
+                                    @if($resultsLaunchDisabled) disabled @endif>
                                 <i class="bi bi-play-fill me-1"></i>
                                 Lancer la découverte
                             </button>
@@ -145,6 +159,21 @@
                                     $qStatusCfg = config('global.data.company_qualification_statuses.' . $qStatus);
 
                                     $contactCount = $company->contacts->count();
+                                    $enrichmentStatus = $company->enrichment_status;
+                                    $enrichmentCfg = $enrichmentStatus !== null
+                                        ? config('global.data.company_enrichment_statuses.' . $enrichmentStatus)
+                                        : config('global.data.company_enrichment_status_null');
+                                    $enrichmentLabelOverrides = [
+                                        'hunter_failed' => 'Échec de l’enrichissement — à réessayer',
+                                        'enriching' => 'Enrichissement de contacts en cours',
+                                        'skipped_budget' => 'Reporté — quota d’enrichissement',
+                                        'skipped_provider_unavailable' => 'Reporté — service d’enrichissement indisponible',
+                                    ];
+                                    if ($enrichmentCfg) {
+                                        $enrichmentCfg['label'] = $enrichmentStatus === null
+                                            ? 'Enrichissement de contacts non tenté'
+                                            : ($enrichmentLabelOverrides[$enrichmentStatus] ?? $enrichmentCfg['label']);
+                                    }
                                 @endphp
 
                                 {{-- Company row --}}
@@ -198,15 +227,24 @@
                                         @endif
                                     </td>
                                     <td>
-                                        <button type="button"
-                                                class="btn btn-sm btn-light d-flex align-items-center gap-1"
-                                                data-bs-toggle="collapse"
-                                                data-bs-target="#criteria_contacts_{{ $company->id }}"
-                                                aria-expanded="false"
-                                                aria-controls="criteria_contacts_{{ $company->id }}">
-                                            <span>{{ $contactCount }}</span>
-                                            <i class="bi bi-chevron-down fs-7"></i>
-                                        </button>
+                                        <div class="d-flex flex-column align-items-start gap-1">
+                                            <button type="button"
+                                                    class="btn btn-sm btn-light d-flex align-items-center gap-1"
+                                                    data-bs-toggle="collapse"
+                                                    data-bs-target="#criteria_contacts_{{ $company->id }}"
+                                                    aria-expanded="false"
+                                                    aria-controls="criteria_contacts_{{ $company->id }}">
+                                                <span>{{ $contactCount }}</span>
+                                                <i class="bi bi-chevron-down fs-7"></i>
+                                            </button>
+                                            @if($enrichmentCfg)
+                                                <span class="badge badge-light-{{ $enrichmentCfg['color'] }} fs-8">
+                                                    {{ $enrichmentCfg['label'] }}
+                                                </span>
+                                            @elseif($enrichmentStatus !== null)
+                                                <span class="badge badge-light-secondary fs-8">{{ $enrichmentStatus }}</span>
+                                            @endif
+                                        </div>
                                     </td>
                                     <td class="text-end pe-5">
                                         @can('view companies')

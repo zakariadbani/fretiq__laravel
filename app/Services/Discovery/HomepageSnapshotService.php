@@ -81,6 +81,28 @@ class HomepageSnapshotService
     }
 
     /**
+     * Read a previously prefetched excerpt without ever opening a network request.
+     * The discovery pipeline uses this after prefetch() so an unexpected cache
+     * eviction cannot start an unbounded fallback call near the attempt deadline.
+     */
+    public function cachedExcerpt(string $domain): ?string
+    {
+        if (! $this->enabled()) {
+            return null;
+        }
+
+        $domain = strtolower(trim($domain));
+
+        if ($domain === '' || ! Cache::has($this->cacheKey($domain))) {
+            return null;
+        }
+
+        $cached = Cache::get($this->cacheKey($domain));
+
+        return is_string($cached) && $cached !== self::NEGATIVE_SENTINEL ? $cached : null;
+    }
+
+    /**
      * Warm the cache for many domains concurrently.
      *
      * Writes exactly the keys/TTL/sentinel that excerpt() reads, so every domain
@@ -91,10 +113,10 @@ class HomepageSnapshotService
      *
      * @param  list<string>|array<mixed>  $domains
      */
-    public function prefetch(array $domains): void
+    public function prefetch(array $domains, ?float $deadlineAt = null): bool
     {
         if (! $this->enabled()) {
-            return;
+            return true;
         }
 
         $pending = [];
@@ -121,7 +143,7 @@ class HomepageSnapshotService
         $pending = array_keys($pending);
 
         if ($pending === []) {
-            return;
+            return true;
         }
 
         $fallback = $this->httpFallbackEnabled();
@@ -129,12 +151,24 @@ class HomepageSnapshotService
         foreach (array_chunk($pending, self::POOL_CHUNK) as $chunk) {
             // Transport failures are only deferred (left uncached) when there is an
             // http:// pass still to come; otherwise they are cached negative here.
-            $deferred = $this->runPoolPass($chunk, 'https', $fallback);
+            $pass = $this->runPoolPass($chunk, 'https', $fallback, $deadlineAt);
+
+            if (! $pass['completed']) {
+                return false;
+            }
+
+            $deferred = $pass['deferred'];
 
             if ($deferred !== []) {
-                $this->runPoolPass($deferred, 'http', false);
+                $fallbackPass = $this->runPoolPass($deferred, 'http', false, $deadlineAt);
+
+                if (! $fallbackPass['completed']) {
+                    return false;
+                }
             }
         }
+
+        return true;
     }
 
     // ── Internals ────────────────────────────────────────────────────────────────
@@ -143,11 +177,20 @@ class HomepageSnapshotService
      * Fire one wave of concurrent GETs and cache each outcome independently.
      *
      * @param  list<string>  $domains
-     * @return list<string>  domains with a transport failure, when $deferFailures
+     * @return array{deferred:list<string>,completed:bool}
      */
-    private function runPoolPass(array $domains, string $scheme, bool $deferFailures): array
+    private function runPoolPass(
+        array $domains,
+        string $scheme,
+        bool $deferFailures,
+        ?float $deadlineAt = null,
+    ): array
     {
-        $timeout = $this->timeout();
+        $timeout = $this->boundedTimeout($deadlineAt);
+
+        if ($timeout === null) {
+            return ['deferred' => $domains, 'completed' => false];
+        }
 
         try {
             $responses = Http::pool(fn (Pool $pool) => array_map(
@@ -167,6 +210,13 @@ class HomepageSnapshotService
                 'error'  => $e->getMessage(),
             ]);
 
+            // With an absolute deadline, serial fallback could multiply the remaining
+            // timeout by the number of domains. Leave the whole wave uncached so the
+            // next job attempt can retry it safely.
+            if ($deadlineAt !== null) {
+                return ['deferred' => $domains, 'completed' => false];
+            }
+
             foreach ($domains as $domain) {
                 try {
                     $this->cacheExcerpt($domain, $this->fetchAndClean($domain));
@@ -175,7 +225,7 @@ class HomepageSnapshotService
                 }
             }
 
-            return [];
+            return ['deferred' => [], 'completed' => true];
         }
 
         $deferred = [];
@@ -232,7 +282,28 @@ class HomepageSnapshotService
             }
         }
 
-        return $deferred;
+        return ['deferred' => $deferred, 'completed' => true];
+    }
+
+    /**
+     * Bound every outbound homepage request to the absolute work deadline.
+     * A null return means the request must not start.
+     */
+    private function boundedTimeout(?float $deadlineAt): ?int
+    {
+        $configured = $this->timeout();
+
+        if ($deadlineAt === null) {
+            return $configured;
+        }
+
+        $remaining = $deadlineAt - microtime(true);
+
+        if ($remaining < 1.0) {
+            return null;
+        }
+
+        return max(1, min($configured, (int) floor($remaining)));
     }
 
     private function cacheKey(string $domain): string

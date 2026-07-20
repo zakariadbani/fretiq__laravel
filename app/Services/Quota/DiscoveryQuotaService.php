@@ -2,6 +2,7 @@
 
 namespace App\Services\Quota;
 
+use App\Exceptions\CriteriaCompanyNoLongerEligibleException;
 use App\Exceptions\CriteriaInactiveException;
 use App\Exceptions\DiscoveryRunInFlightException;
 use App\Exceptions\EnrichmentInFlightException;
@@ -13,6 +14,7 @@ use App\Models\Package;
 use App\Models\PackageAssignment;
 use App\Models\ProspectCriteria;
 use App\Models\Setting;
+use App\Services\Discovery\DiscoveryClaimFinalizer;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -201,11 +203,11 @@ class DiscoveryQuotaService
      * so it can reach negative $i to find a pre-anchor window.
      *
      * @param  CarbonInterface|null  $on  Reference "today"; defaults to $this->today() (quota tz).
-     * @return array{0: \Carbon\Carbon, 1: \Carbon\Carbon}  [$start, $end] half-open.
+     * @return array{0: \Carbon\Carbon, 1: \Carbon\Carbon} [$start, $end] half-open.
      */
     public function currentPeriod(?CarbonInterface $on = null): array
     {
-        $on  = ($on ?? $this->today())->copy()->startOfDay();
+        $on = ($on ?? $this->today())->copy()->startOfDay();
         $raw = $this->activePackage()?->quota_anchor_date;
         $anchor = $raw ? Carbon::parse($raw)->startOfDay() : $on->copy()->startOfMonth();
 
@@ -213,8 +215,12 @@ class DiscoveryQuotaService
         // Walk forward/backward so [anchor+i, anchor+i+1) contains $on. Both bounds off the ORIGINAL anchor.
         // Contiguity invariant: every consecutive boundary is shared exactly once → gap-free and overlap-free.
         $i = (int) floor($anchor->floatDiffInMonths($on));                                // signed seed — may be negative
-        while ($anchor->copy()->addMonthsNoOverflow($i + 1)->lte($on)) { $i++; }         // walk forward
-        while ($anchor->copy()->addMonthsNoOverflow($i)->gt($on))      { $i--; }         // walk backward (no $i>0 gate)
+        while ($anchor->copy()->addMonthsNoOverflow($i + 1)->lte($on)) {
+            $i++;
+        }         // walk forward
+        while ($anchor->copy()->addMonthsNoOverflow($i)->gt($on)) {
+            $i--;
+        }         // walk backward (no $i>0 gate)
 
         return [$anchor->copy()->addMonthsNoOverflow($i), $anchor->copy()->addMonthsNoOverflow($i + 1)];
     }
@@ -231,10 +237,9 @@ class DiscoveryQuotaService
      * Query: one pass with CASE WHEN, portable across MySQL 8 and SQLite.
      * Uses the indexed `quota_date` column — never DATE(created_at).
      *
-     * @param  CarbonInterface  $date
-     * @param  int|null         $excludeRunId  Exclude a specific run from the sum
-     *                                         (used by re-check in the job to exclude
-     *                                          the run's own reservation).
+     * @param  int|null  $excludeRunId  Exclude a specific run from the sum
+     *                                  (used by re-check in the job to exclude
+     *                                  the run's own reservation).
      */
     public function usedOn(CarbonInterface $date, ?int $excludeRunId = null): int
     {
@@ -276,7 +281,7 @@ class DiscoveryQuotaService
     {
         if ($this->isUnlimited()) {
             throw new \LogicException(
-                'remainingOn() must not be called when the package is unlimited. ' .
+                'remainingOn() must not be called when the package is unlimited. '.
                 'Guard with isUnlimited() before calling this method.'
             );
         }
@@ -312,8 +317,7 @@ class DiscoveryQuotaService
      * Query: one pass with CASE WHEN, portable across MySQL 8 and SQLite.
      * Uses the indexed `quota_date` column — never DATE(created_at).
      *
-     * @param  CarbonInterface  $date
-     * @param  int|null         $excludeRunId  Exclude a specific run from the sum.
+     * @param  int|null  $excludeRunId  Exclude a specific run from the sum.
      */
     public function contactUsedOn(CarbonInterface $date, ?int $excludeRunId = null): int
     {
@@ -352,7 +356,7 @@ class DiscoveryQuotaService
     {
         if ($this->contactIsUnlimited()) {
             throw new \LogicException(
-                'contactRemainingOn() must not be called when the contact meter is unlimited. ' .
+                'contactRemainingOn() must not be called when the contact meter is unlimited. '.
                 'Guard with contactIsUnlimited() before calling this method.'
             );
         }
@@ -392,17 +396,17 @@ class DiscoveryQuotaService
      * The range scan is sargable on the existing btree index on quota_date
      * (added in migration 2026_06_10_400003).
      *
-     * @param  CarbonInterface  $start         Inclusive lower bound (>= start).
-     * @param  CarbonInterface  $end           Exclusive upper bound (< end).
-     * @param  int|null         $excludeRunId  Exclude a specific run from the sum
-     *                                         (job re-check uses this to exclude the
-     *                                          run's own reservation — finding #3).
+     * @param  CarbonInterface  $start  Inclusive lower bound (>= start).
+     * @param  CarbonInterface  $end  Exclusive upper bound (< end).
+     * @param  int|null  $excludeRunId  Exclude a specific run from the sum
+     *                                  (job re-check uses this to exclude the
+     *                                  run's own reservation — finding #3).
      */
     public function usedInPeriod(CarbonInterface $start, CarbonInterface $end, ?int $excludeRunId = null): int
     {
         $query = DiscoveryRun::query()
             ->where('quota_date', '>=', $start->toDateString())
-            ->where('quota_date', '<',  $end->toDateString())
+            ->where('quota_date', '<', $end->toDateString())
             ->selectRaw(
                 "SUM(CASE
                     WHEN status IN ('completed', 'failed')
@@ -434,15 +438,15 @@ class DiscoveryQuotaService
      * or max(contact_credits_reserved, contact_consumed) (in-flight) over the
      * half-open date range.
      *
-     * @param  CarbonInterface  $start         Inclusive lower bound (>= start).
-     * @param  CarbonInterface  $end           Exclusive upper bound (< end).
-     * @param  int|null         $excludeRunId  Exclude a specific run from the sum.
+     * @param  CarbonInterface  $start  Inclusive lower bound (>= start).
+     * @param  CarbonInterface  $end  Exclusive upper bound (< end).
+     * @param  int|null  $excludeRunId  Exclude a specific run from the sum.
      */
     public function contactUsedInPeriod(CarbonInterface $start, CarbonInterface $end, ?int $excludeRunId = null): int
     {
         $query = DiscoveryRun::query()
             ->where('quota_date', '>=', $start->toDateString())
-            ->where('quota_date', '<',  $end->toDateString())
+            ->where('quota_date', '<', $end->toDateString())
             ->selectRaw(
                 "SUM(CASE
                     WHEN status IN ('completed', 'failed')
@@ -474,16 +478,17 @@ class DiscoveryQuotaService
      * (finding #3): without it, the run's own in-flight reservation fills the
      * entire monthly budget and starves itself to 0.
      *
-     * @param  CarbonInterface  $start         Inclusive period start (from currentPeriod()).
-     * @param  CarbonInterface  $end           Exclusive period end (from currentPeriod()).
-     * @param  int|null         $excludeRunId  Run to exclude from the used tally.
+     * @param  CarbonInterface  $start  Inclusive period start (from currentPeriod()).
+     * @param  CarbonInterface  $end  Exclusive period end (from currentPeriod()).
+     * @param  int|null  $excludeRunId  Run to exclude from the used tally.
+     *
      * @throws \LogicException
      */
     public function monthlyRemaining(CarbonInterface $start, CarbonInterface $end, ?int $excludeRunId = null): int
     {
         if ($this->monthlyIsUnlimited()) {
             throw new \LogicException(
-                'monthlyRemaining() must not be called when the monthly company cap is unlimited. ' .
+                'monthlyRemaining() must not be called when the monthly company cap is unlimited. '.
                 'Guard with monthlyIsUnlimited() before calling this method.'
             );
         }
@@ -499,16 +504,17 @@ class DiscoveryQuotaService
      * Only call when not monthly-contact-unlimited — throws LogicException if
      * called for an unlimited package (mirrors contactRemainingOn()).
      *
-     * @param  CarbonInterface  $start         Inclusive period start (from currentPeriod()).
-     * @param  CarbonInterface  $end           Exclusive period end (from currentPeriod()).
-     * @param  int|null         $excludeRunId  Run to exclude from the used tally.
+     * @param  CarbonInterface  $start  Inclusive period start (from currentPeriod()).
+     * @param  CarbonInterface  $end  Exclusive period end (from currentPeriod()).
+     * @param  int|null  $excludeRunId  Run to exclude from the used tally.
+     *
      * @throws \LogicException
      */
     public function monthlyContactRemaining(CarbonInterface $start, CarbonInterface $end, ?int $excludeRunId = null): int
     {
         if ($this->monthlyContactIsUnlimited()) {
             throw new \LogicException(
-                'monthlyContactRemaining() must not be called when the monthly contact cap is unlimited. ' .
+                'monthlyContactRemaining() must not be called when the monthly contact cap is unlimited. '.
                 'Guard with monthlyContactIsUnlimited() before calling this method.'
             );
         }
@@ -613,7 +619,7 @@ class DiscoveryQuotaService
             ->where('quota_date', $today)
             ->whereIn('status', ['pending', 'running'])
             ->selectRaw(
-                "SUM(CASE
+                'SUM(CASE
                     WHEN (CASE WHEN searches_reserved IS NULL THEN credits_reserved ELSE searches_reserved END) >
                          (CASE WHEN searches_reserved IS NULL THEN (consumed - COALESCE(excluded_count, 0)) ELSE searches_consumed END)
                     THEN (CASE WHEN searches_reserved IS NULL THEN credits_reserved ELSE searches_reserved END) -
@@ -624,7 +630,7 @@ class DiscoveryQuotaService
                     WHEN contact_credits_reserved > contact_consumed
                     THEN contact_credits_reserved - contact_consumed
                     ELSE 0
-                END) as hunter_searches_reserved"
+                END) as hunter_searches_reserved'
             )
             ->first();
 
@@ -685,25 +691,25 @@ class DiscoveryQuotaService
     public function displayMeters(): array
     {
         $meta = [
-            'company'  => ['label' => 'Requêtes de découverte', 'icon' => 'bi-building'],
+            'company' => ['label' => 'Requêtes de découverte', 'icon' => 'bi-building'],
             'contacts' => ['label' => 'Contacts',               'icon' => 'bi-person-lines-fill'],
         ];
 
         try {
-            $daily   = $this->dailyDisplaySummary();
+            $daily = $this->dailyDisplaySummary();
             $monthly = $this->monthlyDisplaySummary();
         } catch (\Illuminate\Database\QueryException $e) {
             // Quota tables not yet migrated — feed the same shape through the
             // normal path so every meter comes back unlimited with null totals.
-            $blank   = ['unlimited' => true, 'used_reserved' => 0, 'total' => null, 'remaining' => null];
-            $daily   = ['company' => $blank, 'contacts' => $blank];
+            $blank = ['unlimited' => true, 'used_reserved' => 0, 'total' => null, 'remaining' => null];
+            $daily = ['company' => $blank, 'contacts' => $blank];
             $monthly = $daily;
         }
 
         $meters = [];
 
         foreach ($meta as $key => $labels) {
-            $dailyMeter   = $daily[$key];
+            $dailyMeter = $daily[$key];
             $monthlyMeter = $monthly[$key];
 
             $severity = max(
@@ -712,25 +718,25 @@ class DiscoveryQuotaService
             );
 
             $meters[$key] = [
-                'key'       => $key,
-                'label'     => $labels['label'],
-                'icon'      => $labels['icon'],
-                'severity'  => $severity,
-                'color'     => match ($severity) {
-                    3       => 'danger',
-                    2       => 'warning',
+                'key' => $key,
+                'label' => $labels['label'],
+                'icon' => $labels['icon'],
+                'severity' => $severity,
+                'color' => match ($severity) {
+                    3 => 'danger',
+                    2 => 'warning',
                     default => 'success',
                 },
                 'unlimited' => (bool) $dailyMeter['unlimited'],
-                'daily'     => [
+                'daily' => [
                     'used_reserved' => (int) $dailyMeter['used_reserved'],
-                    'total'         => $dailyMeter['total'],
-                    'remaining'     => $dailyMeter['remaining'],
+                    'total' => $dailyMeter['total'],
+                    'remaining' => $dailyMeter['remaining'],
                 ],
-                'monthly'   => [
+                'monthly' => [
                     'used_reserved' => (int) $monthlyMeter['used_reserved'],
-                    'total'         => $monthlyMeter['total'],
-                    'remaining'     => $monthlyMeter['remaining'],
+                    'total' => $monthlyMeter['total'],
+                    'remaining' => $monthlyMeter['remaining'],
                 ],
             ];
         }
@@ -789,11 +795,13 @@ class DiscoveryQuotaService
     public function effectiveBatchFor(ProspectCriteria $criteria): int
     {
         $wantedBatch = $criteria->daily_limit ?: 20;
-        $today       = $this->today();
+        $today = $this->today();
 
         // Collect only the caps that are active (not unlimited); each guarded before append.
         $caps = [];
-        if (! $this->isUnlimited())        $caps[] = $this->remainingOn($today);
+        if (! $this->isUnlimited()) {
+            $caps[] = $this->remainingOn($today);
+        }
         if (! $this->monthlyIsUnlimited()) {
             [$pStart, $pEnd] = $this->currentPeriod($today);
             $caps[] = $this->monthlyRemaining($pStart, $pEnd);
@@ -831,46 +839,70 @@ class DiscoveryQuotaService
      * On non-MySQL drivers (SQLite in tests) the named lock is skipped — single-
      * writer + single-process tests do not need it.
      *
-     * @throws CriteriaInactiveException       When criteria is inactive.
-     * @throws DiscoveryRunInFlightException   When a non-stale run is already in flight.
-     * @throws QuotaExhaustedException         When the daily balance is 0.
-     * @throws QuotaLockUnavailableException   When the MySQL lock cannot be acquired (fail-closed).
+     * @param  bool  $allowContactOnly  Scheduled runs may continue with zero
+     *                                  SerpAPI searches when Hunter capacity remains.
+     *
+     * @throws CriteriaInactiveException When criteria is inactive.
+     * @throws DiscoveryRunInFlightException When a non-stale run is already in flight.
+     * @throws QuotaExhaustedException When search quota is zero for a manual
+     *                                 run, or both meters are zero for a schedule.
+     * @throws QuotaLockUnavailableException When the MySQL lock cannot be acquired (fail-closed).
      */
-    public function reserveRun(ProspectCriteria $criteria): DiscoveryRun
+    public function reserveRun(ProspectCriteria $criteria, bool $allowContactOnly = false): DiscoveryRun
     {
-        $isMySQL  = DB::getDriverName() === 'mysql';
-        $lockName = 'discovery-quota:' . DB::getDatabaseName();
-
-        // Truncate to 64 chars (MySQL hard limit for GET_LOCK names).
-        $lockName = mb_substr($lockName, 0, 64);
-
-        if ($isMySQL) {
-            $lockResult = DB::selectOne('SELECT GET_LOCK(?, 5) as acquired', [$lockName]);
-            if (! $lockResult || (int) $lockResult->acquired !== 1) {
-                throw new QuotaLockUnavailableException();
-            }
-        }
-
-        try {
-            $run = DB::transaction(function () use ($criteria) {
+        return $this->withQuotaAdmissionLock(
+            function () use ($criteria, $allowContactOnly): DiscoveryRun {
                 // Re-read criteria with a row-level lock so concurrent reservations
                 // for the same criteria are serialized even on non-MySQL drivers.
                 $criteria = ProspectCriteria::lockForUpdate()->findOrFail($criteria->id);
 
                 if (! $criteria->is_active) {
-                    throw new CriteriaInactiveException();
+                    throw new CriteriaInactiveException;
                 }
 
                 $latest = $criteria->discoveryRuns()
                     ->where('type', 'discovery')
                     ->latest('id')
+                    ->lockForUpdate()
                     ->first();
 
-                if ($latest && in_array($latest->status, ['pending', 'running'], true) && ! $latest->isStale()) {
-                    throw new DiscoveryRunInFlightException($latest);
+                if ($latest && in_array($latest->status, ['pending', 'running'], true)) {
+                    if (! $latest->isStale()) {
+                        throw new DiscoveryRunInFlightException($latest);
+                    }
+
+                    // Invalidate the old serialized job before reserving its
+                    // replacement. Its owned-run guard will now abort even if the
+                    // queue eventually delivers it after this transaction commits.
+                    $latest->forceFill([
+                        'status' => 'failed',
+                        'error' => 'Exécution obsolète remplacée par une nouvelle réservation.',
+                        'finished_at' => now(),
+                    ])->save();
+                    app(DiscoveryClaimFinalizer::class)->releaseForTerminalRun((int) $latest->id);
                 }
 
-                $today       = $this->today();
+                $today = $this->today();
+
+                // The scheduler promises at most one automatic discovery parent
+                // per criterion and quota day, regardless of how quickly an earlier
+                // run reached a terminal state. Re-check under the admission lock so
+                // concurrent scheduler ticks cannot both pass the outer query.
+                if ($allowContactOnly) {
+                    $sameDayRun = $criteria->discoveryRuns()
+                        ->where('type', 'discovery')
+                        ->where('quota_date', $today->toDateString())
+                        ->latest('id')
+                        ->first();
+
+                    if ($sameDayRun !== null) {
+                        throw new DiscoveryRunInFlightException(
+                            $sameDayRun,
+                            'Une découverte automatique a déjà été lancée aujourd\'hui.',
+                        );
+                    }
+                }
+
                 $wantedBatch = $criteria->daily_limit ?: 20;
 
                 // Pin the monthly period ONCE — both company and contact monthly reads
@@ -881,51 +913,62 @@ class DiscoveryQuotaService
                 // Company meter — collect only the caps that apply (each guarded by
                 // *IsUnlimited() before append so null never reaches min()).
                 $caps = [];
-                if (! $this->isUnlimited())        $caps[] = $this->remainingOn($today);
-                if (! $this->monthlyIsUnlimited()) $caps[] = $this->monthlyRemaining($pStart, $pEnd);
+                if (! $this->isUnlimited()) {
+                    $caps[] = $this->remainingOn($today);
+                }
+                if (! $this->monthlyIsUnlimited()) {
+                    $caps[] = $this->monthlyRemaining($pStart, $pEnd);
+                }
 
                 $batch = $caps === [] ? $wantedBatch : min($wantedBatch, min($caps));
 
-                // Throw if ANY active company cap is binding at zero — moved OUTSIDE
-                // the individual cap blocks so it fires when daily is unlimited but
-                // monthly is the binding zero (the old code inside !isUnlimited()
-                // silently skipped the monthly check in that case).
-                if ($caps !== [] && $batch <= 0) {
-                    throw new QuotaExhaustedException();
+                // Hunter is an independent meter. Blank means 20; values from
+                // legacy rows are clamped again at runtime even after migration.
+                $autoEnrich = $criteria->auto_enrich
+                    ?? (bool) Setting::get('decouverte.auto_enrich', false);
+
+                $contactReserved = 0;
+                $successfulEnrichmentsTarget = 0;
+                if ($autoEnrich) {
+                    // contact_limit is the successful-company objective. Hunter
+                    // attempts have their own independent package-backed budget.
+                    $successfulEnrichmentsTarget = max(
+                        1,
+                        min((int) ($criteria->contact_limit ?? 20), 20),
+                    );
+                    $contactCaps = [20];
+                    if (! $this->contactIsUnlimited()) {
+                        $contactCaps[] = $this->contactRemainingOn($today);
+                    }
+                    if (! $this->monthlyContactIsUnlimited()) {
+                        $contactCaps[] = $this->monthlyContactRemaining($pStart, $pEnd);
+                    }
+                    $contactReserved = min($contactCaps);
                 }
 
-                // Contact meter: reserve as many as remain (or full batch if unlimited).
-                // Contact exhaustion does NOT throw — the run proceeds at reduced scope.
-                // Each cap is appended only after its *IsUnlimited() guard so null
-                // never reaches min() (PHP null footgun).
-                $contactCaps = [$batch];   // upper-bound by company batch
-                if ($criteria->contact_limit !== null)    $contactCaps[] = (int) $criteria->contact_limit;  // per-criteria cap
-                if (! $this->contactIsUnlimited())        $contactCaps[] = $this->contactRemainingOn($today);
-                if (! $this->monthlyContactIsUnlimited()) $contactCaps[] = $this->monthlyContactRemaining($pStart, $pEnd);
-                $contactReserved = min($contactCaps);
+                // Manual discovery retains the existing hard search-quota error.
+                // A schedule may reserve a contact-only parent run, but creating an
+                // empty run (zero on both meters) is never useful.
+                if ($batch <= 0 && (! $allowContactOnly || $contactReserved <= 0)) {
+                    throw new QuotaExhaustedException;
+                }
 
                 return DiscoveryRun::create([
-                    'prospect_criteria_id'     => $criteria->id,
-                    'status'                   => 'pending',
-                    'credits_reserved'         => $batch,
-                    'searches_reserved'        => $batch,
-                    'searches_consumed'        => 0,
-                    'consumed'                 => 0,
+                    'prospect_criteria_id' => $criteria->id,
+                    'status' => 'pending',
+                    'credits_reserved' => $batch,
+                    'searches_reserved' => $batch,
+                    'searches_consumed' => 0,
+                    'consumed' => 0,
                     'contact_credits_reserved' => $contactReserved,
-                    'contact_consumed'         => 0,
-                    'quota_date'               => $today->toDateString(),
-                    'package_assignment_id'    => PackageAssignment::latestActive()?->id,
+                    'contact_consumed' => 0,
+                    'successful_enrichments_target' => $successfulEnrichmentsTarget,
+                    'successful_enrichments' => 0,
+                    'quota_date' => $today->toDateString(),
+                    'package_assignment_id' => PackageAssignment::latestActive()?->id,
                 ]);
-            });
-
-            return $run;
-        } finally {
-            // Release lock AFTER the transaction has committed (the finally block
-            // runs after DB::transaction returns, so the commit has already happened).
-            if ($isMySQL) {
-                DB::selectOne('SELECT RELEASE_LOCK(?)', [$lockName]);
             }
-        }
+        );
     }
 
     // ── Manual enrichment reservation ─────────────────────────────────────────
@@ -934,84 +977,383 @@ class DiscoveryQuotaService
      * Reserve a manual enrichment run for a single company.
      *
      * Uses the same GET_LOCK + transaction protocol as reserveRun() for
-     * serialization. Credits_reserved = 1 and consumed = 1 (debit-before-call
-     * semantics — no refund on Hunter failure).
+     * serialization. The contact meter reserves and consumes one attempt before
+     * the provider call (no refund on Hunter failure); search credits stay zero.
      *
      * Guards (checked inside the lock+transaction):
      *   - Same-company in-flight: running non-stale manual row for this company → EnrichmentInFlightException (409)
      *   - Quota exhausted (limited packages only)               → QuotaExhaustedException (422)
      *
-     * @throws EnrichmentInFlightException    When a non-stale manual run is already running for this company.
-     * @throws QuotaExhaustedException        When the daily balance is 0.
-     * @throws QuotaLockUnavailableException  When the MySQL lock cannot be acquired (fail-closed).
+     * @throws EnrichmentInFlightException When a non-stale manual run is already running for this company.
+     * @throws QuotaExhaustedException When the daily balance is 0.
+     * @throws QuotaLockUnavailableException When the MySQL lock cannot be acquired (fail-closed).
      */
     public function reserveManualEnrichment(Company $company): DiscoveryRun
     {
-        $isMySQL  = DB::getDriverName() === 'mysql';
-        $lockName = 'discovery-quota:' . DB::getDatabaseName();
+        return $this->withQuotaAdmissionLock(function () use ($company): DiscoveryRun {
+            if ($company->criteria_id !== null) {
+                ProspectCriteria::whereKey($company->criteria_id)->lockForUpdate()->first();
+            }
 
-        // Truncate to 64 chars (MySQL hard limit for GET_LOCK names).
-        $lockName = mb_substr($lockName, 0, 64);
+            $company = Company::withRejected()
+                ->whereKey($company->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $this->assertClaimAvailable($company);
+
+            // Same-company in-flight guard: look for any running manual row
+            // for this company that is not stale. This keeps legacy rows that
+            // pre-date durable claims protected too.
+            $candidates = DiscoveryRun::where('type', 'manual')
+                ->where('company_id', $company->id)
+                ->whereIn('status', ['running'])
+                ->get();
+
+            foreach ($candidates as $candidate) {
+                if (! $candidate->isStale()) {
+                    throw new EnrichmentInFlightException;
+                }
+            }
+
+            $today = $this->today();
+
+            // Pin the monthly period once — both daily and monthly contact guards
+            // use the same window so they cannot see two different periods.
+            [$pStart, $pEnd] = $this->currentPeriod($today);
+
+            // Contact quota guard: manual enrichment debits the contact meter only.
+            // Both the daily AND monthly contact caps must have remaining balance.
+            // Guard *IsUnlimited() first to avoid null arithmetic on each.
+            // Unlike the discovery path, manual enrich DOES throw on contact exhaustion.
+            if (! $this->contactIsUnlimited() && $this->contactRemainingOn($today) <= 0) {
+                throw new QuotaExhaustedException;
+            }
+            if (! $this->monthlyContactIsUnlimited() && $this->monthlyContactRemaining($pStart, $pEnd) <= 0) {
+                throw new QuotaExhaustedException;
+            }
+
+            $run = DiscoveryRun::create([
+                'prospect_criteria_id' => $company->criteria_id ?? null,
+                'type' => 'manual',
+                'company_id' => $company->id,
+                'status' => 'running',
+                'credits_reserved' => 0,  // no company meter debit
+                'consumed' => 0,  // no company meter debit
+                'contact_credits_reserved' => 1,
+                'contact_consumed' => 1,
+                'successful_enrichments_target' => 1,
+                'successful_enrichments' => 0,
+                'quota_date' => $today->toDateString(),
+                'started_at' => now(),
+                'companies_count' => 0,
+                'contacts_count' => 0,
+                'skipped_count' => 0,
+                'low_score_count' => 0,
+                'package_assignment_id' => PackageAssignment::latestActive()?->id,
+            ]);
+
+            $this->markClaimed($company, $run);
+
+            return $run;
+        });
+    }
+
+    /**
+     * Batch-only reservation. Eligibility is checked on a locked, fresh company
+     * in the same serialized transaction that creates the debit row.
+     *
+     * @return array{0: Company, 1: DiscoveryRun}
+     */
+    public function reserveCriteriaEnrichment(
+        int $companyId,
+        ProspectCriteria $criteria,
+        ?string $batchId = null,
+        int $approvedAttempts = 1,
+        int $successTarget = 1,
+    ): array {
+        return $this->withQuotaAdmissionLock(function () use (
+            $companyId,
+            $criteria,
+            $batchId,
+            $approvedAttempts,
+            $successTarget,
+        ): array {
+            $freshCriteria = ProspectCriteria::whereKey($criteria->id)->lockForUpdate()->first();
+            if ($freshCriteria === null) {
+                throw new CriteriaCompanyNoLongerEligibleException;
+            }
+
+            $approvedAttempts = max(1, min($approvedAttempts, 20));
+            $successTarget = max(1, min($successTarget, 20));
+
+            if ($batchId !== null) {
+                $batchRuns = DiscoveryRun::query()
+                    ->where('enrichment_batch_id', $batchId)
+                    ->lockForUpdate()
+                    ->get();
+
+                if ($batchRuns->contains(fn (DiscoveryRun $run): bool => (int) $run->company_id === $companyId)) {
+                    // A retried job must never call Hunter twice for a company
+                    // already admitted by this immutable batch UUID.
+                    throw new CriteriaCompanyNoLongerEligibleException;
+                }
+
+                if ($batchRuns->count() >= $approvedAttempts
+                    || $batchRuns->sum('successful_enrichments') >= $successTarget) {
+                    throw new QuotaExhaustedException('Limite de ce lot d’enrichissement atteinte.');
+                }
+            }
+
+            $effectiveMinScore = (int) ($freshCriteria->min_score_enrich ?? Setting::get('decouverte.min_score_enrich', 50));
+            $company = Company::withRejected()->whereKey($companyId)->lockForUpdate()->first();
+            $eligible = $company !== null
+                && (int) $company->criteria_id === (int) $freshCriteria->id
+                && $company->qualification_status !== 'rejected'
+                && $company->ai_score !== null
+                && (int) $company->ai_score >= $effectiveMinScore
+                && $company->enrichment_status !== Company::ENRICHMENT_HUNTER_EMPTY
+                && ! empty($company->domain)
+                && ! app(\App\Services\Discovery\CompanyDiscoveryService::class)->isBlockedDomain($company->domain)
+                && ! $company->contacts()->exists();
+
+            if (! $eligible) {
+                throw new CriteriaCompanyNoLongerEligibleException;
+            }
+
+            $this->assertClaimAvailable($company);
+
+            $inFlight = DiscoveryRun::where('type', 'manual')
+                ->where('company_id', $company->id)
+                ->where('status', 'running')
+                ->get()
+                ->contains(fn (DiscoveryRun $run) => ! $run->isStale());
+            if ($inFlight) {
+                throw new EnrichmentInFlightException;
+            }
+
+            $today = $this->today();
+            [$pStart, $pEnd] = $this->currentPeriod($today);
+            if (! $this->contactIsUnlimited() && $this->contactRemainingOn($today) <= 0) {
+                throw new QuotaExhaustedException;
+            }
+            if (! $this->monthlyContactIsUnlimited() && $this->monthlyContactRemaining($pStart, $pEnd) <= 0) {
+                throw new QuotaExhaustedException;
+            }
+
+            $run = DiscoveryRun::create([
+                'prospect_criteria_id' => $freshCriteria->id,
+                'type' => 'manual',
+                'company_id' => $company->id,
+                'status' => 'running',
+                'credits_reserved' => 0,
+                'consumed' => 0,
+                'contact_credits_reserved' => 1,
+                'contact_consumed' => 1,
+                'successful_enrichments_target' => $successTarget,
+                'successful_enrichments' => 0,
+                'enrichment_batch_id' => $batchId,
+                'quota_date' => $today->toDateString(),
+                'started_at' => now(),
+                'companies_count' => 0,
+                'contacts_count' => 0,
+                'skipped_count' => 0,
+                'low_score_count' => 0,
+                'package_assignment_id' => PackageAssignment::latestActive()?->id,
+            ]);
+
+            $this->markClaimed($company, $run);
+
+            return [$company, $run];
+        });
+    }
+
+    // ── Parent-run enrichment claims ─────────────────────────────────────────
+
+    /**
+     * Atomically admit one automatic Hunter lookup against its parent run.
+     *
+     * The debit happens before this method returns, in the same transaction that
+     * marks the company as owned by the run. Provider failures are therefore not
+     * refunded, and a worker retry cannot repeat the same Hunter call.
+     *
+     * @throws CriteriaCompanyNoLongerEligibleException
+     * @throws EnrichmentInFlightException
+     * @throws QuotaExhaustedException
+     * @throws QuotaLockUnavailableException
+     */
+    public function claimAutomaticEnrichment(int $companyId, DiscoveryRun $run): Company
+    {
+        return $this->withQuotaAdmissionLock(function () use ($companyId, $run): Company {
+            // Lock order is stable across all automatic claimers: criterion,
+            // parent run, then company.
+            $criteria = ProspectCriteria::whereKey($run->prospect_criteria_id)
+                ->lockForUpdate()
+                ->first();
+            $freshRun = DiscoveryRun::whereKey($run->id)
+                ->lockForUpdate()
+                ->first();
+
+            $validParent = $criteria !== null
+                && $freshRun !== null
+                && (int) $freshRun->prospect_criteria_id === (int) $criteria->id
+                && $freshRun->type === 'discovery'
+                && in_array($freshRun->status, ['pending', 'running'], true)
+                && ! $freshRun->isStale()
+                && (bool) $criteria->is_active;
+
+            $autoEnrich = $criteria?->auto_enrich
+                ?? (bool) Setting::get('decouverte.auto_enrich', false);
+
+            if (! $validParent || ! $autoEnrich) {
+                throw new CriteriaCompanyNoLongerEligibleException;
+            }
+
+            $company = Company::withRejected()
+                ->whereKey($companyId)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $this->isAutomaticallyEligible($company, $criteria)) {
+                throw new CriteriaCompanyNoLongerEligibleException;
+            }
+
+            $this->assertClaimAvailable($company, $freshRun->id);
+
+            if ((int) $freshRun->contact_consumed >= (int) $freshRun->contact_credits_reserved) {
+                throw new QuotaExhaustedException('Limite Hunter de cette exécution atteinte.');
+            }
+
+            if ((int) $freshRun->successful_enrichments
+                >= (int) $freshRun->successful_enrichments_target) {
+                throw new QuotaExhaustedException('Objectif d’enrichissements réussis atteint.');
+            }
+
+            $freshRun->contact_consumed = (int) $freshRun->contact_consumed + 1;
+            $freshRun->save();
+            $this->markClaimed($company, $freshRun);
+
+            return $company;
+        });
+    }
+
+    /**
+     * Clear a durable claim only when the caller still owns it.
+     *
+     * A late provider response from a stale run must never clear a claim that a
+     * newer run has already reclaimed.
+     */
+    public function clearEnrichmentClaim(int $companyId, DiscoveryRun $run): bool
+    {
+        return $this->withQuotaAdmissionLock(function () use ($companyId, $run): bool {
+            if ($run->prospect_criteria_id !== null) {
+                ProspectCriteria::whereKey($run->prospect_criteria_id)->lockForUpdate()->first();
+            }
+
+            DiscoveryRun::whereKey($run->id)->lockForUpdate()->first();
+            $company = Company::withRejected()
+                ->whereKey($companyId)
+                ->lockForUpdate()
+                ->first();
+
+            if ($company === null || (int) $company->enrichment_claim_run_id !== (int) $run->id) {
+                return false;
+            }
+
+            $company->forceFill(['enrichment_claim_run_id' => null])->save();
+
+            return true;
+        });
+    }
+
+    private function isAutomaticallyEligible(?Company $company, ProspectCriteria $criteria): bool
+    {
+        if ($company === null
+            || (int) $company->criteria_id !== (int) $criteria->id
+            || ! (bool) $company->is_active
+            || $company->qualification_status === 'rejected'
+            || empty(trim((string) $company->domain))
+            || ! $this->hasValidEnrichmentDomain((string) $company->domain)
+            || $company->contacts()->exists()
+            || $company->enrichment_status === Company::ENRICHMENT_HUNTER_EMPTY
+        ) {
+            return false;
+        }
+
+        if (app(\App\Services\Discovery\CompanyDiscoveryService::class)
+            ->isBlockedDomain($company->domain)) {
+            return false;
+        }
+
+        $autoScoring = (bool) Setting::get('decouverte.auto_scoring', true);
+        if (! $autoScoring) {
+            return true;
+        }
+
+        $minimum = (int) ($criteria->min_score_enrich
+            ?? Setting::get('decouverte.min_score_enrich', 50));
+
+        return $company->ai_score !== null && (int) $company->ai_score >= $minimum;
+    }
+
+    private function hasValidEnrichmentDomain(string $domain): bool
+    {
+        $domain = strtolower(trim($domain));
+
+        return strlen($domain) <= 253
+            && str_contains($domain, '.')
+            && ! str_starts_with($domain, '.')
+            && ! str_ends_with($domain, '.')
+            && filter_var($domain, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false;
+    }
+
+    private function assertClaimAvailable(Company $company, ?int $claimingRunId = null): void
+    {
+        $ownerId = $company->enrichment_claim_run_id;
+        if ($ownerId === null) {
+            return;
+        }
+
+        if ($claimingRunId !== null && (int) $ownerId === $claimingRunId) {
+            throw new EnrichmentInFlightException;
+        }
+
+        $owner = DiscoveryRun::whereKey($ownerId)->lockForUpdate()->first();
+        if ($owner !== null
+            && in_array($owner->status, ['pending', 'running'], true)
+            && ! $owner->isStale()) {
+            throw new EnrichmentInFlightException;
+        }
+    }
+
+    private function markClaimed(Company $company, DiscoveryRun $run): void
+    {
+        $company->forceFill([
+            'enrichment_status' => Company::ENRICHMENT_ENRICHING,
+            'enrichment_attempted_at' => now(),
+            'enrichment_claim_run_id' => $run->id,
+        ])->save();
+    }
+
+    /**
+     * Execute one admission transaction under the single process-wide MySQL lock.
+     * SQLite skips GET_LOCK; its single writer plus row locks used by production
+     * code are sufficient for focused tests.
+     */
+    private function withQuotaAdmissionLock(callable $callback): mixed
+    {
+        $isMySQL = DB::getDriverName() === 'mysql';
+        $lockName = mb_substr('discovery-quota:'.DB::getDatabaseName(), 0, 64);
 
         if ($isMySQL) {
             $lockResult = DB::selectOne('SELECT GET_LOCK(?, 5) as acquired', [$lockName]);
             if (! $lockResult || (int) $lockResult->acquired !== 1) {
-                throw new QuotaLockUnavailableException();
+                throw new QuotaLockUnavailableException;
             }
         }
 
         try {
-            $run = DB::transaction(function () use ($company) {
-                // Same-company in-flight guard: look for any running manual row
-                // for this company that is not stale.
-                $candidates = DiscoveryRun::where('type', 'manual')
-                    ->where('company_id', $company->id)
-                    ->whereIn('status', ['running'])
-                    ->get();
-
-                foreach ($candidates as $candidate) {
-                    if (! $candidate->isStale()) {
-                        throw new EnrichmentInFlightException();
-                    }
-                }
-
-                $today = $this->today();
-
-                // Pin the monthly period once — both daily and monthly contact guards
-                // use the same window so they cannot see two different periods.
-                [$pStart, $pEnd] = $this->currentPeriod($today);
-
-                // Contact quota guard: manual enrichment debits the contact meter only.
-                // Both the daily AND monthly contact caps must have remaining balance.
-                // Guard *IsUnlimited() first to avoid null arithmetic on each.
-                // Unlike the discovery path, manual enrich DOES throw on contact exhaustion.
-                if (! $this->contactIsUnlimited() && $this->contactRemainingOn($today) <= 0) {
-                    throw new QuotaExhaustedException();
-                }
-                if (! $this->monthlyContactIsUnlimited() && $this->monthlyContactRemaining($pStart, $pEnd) <= 0) {
-                    throw new QuotaExhaustedException();
-                }
-
-                return DiscoveryRun::create([
-                    'prospect_criteria_id'     => $company->criteria_id ?? null,
-                    'type'                     => 'manual',
-                    'company_id'               => $company->id,
-                    'status'                   => 'running',
-                    'credits_reserved'         => 0,  // no company meter debit
-                    'consumed'                 => 0,  // no company meter debit
-                    'contact_credits_reserved' => 1,
-                    'contact_consumed'         => 1,
-                    'quota_date'               => $today->toDateString(),
-                    'started_at'               => now(),
-                    'companies_count'          => 0,
-                    'contacts_count'           => 0,
-                    'skipped_count'            => 0,
-                    'low_score_count'          => 0,
-                    'package_assignment_id'    => PackageAssignment::latestActive()?->id,
-                ]);
-            });
-
-            return $run;
+            return DB::transaction($callback);
         } finally {
             if ($isMySQL) {
                 DB::selectOne('SELECT RELEASE_LOCK(?)', [$lockName]);
@@ -1038,14 +1380,14 @@ class DiscoveryQuotaService
      * rendered from usedOn() on the same page.
      *
      * @param  CarbonInterface  $start  Inclusive lower bound.
-     * @param  CarbonInterface  $end    Exclusive upper bound.
+     * @param  CarbonInterface  $end  Exclusive upper bound.
      * @return array{dates: array<string>, discoveries: array<int>, contacts: array<int>}
      */
     public function dailySeries(CarbonInterface $start, CarbonInterface $end): array
     {
         $rows = DiscoveryRun::query()
             ->where('quota_date', '>=', $start->toDateString())
-            ->where('quota_date', '<',  $end->toDateString())
+            ->where('quota_date', '<', $end->toDateString())
             ->selectRaw(
                 "quota_date,
                  COALESCE(SUM(CASE
@@ -1064,24 +1406,24 @@ class DiscoveryQuotaService
             ->get()
             ->keyBy(fn ($row) => Carbon::parse($row->quota_date)->toDateString());
 
-        $dates       = [];
+        $dates = [];
         $discoveries = [];
-        $contacts    = [];
+        $contacts = [];
 
         // CarbonPeriod is inclusive of both endpoints — stop at $end minus a day
         // so the half-open [$start, $end) range yields exactly the right day count.
         foreach (\Carbon\CarbonPeriod::create($start, $end->copy()->subDay()) as $day) {
-            $key           = $day->toDateString();
-            $row           = $rows->get($key);
-            $dates[]       = $key;
+            $key = $day->toDateString();
+            $row = $rows->get($key);
+            $dates[] = $key;
             $discoveries[] = $row ? (int) $row->discoveries : 0;
-            $contacts[]    = $row ? (int) $row->contacts : 0;
+            $contacts[] = $row ? (int) $row->contacts : 0;
         }
 
         return [
-            'dates'       => $dates,
+            'dates' => $dates,
             'discoveries' => $discoveries,
-            'contacts'    => $contacts,
+            'contacts' => $contacts,
         ];
     }
 
@@ -1095,8 +1437,7 @@ class DiscoveryQuotaService
      * runs under a NULL key keeps them in their own "Enrichissement manuel" row.
      *
      * @param  CarbonInterface  $start  Inclusive lower bound.
-     * @param  CarbonInterface  $end    Exclusive upper bound.
-     * @return \Illuminate\Support\Collection
+     * @param  CarbonInterface  $end  Exclusive upper bound.
      */
     public function perCriteriaBreakdown(CarbonInterface $start, CarbonInterface $end): \Illuminate\Support\Collection
     {
@@ -1107,7 +1448,7 @@ class DiscoveryQuotaService
                 ));
             })
             ->where('discovery_runs.quota_date', '>=', $start->toDateString())
-            ->where('discovery_runs.quota_date', '<',  $end->toDateString())
+            ->where('discovery_runs.quota_date', '<', $end->toDateString())
             // consumed is EFFECTIVE (net of AI-excluded candidates), matching the
             // usedOn()/usedInPeriod() meter — not raw consumed.
             ->selectRaw(

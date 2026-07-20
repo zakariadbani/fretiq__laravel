@@ -44,6 +44,12 @@ class Company extends Model
     /** Per-run contact budget exhausted — Hunter never called. */
     public const ENRICHMENT_SKIPPED_BUDGET = 'skipped_budget';
 
+    /** A run owns the durable claim and is currently calling Hunter. */
+    public const ENRICHMENT_ENRICHING = 'enriching';
+
+    /** Hunter was circuit-broken after a temporary provider failure. */
+    public const ENRICHMENT_SKIPPED_PROVIDER_UNAVAILABLE = 'skipped_provider_unavailable';
+
     /** AI scorer flagged the candidate as a competitor — Hunter never called. */
     public const ENRICHMENT_SKIPPED_EXCLUDED = 'skipped_excluded';
 
@@ -79,8 +85,9 @@ class Company extends Model
      */
     protected $casts = [
         'enrichment_data' => 'array',
-        'ai_score'        => 'integer',
-        'is_active'       => 'boolean',
+        'enrichment_attempted_at' => 'datetime',
+        'ai_score' => 'integer',
+        'is_active' => 'boolean',
     ];
 
     /**
@@ -91,10 +98,10 @@ class Company extends Model
     protected static function booted(): void
     {
         static::saving(function (self $company): void {
-            $company->relationship         ??= 'prospect';
-            $company->source               ??= 'manual';
+            $company->relationship ??= 'prospect';
+            $company->source ??= 'manual';
             $company->qualification_status ??= 'pending';
-            $company->is_active           ??= true;
+            $company->is_active ??= true;
         });
 
         // Hide rejected (AI-excluded competitor) companies from every read path
@@ -142,6 +149,14 @@ class Company extends Model
         return $this->hasMany(Contact::class);
     }
 
+    /**
+     * The discovery/manual run currently admitted to call Hunter for this company.
+     */
+    public function enrichmentClaimRun(): BelongsTo
+    {
+        return $this->belongsTo(DiscoveryRun::class, 'enrichment_claim_run_id');
+    }
+
     // ── Validation ─────────────────────────────────────────────────────────────
 
     /**
@@ -155,19 +170,19 @@ class Company extends Model
     public function rules(): array
     {
         return [
-            'name'                 => 'required|string|max:255',
-            'domain'               => 'nullable|string|max:191|unique:companies,domain,' . $this->id,
-            'sector'               => 'nullable|string|max:100',
-            'country'              => 'nullable|string|size:2',
-            'estimated_size'       => 'nullable|string|max:20',
-            'phone'                => 'nullable|string|max:50',
-            'relationship'         => 'nullable|' . ConfigEnum::in('company_relationships'),
-            'source'               => 'nullable|' . ConfigEnum::in('company_sources'),
-            'qualification_status' => 'nullable|' . ConfigEnum::in('company_qualification_statuses'),
-            'enrichment_status'    => 'nullable|' . ConfigEnum::in('company_enrichment_statuses'),
-            'is_active'            => 'nullable|boolean',
-            'ai_score'             => 'nullable|integer|between:0,100',
-            'zoho_account_id'      => 'nullable|string|max:100',
+            'name' => 'required|string|max:255',
+            'domain' => 'nullable|string|max:191|unique:companies,domain,'.$this->id,
+            'sector' => 'nullable|string|max:100',
+            'country' => 'nullable|string|size:2',
+            'estimated_size' => 'nullable|string|max:20',
+            'phone' => 'nullable|string|max:50',
+            'relationship' => 'nullable|'.ConfigEnum::in('company_relationships'),
+            'source' => 'nullable|'.ConfigEnum::in('company_sources'),
+            'qualification_status' => 'nullable|'.ConfigEnum::in('company_qualification_statuses'),
+            'enrichment_status' => 'nullable|'.ConfigEnum::in('company_enrichment_statuses'),
+            'is_active' => 'nullable|boolean',
+            'ai_score' => 'nullable|integer|between:0,100',
+            'zoho_account_id' => 'nullable|string|max:100',
         ];
     }
 
@@ -179,9 +194,9 @@ class Company extends Model
      */
     public function relationshipBadgeClass(): string
     {
-        $color = config('global.data.company_relationships.' . $this->relationship . '.color', 'secondary');
+        $color = config('global.data.company_relationships.'.$this->relationship.'.color', 'secondary');
 
-        return 'badge-light-' . $color;
+        return 'badge-light-'.$color;
     }
 
     public function hasSocialDomain(): bool

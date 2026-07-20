@@ -27,5 +27,5 @@ interface ScoringDriverInterface
      * @param  ProspectCriteria  $criteria
      * @return array{score: int, explanation: string, exclude: bool}|null
      */
-    public function score(array $candidate, ProspectCriteria $criteria): ?array;
+    public function score(array $candidate, ProspectCriteria $criteria, ?int $timeoutSeconds = null): ?array;
 }

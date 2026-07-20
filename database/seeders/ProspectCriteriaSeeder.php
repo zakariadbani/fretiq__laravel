@@ -8,10 +8,12 @@ use Illuminate\Database\Seeder;
 /**
  * ProspectCriteriaSeeder — persistent, prod-safe reference data.
  *
- * Seeds 3 starter prospect-criteria records for TCL France, now including the
- * AI targeting fields (ai_target / ai_exclude / ai_queries).
+ * Seeds the 3 "familles" de prospection définies par TCL Transport. The prospects
+ * are MOROCCAN IMPORTERS (countries = ['MA']) sourcing their goods from Europe —
+ * not European shippers. Each famille maps 1:1 to a sequence + segment + campaign
+ * seeded by TclFamilleSequenceSeeder.
  *
- * TCL France is a freight forwarder, so transporteurs / transitaires /
+ * TCL Transport is a freight forwarder, so transporteurs / transitaires /
  * logisticiens are competitors — never customers. Every criterion therefore
  * carries the same ai_exclude description and curated, competitor-free
  * ai_queries (Google negative operators) so discovery runs clean out of the
@@ -21,6 +23,10 @@ use Illuminate\Database\Seeder;
  * is written via saveQuietly() because ProspectCriteria::updating() nulls
  * ai_queries whenever ai_target/ai_exclude is dirty — a normal save on an updated
  * row would wipe the seeded queries. saveQuietly() bypasses that hook.
+ *
+ * The 3 legacy criteria (Chargeurs Agro & Cosmétique, Industrie & Automobile,
+ * E-commerce & Distribution) are NOT deleted — companies FK-reference them via
+ * criteria_id. They are deactivated instead, idempotently, at the end of run().
  */
 class ProspectCriteriaSeeder extends Seeder
 {
@@ -32,56 +38,93 @@ class ProspectCriteriaSeeder extends Seeder
 
         $rows = [
             [
-                'name'             => 'Chargeurs Agro & Cosmétique — France',
-                'ai_target'        => 'Chargeurs de l\'agroalimentaire et de la cosmétique/parfumerie en France : fabricants, industriels et marques qui expédient leurs produits.',
+                'name'             => 'Famille 1 — Urgence & Réglementation (Importateurs MA)',
+                'ai_target'        => 'Importateurs et distributeurs marocains de produits à forte valeur ou soumis à réglementation stricte : matériel médical, dispositifs dentaires, optique, laboratoires pharmaceutiques, matériel informatique, instruments de mesure et équipementiers aéronautique. Ils importent leurs marchandises depuis l\'Europe et sont soumis à des contraintes de délai, de traçabilité et de conformité douanière.',
                 'ai_exclude'       => $exclude,
                 'ai_queries'       => [
-                    'fabricant agroalimentaire France -transitaire -logistique -transporteur',
-                    'industriel agroalimentaire France exportateur -transitaire -logistique',
-                    'fabricant cosmétique France -"commissionnaire de transport"',
-                    'marque parfumerie France fabricant -transitaire -logistique',
-                    'producteur agroalimentaire France export -transporteur -logistique',
+                    'importateur matériel médical Maroc -transitaire -logistique -transporteur',
+                    'distributeur matériel informatique Casablanca importateur -transitaire',
+                    'laboratoire pharmaceutique Maroc importation -logistique -transporteur',
+                    'distributeur dispositifs médicaux Maroc -"commissionnaire de transport"',
+                    'importateur instruments de mesure Maroc -transitaire -logistique',
                 ],
-                'sectors'          => ['Agroalimentaire', 'Cosmétique & Parfumerie'],
-                'countries'        => ['FR'],
-                'company_sizes'    => ['51-200', '201-500'],
-                'target_positions' => ['Directeur Supply Chain', 'Responsable Transport', 'Responsable Achats'],
+                'sectors'          => [
+                    'Informatique',
+                    'Matériel médical',
+                    'Laboratoires pharmaceutiques',
+                    'Équipementiers aéronautique',
+                    'Instruments de mesure',
+                    'Dentaire',
+                    'Optique',
+                ],
+                'countries'        => ['MA'],
+                'company_sizes'    => ['11-50', '51-200', '201-500'],
+                'target_positions' => [
+                    'Responsable Import/Export',
+                    'Responsable Logistique',
+                    'Directeur Supply Chain',
+                    'Responsable Douane',
+                    'Responsable Achats',
+                ],
                 'daily_limit'      => 25,
                 'is_active'        => true,
             ],
             [
-                'name'             => 'Industrie & Automobile — Export UE',
-                'ai_target'        => 'Chargeurs industriels exportateurs (UE) : industrie manufacturière, équipementiers automobiles, fabricants de machines et d\'équipements industriels.',
+                'name'             => 'Famille 2 — Volume & Récurrence (Importateurs MA)',
+                'ai_target'        => 'Importateurs marocains à flux réguliers, récurrents et à fort volume depuis l\'Europe : matériel industriel, isolation thermique et panneaux sandwich, équipementiers automobiles, climatisation, mobilier, électroménager, lubrifiants et produits pétroliers. Ils expédient en groupage routier ou en lot complet et cherchent avant tout à optimiser leur coût de transport unitaire.',
                 'ai_exclude'       => $exclude,
                 'ai_queries'       => [
-                    'fabricant équipement automobile France -transitaire -logistique -transporteur',
-                    'industrie manufacturière Allemagne exportateur -transitaire -logistique',
-                    'fabricant machines industrielles Italie -"commissionnaire de transport"',
-                    'équipementier automobile Espagne -transitaire -transporteur',
-                    'constructeur machines France export -logistique -transporteur',
+                    'importateur matériel industriel Maroc -transitaire -logistique -transporteur',
+                    'importateur électroménager Casablanca -transitaire -logistique',
+                    'équipementier automobile Tanger importateur -transporteur',
+                    'distributeur climatisation Maroc importation -"commissionnaire de transport"',
+                    'importateur lubrifiants Maroc -transitaire -logistique',
                 ],
-                'sectors'          => ['Industrie manufacturière', 'Automobile', 'Machines & Équipements industriels'],
-                'countries'        => ['FR', 'DE', 'IT', 'ES'],
-                'company_sizes'    => ['201-500', '500+'],
-                'target_positions' => ['Directeur Logistique', 'Responsable Import/Export', 'Directeur Achats'],
+                'sectors'          => [
+                    'Matériel industriel',
+                    'Isolation thermique & panneaux sandwich',
+                    'Équipementiers automobiles',
+                    'Climatisation',
+                    'Mobilier',
+                    'Électroménager',
+                    'Lubrifiants & pétrole',
+                ],
+                'countries'        => ['MA'],
+                'company_sizes'    => ['51-200', '201-500', '500+'],
+                'target_positions' => [
+                    'Directeur Logistique',
+                    'Responsable Transport',
+                    'Acheteur Transport',
+                    'Directeur Achats',
+                    'Responsable Import/Export',
+                ],
                 'daily_limit'      => 30,
                 'is_active'        => true,
             ],
             [
-                'name'             => 'E-commerce & Distribution — Axe France–Maroc',
-                'ai_target'        => 'Chargeurs e-commerce, grande distribution et textile/habillement sur l\'axe France–Maroc qui expédient des marchandises.',
+                'name'             => 'Famille 3 — Projets & Chantiers (Importateurs MA)',
+                'ai_target'        => 'Entreprises marocaines pilotant des projets à date fixe et important leurs équipements depuis l\'Europe : traitement des eaux, matériel d\'hôtellerie, cosmétique et parfumerie. Intégrateurs, promoteurs et industriels dont la livraison doit être synchronisée avec un planning de chantier ou une date de mise en service.',
                 'ai_exclude'       => $exclude,
                 'ai_queries'       => [
-                    'e-commerce France marchand expéditeur -transitaire -logistique -transporteur',
-                    'grande distribution France importateur -"commissionnaire de transport"',
-                    'grossiste textile habillement France -transitaire -logistique',
-                    'importateur habillement Maroc -transporteur -logistique',
-                    'fabricant textile Maroc -transitaire -logistique',
+                    'société traitement des eaux Maroc équipement importé -transitaire -logistique',
+                    'fournisseur matériel hôtellerie Maroc importateur -transporteur',
+                    'équipement hôtelier Marrakech importateur -transitaire -logistique',
+                    'fabricant cosmétique Maroc importation matières premières -transitaire',
+                    'projet station épuration Maroc équipementier -logistique -transporteur',
                 ],
-                'sectors'          => ['E-commerce', 'Grande distribution', 'Textile & Habillement'],
-                'countries'        => ['FR', 'MA'],
-                'company_sizes'    => ['11-50', '51-200'],
-                'target_positions' => ['Responsable Logistique', 'Acheteur Transport', 'Responsable Douane'],
+                'sectors'          => [
+                    'Traitement des eaux',
+                    'Matériel d\'hôtellerie',
+                    'Cosmétique & Parfumerie',
+                ],
+                'countries'        => ['MA'],
+                'company_sizes'    => ['11-50', '51-200', '201-500'],
+                'target_positions' => [
+                    'Directeur des Opérations',
+                    'Responsable Achats',
+                    'Responsable Logistique',
+                    'Responsable Import/Export',
+                ],
                 'daily_limit'      => 20,
                 'is_active'        => true,
             ],
@@ -100,5 +143,15 @@ class ProspectCriteriaSeeder extends Seeder
             $criteria->ai_queries = $queries;
             $criteria->saveQuietly();
         }
+
+        // ── Legacy criteria — deactivate, never delete ────────────────────────────
+        // companies.criteria_id still points at these rows; deleting them would
+        // break the FK. Deactivating hides them from discovery while preserving
+        // the historical attribution of already-discovered companies.
+        ProspectCriteria::whereIn('name', [
+            'Chargeurs Agro & Cosmétique — France',
+            'Industrie & Automobile — Export UE',
+            'E-commerce & Distribution — Axe France–Maroc',
+        ])->update(['is_active' => false]);
     }
 }

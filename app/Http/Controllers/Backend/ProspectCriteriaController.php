@@ -9,15 +9,21 @@ use App\Exceptions\QuotaExhaustedException;
 use App\Exceptions\QuotaLockUnavailableException;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
+use App\Jobs\EnrichCriteriaContactsJob;
 use App\Jobs\RunDiscoveryPipelineJob;
 use App\Models\Company;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Services\Discovery\CompanyDiscoveryService;
+use App\Services\Discovery\CriteriaContactEnrichmentService;
 use App\Services\Discovery\DiscoveryEngineRegistry;
+use App\Services\Discovery\DiscoveryProgressPresenter;
 use App\Services\Discovery\IntentQueryService;
 use App\Services\Quota\DiscoveryQuotaService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class ProspectCriteriaController extends BackendController
@@ -42,17 +48,18 @@ class ProspectCriteriaController extends BackendController
         $this->middleware('permission:run discovery')->only(['discover']);
         $this->middleware('permission:create prospect_criteria')->only(['duplicate']);
         $this->middleware('permission:view prospect_criteria')->only(['previewQueries']);
+        $this->middleware('permission:enrich companies')->only(['contactEnrichmentPreview', 'dispatchContactEnrichment']);
 
         $this->listTitle = 'Critères de découverte';
-        $this->title     = 'name';
+        $this->title = 'name';
 
         $this->bootResource(new BackendResource(
-            modelClass:       ProspectCriteria::class,
-            modelName:        'prospect_criteria',
-            dataTableClass:   ProspectCriteriaDataTable::class,
+            modelClass: ProspectCriteria::class,
+            modelName: 'prospect_criteria',
+            dataTableClass: ProspectCriteriaDataTable::class,
             permissionEntity: 'prospect_criteria',
-            prefixName:       'admin',
-            titleField:       'name',
+            prefixName: 'admin',
+            titleField: 'name',
         ));
 
         $this->viewConfigClass = \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::class;
@@ -69,17 +76,17 @@ class ProspectCriteriaController extends BackendController
         return $this->currentDataTable->render(
             'backend.contents.prospect_criteria.crud.index',
             [
-                'listTitle'               => $this->listTitle,
-                'dataTableConfig'         => $this->currentDataTable->getIndexConfig(),
-                'quotaRemaining'          => $quotaRemaining,
-                'quotaPackage'            => $quotaPackage,
-                'contactRemaining'        => $contactRemaining,
-                'monthlyRemaining'        => $monthlyRemaining,
+                'listTitle' => $this->listTitle,
+                'dataTableConfig' => $this->currentDataTable->getIndexConfig(),
+                'quotaRemaining' => $quotaRemaining,
+                'quotaPackage' => $quotaPackage,
+                'contactRemaining' => $contactRemaining,
+                'monthlyRemaining' => $monthlyRemaining,
                 'monthlyContactRemaining' => $monthlyContactRemaining,
-                'activeDailyLimitSum'     => $activeDailyLimitSum,
-                'dailyQuotaSummary'       => $dailyQuotaSummary,
-                'monthlyQuotaSummary'     => $monthlyQuotaSummary,
-                'quotaMeters'             => $quotaMeters,
+                'activeDailyLimitSum' => $activeDailyLimitSum,
+                'dailyQuotaSummary' => $dailyQuotaSummary,
+                'monthlyQuotaSummary' => $monthlyQuotaSummary,
+                'quotaMeters' => $quotaMeters,
             ]
         );
     }
@@ -92,8 +99,7 @@ class ProspectCriteriaController extends BackendController
      * can inspect and un-reject the AI's calls. Default (no param) keeps the
      * global notRejected scope in effect.
      *
-     * @param  int                   $id
-     * @param  DiscoveryQuotaService $quotaService
+     * @param  int  $id
      * @return \Illuminate\Http\RedirectResponse|\Illuminate\View\View
      */
     public function view($id, DiscoveryQuotaService $quotaService)
@@ -103,27 +109,27 @@ class ProspectCriteriaController extends BackendController
 
         if ($model === null) {
             session()->flash('error', trans('app.not_found'));
+
             return redirect(route('admin.prospect_criteria.index'));
         }
 
         $auditMode = $this->currentRequest->boolean('audit');
 
         $allowedResultSorts = [
-            'score'      => 'companies.ai_score',
+            'score' => 'companies.ai_score',
             'created_at' => 'companies.created_at',
-            'recent'     => 'companies.id',
-            'name'       => 'companies.name',
-            'sector'     => 'companies.sector',
-            'country'    => 'companies.country',
-            'size'       => 'companies.estimated_size',
-            'contacts'   => 'contacts_count',
+            'recent' => 'companies.id',
+            'name' => 'companies.name',
+            'sector' => 'companies.sector',
+            'country' => 'companies.country',
+            'size' => 'companies.estimated_size',
+            'contacts' => 'contacts_count',
         ];
         $resultsSort = (string) $this->currentRequest->query('results_sort', 'score');
         if (! array_key_exists($resultsSort, $allowedResultSorts)) {
             $resultsSort = 'score';
         }
         $resultsDir = strtolower((string) $this->currentRequest->query('results_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
-
 
         // Paginate discovered companies first so we can reuse ->total() in the
         // ViewConfig stat card — avoids a second COUNT query.
@@ -141,32 +147,34 @@ class ProspectCriteriaController extends BackendController
 
         $view = $this->getView('backend.contents.prospect_criteria.crud.view');
         $view->with('title', __('overview'))
-             ->with('model', $model);
+            ->with('model', $model);
+
+        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining, $activeDailyLimitSum, $dailyQuotaSummary, $monthlyQuotaSummary, $quotaMeters] = $this->resolveQuotaVars($quotaService);
 
         $viewConfig = \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::make(
             $model,
             [
                 'discovered_total' => $resultCompanies->total(),
-                'quota_tz'         => $quotaService->quotaTz(),
+                'quota_tz' => $quotaService->quotaTz(),
+                'quota_exhausted' => $quotaRemaining === 0 || $monthlyRemaining === 0,
             ]
         );
         $view->with('viewConfig', $viewConfig);
 
-        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining, $activeDailyLimitSum, $dailyQuotaSummary, $monthlyQuotaSummary, $quotaMeters] = $this->resolveQuotaVars($quotaService);
         $view->with('quotaRemaining', $quotaRemaining)
-             ->with('quotaPackage', $quotaPackage)
-             ->with('contactRemaining', $contactRemaining)
-             ->with('monthlyRemaining', $monthlyRemaining)
-             ->with('monthlyContactRemaining', $monthlyContactRemaining)
-             ->with('activeDailyLimitSum', $activeDailyLimitSum)
-             ->with('dailyQuotaSummary', $dailyQuotaSummary)
-             ->with('monthlyQuotaSummary', $monthlyQuotaSummary)
-             ->with('quotaMeters', $quotaMeters)
-             ->with('resultCompanies', $resultCompanies)
-             ->with('resultsSort', $resultsSort)
-             ->with('resultsDir', $resultsDir)
-             ->with('queryGroups', $queryGroups)
-             ->with('auditMode', $auditMode);
+            ->with('quotaPackage', $quotaPackage)
+            ->with('contactRemaining', $contactRemaining)
+            ->with('monthlyRemaining', $monthlyRemaining)
+            ->with('monthlyContactRemaining', $monthlyContactRemaining)
+            ->with('activeDailyLimitSum', $activeDailyLimitSum)
+            ->with('dailyQuotaSummary', $dailyQuotaSummary)
+            ->with('monthlyQuotaSummary', $monthlyQuotaSummary)
+            ->with('quotaMeters', $quotaMeters)
+            ->with('resultCompanies', $resultCompanies)
+            ->with('resultsSort', $resultsSort)
+            ->with('resultsDir', $resultsDir)
+            ->with('queryGroups', $queryGroups)
+            ->with('auditMode', $auditMode);
 
         return $view;
     }
@@ -180,7 +188,6 @@ class ProspectCriteriaController extends BackendController
      * surface via withRejected(). Companies with a null discovery_query (pre-AI
      * or manually created) are bucketed under a single "(sans requête)" group.
      *
-     * @param  ProspectCriteria  $model
      * @return list<array{query: ?string, found: int, kept: int, excluded: int, companies: \Illuminate\Support\Collection}>
      */
     private function buildQueryResultGroups(ProspectCriteria $model): array
@@ -194,13 +201,13 @@ class ProspectCriteriaController extends BackendController
 
         return $all->map(function ($companies, $query) {
             $excluded = $companies->where('qualification_status', 'rejected');
-            $kept     = $companies->reject(fn (Company $c) => $c->qualification_status === 'rejected');
+            $kept = $companies->reject(fn (Company $c) => $c->qualification_status === 'rejected');
 
             return [
-                'query'     => $query !== '' ? $query : null,
-                'found'     => $companies->count(),
-                'kept'      => $kept->count(),
-                'excluded'  => $excluded->count(),
+                'query' => $query !== '' ? $query : null,
+                'found' => $companies->count(),
+                'kept' => $kept->count(),
+                'excluded' => $excluded->count(),
                 'companies' => $companies,
             ];
         })->values()->all();
@@ -264,11 +271,11 @@ class ProspectCriteriaController extends BackendController
     protected function getViewVars(): array
     {
         $quotaService = app(DiscoveryQuotaService::class);
-        $editingId    = $this->currentRequest->route('id');
+        $editingId = $this->currentRequest->route('id');
 
         try {
             $quotaPackage = $quotaService->activePackage();
-            $sumQuery     = ProspectCriteria::where('is_active', true);
+            $sumQuery = ProspectCriteria::where('is_active', true);
             if ($editingId !== null) {
                 $sumQuery->where('id', '!=', $editingId);
             }
@@ -276,36 +283,36 @@ class ProspectCriteriaController extends BackendController
                 ->selectRaw('COALESCE(SUM(COALESCE(daily_limit, 20)), 0) AS s')
                 ->value('s');
 
-            $quotaRemaining    = $quotaService->remainingTodayForDisplay();
-            $contactRemaining  = $quotaService->contactRemainingTodayForDisplay();
-            $monthlyRemaining  = $quotaService->monthlyRemainingForDisplay();
+            $quotaRemaining = $quotaService->remainingTodayForDisplay();
+            $contactRemaining = $quotaService->contactRemainingTodayForDisplay();
+            $monthlyRemaining = $quotaService->monthlyRemainingForDisplay();
         } catch (\Illuminate\Database\QueryException $e) {
-            $quotaPackage        = null;
+            $quotaPackage = null;
             $activeDailyLimitSum = null;
-            $quotaRemaining      = null;
-            $contactRemaining    = null;
-            $monthlyRemaining    = null;
+            $quotaRemaining = null;
+            $contactRemaining = null;
+            $monthlyRemaining = null;
         }
 
         return [
-            'companySizes'        => config('global.data.company_size_buckets', []),
-            'countries'           => config('global.data.company_countries', []),
-            'sectorsList'         => config('global.data.prospect_sectors', []),
-            'positionGroups'      => config('global.data.prospect_positions', []),
-            'euCodes'             => config('global.data.eu_country_codes', []),
+            'companySizes' => config('global.data.company_size_buckets', []),
+            'countries' => config('global.data.company_countries', []),
+            'sectorsList' => config('global.data.prospect_sectors', []),
+            'positionGroups' => config('global.data.prospect_positions', []),
+            'euCodes' => config('global.data.eu_country_codes', []),
             'recommendedPositions' => collect(config('global.data.prospect_positions', []))
                 ->only(config('global.data.prospect_positions_recommended_groups', []))
                 ->flatten()->values()->all(),
-            'quotaPackage'        => $quotaPackage,
+            'quotaPackage' => $quotaPackage,
             'activeDailyLimitSum' => $activeDailyLimitSum,
-            'quotaRemaining'      => $quotaRemaining,
-            'contactRemaining'    => $contactRemaining,
-            'monthlyRemaining'    => $monthlyRemaining,
-            'globalMinScore'      => (int) \App\Models\Setting::get('decouverte.min_score_enrich', 50),
+            'quotaRemaining' => $quotaRemaining,
+            'contactRemaining' => $contactRemaining,
+            'monthlyRemaining' => $monthlyRemaining,
+            'globalMinScore' => (int) \App\Models\Setting::get('decouverte.min_score_enrich', 50),
             // Fallback false: enrichment is opted into per criteria; a missing settings
             // row must not make « Hérité » read as "activé" in the form.
-            'globalAutoEnrich'    => (bool) \App\Models\Setting::get('decouverte.auto_enrich', false),
-            'quotaTz'             => $quotaService->quotaTz(),
+            'globalAutoEnrich' => (bool) \App\Models\Setting::get('decouverte.auto_enrich', false),
+            'quotaTz' => $quotaService->quotaTz(),
         ];
     }
 
@@ -319,16 +326,16 @@ class ProspectCriteriaController extends BackendController
      *
      * company_sizes arrives as an array from a multi-select → passed through (default []).
      *
-     * @param int|null $id
-     * @return array
+     * @param  int|null  $id
      */
     protected function beforeSave($id = null): array
     {
         $attributes = $this->currentRequest->all();
 
         foreach (['sectors', 'countries', 'target_positions'] as $field) {
-            if (!array_key_exists($field, $attributes)) {
+            if (! array_key_exists($field, $attributes)) {
                 $attributes[$field] = [];
+
                 continue;
             }
 
@@ -339,17 +346,17 @@ class ProspectCriteriaController extends BackendController
                 // E2: guard against nested-array items — trim(array) throws TypeError before
                 // validation runs (Crudable calls beforeSave first). Non-strings are silently
                 // dropped; F1 rules then validate what remains.
-                $attributes[$field] = array_values(array_filter(array_map(fn($v) => is_string($v) ? trim($v) : '', $value), fn($v) => $v !== ''));
+                $attributes[$field] = array_values(array_filter(array_map(fn ($v) => is_string($v) ? trim($v) : '', $value), fn ($v) => $v !== ''));
             } elseif (is_string($value) && trim($value) !== '') {
                 // Comma-separated text input
-                $attributes[$field] = array_values(array_filter(array_map('trim', explode(',', $value)), fn($v) => $v !== ''));
+                $attributes[$field] = array_values(array_filter(array_map('trim', explode(',', $value)), fn ($v) => $v !== ''));
             } else {
                 $attributes[$field] = [];
             }
         }
 
         // company_sizes arrives from a multi-select as an array; ensure it defaults to []
-        if (!array_key_exists('company_sizes', $attributes) || !is_array($attributes['company_sizes'])) {
+        if (! array_key_exists('company_sizes', $attributes) || ! is_array($attributes['company_sizes'])) {
             $attributes['company_sizes'] = [];
         }
 
@@ -395,7 +402,6 @@ class ProspectCriteriaController extends BackendController
      * Sets the clone's name to 'Copie de {original name}' and is_active to false.
      * Redirects to the clone's edit page with a standard success flash.
      *
-     * @param  ProspectCriteria  $prospectCriteria
      * @return \Illuminate\Http\RedirectResponse
      */
     public function duplicate(ProspectCriteria $prospectCriteria)
@@ -405,9 +411,9 @@ class ProspectCriteriaController extends BackendController
         $prefix = 'Copie de ';
 
         $clone = $prospectCriteria->replicate();
-        $clone->name      = $prefix . Str::limit($prospectCriteria->name, 100 - mb_strlen($prefix), '');
+        $clone->name = $prefix.Str::limit($prospectCriteria->name, 100 - mb_strlen($prefix), '');
         $clone->is_active = false;
-        $clone->auto_run  = false;
+        $clone->auto_run = false;
         $clone->save();
 
         session()->flash('success', trans('app.creation_completed'));
@@ -425,8 +431,6 @@ class ProspectCriteriaController extends BackendController
      * present, else falls back to the structured buildQueries() list wrapped in
      * the same {q, enabled} shape.
      *
-     * @param  ProspectCriteria        $prospectCriteria
-     * @param  CompanyDiscoveryService $discoveryService
      * @return \Illuminate\Http\JsonResponse
      */
     public function previewQueries(
@@ -439,14 +443,14 @@ class ProspectCriteriaController extends BackendController
             ? $this->normalizeAiQueries($prospectCriteria->ai_queries)
             : array_map(
                 fn (string $q) => [
-                    'q'       => $q,
+                    'q' => $q,
                     'enabled' => true,
                 ],
                 $discoveryService->buildQueries($prospectCriteria)
             );
 
         return response()->json([
-            'queries'   => $queries,
+            'queries' => $queries,
             'execution' => $this->queryPreviewExecutionMeta(
                 $prospectCriteria,
                 $quotaService,
@@ -469,8 +473,7 @@ class ProspectCriteriaController extends BackendController
         DiscoveryQuotaService $quotaService,
         int $engineCount,
         int $enabledQueryCount,
-    ): array
-    {
+    ): array {
         $dailyLimit = (int) ($criteria->daily_limit ?: 20);
         $caps = [$dailyLimit];
 
@@ -490,7 +493,7 @@ class ProspectCriteriaController extends BackendController
         }
 
         return [
-            'daily_limit'   => $dailyLimit,
+            'daily_limit' => $dailyLimit,
             'search_budget' => max(0, min($caps)),
             'engine_count' => max(0, $engineCount),
             'prepared_attempts' => max(0, $engineCount) * max(0, $enabledQueryCount),
@@ -508,9 +511,7 @@ class ProspectCriteriaController extends BackendController
      * silently re-enable queries the user turned off in this same editing session.
      * Persisting ai_queries happens only via Enregistrer → beforeSave().
      *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  int                       $id
-     * @param  IntentQueryService        $intentQueryService
+     * @param  int  $id
      * @return \Illuminate\Http\JsonResponse
      */
     public function generateQueries(Request $request, $id, IntentQueryService $intentQueryService)
@@ -520,7 +521,7 @@ class ProspectCriteriaController extends BackendController
         $criteria = ProspectCriteria::findOrFail((int) $id);
 
         // In-memory only — mirrors the unsaved form state, never save()d.
-        $criteria->ai_target  = $request->input('ai_target');
+        $criteria->ai_target = $request->input('ai_target');
         $criteria->ai_exclude = $request->input('ai_exclude');
 
         // Index enabled flags from the POSTed current list (not the DB) so unchanged
@@ -530,7 +531,7 @@ class ProspectCriteriaController extends BackendController
 
         $queries = collect($intentQueryService->expand($criteria))
             ->map(fn (string $q) => [
-                'q'       => $q,
+                'q' => $q,
                 'enabled' => $previousEnabled->get($q, true),
             ])
             ->values()
@@ -570,8 +571,7 @@ class ProspectCriteriaController extends BackendController
      * Partial batch: when limited and credits_reserved < daily_limit, the success
      * message includes the partial count.
      *
-     * @param  int                    $id
-     * @param  DiscoveryQuotaService  $quotaService
+     * @param  int  $id
      * @return \Illuminate\Http\JsonResponse
      */
     public function discover($id, DiscoveryQuotaService $quotaService)
@@ -588,24 +588,25 @@ class ProspectCriteriaController extends BackendController
         } catch (CriteriaInactiveException $e) {
             return response()->json([
                 'message' => 'error',
-                'text'    => $e->getMessage(),
+                'text' => $e->getMessage(),
             ], 422);
         } catch (DiscoveryRunInFlightException $e) {
             return response()->json([
                 'message' => 'error',
-                'text'    => $e->getMessage(),
-                'run_id'  => $e->existingRun->id,
-                'status'  => $e->existingRun->status,
+                'text' => $e->getMessage(),
+                'run_id' => $e->existingRun->id,
+                'status' => $e->existingRun->status,
+                'status_url' => $this->discoveryStatusUrl($criteria, $e->existingRun),
             ], 409);
         } catch (QuotaExhaustedException $e) {
             return response()->json([
                 'message' => 'error',
-                'text'    => $e->getMessage(),
+                'text' => $e->getMessage(),
             ], 422);
         } catch (QuotaLockUnavailableException $e) {
             return response()->json([
                 'message' => 'error',
-                'text'    => 'Réservation temporairement indisponible — réessayez dans un instant.',
+                'text' => 'Réservation temporairement indisponible — réessayez dans un instant.',
             ], 409);
         }
 
@@ -616,67 +617,175 @@ class ProspectCriteriaController extends BackendController
         try {
             RunDiscoveryPipelineJob::dispatch($criteria->id, $run->id);
         } catch (\Throwable $e) {
-            DiscoveryRun::where('id', $run->id)->update([
-                'status'      => 'failed',
-                'error'       => Str::limit('Échec de mise en file : ' . $e->getMessage(), 1000),
-                'finished_at' => now(),
+            $markedFailed = DiscoveryRun::failPendingDispatch((int) $run->id, (int) $criteria->id);
+
+            Log::error('[ProspectCriteriaController] Discovery dispatch failed.', [
+                'criteria_id' => $criteria->id,
+                'run_id' => $run->id,
+                'run_marked_failed' => $markedFailed,
+                'exception_class' => $e::class,
             ]);
 
             return response()->json([
                 'message' => 'error',
-                'text'    => 'Impossible de lancer la découverte. Réessayez.',
+                'text' => 'Impossible de lancer la découverte. Réessayez.',
             ], 500);
         }
 
         // Partial search-budget message: when limited and we got fewer searches than requested
         $wantedSearches = $criteria->daily_limit ?: 20;
         $reservedSearches = (int) ($run->searches_reserved ?? $run->credits_reserved);
-        $isPartial   = (! $quotaService->isUnlimited()) && ($reservedSearches < $wantedSearches);
+        $isPartial = (! $quotaService->isUnlimited()) && ($reservedSearches < $wantedSearches);
 
         $successText = $isPartial
-            ? "Découverte lancée — {$reservedSearches} requêtes de découverte possibles aujourd'hui"
+            ? "Découverte lancée — {$reservedSearches} recherches d’entreprises possibles aujourd'hui"
             : 'Découverte lancée en arrière-plan';
 
-        // Append contact enrichment limit note when contact quota is capped —
-
-        if ($run->contact_credits_reserved < $run->credits_reserved) {
-            $successText .= " (enrichissement limité à {$run->contact_credits_reserved})";
-        }
+        // Hunter capacity is an independent reservation: one attempt means one
+        // company lookup and is not the number of contacts that will be created.
+        $reservedHunter = (int) ($run->contact_credits_reserved ?? 0);
+        $successText .= " — {$reservedHunter} tentatives d’enrichissement réservées";
 
         return response()->json([
-            'message'    => 'success',
-            'text'       => $successText,
-            'run_id'     => $run->id,
-            'status'     => 'pending',
-            'status_url' => route('admin.prospect_criteria.discovery_status', $criteria->id),
+            'message' => 'success',
+            'text' => $successText,
+            'run_id' => $run->id,
+            'status' => 'pending',
+            'status_url' => $this->discoveryStatusUrl($criteria, $run),
         ]);
     }
 
+    public function contactEnrichmentPreview($id, CriteriaContactEnrichmentService $service)
+    {
+        $this->authorize('enrich companies');
+        $criteria = ProspectCriteria::findOrFail((int) $id);
+        $snapshot = $service->snapshot($criteria);
+        $snapshot['approval_token'] = Crypt::encryptString(json_encode([
+            'criteria_id' => $criteria->id,
+            'success_target' => $snapshot['success_target'],
+            'attempt_limit' => $snapshot['attempt_limit'],
+            'expires_at' => now()->addMinutes(5)->timestamp,
+        ], JSON_THROW_ON_ERROR));
+
+        return response()->json($snapshot, 200)
+            ->header('Cache-Control', 'no-store');
+    }
+
+    public function dispatchContactEnrichment($id, CriteriaContactEnrichmentService $service)
+    {
+        $this->authorize('enrich companies');
+        $criteria = ProspectCriteria::findOrFail((int) $id);
+        try {
+            $approval = json_decode(Crypt::decryptString((string) request('approval_token')), true, 512, JSON_THROW_ON_ERROR);
+            $successTarget = (int) ($approval['success_target'] ?? 0);
+            $attemptLimit = (int) ($approval['attempt_limit'] ?? 0);
+            $validApproval = (int) ($approval['criteria_id'] ?? 0) === (int) $criteria->id
+                && (int) ($approval['expires_at'] ?? 0) >= now()->timestamp
+                && $successTarget >= 1
+                && $successTarget <= CriteriaContactEnrichmentService::BATCH_SAFETY_MAX
+                && $attemptLimit >= 1
+                && $attemptLimit <= CriteriaContactEnrichmentService::BATCH_SAFETY_MAX;
+        } catch (\Throwable) {
+            $validApproval = false;
+            $successTarget = 0;
+            $attemptLimit = 0;
+        }
+
+        if (! $validApproval) {
+            return response()->json([
+                'message' => 'error',
+                'text' => 'Confirmation expirée ou invalide — relancez la prévisualisation.',
+            ], 422);
+        }
+
+        $snapshot = $service->snapshot($criteria);
+
+        if ($snapshot['callable_count'] <= 0) {
+            return response()->json([
+                'message' => 'error',
+                'text' => 'Aucune entreprise ne peut être enrichie maintenant.',
+                ...$snapshot,
+            ], 422);
+        }
+
+        $key = EnrichCriteriaContactsJob::admissionKey($criteria->id);
+        $lock = Cache::lock($key, 3600);
+        if (! $lock->get()) {
+            return response()->json([
+                'message' => 'error',
+                'text' => 'Une recherche de contacts est déjà en cours pour ce critère.',
+            ], 409);
+        }
+        $owner = $lock->owner();
+
+        try {
+            EnrichCriteriaContactsJob::dispatch(
+                criteriaId: $criteria->id,
+                approvedAttempts: $attemptLimit,
+                admissionOwner: $owner,
+                successTarget: $successTarget,
+                batchId: (string) Str::uuid(),
+            );
+        } catch (\Throwable $e) {
+            Cache::restoreLock($key, $owner)->release();
+
+            return response()->json([
+                'message' => 'error',
+                'text' => 'Impossible de lancer la recherche de contacts. Réessayez.',
+            ], 500);
+        }
+
+        return response()->json([
+            'message' => 'success',
+            'text' => "Recherche lancée — objectif {$successTarget} enrichissement(s) réussi(s), {$attemptLimit} tentative(s) maximum.",
+            ...$snapshot,
+            'success_target' => $successTarget,
+            'attempt_limit' => $attemptLimit,
+        ], 202);
+    }
+
     /**
-     * Return the current discovery status for the given criteria (latest run).
+     * Return discovery progress for the requested run, or the latest discovery run.
      *
      * Polled by the JS panel on the criteria detail page every ~3 s while in-flight.
      * Returns Cache-Control: no-store to prevent stale responses.
      *
-     * @param int $id
+     * @param  int  $id
      * @return \Illuminate\Http\JsonResponse
      */
-    public function discoveryStatus($id)
+    public function discoveryStatus(Request $request, $id, DiscoveryProgressPresenter $presenter)
     {
         $criteria = ProspectCriteria::findOrFail((int) $id);
-        $run      = $criteria->latestDiscoveryRun;
+        $requestedRunId = null;
 
-        return response()->json([
-            'status'          => $run?->status,
-            'companies_count' => $run?->companies_count ?? 0,
-            'contacts_count'  => $run?->contacts_count ?? 0,
-            'skipped_count'   => $run?->skipped_count ?? 0,
-            'low_score_count' => (int) ($run?->low_score_count ?? 0),
-            'excluded_count'  => (int) ($run?->excluded_count ?? 0),
-            'finished_at'     => optional($run?->finished_at)->toIso8601String(),
-            'companies_total' => $criteria->companies()->count(),
-            'stale'           => $run ? $run->isStale() : false,
-            'error'           => $run?->error,
-        ], 200)->header('Cache-Control', 'no-store');
+        if ($request->query->has('run_id')) {
+            $requestedRunId = filter_var($request->query('run_id'), FILTER_VALIDATE_INT, [
+                'options' => ['min_range' => 1],
+            ]);
+
+            abort_if($requestedRunId === false, 404);
+        }
+
+        $run = $requestedRunId !== null
+            ? $criteria->discoveryRuns()
+                ->where('type', 'discovery')
+                ->whereKey((int) $requestedRunId)
+                ->firstOrFail()
+            : $criteria->latestDiscoveryRun;
+
+        return response()->json($presenter->present(
+            $criteria,
+            $run,
+            $criteria->companies()->count(),
+            config('services.serpapi.driver', 'local') === 'local',
+        ), 200)->header('Cache-Control', 'no-store');
+    }
+
+    private function discoveryStatusUrl(ProspectCriteria $criteria, DiscoveryRun $run): string
+    {
+        return route('admin.prospect_criteria.discovery_status', [
+            'id' => $criteria->getKey(),
+            'run_id' => $run->getKey(),
+        ]);
     }
 }

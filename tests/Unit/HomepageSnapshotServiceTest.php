@@ -403,4 +403,73 @@ class HomepageSnapshotServiceTest extends TestCase
 
         Http::assertNothingSent();
     }
+
+    public function test_prefetch_does_not_start_or_cache_requests_after_the_deadline(): void
+    {
+        Http::fake(fn ($request) => Http::response(
+            $this->page(parse_url($request->url(), PHP_URL_HOST)),
+            200
+        ));
+
+        $service = $this->service();
+
+        $this->assertFalse($service->prefetch(['reprenable.ma'], microtime(true) - 1));
+        Http::assertNothingSent();
+
+        // The skipped domain was not negatively cached: a later attempt can fetch it.
+        $this->assertTrue($service->prefetch(['reprenable.ma']));
+        Http::assertSentCount(1);
+        $this->assertNotNull($service->excerpt('reprenable.ma'));
+        Http::assertSentCount(1);
+    }
+
+    public function test_prefetch_keeps_a_completed_wave_and_resumes_the_remaining_domains_after_deadline(): void
+    {
+        $hits = [];
+
+        Http::fake(function ($request) use (&$hits) {
+            $host = parse_url($request->url(), PHP_URL_HOST);
+            $hits[] = $host;
+
+            if (count($hits) === 1) {
+                // The first ten-domain wave may finish, but the eleventh request
+                // must not begin once less than one full second remains.
+                usleep(650_000);
+            }
+
+            return Http::response($this->page($host), 200);
+        });
+
+        $domains = array_map(fn (int $i) => "wave{$i}.ma", range(1, 11));
+        $service = $this->service();
+
+        $this->assertFalse($service->prefetch($domains, microtime(true) + 1.5));
+        $this->assertCount(10, $hits);
+        $this->assertSame(array_slice($domains, 0, 10), $hits);
+
+        foreach (array_slice($domains, 0, 10) as $domain) {
+            $this->assertTrue(Cache::has("discovery.homepage.{$domain}"));
+        }
+        $this->assertFalse(Cache::has('discovery.homepage.wave11.ma'));
+
+        // A later attempt skips the durable first wave and fetches only the remainder.
+        $this->assertTrue($service->prefetch($domains));
+        $this->assertSame([...array_slice($domains, 0, 10), 'wave11.ma'], $hits);
+        $this->assertStringContainsString('Site wave11.ma', (string) $service->excerpt('wave11.ma'));
+        $this->assertCount(11, $hits);
+    }
+
+    public function test_cached_excerpt_never_falls_back_to_an_external_request(): void
+    {
+        Http::fake([
+            '*' => Http::response($this->page('should-not-be-fetched.ma'), 200),
+        ]);
+        $service = $this->service();
+
+        Cache::put('discovery.homepage.cached-only.ma', $this->page('cached-only.ma'), now()->addDay());
+
+        $this->assertStringContainsString('cached-only.ma', (string) $service->cachedExcerpt('cached-only.ma'));
+        $this->assertNull($service->cachedExcerpt('missing-cache.ma'));
+        Http::assertNothingSent();
+    }
 }

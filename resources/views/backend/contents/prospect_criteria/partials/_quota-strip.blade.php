@@ -27,7 +27,7 @@
             <i class="bi bi-exclamation-triangle fs-2 me-3"></i>
             <div>
                 <span class="fw-semibold">Sur-réservation priorisée &middot; {{ $activeDailyLimitSum }}/{{ $quotaPackage->daily_credits }} par jour</span>
-                — la somme des requêtes de découverte/jour des critères actifs dépasse le quota du package.
+                — la somme des recherches d’entreprises/jour des critères actifs dépasse le quota du package.
                 C'est une priorité, pas une réservation garantie : le premier critère lancé consomme le quota
                 disponible, les autres attendent.
             </div>
@@ -35,14 +35,21 @@
     @endif
 
     <div class="row g-5 mb-6">
-        @foreach($quotaMeters as $meter)
+        @foreach($quotaMeters as $meterKey => $meter)
             @php
                 $meterDaily   = $meter['daily']   ?? ['used_reserved' => 0, 'total' => null];
                 $meterMonthly = $meter['monthly'] ?? ['used_reserved' => 0, 'total' => null];
+                $meterLabel = $meterKey === 'contacts'
+                    ? 'Tentatives d’enrichissement'
+                    : 'Recherches d’entreprises';
 
-                $meterValue = ($meter['unlimited'] ?? false)
-                    ? 'Illimité'
-                    : $meterDaily['used_reserved'] . ' / ' . $meterDaily['total'] . ' par jour';
+                if (($meter['unlimited'] ?? false) && $meterKey === 'contacts') {
+                    $meterValue = 'Quota package illimité · max. 20 par exécution';
+                } else {
+                    $meterValue = ($meter['unlimited'] ?? false)
+                        ? 'Illimité'
+                        : $meterDaily['used_reserved'] . ' / ' . $meterDaily['total'] . ' par jour';
+                }
 
                 // total === null is the unlimited signal (see displayMeterSummary()).
                 $meterHint = $meterMonthly['total'] === null
@@ -53,7 +60,7 @@
             <div class="col-md-6 col-xl-4">
                 <x-crud.stat-card :icon="$meter['icon'] ?? null"
                                   :color="$meter['color'] ?? 'success'"
-                                  :label="$meter['label'] ?? ''"
+                                  :label="$meterLabel"
                                   :value="$meterValue"
                                   :hint="$meterHint" />
             </div>

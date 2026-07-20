@@ -13,7 +13,6 @@ use App\Services\Quota\DiscoveryQuotaService;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -38,7 +37,9 @@ class CompanyManualEnrichTest extends TestCase
     use RefreshDatabase;
 
     private User $superadmin;
+
     private User $commercial;
+
     private User $userNoPermission;
 
     protected function setUp(): void
@@ -49,13 +50,13 @@ class CompanyManualEnrichTest extends TestCase
 
         $this->superadmin = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $this->superadmin->assignRole('superadmin');
 
         $this->commercial = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $this->commercial->assignRole('commercial');
 
@@ -63,7 +64,7 @@ class CompanyManualEnrichTest extends TestCase
         // but NOT enrich companies).
         $this->userNoPermission = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         // Give backend.access so they get past the outer middleware, but no enrich
         $this->userNoPermission->givePermissionTo('backend.access', 'view companies');
@@ -74,11 +75,11 @@ class CompanyManualEnrichTest extends TestCase
     private function makeCompany(array $overrides = []): Company
     {
         return Company::create(array_merge([
-            'name'             => 'Test Company ' . uniqid(),
-            'domain'           => 'bolloretransport.com',
-            'relationship'     => 'prospect',
-            'source'           => 'discovered',
-            'is_active'        => true,
+            'name' => 'Test Company '.uniqid(),
+            'domain' => 'bolloretransport.com',
+            'relationship' => 'prospect',
+            'source' => 'discovered',
+            'is_active' => true,
             'qualification_status' => 'new',
         ], $overrides));
     }
@@ -86,14 +87,14 @@ class CompanyManualEnrichTest extends TestCase
     private function assignLimitedPackage(int $credits): Package
     {
         $package = Package::create([
-            'name'          => "Pack {$credits}/j",
+            'name' => "Pack {$credits}/j",
             'daily_credits' => $credits,
-            'is_active'     => true,
-            'sort_order'    => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
 
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -103,14 +104,14 @@ class CompanyManualEnrichTest extends TestCase
     private function assignUnlimitedPackage(): Package
     {
         $package = Package::create([
-            'name'          => 'Illimité',
+            'name' => 'Illimité',
             'daily_credits' => null,
-            'is_active'     => true,
-            'sort_order'    => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
 
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -125,12 +126,12 @@ class CompanyManualEnrichTest extends TestCase
         $assignment = PackageAssignment::orderByDesc('id')->first();
 
         DiscoveryRun::create([
-            'prospect_criteria_id'  => $criteria->id,
-            'type'                  => 'discovery',
-            'status'                => 'completed',
-            'credits_reserved'      => $n,
-            'consumed'              => $n,
-            'quota_date'            => Carbon::today()->toDateString(),
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'discovery',
+            'status' => 'completed',
+            'credits_reserved' => $n,
+            'consumed' => $n,
+            'quota_date' => app(DiscoveryQuotaService::class)->today()->toDateString(),
             'package_assignment_id' => $assignment?->id,
         ]);
     }
@@ -138,15 +139,15 @@ class CompanyManualEnrichTest extends TestCase
     private function assignLimitedContactPackage(int $contactCredits, ?int $companyCredits = null): Package
     {
         $package = Package::create([
-            'name'                  => "Pack C{$contactCredits}/j",
-            'daily_credits'         => $companyCredits,
+            'name' => "Pack C{$contactCredits}/j",
+            'daily_credits' => $companyCredits,
             'daily_contact_credits' => $contactCredits,
-            'is_active'             => true,
-            'sort_order'            => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
 
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
@@ -161,14 +162,14 @@ class CompanyManualEnrichTest extends TestCase
         $assignment = PackageAssignment::orderByDesc('id')->first();
 
         DiscoveryRun::create([
-            'type'                     => 'manual',
-            'status'                   => 'completed',
-            'credits_reserved'         => 0,
-            'consumed'                 => 0,
+            'type' => 'manual',
+            'status' => 'completed',
+            'credits_reserved' => 0,
+            'consumed' => 0,
             'contact_credits_reserved' => $n,
-            'contact_consumed'         => $n,
-            'quota_date'               => Carbon::today()->toDateString(),
-            'package_assignment_id'    => $assignment?->id,
+            'contact_consumed' => $n,
+            'quota_date' => app(DiscoveryQuotaService::class)->today()->toDateString(),
+            'package_assignment_id' => $assignment?->id,
         ]);
     }
 
@@ -285,7 +286,7 @@ class CompanyManualEnrichTest extends TestCase
         /** @var DiscoveryQuotaService $quotaService */
         $quotaService = app(DiscoveryQuotaService::class);
 
-        $usedBefore = $quotaService->contactUsedOn(Carbon::today());
+        $usedBefore = $quotaService->contactUsedOn($quotaService->today());
 
         $company = $this->makeCompany(['domain' => 'bolloretransport.com']);
 
@@ -312,7 +313,7 @@ class CompanyManualEnrichTest extends TestCase
         $this->assertNotNull($run->finished_at, 'finished_at must be set');
 
         // contactUsedOn(today) must have increased by exactly 1.
-        $usedAfter = $quotaService->contactUsedOn(Carbon::today());
+        $usedAfter = $quotaService->contactUsedOn($quotaService->today());
         $this->assertSame(
             $usedBefore + 1,
             $usedAfter,
@@ -353,19 +354,19 @@ class CompanyManualEnrichTest extends TestCase
 
         // Pre-create a running manual row for this company (non-stale: started just now).
         $existingRun = DB::table('discovery_runs')->insertGetId([
-            'type'                 => 'manual',
-            'company_id'           => $company->id,
-            'status'               => 'running',
-            'credits_reserved'     => 1,
-            'consumed'             => 1,
-            'quota_date'           => Carbon::today()->toDateString(),
-            'started_at'           => now()->toDateTimeString(),
-            'companies_count'      => 0,
-            'contacts_count'       => 0,
-            'skipped_count'        => 0,
-            'low_score_count'      => 0,
-            'created_at'           => now()->toDateTimeString(),
-            'updated_at'           => now()->toDateTimeString(),
+            'type' => 'manual',
+            'company_id' => $company->id,
+            'status' => 'running',
+            'credits_reserved' => 1,
+            'consumed' => 1,
+            'quota_date' => app(DiscoveryQuotaService::class)->today()->toDateString(),
+            'started_at' => now()->toDateTimeString(),
+            'companies_count' => 0,
+            'contacts_count' => 0,
+            'skipped_count' => 0,
+            'low_score_count' => 0,
+            'created_at' => now()->toDateTimeString(),
+            'updated_at' => now()->toDateTimeString(),
         ]);
 
         $runsBefore = DiscoveryRun::count();
@@ -400,8 +401,9 @@ class CompanyManualEnrichTest extends TestCase
         $this->app->bind(
             \App\Services\Discovery\HunterEnrichmentService::class,
             function () {
-                return new class extends \App\Services\Discovery\HunterEnrichmentService {
-                    public function domainSearch(string $domain, int $limit = 10): ?array
+                return new class extends \App\Services\Discovery\HunterEnrichmentService
+                {
+                    public function domainSearch(string $domain, int $limit = 10, ?int $timeoutSeconds = null): ?array
                     {
                         throw new \RuntimeException('Hunter simulated failure');
                     }
@@ -435,31 +437,31 @@ class CompanyManualEnrichTest extends TestCase
         $this->assignUnlimitedPackage();
 
         $criteria = ProspectCriteria::create([
-            'name'        => 'Régression Test ' . uniqid(),
-            'sectors'     => ['transport'],
-            'countries'   => ['France'],
+            'name' => 'Régression Test '.uniqid(),
+            'sectors' => ['transport'],
+            'countries' => ['France'],
             'daily_limit' => 5,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $company = $this->makeCompany(['domain' => 'geodis.com', 'criteria_id' => $criteria->id]);
 
         // Pre-create a running manual row for the company (with criteria_id set).
         DB::table('discovery_runs')->insert([
-            'type'                 => 'manual',
-            'company_id'           => $company->id,
+            'type' => 'manual',
+            'company_id' => $company->id,
             'prospect_criteria_id' => $criteria->id,
-            'status'               => 'running',
-            'credits_reserved'     => 1,
-            'consumed'             => 1,
-            'quota_date'           => Carbon::today()->toDateString(),
-            'started_at'           => now()->toDateTimeString(),
-            'companies_count'      => 0,
-            'contacts_count'       => 0,
-            'skipped_count'        => 0,
-            'low_score_count'      => 0,
-            'created_at'           => now()->toDateTimeString(),
-            'updated_at'           => now()->toDateTimeString(),
+            'status' => 'running',
+            'credits_reserved' => 1,
+            'consumed' => 1,
+            'quota_date' => app(DiscoveryQuotaService::class)->today()->toDateString(),
+            'started_at' => now()->toDateTimeString(),
+            'companies_count' => 0,
+            'contacts_count' => 0,
+            'skipped_count' => 0,
+            'low_score_count' => 0,
+            'created_at' => now()->toDateTimeString(),
+            'updated_at' => now()->toDateTimeString(),
         ]);
 
         /** @var DiscoveryQuotaService $quotaService */
@@ -468,7 +470,7 @@ class CompanyManualEnrichTest extends TestCase
         // reserveRun() must NOT throw DiscoveryRunInFlightException — the manual row
         // is scoped to type='manual' and must be invisible to the discovery in-flight check.
         $exception = null;
-        $run       = null;
+        $run = null;
 
         try {
             $run = $quotaService->reserveRun($criteria);
@@ -497,24 +499,24 @@ class CompanyManualEnrichTest extends TestCase
     {
         // Company meter limited (2 credits), contact meter unlimited (null).
         $package = Package::create([
-            'name'                  => 'Pack Company Limited',
-            'daily_credits'         => 2,
+            'name' => 'Pack Company Limited',
+            'daily_credits' => 2,
             'daily_contact_credits' => null,
-            'is_active'             => true,
-            'sort_order'            => 0,
+            'is_active' => true,
+            'sort_order' => 0,
         ]);
         PackageAssignment::create([
-            'package_id'  => $package->id,
+            'package_id' => $package->id,
             'assigned_by' => null,
         ]);
 
         // Create a criteria and burn 2 company credits today.
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Company Exhausted ' . uniqid(),
-            'sectors'     => ['transport'],
-            'countries'   => ['France'],
+            'name' => 'Critère Company Exhausted '.uniqid(),
+            'sectors' => ['transport'],
+            'countries' => ['France'],
             'daily_limit' => 2,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
         $this->burnCredits(2, $criteria);
 

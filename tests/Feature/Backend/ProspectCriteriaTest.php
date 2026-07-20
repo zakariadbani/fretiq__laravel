@@ -4,6 +4,7 @@ namespace Tests\Feature\Backend;
 
 use App\Jobs\RunDiscoveryPipelineJob;
 use App\Models\Company;
+use App\Models\Contact;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Models\User;
@@ -35,7 +36,7 @@ class ProspectCriteriaTest extends TestCase
 
         $this->superadmin = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $this->superadmin->assignRole('superadmin');
     }
@@ -84,14 +85,14 @@ class ProspectCriteriaTest extends TestCase
         $response = $this->actingAs($this->superadmin)
             ->get(
                 '/admin/prospect_criteria'
-                . '?draw=1&start=0&length=10'
-                . '&columns[0][data]=id&columns[0][name]=id'
-                . '&order[0][column]=0&order[0][dir]=asc',
+                .'?draw=1&start=0&length=10'
+                .'&columns[0][data]=id&columns[0][name]=id'
+                .'&order[0][column]=0&order[0][dir]=asc',
                 ['X-Requested-With' => 'XMLHttpRequest', 'Accept' => 'application/json']
             );
 
         $response->assertStatus(200)
-                 ->assertJsonStructure(['data']);
+            ->assertJsonStructure(['data']);
     }
 
     /**
@@ -100,9 +101,9 @@ class ProspectCriteriaTest extends TestCase
     public function test_datatable_shows_company_count_for_each_criteria(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère avec entreprises',
+            'name' => 'Critère avec entreprises',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         Company::create(['criteria_id' => $criteria->id, 'name' => 'Entreprise Alpha']);
@@ -111,9 +112,9 @@ class ProspectCriteriaTest extends TestCase
         $response = $this->actingAs($this->superadmin)
             ->get(
                 '/admin/prospect_criteria'
-                . '?draw=1&start=0&length=10'
-                . '&columns[0][data]=id&columns[0][name]=id'
-                . '&order[0][column]=0&order[0][dir]=asc',
+                .'?draw=1&start=0&length=10'
+                .'&columns[0][data]=id&columns[0][name]=id'
+                .'&order[0][column]=0&order[0][dir]=asc',
                 ['X-Requested-With' => 'XMLHttpRequest', 'Accept' => 'application/json']
             );
 
@@ -140,11 +141,11 @@ class ProspectCriteriaTest extends TestCase
     {
         $response = $this->actingAs($this->superadmin)
             ->post('/admin/prospect_criteria', [
-                'name'        => 'Test Critère Transport',
-                'sectors'     => 'transport,logistique',
-                'countries'   => 'France',
+                'name' => 'Test Critère Transport',
+                'sectors' => 'transport,logistique',
+                'countries' => 'France',
                 'daily_limit' => 10,
-                'is_active'   => 1,
+                'is_active' => 1,
             ]);
 
         $response->assertStatus(200);
@@ -170,11 +171,11 @@ class ProspectCriteriaTest extends TestCase
     {
         $response = $this->actingAs($this->superadmin)
             ->post('/admin/prospect_criteria', [
-                'name'        => 'Test Critère ISO',
-                'sectors'     => ['Transport & Logistique', 'Agroalimentaire'],
-                'countries'   => ['FR', 'MA', 'DE'],
+                'name' => 'Test Critère ISO',
+                'sectors' => ['Transport & Logistique', 'Agroalimentaire'],
+                'countries' => ['FR', 'MA', 'DE'],
                 'daily_limit' => 15,
-                'is_active'   => 1,
+                'is_active' => 1,
             ]);
 
         $response->assertStatus(200);
@@ -199,15 +200,15 @@ class ProspectCriteriaTest extends TestCase
     public function test_edit_render_with_legacy_freetext_countries_shows_passthrough(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Legacy Critère',
-            'sectors'     => ['Transport'],
-            'countries'   => ['France', 'Maroc'],  // legacy free-text, not ISO codes
+            'name' => 'Legacy Critère',
+            'sectors' => ['Transport'],
+            'countries' => ['France', 'Maroc'],  // legacy free-text, not ISO codes
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id . '/edit');
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/edit');
 
         $response->assertStatus(200);
         // Orphan guard renders legacy values as options
@@ -224,10 +225,10 @@ class ProspectCriteriaTest extends TestCase
 
         $response = $this->actingAs($this->superadmin)
             ->post('/admin/prospect_criteria', [
-                'name'        => 'Test Oversize',
-                'sectors'     => [$oversizeSector],
+                'name' => 'Test Oversize',
+                'sectors' => [$oversizeSector],
                 'daily_limit' => 10,
-                'is_active'   => 1,
+                'is_active' => 1,
             ]);
 
         // Crudable returns 406 on validation failure with 'message' => 'Errors occurred during validation'
@@ -244,17 +245,17 @@ class ProspectCriteriaTest extends TestCase
     public function test_deactivation_via_hidden_input(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Actif',
+            'name' => 'Critère Actif',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         // POST without checkbox value — only the hidden input (is_active=0) is submitted
         $response = $this->actingAs($this->superadmin)
-            ->put('/admin/prospect_criteria/' . $criteria->id, [
-                'name'        => 'Critère Actif',
+            ->put('/admin/prospect_criteria/'.$criteria->id, [
+                'name' => 'Critère Actif',
                 'daily_limit' => 10,
-                'is_active'   => 0,  // simulates hidden input, checkbox unchecked
+                'is_active' => 0,  // simulates hidden input, checkbox unchecked
             ]);
 
         $response->assertStatus(200);
@@ -269,13 +270,13 @@ class ProspectCriteriaTest extends TestCase
     public function test_discover_gate_refuses_inactive_criteria(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Inactif',
+            'name' => 'Critère Inactif',
             'daily_limit' => 10,
-            'is_active'   => false,
+            'is_active' => false,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->post('/admin/prospect_criteria/' . $criteria->id . '/discover', [
+            ->post('/admin/prospect_criteria/'.$criteria->id.'/discover', [
                 '_token' => csrf_token(),
             ]);
 
@@ -292,13 +293,13 @@ class ProspectCriteriaTest extends TestCase
         Queue::fake();
 
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Actif Discovery',
+            'name' => 'Critère Actif Discovery',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->post('/admin/prospect_criteria/' . $criteria->id . '/discover', [
+            ->post('/admin/prospect_criteria/'.$criteria->id.'/discover', [
                 '_token' => csrf_token(),
             ]);
 
@@ -314,9 +315,9 @@ class ProspectCriteriaTest extends TestCase
     public function test_job_skips_inactive_criteria(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Pour Job Skip',
+            'name' => 'Critère Pour Job Skip',
             'daily_limit' => 10,
-            'is_active'   => false,
+            'is_active' => false,
         ]);
 
         // Ensure no pipeline is invoked — job runs synchronously (QUEUE_CONNECTION=sync in phpunit.xml)
@@ -338,11 +339,11 @@ class ProspectCriteriaTest extends TestCase
         // PHP parses this as sectors => [0 => ['x']] — nested array item hits beforeSave.
         $response = $this->actingAs($this->superadmin)
             ->call('POST', '/admin/prospect_criteria', [
-                'name'        => 'Test Nested Array',
+                'name' => 'Test Nested Array',
                 'daily_limit' => 10,
-                'is_active'   => 1,
+                'is_active' => 1,
                 // sectors posted as nested array (sectors[0][] in HTTP)
-                'sectors'     => [['nested_value']],
+                'sectors' => [['nested_value']],
             ]);
 
         // Must NOT be a 500. Any other status (200 with error or 200 with success) is fine.
@@ -355,18 +356,18 @@ class ProspectCriteriaTest extends TestCase
     public function test_datatable_countries_column_maps_iso_to_labels(): void
     {
         ProspectCriteria::create([
-            'name'        => 'Critère DataTable Test',
-            'countries'   => ['FR', 'DE'],
+            'name' => 'Critère DataTable Test',
+            'countries' => ['FR', 'DE'],
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
             ->get(
                 '/admin/prospect_criteria'
-                . '?draw=1&start=0&length=25'
-                . '&columns[0][data]=id&columns[0][name]=id'
-                . '&order[0][column]=0&order[0][dir]=asc',
+                .'?draw=1&start=0&length=25'
+                .'&columns[0][data]=id&columns[0][name]=id'
+                .'&order[0][column]=0&order[0][dir]=asc',
                 ['X-Requested-With' => 'XMLHttpRequest', 'Accept' => 'application/json']
             );
 
@@ -392,10 +393,10 @@ class ProspectCriteriaTest extends TestCase
     public function test_viewconfig_countries_detail_row_maps_iso_to_labels(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère ViewConfig Test',
-            'countries'   => ['FR', 'MA'],
+            'name' => 'Critère ViewConfig Test',
+            'countries' => ['FR', 'MA'],
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $config = \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::make($criteria);
@@ -415,48 +416,62 @@ class ProspectCriteriaTest extends TestCase
     }
 
     /**
-     * Résultats tab labels separate SerpAPI candidates, kept companies, and AI exclusions.
+     * Résultats tab labels separate discovery candidates, kept companies, and AI exclusions.
      */
     public function test_results_tab_distinguishes_candidates_kept_and_excluded(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Résultats UX',
+            'name' => 'Critère Résultats UX',
             'daily_limit' => 4,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         Company::create([
-            'criteria_id'          => $criteria->id,
-            'name'                 => 'Entreprise Gardée',
-            'domain'               => 'gardee.test',
-            'country'              => 'FR',
+            'criteria_id' => $criteria->id,
+            'name' => 'Entreprise Gardée',
+            'domain' => 'gardee.test',
+            'country' => 'FR',
             'qualification_status' => 'pending',
-            'discovery_query'      => 'requête test',
-            'ai_score'             => 80,
+            'discovery_query' => 'requête test',
+            'ai_score' => 80,
         ]);
 
         Company::create([
-            'criteria_id'          => $criteria->id,
-            'name'                 => 'Entreprise Exclue',
-            'domain'               => 'exclue.test',
-            'country'              => 'FR',
+            'criteria_id' => $criteria->id,
+            'name' => 'Entreprise Sous Seuil',
+            'domain' => 'sous-seuil.test',
+            'country' => 'FR',
+            'qualification_status' => 'pending',
+            'discovery_query' => 'requête test',
+            'ai_score' => 20,
+            'enrichment_status' => 'skipped_low_score',
+        ]);
+
+        Company::create([
+            'criteria_id' => $criteria->id,
+            'name' => 'Entreprise Exclue',
+            'domain' => 'exclue.test',
+            'country' => 'FR',
             'qualification_status' => 'rejected',
-            'discovery_query'      => 'requête test',
-            'ai_score'             => 10,
+            'discovery_query' => 'requête test',
+            'ai_score' => 10,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id . '#criteria_resultats');
+            ->get('/admin/prospect_criteria/'.$criteria->id.'#criteria_resultats');
 
         $response->assertStatus(200);
-        $response->assertSee('Résultats par requête SerpAPI', false);
-        $response->assertSee('2 candidat(s) trouvé(s) · 1 entreprise(s) gardée(s) · 1 exclue(s) par l\'IA.', false);
-        $response->assertSee('2 candidat(s)', false);
-        $response->assertSee('1 gardée(s)', false);
+        $response->assertSee('Résultats par requête de découverte', false);
+        $response->assertSee('3 entreprise(s) enregistrée(s) · 2 non exclue(s) · 1 exclue(s) par l\'IA.', false);
+        $response->assertSee('3 enregistrée(s)', false);
+        $response->assertSee('2 non exclue(s)', false);
         $response->assertSee('1 exclue(s)', false);
+        $response->assertSee('Sous le seuil Hunter', false);
+        $response->assertSee('Non exclue', false);
         $response->assertSee('Détails', false);
-        $response->assertSee('Entreprises gardées (1)', false);
-        $response->assertSee('Voir les entreprises gardées', false);
+        $response->assertSee('Entreprises enregistrées non exclues (2)', false);
+        $response->assertSee('Voir les entreprises enregistrées', false);
+        $response->assertSee('Les résultats bruts SerpAPI ne sont pas affichés', false);
     }
 
     /**
@@ -465,33 +480,33 @@ class ProspectCriteriaTest extends TestCase
     public function test_results_table_can_be_sorted_by_name(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Résultats Tri',
+            'name' => 'Critère Résultats Tri',
             'daily_limit' => 4,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         Company::create([
-            'criteria_id'          => $criteria->id,
-            'name'                 => 'Zeta Tri Test',
-            'domain'               => 'zeta-tri.test',
-            'country'              => 'FR',
+            'criteria_id' => $criteria->id,
+            'name' => 'Zeta Tri Test',
+            'domain' => 'zeta-tri.test',
+            'country' => 'FR',
             'qualification_status' => 'pending',
-            'discovery_query'      => 'requête tri',
-            'ai_score'             => 30,
+            'discovery_query' => 'requête tri',
+            'ai_score' => 30,
         ]);
 
         Company::create([
-            'criteria_id'          => $criteria->id,
-            'name'                 => 'Alpha Tri Test',
-            'domain'               => 'alpha-tri.test',
-            'country'              => 'MA',
+            'criteria_id' => $criteria->id,
+            'name' => 'Alpha Tri Test',
+            'domain' => 'alpha-tri.test',
+            'country' => 'MA',
             'qualification_status' => 'pending',
-            'discovery_query'      => 'requête tri',
-            'ai_score'             => 90,
+            'discovery_query' => 'requête tri',
+            'ai_score' => 90,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id . '?results_sort=name&results_dir=asc#criteria_resultats');
+            ->get('/admin/prospect_criteria/'.$criteria->id.'?results_sort=name&results_dir=asc#criteria_resultats');
 
         $response->assertStatus(200);
         $response->assertSee('Cliquez sur un en-tête pour trier la table.', false);
@@ -500,13 +515,66 @@ class ProspectCriteriaTest extends TestCase
         $response->assertSee('results_sort=name', false);
         $response->assertSee('results_dir=desc', false);
 
-        $resultsTable = strstr($response->getContent(), 'Entreprises gardées (2)') ?: $response->getContent();
+        $resultsTable = strstr($response->getContent(), 'Entreprises enregistrées non exclues (2)') ?: $response->getContent();
         $alphaPosition = strpos($resultsTable, 'Alpha Tri Test');
-        $zetaPosition  = strpos($resultsTable, 'Zeta Tri Test');
+        $zetaPosition = strpos($resultsTable, 'Zeta Tri Test');
 
         $this->assertNotFalse($alphaPosition);
         $this->assertNotFalse($zetaPosition);
         $this->assertLessThan($zetaPosition, $alphaPosition);
+    }
+
+    public function test_results_contact_sort_keeps_enrichment_reason_badges_visible(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name' => 'Critère raisons enrichissement',
+            'daily_limit' => 4,
+            'is_active' => true,
+        ]);
+
+        $withContact = Company::create([
+            'criteria_id' => $criteria->id,
+            'name' => 'Entreprise avec contact',
+            'domain' => 'avec-contact.test',
+            'qualification_status' => 'pending',
+            'enrichment_status' => 'enriched',
+        ]);
+        Contact::create([
+            'company_id' => $withContact->id,
+            'name' => 'Contact test',
+            'email' => 'contact@avec-contact.test',
+        ]);
+
+        Company::create([
+            'criteria_id' => $criteria->id,
+            'name' => 'Entreprise sans email',
+            'domain' => 'sans-email.test',
+            'qualification_status' => 'pending',
+            'enrichment_status' => 'hunter_empty',
+        ]);
+
+        Company::create([
+            'criteria_id' => $criteria->id,
+            'name' => 'Entreprise enrichissement à relancer',
+            'domain' => 'enrichissement-relance.test',
+            'qualification_status' => 'pending',
+            'enrichment_status' => 'hunter_failed',
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/'.$criteria->id.'?results_sort=contacts&results_dir=desc#criteria_resultats')
+            ->assertOk();
+
+        $response->assertSee('Enrichi', false);
+        $response->assertSee('Aucun email trouvé', false);
+        $response->assertSee('Échec de l’enrichissement — à réessayer', false);
+        $resultsTable = strstr($response->getContent(), 'Entreprises enregistrées non exclues (3)') ?: $response->getContent();
+        $withContactPosition = strpos($resultsTable, 'Entreprise avec contact');
+        $withoutEmailPosition = strpos($resultsTable, 'Entreprise sans email');
+
+        $this->assertNotFalse($withContactPosition);
+        $this->assertNotFalse($withoutEmailPosition);
+        $this->assertLessThan($withoutEmailPosition, $withContactPosition);
     }
 
     /**
@@ -515,42 +583,42 @@ class ProspectCriteriaTest extends TestCase
     public function test_results_table_can_be_sorted_by_created_at(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Résultats Date Création',
+            'name' => 'Critère Résultats Date Création',
             'daily_limit' => 4,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $old = Company::create([
-            'criteria_id'          => $criteria->id,
-            'name'                 => 'Ancienne Entreprise Test',
-            'domain'               => 'ancienne-entreprise.test',
-            'country'              => 'FR',
+            'criteria_id' => $criteria->id,
+            'name' => 'Ancienne Entreprise Test',
+            'domain' => 'ancienne-entreprise.test',
+            'country' => 'FR',
             'qualification_status' => 'pending',
-            'discovery_query'      => 'requête date',
-            'ai_score'             => 50,
+            'discovery_query' => 'requête date',
+            'ai_score' => 50,
         ]);
         $old->forceFill(['created_at' => now()->subDays(2), 'updated_at' => now()->subDays(2)])->save();
 
         $new = Company::create([
-            'criteria_id'          => $criteria->id,
-            'name'                 => 'Nouvelle Entreprise Test',
-            'domain'               => 'nouvelle-entreprise.test',
-            'country'              => 'MA',
+            'criteria_id' => $criteria->id,
+            'name' => 'Nouvelle Entreprise Test',
+            'domain' => 'nouvelle-entreprise.test',
+            'country' => 'MA',
             'qualification_status' => 'pending',
-            'discovery_query'      => 'requête date',
-            'ai_score'             => 50,
+            'discovery_query' => 'requête date',
+            'ai_score' => 50,
         ]);
         $new->forceFill(['created_at' => now(), 'updated_at' => now()])->save();
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id . '?results_sort=created_at&results_dir=desc#criteria_resultats');
+            ->get('/admin/prospect_criteria/'.$criteria->id.'?results_sort=created_at&results_dir=desc#criteria_resultats');
 
         $response->assertStatus(200);
         $response->assertSee('Créée le', false);
         $response->assertSee('results_sort=created_at', false);
         $response->assertSee('results_dir=asc', false);
 
-        $resultsTable = strstr($response->getContent(), 'Entreprises gardées (2)') ?: $response->getContent();
+        $resultsTable = strstr($response->getContent(), 'Entreprises enregistrées non exclues (2)') ?: $response->getContent();
         $newPosition = strpos($resultsTable, 'Nouvelle Entreprise Test');
         $oldPosition = strpos($resultsTable, 'Ancienne Entreprise Test');
 
@@ -565,41 +633,41 @@ class ProspectCriteriaTest extends TestCase
     public function test_results_table_defaults_to_score_desc(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Résultats Score Par Défaut',
+            'name' => 'Critère Résultats Score Par Défaut',
             'daily_limit' => 4,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         Company::create([
-            'criteria_id'          => $criteria->id,
-            'name'                 => 'Score Faible Test',
-            'domain'               => 'score-faible.test',
-            'country'              => 'FR',
+            'criteria_id' => $criteria->id,
+            'name' => 'Score Faible Test',
+            'domain' => 'score-faible.test',
+            'country' => 'FR',
             'qualification_status' => 'pending',
-            'discovery_query'      => 'requête score',
-            'ai_score'             => 20,
+            'discovery_query' => 'requête score',
+            'ai_score' => 20,
         ]);
 
         Company::create([
-            'criteria_id'          => $criteria->id,
-            'name'                 => 'Score Fort Test',
-            'domain'               => 'score-fort.test',
-            'country'              => 'MA',
+            'criteria_id' => $criteria->id,
+            'name' => 'Score Fort Test',
+            'domain' => 'score-fort.test',
+            'country' => 'MA',
             'qualification_status' => 'pending',
-            'discovery_query'      => 'requête score',
-            'ai_score'             => 95,
+            'discovery_query' => 'requête score',
+            'ai_score' => 95,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id . '#criteria_resultats');
+            ->get('/admin/prospect_criteria/'.$criteria->id.'#criteria_resultats');
 
         $response->assertStatus(200);
         $response->assertSee('results_sort=score', false);
         $response->assertSee('results_dir=asc', false);
 
-        $resultsTable = strstr($response->getContent(), 'Entreprises gardées (2)') ?: $response->getContent();
+        $resultsTable = strstr($response->getContent(), 'Entreprises enregistrées non exclues (2)') ?: $response->getContent();
         $strongPosition = strpos($resultsTable, 'Score Fort Test');
-        $weakPosition   = strpos($resultsTable, 'Score Faible Test');
+        $weakPosition = strpos($resultsTable, 'Score Faible Test');
 
         $this->assertNotFalse($strongPosition);
         $this->assertNotFalse($weakPosition);
@@ -612,36 +680,42 @@ class ProspectCriteriaTest extends TestCase
     public function test_view_apercu_includes_history_without_history_tab(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Historique SerpAPI',
+            'name' => 'Critère Historique Découverte',
             'daily_limit' => 4,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         DiscoveryRun::create([
             'prospect_criteria_id' => $criteria->id,
-            'type'                 => 'discovery',
-            'status'               => 'completed',
-            'credits_reserved'     => 4,
-            'searches_reserved'    => 4,
-            'searches_consumed'    => 4,
-            'consumed'             => 20,
-            'companies_count'      => 16,
-            'new_companies_count'  => 16,
-            'contacts_count'       => 0,
-            'skipped_count'        => 0,
-            'low_score_count'      => 0,
-            'quota_date'           => now()->toDateString(),
-            'started_at'           => now()->subMinutes(3),
-            'finished_at'          => now(),
+            'type' => 'discovery',
+            'status' => 'completed',
+            'credits_reserved' => 4,
+            'searches_reserved' => 4,
+            'searches_consumed' => 4,
+            'consumed' => 20,
+            'companies_count' => 16,
+            'new_companies_count' => 16,
+            'contacts_count' => 0,
+            'skipped_count' => 0,
+            'low_score_count' => 0,
+            'quota_date' => now()->toDateString(),
+            'started_at' => now()->subMinutes(3),
+            'finished_at' => now(),
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id);
+            ->get('/admin/prospect_criteria/'.$criteria->id);
 
         $response->assertStatus(200);
         $response->assertSee('Historique des lancements (1)', false);
-        $response->assertSee('1 lancement(s) de découverte · 4 requête(s) de découverte consommée(s).', false);
-        $response->assertSee('Requêtes de découverte', false);
+        $response->assertSee('1 lancement(s) · 4 recherche(s) d’entreprises consommée(s)', false);
+        $response->assertSee('0 tentative(s) d’enrichissement consommée(s)', false);
+        $response->assertSee('0 contact(s) créé(s).', false);
+        $response->assertSee('Recherches d’entreprises', false);
+        $response->assertSee('Domaines exploitables', false);
+        $response->assertSee('Domaines analysés par l’IA', false);
+        $response->assertSee('Tentatives d’enrichissement', false);
+        $response->assertSee('Contacts créés', false);
         $response->assertSee('>4</span>', false);
         $response->assertSee('/ 4</span>', false);
         $response->assertDontSee('href="#criteria_historique"', false);
@@ -664,22 +738,22 @@ class ProspectCriteriaTest extends TestCase
     public function test_duplicate_creates_clone_and_redirects_to_edit(): void
     {
         $original = ProspectCriteria::create([
-            'name'        => 'Critère Original',
-            'sectors'     => ['Transport', 'Logistique'],
-            'countries'   => ['FR', 'MA'],
+            'name' => 'Critère Original',
+            'sectors' => ['Transport', 'Logistique'],
+            'countries' => ['FR', 'MA'],
             'daily_limit' => 25,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->post('/admin/prospect_criteria/' . $original->id . '/duplicate');
+            ->post('/admin/prospect_criteria/'.$original->id.'/duplicate');
 
         // Should redirect (302) to the clone's edit page
         $response->assertStatus(302);
 
         // Clone must exist in DB
         $this->assertDatabaseHas('prospect_criteria', [
-            'name'      => 'Copie de Critère Original',
+            'name' => 'Copie de Critère Original',
             'is_active' => false,
         ]);
 
@@ -705,13 +779,13 @@ class ProspectCriteriaTest extends TestCase
         $longName = str_repeat('A', 100); // exactly at the column limit
 
         $original = ProspectCriteria::create([
-            'name'        => $longName,
+            'name' => $longName,
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->post('/admin/prospect_criteria/' . $original->id . '/duplicate');
+            ->post('/admin/prospect_criteria/'.$original->id.'/duplicate');
 
         $response->assertStatus(302);
 
@@ -723,7 +797,7 @@ class ProspectCriteriaTest extends TestCase
         $this->assertStringStartsWith('Copie de ', $clone->name);
         $this->assertLessThanOrEqual(100, mb_strlen($clone->name));
         // 'Copie de ' (9) + first 91 chars of the original name = 100 chars.
-        $this->assertSame('Copie de ' . str_repeat('A', 91), $clone->name);
+        $this->assertSame('Copie de '.str_repeat('A', 91), $clone->name);
     }
 
     /**
@@ -732,21 +806,21 @@ class ProspectCriteriaTest extends TestCase
     public function test_duplicate_forbidden_without_create_permission(): void
     {
         $original = ProspectCriteria::create([
-            'name'        => 'Critère Pour 403',
+            'name' => 'Critère Pour 403',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         // Create a user with only view permission — no create
         $viewOnlyUser = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $viewOnlyUser->givePermissionTo('view prospect_criteria');
         $viewOnlyUser->givePermissionTo('backend.access');
 
         $response = $this->actingAs($viewOnlyUser)
-            ->post('/admin/prospect_criteria/' . $original->id . '/duplicate');
+            ->post('/admin/prospect_criteria/'.$original->id.'/duplicate');
 
         $response->assertStatus(403);
         $this->assertDatabaseMissing('prospect_criteria', ['name' => 'Copie de Critère Pour 403']);
@@ -758,12 +832,12 @@ class ProspectCriteriaTest extends TestCase
     public function test_duplicate_guest_redirected_to_login(): void
     {
         $original = ProspectCriteria::create([
-            'name'        => 'Critère Guest Test',
+            'name' => 'Critère Guest Test',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
-        $response = $this->post('/admin/prospect_criteria/' . $original->id . '/duplicate');
+        $response = $this->post('/admin/prospect_criteria/'.$original->id.'/duplicate');
 
         $response->assertRedirect('/login');
     }
@@ -777,15 +851,15 @@ class ProspectCriteriaTest extends TestCase
     public function test_preview_queries_returns_json_with_queries(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Preview Test',
-            'sectors'     => ['Transport'],
-            'countries'   => ['FR'],
+            'name' => 'Critère Preview Test',
+            'sectors' => ['Transport'],
+            'countries' => ['FR'],
             'daily_limit' => 20,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id . '/preview-queries');
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/preview-queries');
 
         $response->assertStatus(200);
         $response->assertJsonStructure([
@@ -806,21 +880,21 @@ class ProspectCriteriaTest extends TestCase
     public function test_preview_queries_forbidden_without_view_permission(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Preview 403',
+            'name' => 'Critère Preview 403',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         // Create a user with only create permission — no view
         $noViewUser = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $noViewUser->givePermissionTo('create prospect_criteria');
         $noViewUser->givePermissionTo('backend.access');
 
         $response = $this->actingAs($noViewUser)
-            ->get('/admin/prospect_criteria/' . $criteria->id . '/preview-queries');
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/preview-queries');
 
         $response->assertStatus(403);
     }
@@ -847,18 +921,18 @@ class ProspectCriteriaTest extends TestCase
         ]);
 
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Generate Test',
-            'ai_target'   => 'Ancienne cible stockée',
+            'name' => 'Critère Generate Test',
+            'ai_target' => 'Ancienne cible stockée',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->post('/admin/prospect_criteria/' . $criteria->id . '/generate-queries', [
-                'ai_target'  => 'grossistes textile et importateurs habillement',
+            ->post('/admin/prospect_criteria/'.$criteria->id.'/generate-queries', [
+                'ai_target' => 'grossistes textile et importateurs habillement',
                 'ai_exclude' => 'transporteurs et logisticiens',
-                'queries'    => [[
-                    'q'       => 'grossiste textile France -transporteur',
+                'queries' => [[
+                    'q' => 'grossiste textile France -transporteur',
                     'enabled' => '0',
                 ]],
             ]);
@@ -898,17 +972,17 @@ class ProspectCriteriaTest extends TestCase
         ]);
 
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Notice Indispo',
-            'ai_target'   => 'grossistes textile',
+            'name' => 'Critère Notice Indispo',
+            'ai_target' => 'grossistes textile',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->post('/admin/prospect_criteria/' . $criteria->id . '/generate-queries', [
-                'ai_target'  => 'grossistes textile et importateurs habillement',
+            ->post('/admin/prospect_criteria/'.$criteria->id.'/generate-queries', [
+                'ai_target' => 'grossistes textile et importateurs habillement',
                 'ai_exclude' => '',
-                'queries'    => [],
+                'queries' => [],
             ]);
 
         $response->assertStatus(200);
@@ -933,13 +1007,14 @@ class ProspectCriteriaTest extends TestCase
         ]);
 
         $this->actingAs($this->superadmin)
-            ->put('/admin/prospect_criteria/' . $criteria->id, [
+            ->put('/admin/prospect_criteria/'.$criteria->id, [
                 'name' => 'Legacy engines',
                 'daily_limit' => 10,
                 'is_active' => 1,
                 'ai_queries' => $criteria->ai_queries,
             ])
-            ->assertRedirect()
+            ->assertOk()
+            ->assertJson(['message' => 'success'])
             ->assertSessionHasNoErrors();
 
         $this->assertSame([
@@ -961,7 +1036,7 @@ class ProspectCriteriaTest extends TestCase
         ]);
 
         $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id . '/edit')
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/edit')
             ->assertOk()
             ->assertDontSee('q-engine', false)
             ->assertDontSee('[engine]', false)
@@ -969,7 +1044,7 @@ class ProspectCriteriaTest extends TestCase
             ->assertDontSee('google_maps', false);
 
         $response = $this->actingAs($this->superadmin)
-            ->get('/admin/prospect_criteria/' . $criteria->id . '/preview-queries')
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/preview-queries')
             ->assertOk();
 
         $this->assertSame([
@@ -1002,21 +1077,21 @@ class ProspectCriteriaTest extends TestCase
     public function test_update_persists_automation_fields(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Automatisation',
+            'name' => 'Critère Automatisation',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->put('/admin/prospect_criteria/' . $criteria->id, [
-                'name'             => 'Critère Automatisation',
-                'daily_limit'      => 10,
-                'is_active'        => 1,
-                'auto_run'         => 1,
-                'run_at_hour'      => 8,
-                'contact_limit'    => 5,
+            ->put('/admin/prospect_criteria/'.$criteria->id, [
+                'name' => 'Critère Automatisation',
+                'daily_limit' => 10,
+                'is_active' => 1,
+                'auto_run' => 1,
+                'run_at_hour' => 8,
+                'contact_limit' => 5,
                 'min_score_enrich' => 70,
-                'auto_enrich'      => 0,
+                'auto_enrich' => 0,
             ]);
 
         $response->assertStatus(200);
@@ -1029,6 +1104,76 @@ class ProspectCriteriaTest extends TestCase
         $this->assertFalse((bool) $criteria->auto_enrich);
     }
 
+    public function test_automation_form_describes_successful_enrichment_target_and_attempt_guard(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name' => 'Critère aide enrichissement',
+            'daily_limit' => 5,
+            'is_active' => true,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/edit#criteria_automatisation')
+            ->assertOk();
+
+        $response->assertSee('Enrichissements réussis / exécution', false);
+        $response->assertSee('Vide = 20 enrichissements réussis', false);
+        $response->assertSee('20 tentatives maximum', false);
+        $response->assertSee('max="20"', false);
+        $response->assertDontSee('Contacts max / exécution', false);
+        $response->assertSee('Recherches d’entreprises', false);
+        $response->assertSee('Tentatives d’enrichissement', false);
+        $response->assertDontSee('SerpAPI', false);
+        $response->assertDontSee('Hunter', false);
+    }
+
+    public function test_contact_limit_above_twenty_is_rejected(): void
+    {
+        $this->actingAs($this->superadmin)
+            ->post('/admin/prospect_criteria', [
+                'name' => 'Critère limite enrichissement invalide',
+                'daily_limit' => 5,
+                'contact_limit' => 21,
+                'is_active' => 1,
+            ])
+            ->assertStatus(406)
+            ->assertJsonStructure(['message', 'errors' => ['contact_limit']]);
+    }
+
+    public function test_contact_limit_of_twenty_is_accepted(): void
+    {
+        $this->actingAs($this->superadmin)
+            ->post('/admin/prospect_criteria', [
+                'name' => 'Critère limite enrichissement valide',
+                'daily_limit' => 5,
+                'contact_limit' => 20,
+                'is_active' => 1,
+            ])
+            ->assertOk();
+
+        $this->assertDatabaseHas('prospect_criteria', [
+            'name' => 'Critère limite enrichissement valide',
+            'contact_limit' => 20,
+        ]);
+    }
+
+    public function test_legacy_contact_limit_is_displayed_with_the_runtime_cap(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name' => 'Critère héritage enrichissement',
+            'daily_limit' => 5,
+            'is_active' => true,
+        ]);
+        ProspectCriteria::whereKey($criteria->id)->update(['contact_limit' => 500]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/edit#criteria_automatisation')
+            ->assertOk();
+
+        $response->assertSee('value="20"', false);
+        $response->assertDontSee('value="500"', false);
+    }
+
     /**
      * auto_enrich posted as an empty string ('' — the Hérité select option) round-trips
      * to null in the DB (ConvertEmptyStringsToNull + nullable|boolean rule), preserving
@@ -1037,17 +1182,17 @@ class ProspectCriteriaTest extends TestCase
     public function test_auto_enrich_empty_string_saves_as_null(): void
     {
         $criteria = ProspectCriteria::create([
-            'name'        => 'Critère Tri-State',
+            'name' => 'Critère Tri-State',
             'daily_limit' => 10,
-            'is_active'   => true,
+            'is_active' => true,
             'auto_enrich' => true,
         ]);
 
         $response = $this->actingAs($this->superadmin)
-            ->put('/admin/prospect_criteria/' . $criteria->id, [
-                'name'        => 'Critère Tri-State',
+            ->put('/admin/prospect_criteria/'.$criteria->id, [
+                'name' => 'Critère Tri-State',
                 'daily_limit' => 10,
-                'is_active'   => 1,
+                'is_active' => 1,
                 'auto_enrich' => '',
             ]);
 
@@ -1065,10 +1210,10 @@ class ProspectCriteriaTest extends TestCase
     {
         $response = $this->actingAs($this->superadmin)
             ->post('/admin/prospect_criteria', [
-                'name'        => 'Critère Auto Sans Heure',
+                'name' => 'Critère Auto Sans Heure',
                 'daily_limit' => 10,
-                'is_active'   => 1,
-                'auto_run'    => 1,
+                'is_active' => 1,
+                'auto_run' => 1,
             ]);
 
         $response->assertStatus(406);
@@ -1084,9 +1229,9 @@ class ProspectCriteriaTest extends TestCase
     {
         $response = $this->actingAs($this->superadmin)
             ->post('/admin/prospect_criteria', [
-                'name'             => 'Critère Score Invalide',
-                'daily_limit'      => 10,
-                'is_active'        => 1,
+                'name' => 'Critère Score Invalide',
+                'daily_limit' => 10,
+                'is_active' => 1,
                 'min_score_enrich' => 101,
             ]);
 

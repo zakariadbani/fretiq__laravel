@@ -45,12 +45,19 @@ class ZohoCampaignsDriver implements CampaignsClient
      * docs alone are insufficient). The subscriber field 'Company' is populated at
      * addListSubscribers time; the merge tag name must match whatever Zoho exposes.
      * Correct the map if the live merge-tag list differs.
+     *
+     * NOT MAPPED — {{company.sector}} has no known Zoho Campaigns equivalent and is
+     * therefore absent from this map: it passes through to Zoho unchanged (i.e. the
+     * literal `{{company.sector}}` reaches the recipient). UNVERIFIED against the live
+     * Zoho merge-tag list — if Zoho exposes a sector/industry subscriber field, add the
+     * mapping here during Phase 5 tinker verification.
      */
     private const MERGE_TAG_MAP = [
-        '{{contact.name}}'    => '$[FNAME]$',
-        '{{contact.email}}'   => '$[EMAIL]$',
-        '{{company.name}}'    => '$[COMPANY]$',   // UNVERIFIED — confirm tag name live
-        '{{unsubscribe_url}}' => '$[LI:UNSUBSCRIBE]$',
+        '{{contact.name}}'       => '$[FNAME]$',
+        '{{contact.first_name}}' => '$[FNAME]$',
+        '{{contact.email}}'      => '$[EMAIL]$',
+        '{{company.name}}'       => '$[COMPANY]$',   // UNVERIFIED — confirm tag name live
+        '{{unsubscribe_url}}'    => '$[LI:UNSUBSCRIBE]$',
     ];
 
     /**
@@ -69,6 +76,32 @@ class ZohoCampaignsDriver implements CampaignsClient
             array_values(self::MERGE_TAG_MAP),
             $text
         );
+    }
+
+    /**
+     * Prepare campaign HTML for Zoho while keeping unsubscribe ownership in the driver.
+     *
+     * Legacy templates keep the placement of their {{unsubscribe_url}} link. Clean
+     * templates receive one visible footer containing Zoho's unsubscribe merge tag.
+     */
+    public static function prepareHtmlContent(string $html): string
+    {
+        $html = self::translateMergeTags($html);
+        [$html, $hasUnsubscribeLink] = UnsubscribeHtmlNormalizer::normalize(
+            $html,
+            '$[LI:UNSUBSCRIBE]$',
+        );
+
+        if ($hasUnsubscribeLink) {
+            return $html;
+        }
+
+        $footer = '<div style="margin-top:24px;font-size:11px;color:#888;font-family:sans-serif;">'
+            . 'Vous recevez cet email car vous faites partie de notre liste de contacts professionnels. '
+            . '<a href="$[LI:UNSUBSCRIBE]$" style="color:#888;">Se désabonner</a>'
+            . '</div>';
+
+        return UnsubscribeHtmlNormalizer::insertBeforeDocumentEnd($html, $footer);
     }
     public function __construct(
         private readonly ZohoCampaignsClient $zohoClient,
