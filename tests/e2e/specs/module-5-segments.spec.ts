@@ -82,6 +82,43 @@ test.describe('Segments module', () => {
     await expect(segments.table.locator(`tbody tr:has-text("${name}")`)).toHaveCount(0);
   });
 
+  test('manual create toggles guidance and redirects to the contacts pane', async ({ page }) => {
+    const segments = new SegmentPage(page);
+    const name = uniqueName('E2E Manual Segment');
+
+    await segments.gotoCreate();
+    await segments.nameInput.fill(name);
+    await segments.manualModeRadio.check();
+
+    await expect(segments.manualCreateGuidance).toBeVisible();
+    await expect(segments.scopeSelect).toBeHidden();
+    await expect(segments.targetingFields).toBeHidden();
+    await expect(segments.previewCard).toBeHidden();
+
+    await segments.dynamicModeRadio.check();
+    await expect(segments.manualCreateGuidance).toBeHidden();
+    await expect(segments.scopeSelect).toBeVisible();
+    await expect(segments.targetingFields).toBeVisible();
+    await expect(segments.previewCard).toBeVisible();
+
+    await segments.manualModeRadio.check();
+    await segments.saveButton.click();
+    await page.waitForURL((url) => url.hash === '#segment_contacts', { timeout: 15000 });
+
+    await expect(segments.contactsPane).toBeVisible();
+    await expect(segments.contactsHeading).toBeVisible();
+    await expect(segments.addContactsButton).toBeVisible();
+    await segments.expectContactsPaneIntersectingAndLoaded();
+
+    await segments.goto();
+    await waitForDataTable(page, 'segment-table');
+    await segments.deleteAllByName(name, {
+      search: (q) => segments.search(q),
+      waitForDataTable,
+      confirmDelete,
+    });
+  });
+
   // ── 3. Edit flow ───────────────────────────────────────────────────────────
 
   test('edit: change name field, save, redirect', async ({ page }) => {

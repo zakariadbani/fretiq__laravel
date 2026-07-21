@@ -31,6 +31,18 @@ class ZohoCampaignsClient
     /** Base URL for the Zoho Campaigns API — overridable via config. */
     private string $apiUrl;
 
+    /**
+     * API-level `code` values from POST /json/listsubscribe that must be treated
+     * as success.
+     *
+     * Live-verified (prod, 2026-07-21): subscribing a contact that is already a
+     * list member (no prior topic association) and re-subscribing an
+     * already-subscribed contact both return STATUS 200 with code "0" — Zoho does
+     * not use a separate "already subscribed" code, and no double opt-in pending
+     * state was observed. Code "0" is the only accepted value.
+     */
+    private const LISTSUBSCRIBE_ACCEPTED_CODES = ['0'];
+
     public function __construct(
         private readonly ZohoAuthService $authService,
     ) {
@@ -43,36 +55,72 @@ class ZohoCampaignsClient
     // ── Public API methods ─────────────────────────────────────────────────────
 
     /**
-     * Add subscribers to a Zoho Campaigns mailing list in bulk.
+     * Add subscribers to a Zoho Campaigns mailing list.
      *
-     * Live-verified endpoint: POST /addlistsubscribersinbulk.
-     * Required params: resfmt=JSON, listkey, emailids (comma-separated emails; max 10).
+     * Zoho's topic ("rubrique") management only delivers a campaign to contacts
+     * subscribed to that campaign's topic. Neither /addlistsubscribersinbulk nor
+     * /addlistandcontacts accepts a topic_id param, so when a topic is configured
+     * each contact must instead be individually subscribed via the ONLY v1.1
+     * subscribe endpoint that does accept one: POST /json/listsubscribe (see
+     * subscribeContactWithTopic()).
+     *
+     * Branch selection is driven by config('services.zoho.campaigns.topic_id'):
+     *
+     * - Topic configured (non-empty): loop subscribeContactWithTopic() once per
+     *   (deduplicated) contact. Returns an aggregate summary, not Zoho's raw payload.
+     * - No topic configured (empty): legacy bulk path, unchanged.
+     *   Live-verified endpoint: POST /addlistsubscribersinbulk.
+     *   Required params: resfmt=JSON, listkey, emailids (comma-separated emails; max 10).
+     *
      * Zoho returns HTTP 200 even for API-level errors, so callers must inspect code/status.
      *
      * @param  string  $listKey   The Zoho Campaigns list key (e.g. from createList or a pre-existing key).
      * @param  array   $contacts  Array of contact arrays; each must have 'Contact Email'; may include
      *                            merge fields like 'First Name', 'Last Name', 'Company'.
      *                            Example: [['Contact Email' => 'foo@bar.com', 'First Name' => 'Jean'], ...]
-     * @return array              Decoded JSON response from Zoho Campaigns.
+     * @return array              Decoded JSON response from Zoho Campaigns (bulk branch), or an
+     *                            aggregate ['code','status','subscribed'] summary (topic branch).
      *
+     * @throws \InvalidArgumentException  If no contact carries a usable email.
      * @throws \RuntimeException  If the HTTP request fails or Zoho returns a non-2xx status.
      */
     public function addListSubscribers(string $listKey, array $contacts): array
     {
+        $topicId = trim((string) config('services.zoho.campaigns.topic_id'));
+
+        // Dedupe by lowercased email in both branches — this reuses the same
+        // normalisation the legacy bulk path already applied to emailids.
+        $uniqueContacts = collect($contacts)
+            ->filter(fn (array $contact) => trim((string) ($contact['Contact Email'] ?? $contact['email'] ?? '')) !== '')
+            ->unique(fn (array $contact) => mb_strtolower(trim((string) ($contact['Contact Email'] ?? $contact['email'] ?? ''))))
+            ->values();
+
+        if ($uniqueContacts->isEmpty()) {
+            throw new \InvalidArgumentException('[ZohoCampaignsClient] Aucun email valide à ajouter à la liste Zoho.');
+        }
+
+        if ($topicId !== '') {
+            foreach ($uniqueContacts as $contact) {
+                $this->subscribeContactWithTopic($listKey, $contact, $topicId);
+            }
+
+            Log::info('[ZohoCampaignsClient] addListSubscribers', [
+                'list_key' => $listKey,
+                'count'    => $uniqueContacts->count(),
+                'topic_id' => $topicId,
+            ]);
+
+            return ['code' => '0', 'status' => 'success', 'subscribed' => $uniqueContacts->count()];
+        }
+
         $accessToken = $this->authService->getAccessToken('campaigns');
 
         // Zoho Campaigns bulk-subscribe expects emailids as a comma-separated
         // email list (max 10 per request). It does not accept merge-field JSON
         // on this endpoint; profile enrichment must be handled separately.
-        $emailIds = collect($contacts)
+        $emailIds = $uniqueContacts
             ->map(fn (array $contact) => trim((string) ($contact['Contact Email'] ?? $contact['email'] ?? '')))
-            ->filter()
-            ->unique(fn (string $email) => strtolower($email))
             ->implode(',');
-
-        if ($emailIds === '') {
-            throw new \InvalidArgumentException('[ZohoCampaignsClient] Aucun email valide à ajouter à la liste Zoho.');
-        }
 
         $response = Http::withHeaders([
             'Authorization' => 'Zoho-oauthtoken ' . $accessToken,
@@ -104,6 +152,74 @@ class ZohoCampaignsClient
             'count'    => count($contacts),
             'status'   => $response->status(),
         ]);
+
+        return $payload;
+    }
+
+    /**
+     * Subscribe a single contact to a mailing list under a specific topic ("rubrique").
+     *
+     * Live-verified (prod, 2026-07-21): POST /json/listsubscribe with resfmt=JSON,
+     * listkey, topic_id, source, contactinfo → STATUS 200, code "0". Confirmed for
+     * both a first-time subscribe and a re-subscribe of an already-subscribed
+     * contact (same code both times — see LISTSUBSCRIBE_ACCEPTED_CODES). The
+     * 'Company Name' contactinfo field is also live-verified: a follow-up
+     * GET /getlistsubscribers returned firstname/companyname populated.
+     *
+     * Documented endpoint: POST /json/listsubscribe.
+     * Required params: resfmt=JSON, listkey, contactinfo (JSON-encoded field=>value
+     * map, 'Contact Email' mandatory), source, topic_id.
+     *
+     * @param  array<string, string>  $contact  Must contain 'Contact Email'; may contain
+     *                                          'First Name' and 'Company'.
+     *
+     * @throws \RuntimeException  If the HTTP request fails, or Zoho returns an API-level
+     *                            error code not in self::LISTSUBSCRIBE_ACCEPTED_CODES.
+     */
+    private function subscribeContactWithTopic(string $listKey, array $contact, string $topicId): array
+    {
+        $email = trim((string) ($contact['Contact Email'] ?? $contact['email'] ?? ''));
+        if ($email === '') {
+            throw new \InvalidArgumentException('[ZohoCampaignsClient] subscribeContactWithTopic nécessite un email de contact.');
+        }
+
+        $contactInfo = ['Contact Email' => $email];
+        $firstName = trim((string) ($contact['First Name'] ?? ''));
+        if ($firstName !== '') {
+            $contactInfo['First Name'] = $firstName;
+        }
+        $company = trim((string) ($contact['Company'] ?? ''));
+        if ($company !== '') {
+            $contactInfo['Company Name'] = $company;
+        }
+
+        $response = Http::withHeaders([
+            'Authorization' => 'Zoho-oauthtoken ' . $this->authService->getAccessToken('campaigns'),
+        ])
+            ->timeout(30)
+            ->asForm()
+            ->post($this->apiUrl . '/json/listsubscribe', [
+                'resfmt'      => 'JSON',
+                'listkey'     => $listKey,
+                'topic_id'    => $topicId,
+                'source'      => 'fretiq',
+                'contactinfo' => json_encode($contactInfo),
+            ]);
+
+        if ($response->failed()) {
+            throw new \RuntimeException(
+                '[ZohoCampaignsClient] subscribeContactWithTopic échoué (HTTP ' . $response->status() . ') pour ' . $email . ' : ' . $response->body()
+            );
+        }
+
+        $payload = $response->json() ?? [];
+        $code = (string) ($payload['code'] ?? '0');
+
+        if (! in_array($code, self::LISTSUBSCRIBE_ACCEPTED_CODES, true)) {
+            throw new \RuntimeException(
+                '[ZohoCampaignsClient] subscribeContactWithTopic erreur API Zoho pour ' . $email . ' : ' . $response->body()
+            );
+        }
 
         return $payload;
     }

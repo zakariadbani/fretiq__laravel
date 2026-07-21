@@ -42,6 +42,15 @@ export class SegmentPage extends DataTablePage {
   readonly sectorSelect: Locator;
   readonly countrySelect: Locator;
   readonly statusSelect: Locator;
+  readonly dynamicModeRadio: Locator;
+  readonly manualModeRadio: Locator;
+  readonly manualCreateGuidance: Locator;
+  readonly targetingFields: Locator;
+  readonly saveButton: Locator;
+  readonly contactsPane: Locator;
+  readonly contactsHeading: Locator;
+  readonly addContactsButton: Locator;
+  readonly contactsSkeleton: Locator;
 
   // Preview panel locators
   readonly previewCard: Locator;
@@ -65,6 +74,15 @@ export class SegmentPage extends DataTablePage {
     this.sectorSelect  = page.locator('#form_crud select[name="filter[sector][]"]');
     this.countrySelect = page.locator('#form_crud select[name="filter[country][]"]');
     this.statusSelect  = page.locator('#form_crud select[name="filter[status]"]');
+    this.dynamicModeRadio = page.locator('[data-segment-mode="dynamic"]');
+    this.manualModeRadio = page.locator('[data-segment-mode="manual"]');
+    this.manualCreateGuidance = page.locator('[data-segment-manual-create-guidance]');
+    this.targetingFields = page.locator('[data-segment-targeting-fields]');
+    this.saveButton = page.locator('#form_crud button[name="save"]');
+    this.contactsPane = page.locator('#segment_contacts[data-crud-pane]');
+    this.contactsHeading = this.contactsPane.getByRole('heading', { name: 'Contacts' });
+    this.addContactsButton = this.contactsPane.getByRole('button', { name: 'Ajouter des contacts à ce segment' });
+    this.contactsSkeleton = this.contactsPane.locator('#segment_contacts_skeleton');
 
     // Preview panel
     this.previewCard    = page.locator('#segment_preview_card');
@@ -135,6 +153,14 @@ export class SegmentPage extends DataTablePage {
     await this.page.waitForLoadState('networkidle');
     // Spinner must be hidden once the call is done.
     await expect(this.previewLoading).toBeHidden({ timeout: 5000 });
+  }
+
+  async expectContactsPaneIntersectingAndLoaded() {
+    await expect.poll(async () => this.contactsPane.evaluate((pane) => {
+      const rect = pane.getBoundingClientRect();
+      return rect.bottom > 0 && rect.top < window.innerHeight;
+    })).toBe(true);
+    await expect(this.contactsSkeleton).toHaveCount(0, { timeout: 10000 });
   }
 
   // ── Row helpers ───────────────────────────────────────────────────────────

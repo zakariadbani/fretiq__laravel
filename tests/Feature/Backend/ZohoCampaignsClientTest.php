@@ -4,6 +4,7 @@ namespace Tests\Feature\Backend;
 
 use App\Services\Zoho\ZohoCampaignsClient;
 use App\Services\Zoho\ZohoAuthService;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -13,9 +14,16 @@ use Tests\TestCase;
  * All external HTTP is faked via Http::fake().
  * The OAuth endpoint is faked too so no real token refresh is attempted.
  * No live Zoho Campaigns credentials are required.
+ *
+ * RefreshDatabase (matching sibling Zoho*Test conventions) rolls back the
+ * ZohoToken row ZohoAuthService persists on each getAccessToken() call, so a
+ * still-valid cached token from one test method can't leak into the next and
+ * suppress an expected oauth/v2/token HTTP call.
  */
 class ZohoCampaignsClientTest extends TestCase
 {
+    use RefreshDatabase;
+
     /** Base URL used by the client (matches config default). */
     private string $baseUrl = 'https://campaigns.zoho.com/api/v1.1';
 
@@ -34,6 +42,10 @@ class ZohoCampaignsClientTest extends TestCase
             'services.zoho.campaigns.refresh_token' => 'fake-rt',
             'services.zoho.campaigns.client_id'     => 'x',
             'services.zoho.campaigns.client_secret'  => 'y',
+            // Explicit: the bulk-subscribe branch of addListSubscribers is only
+            // reached when no topic is configured. Topic-branch tests below
+            // override this per-test.
+            'services.zoho.campaigns.topic_id'      => '',
         ]);
     }
 
@@ -110,6 +122,110 @@ class ZohoCampaignsClientTest extends TestCase
                 && $request['resfmt'] === 'JSON'
                 && $request['emailids'] === 'jean@acme.test';
         });
+    }
+
+    /**
+     * When a Zoho topic is configured, addListSubscribers must subscribe each
+     * contact individually via POST /json/listsubscribe (carrying topic_id +
+     * contactinfo) and must never call the topic-less bulk endpoint.
+     */
+    public function test_add_list_subscribers_uses_topic_subscribe_endpoint_per_contact_when_topic_configured(): void
+    {
+        config(['services.zoho.campaigns.topic_id' => 'topic-99']);
+        Http::preventStrayRequests();
+
+        $seenEmails = [];
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*json/listsubscribe*' => function (\Illuminate\Http\Client\Request $request) use (&$seenEmails) {
+                $seenEmails[] = json_decode($request['contactinfo'], true)['Contact Email'];
+
+                return Http::response(['status' => 'success', 'code' => '0'], 200);
+            },
+        ]);
+
+        $contacts = [
+            ['Contact Email' => 'jean@acme.test', 'First Name' => 'Jean'],
+            ['Contact Email' => 'marie@acme.test', 'First Name' => 'Marie'],
+        ];
+
+        $result = $this->makeClient()->addListSubscribers('LK-001', $contacts);
+
+        $this->assertSame(['code' => '0', 'status' => 'success', 'subscribed' => 2], $result);
+        $this->assertSame(['jean@acme.test', 'marie@acme.test'], $seenEmails);
+
+        Http::assertSentCount(3); // 1 oauth + 2 listsubscribe calls
+        Http::assertSent(function (\Illuminate\Http\Client\Request $request) {
+            return $request->url() === $this->baseUrl . '/json/listsubscribe'
+                && str_contains($request->header('Authorization')[0] ?? '', 'Zoho-oauthtoken')
+                && $request['resfmt'] === 'JSON'
+                && $request['listkey'] === 'LK-001'
+                && $request['topic_id'] === 'topic-99'
+                && $request['source'] === 'fretiq'
+                && json_decode($request['contactinfo'], true)['Contact Email'] === 'jean@acme.test';
+        });
+        Http::assertNotSent(fn (\Illuminate\Http\Client\Request $request) => str_contains($request->url(), '/addlistsubscribersinbulk'));
+    }
+
+    /**
+     * Live-verified (prod, 2026-07-21): 'Company Name' is a real contactinfo
+     * field — a follow-up getlistsubscribers returned companyname populated.
+     * addListSubscribers must include it when the contact carries a 'Company',
+     * and omit the key entirely when it doesn't (no empty Company Name sent).
+     */
+    public function test_add_list_subscribers_with_topic_includes_company_name_when_present(): void
+    {
+        config(['services.zoho.campaigns.topic_id' => 'topic-99']);
+        Http::preventStrayRequests();
+
+        $seenContactInfo = [];
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*json/listsubscribe*' => function (\Illuminate\Http\Client\Request $request) use (&$seenContactInfo) {
+                $seenContactInfo[] = json_decode($request['contactinfo'], true);
+
+                return Http::response(['status' => 'success', 'code' => '0'], 200);
+            },
+        ]);
+
+        $contacts = [
+            ['Contact Email' => 'jean@acme.test', 'First Name' => 'Jean', 'Company' => 'Acme SAS'],
+            ['Contact Email' => 'marie@acme.test', 'First Name' => 'Marie', 'Company' => ''],
+        ];
+
+        $this->makeClient()->addListSubscribers('LK-001', $contacts);
+
+        $this->assertSame([
+            'Contact Email' => 'jean@acme.test',
+            'First Name' => 'Jean',
+            'Company Name' => 'Acme SAS',
+        ], $seenContactInfo[0]);
+        $this->assertSame([
+            'Contact Email' => 'marie@acme.test',
+            'First Name' => 'Marie',
+        ], $seenContactInfo[1]);
+        $this->assertArrayNotHasKey('Company Name', $seenContactInfo[1]);
+    }
+
+    /**
+     * An API-level error code from /json/listsubscribe (not in the accepted-codes
+     * allowlist) must raise a RuntimeException, not be silently swallowed.
+     */
+    public function test_add_list_subscribers_with_topic_throws_on_api_level_error(): void
+    {
+        config(['services.zoho.campaigns.topic_id' => 'topic-99']);
+        Http::preventStrayRequests();
+
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*json/listsubscribe*' => Http::response(['status' => 'error', 'code' => '1234', 'message' => 'Invalid list key'], 200),
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+
+        $this->makeClient()->addListSubscribers('LK-001', [
+            ['Contact Email' => 'jean@acme.test'],
+        ]);
     }
 
     public function test_create_recipient_list_with_seed_contacts_verifies_the_returned_list_key_without_campaign_calls(): void

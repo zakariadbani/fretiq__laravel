@@ -92,6 +92,111 @@ class CampaignZohoListSyncTest extends TestCase
         $this->assertDatabaseHas('campaign_recipients', ['campaign_run_id' => $run->id, 'contact_id' => $marie->id, 'status' => 'queued']);
     }
 
+    /**
+     * Zoho only delivers a campaign to contacts subscribed to its topic
+     * ("rubrique"). Seed contacts pushed by ensureCampaignList() at list
+     * creation are already list members but were never topic-subscribed, so
+     * when a topic is configured, sync() must push the FULL target audience
+     * through addContacts() — not just the membership diff — otherwise those
+     * seed contacts are silently skipped by Zoho's send. The reported 'added'
+     * count still reflects the membership diff, not the topic-subscribe count.
+     */
+    public function test_sync_pushes_all_target_contacts_when_a_zoho_topic_is_configured(): void
+    {
+        config(['services.zoho.campaigns.topic_id' => 'topic-99']);
+
+        [$campaign] = $this->campaignWithTwoEligibleContacts();
+
+        $gateway = new class implements ZohoRecipientListGateway {
+            public array $remoteEmails = ['jean@acme.test', 'contact-historique@acme.test'];
+            public array $added = [];
+            public int $createCampaignCalls = 0;
+            public int $sendCampaignCalls = 0;
+
+            public function ensureCampaignList(int $campaignId, string $listName, array $seedContacts): string
+            {
+                return 'zoho-list-stable-' . $campaignId;
+            }
+
+            public function listEmails(string $listKey): array
+            {
+                return $this->remoteEmails;
+            }
+
+            public function addContacts(string $listKey, array $contacts): void
+            {
+                $this->added = array_merge($this->added, $contacts);
+                $this->remoteEmails = array_values(array_unique(array_merge(
+                    $this->remoteEmails,
+                    array_column($contacts, 'Contact Email'),
+                )));
+            }
+
+            public function createCampaign(): void { $this->createCampaignCalls++; }
+            public function sendCampaign(): void { $this->sendCampaignCalls++; }
+        };
+
+        $summary = (new CampaignZohoListSyncService(app(SegmentService::class), $gateway))->sync($campaign);
+
+        // jean@acme.test was already a list member (in remoteEmails), yet it must
+        // still be pushed through addContacts() so Zoho subscribes it to the topic.
+        $this->assertSame(
+            ['jean@acme.test', 'marie@acme.test'],
+            array_column($gateway->added, 'Contact Email'),
+        );
+        // 'added' still reports the membership diff (only marie was missing), not
+        // the topic-subscribe count (both contacts).
+        $this->assertSame(1, $summary['added']);
+        $this->assertTrue($summary['verified']);
+    }
+
+    /**
+     * Complementary case: with no topic configured, only the contacts missing
+     * from the Zoho list are pushed through addContacts() — the legacy,
+     * membership-diff-only behaviour.
+     */
+    public function test_sync_pushes_only_missing_contacts_when_no_zoho_topic_is_configured(): void
+    {
+        config(['services.zoho.campaigns.topic_id' => '']);
+
+        [$campaign] = $this->campaignWithTwoEligibleContacts();
+
+        $gateway = new class implements ZohoRecipientListGateway {
+            public array $remoteEmails = ['jean@acme.test', 'contact-historique@acme.test'];
+            public array $added = [];
+            public int $createCampaignCalls = 0;
+            public int $sendCampaignCalls = 0;
+
+            public function ensureCampaignList(int $campaignId, string $listName, array $seedContacts): string
+            {
+                return 'zoho-list-stable-' . $campaignId;
+            }
+
+            public function listEmails(string $listKey): array
+            {
+                return $this->remoteEmails;
+            }
+
+            public function addContacts(string $listKey, array $contacts): void
+            {
+                $this->added = array_merge($this->added, $contacts);
+                $this->remoteEmails = array_values(array_unique(array_merge(
+                    $this->remoteEmails,
+                    array_column($contacts, 'Contact Email'),
+                )));
+            }
+
+            public function createCampaign(): void { $this->createCampaignCalls++; }
+            public function sendCampaign(): void { $this->sendCampaignCalls++; }
+        };
+
+        $summary = (new CampaignZohoListSyncService(app(SegmentService::class), $gateway))->sync($campaign);
+
+        $this->assertSame(['marie@acme.test'], array_column($gateway->added, 'Contact Email'));
+        $this->assertSame(1, $summary['added']);
+        $this->assertTrue($summary['verified']);
+    }
+
     public function test_sync_is_successful_when_unrelated_existing_list_contacts_are_retained(): void
     {
         [$campaign] = $this->campaignWithTwoEligibleContacts();

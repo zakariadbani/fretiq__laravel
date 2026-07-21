@@ -114,25 +114,41 @@
                         <div class="d-flex flex-column gap-3">
                             <label class="form-check form-check-custom form-check-solid">
                                 <input class="form-check-input" type="radio" name="is_manual" value="0"
+                                       data-segment-mode="dynamic"
                                        {{ ! $isManual ? 'checked' : '' }} />
                                 <span class="form-check-label">
                                     <span class="fw-semibold d-block">Audience dynamique</span>
                                     <span class="text-muted fs-7">La portée et les filtres sont réévalués à chaque envoi.</span>
                                 </span>
                             </label>
-                            <label class="form-check form-check-custom form-check-solid">
-                                <input class="form-check-input" type="radio" name="is_manual" value="1"
-                                       {{ $isManual ? 'checked' : '' }} />
-                                <span class="form-check-label">
-                                    <span class="fw-semibold d-block">Contacts sélectionnés uniquement</span>
-                                    <span class="text-muted fs-7">Seuls les contacts ajoutés ci-dessous sont retenus, après les règles de conformité.</span>
-                                </span>
-                            </label>
+                            @can('edit segments')
+                                <label class="form-check form-check-custom form-check-solid">
+                                    <input class="form-check-input" type="radio" name="is_manual" value="1"
+                                           data-segment-mode="manual"
+                                           {{ $isManual ? 'checked' : '' }} />
+                                    <span class="form-check-label">
+                                        <span class="fw-semibold d-block">Contacts sélectionnés uniquement</span>
+                                        <span class="text-muted fs-7">Seuls les contacts ajoutés ci-dessous sont retenus, après les règles de conformité.</span>
+                                    </span>
+                                </label>
+                            @endcan
                         </div>
                     </div>
 
+                    @if(! isset($model) || ! $model->id)
+                        @can('edit segments')
+                            <div class="alert alert-info align-items-center mb-7 {{ $isManual ? 'd-flex' : 'd-none' }}"
+                                 data-segment-manual-create-guidance>
+                                <i class="bi bi-info-circle fs-3 me-3"></i>
+                                <span>Enregistrez le segment pour sélectionner ses contacts.</span>
+                            </div>
+                        @endcan
+                    @endif
+
                     {{-- Portée (scope): kept as an internal fallback for manual segments. --}}
-                    <input type="hidden" id="manual_scope_value" name="scope" value="{{ $savedScope }}" {{ ! $isManual ? 'disabled' : '' }} />
+                    <div class="fv-row d-none">
+                        <input type="hidden" id="manual_scope_value" name="scope" value="{{ $savedScope }}" {{ ! $isManual ? 'disabled' : '' }} />
+                    </div>
                     <div class="fv-row mb-0" data-segment-dynamic-fields {{ $isManual ? 'hidden' : '' }}>
                         <label class="required fw-semibold fs-6 mb-2">Portée</label>
                         <select id="segment_scope" name="scope" class="form-select form-select-solid" required {{ $isManual ? 'disabled' : '' }}>
@@ -163,7 +179,7 @@
                 if (is_string($storedCountries)) { $storedCountries = $storedCountries ? [$storedCountries] : []; }
             @endphp
 
-            <div class="card mb-5" data-segment-dynamic-fields {{ $isManual ? 'hidden' : '' }}>
+            <div class="card mb-5" data-segment-dynamic-fields data-segment-targeting-fields {{ $isManual ? 'hidden' : '' }}>
                 <div class="card-header border-0 pt-5">
                     <h3 class="card-title fw-bolder m-0">
                         <i class="bi bi-crosshair text-info fs-3 me-2"></i>

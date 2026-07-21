@@ -40,7 +40,18 @@ class CampaignZohoListSyncService
         $run = $this->createAudienceSnapshot($campaign, $contacts, $listKey);
         $missing = array_diff_key($target, $before);
 
-        foreach (array_chunk(array_values($missing), 10) as $chunk) {
+        // When a Zoho topic ("rubrique") is configured, delivery requires every
+        // contact to be individually subscribed to that topic (see
+        // ZohoCampaignsClient::addListSubscribers). Seed contacts pushed by
+        // ensureCampaignList()/addlistandcontacts at list creation are already
+        // list members but were never topic-subscribed, so they would be silently
+        // skipped by Zoho's send if we only pushed the membership diff. Push the
+        // full target audience through addContacts() in that case; 'added' below
+        // still reports the membership diff, not the topic-subscribe count.
+        $topicId = trim((string) config('services.zoho.campaigns.topic_id'));
+        $toPush = $topicId !== '' ? $target : $missing;
+
+        foreach (array_chunk(array_values($toPush), 10) as $chunk) {
             $this->gateway->addContacts($listKey, $chunk);
         }
 

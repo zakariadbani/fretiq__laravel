@@ -14,7 +14,10 @@ use Illuminate\Support\Facades\Log;
 
 class SegmentController extends BackendController
 {
-    use Crudable, Datatableable;
+    use Crudable {
+        store as private crudStore;
+    }
+    use Datatableable;
 
     public function __construct(Request $request, Segment $model, SegmentsDataTable $dataTable)
     {
@@ -118,6 +121,33 @@ class SegmentController extends BackendController
                 'dataTableConfig' => $this->currentDataTable->getIndexConfig(),
             ]
         );
+    }
+
+    /**
+     * Manual segments must land on the saved segment's contact picker.
+     * Creating one also requires edit permission because selecting contacts is
+     * an edit-only operation.
+     */
+    public function store()
+    {
+        $request = request();
+        $manual = $request->boolean('is_manual');
+
+        if ($manual && ! $request->user()?->can('edit segments')) {
+            abort(403);
+        }
+
+        $response = $this->crudStore();
+
+        if ($manual && $response instanceof \Illuminate\Http\JsonResponse && $response->isSuccessful()) {
+            $payload = $response->getData(true);
+            if (isset($payload['model']['id'])) {
+                $payload['redirect'] = route('admin.segments.edit', $payload['model']['id']) . '#segment_contacts';
+                $response->setData($payload);
+            }
+        }
+
+        return $response;
     }
 
     /**

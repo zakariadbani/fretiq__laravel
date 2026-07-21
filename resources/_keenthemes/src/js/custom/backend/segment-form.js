@@ -71,6 +71,21 @@ var KTSegmentForm = function () {
             .prop('disabled', manual);
         $manualScope.prop('disabled', !manual);
         $(IDS.card).prop('hidden', manual);
+        $('[data-segment-manual-create-guidance]')
+            .toggleClass('d-none', !manual)
+            .toggleClass('d-flex', manual);
+    }
+
+    function scrollToContactsHash() {
+        if (window.location.hash !== '#segment_contacts') return;
+
+        // crud-tabs.js registers first and schedules its hash reset in rAF.
+        // Queue after it so the relocated pane is the final scroll target and
+        // becomes intersectable for segment-contacts.js lazy loading.
+        window.requestAnimationFrame(function () {
+            var pane = document.querySelector('#segment_contacts[data-crud-pane]');
+            if (pane) pane.scrollIntoView({ block: 'start', behavior: 'auto' });
+        });
     }
 
     /* ── Initialisation select2 ─────────────────────────────────────────── */
@@ -318,6 +333,7 @@ var KTSegmentForm = function () {
             if (!isManual()) {
                 doPreview();
             }
+            scrollToContactsHash();
         },
         /* Exposed for segment-contacts.js to call after pin mutations */
         refresh: function () {
@@ -330,4 +346,3 @@ var KTSegmentForm = function () {
 $(document).ready(function () {
     KTSegmentForm.init();
 });
-
