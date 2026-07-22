@@ -80,15 +80,36 @@ try {
 // ── Step 2 — contact field names ────────────────────────────────────────────
 // NOTE: GET /getallcontactfields is NOT a valid v1.1 endpoint — live-verified
 // (prod, 2026-07-21) to return Code 1004 "Unable to find the resource you're
-// looking for." Do not call it. Field names are instead confirmed from the
-// GET /getlistsubscribers response shape (see step 5 below), which is
-// live-verified to return: firstname, lastname, companyname, contact_email,
-// phone, zuid, added_time. 'Company Name' is therefore the correct
-// contactinfo key for POST /json/listsubscribe (already wired in
-// ZohoCampaignsClient::subscribeContactWithTopic()).
-zoho_topic_verify_step('2. Noms de champs contact (voir étape 5 — getlistsubscribers)');
-echo "Sautée : /getallcontactfields renvoie Code 1004 sur v1.1 (non valide).\n";
-echo "Les noms de champs sont confirmés via GET /getlistsubscribers (étape 5).\n";
+// looking for." Do not call it. The correct endpoint is GET /contact/allfields
+// (type=json) — live-verified (prod, 2026-07-21) STATUS 200. The company field
+// is DISPLAY_NAME "Company Name", FIELD_DISPLAY_NAME "COMPANYNAME",
+// FIELD_NAME "companyname" — this is what confirms the $[COMPANYNAME]$ merge
+// tag used in ZohoCampaignsDriver::MERGE_TAG_MAP.
+zoho_topic_verify_step('2. GET /contact/allfields');
+try {
+    $accessToken = $authService->getAccessToken('campaigns');
+    $response = \Illuminate\Support\Facades\Http::withHeaders([
+        'Authorization' => 'Zoho-oauthtoken ' . $accessToken,
+    ])->timeout(30)->get($apiUrl . '/contact/allfields', [
+        'type' => 'json',
+    ]);
+    $payload = zoho_topic_verify_summarize($response);
+
+    $fields = $payload['CONTACT_FIELDS'] ?? $payload['contact_fields'] ?? $payload ?? [];
+    if (is_array($fields)) {
+        foreach ($fields as $field) {
+            if (! is_array($field)) {
+                continue;
+            }
+            $displayName = $field['DISPLAY_NAME'] ?? 'inconnu';
+            $fieldDisplayName = $field['FIELD_DISPLAY_NAME'] ?? 'inconnu';
+            $fieldName = $field['FIELD_NAME'] ?? 'inconnu';
+            echo "  DISPLAY_NAME={$displayName} FIELD_DISPLAY_NAME={$fieldDisplayName} FIELD_NAME={$fieldName}\n";
+        }
+    }
+} catch (\Throwable $e) {
+    echo 'ERREUR étape 2 : ' . $e->getMessage() . "\n";
+}
 
 // ── Step 3 — subscribe $verifyEmail to $verifyListKey under the topic ──────
 zoho_topic_verify_step('3. POST /json/listsubscribe (première tentative)');

@@ -14,16 +14,16 @@ class ZohoMergeTagTranslationTest extends TestCase
 {
     // ── Individual placeholder translations ────────────────────────────────────
 
-    public function test_contact_name_translates_to_fname_tag(): void
+    public function test_contact_name_translates_to_fname_tag_with_fallback(): void
     {
         $result = ZohoCampaignsDriver::translateMergeTags('Bonjour {{contact.name}},');
-        $this->assertSame('Bonjour $[FNAME]$,', $result);
+        $this->assertSame('Bonjour $[FNAME|client|client]$,', $result);
     }
 
-    public function test_contact_first_name_translates_to_fname_tag(): void
+    public function test_contact_first_name_translates_to_fname_tag_with_fallback(): void
     {
         $result = ZohoCampaignsDriver::translateMergeTags('Bonjour {{contact.first_name}},');
-        $this->assertSame('Bonjour $[FNAME]$,', $result);
+        $this->assertSame('Bonjour $[FNAME|client|client]$,', $result);
     }
 
     /**
@@ -42,10 +42,10 @@ class ZohoMergeTagTranslationTest extends TestCase
         $this->assertSame('Votre email : $[EMAIL]$', $result);
     }
 
-    public function test_company_name_translates_to_company_tag(): void
+    public function test_company_name_translates_to_companyname_tag_with_fallback(): void
     {
         $result = ZohoCampaignsDriver::translateMergeTags('Société : {{company.name}}');
-        $this->assertSame('Société : $[COMPANY]$', $result);
+        $this->assertSame('Société : $[COMPANYNAME|votre entreprise|votre entreprise]$', $result);
     }
 
     public function test_unsubscribe_url_translates_to_zoho_unsubscribe_tag(): void
@@ -66,8 +66,8 @@ class ZohoMergeTagTranslationTest extends TestCase
 HTML;
 
         $expected = <<<'HTML'
-<p>Bonjour $[FNAME]$,</p>
-<p>Votre société : $[COMPANY]$</p>
+<p>Bonjour $[FNAME|client|client]$,</p>
+<p>Votre société : $[COMPANYNAME|votre entreprise|votre entreprise]$</p>
 <p>Email : $[EMAIL]$</p>
 <p><a href="$[LI:UNSUBSCRIBE]$">Se désabonner</a></p>
 HTML;
@@ -88,7 +88,7 @@ HTML;
     {
         $input    = 'Bonjour {{contact.name}}, tél : {{contact.phone}}';
         $result   = ZohoCampaignsDriver::translateMergeTags($input);
-        $this->assertSame('Bonjour $[FNAME]$, tél : {{contact.phone}}', $result);
+        $this->assertSame('Bonjour $[FNAME|client|client]$, tél : {{contact.phone}}', $result);
     }
 
     // ── Plain text without any tags is returned unchanged ─────────────────────

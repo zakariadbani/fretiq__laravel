@@ -36,15 +36,15 @@ class ZohoCampaignsDriver implements CampaignsClient
     /**
      * Map of local template placeholders → Zoho Campaigns predefined merge tags.
      *
-     * Tags are doc-sourced (Zoho Campaigns predefined merge tags).
-     * The unsubscribe tag $[LI:UNSUBSCRIBE]$ is intended for use inside an href attribute.
-     *
-     * IMPORTANT — $[COMPANY]$ is UNVERIFIED: the exact company-field merge tag must be
-     * confirmed against the live merge-tag list during Phase 5 tinker verification
-     * (project hard rule: Zoho behavior requires empirical STATUS 200 verification —
-     * docs alone are insufficient). The subscriber field 'Company' is populated at
-     * addListSubscribers time; the merge tag name must match whatever Zoho exposes.
-     * Correct the map if the live merge-tag list differs.
+     * VERIFIED — 2026-07-21, live `GET {api_url}/contact/allfields?type=json` → STATUS 200.
+     * The company field is DISPLAY_NAME "Company Name", FIELD_DISPLAY_NAME "COMPANYNAME",
+     * FIELD_NAME "companyname". The merge tag itself, `$[COMPANYNAME]$`, was confirmed
+     * directly from Zoho's own merge-tag picker in the campaign editor (not doc-sourced).
+     * A prior version of this map used `$[COMPANY]$`, which is not a real Zoho Campaigns
+     * merge tag — Zoho emitted it back to recipients literally instead of substituting the
+     * company name. Both the company tag and the first-name tag now use Zoho's documented
+     * pipe-separated fallback form `$[TAG|value_for_email|value_for_social]$` (first value
+     * used in email campaigns) so a contact with a blank field never renders empty.
      *
      * NOT MAPPED — {{company.sector}} has no known Zoho Campaigns equivalent and is
      * therefore absent from this map: it passes through to Zoho unchanged (i.e. the
@@ -53,10 +53,10 @@ class ZohoCampaignsDriver implements CampaignsClient
      * mapping here during Phase 5 tinker verification.
      */
     private const MERGE_TAG_MAP = [
-        '{{contact.name}}'       => '$[FNAME]$',
-        '{{contact.first_name}}' => '$[FNAME]$',
+        '{{contact.name}}'       => '$[FNAME|client|client]$',
+        '{{contact.first_name}}' => '$[FNAME|client|client]$',
         '{{contact.email}}'      => '$[EMAIL]$',
-        '{{company.name}}'       => '$[COMPANY]$',   // UNVERIFIED — confirm tag name live
+        '{{company.name}}'       => '$[COMPANYNAME|votre entreprise|votre entreprise]$',
         '{{unsubscribe_url}}'    => '$[LI:UNSUBSCRIBE]$',
     ];
 
