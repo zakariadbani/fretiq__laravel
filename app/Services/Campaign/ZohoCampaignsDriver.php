@@ -6,6 +6,7 @@ use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
 use App\Services\Zoho\ZohoCampaignsClient;
+use Illuminate\Container\Container;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
@@ -81,18 +82,48 @@ class ZohoCampaignsDriver implements CampaignsClient
     /**
      * Prepare campaign HTML for Zoho while keeping unsubscribe ownership in the driver.
      *
-     * Legacy templates keep the placement of their {{unsubscribe_url}} link. Clean
-     * templates receive one visible footer containing Zoho's unsubscribe merge tag.
+     * Legacy templates keep the placement of their {{unsubscribe_url}} link. Templates
+     * authored via the builder carry no unsubscribe section at all (Zoho is expected to
+     * manage unsubscribe) — for those, this method appends one driver-owned visible
+     * footer containing Zoho's unsubscribe merge tag, GATED behind
+     * `config('services.zoho.append_unsubscribe_fallback')` (env `ZOHO_APPEND_UNSUBSCRIBE_FALLBACK`,
+     * default true).
+     *
+     * UNVERIFIED — "Zoho appends its own managed unsubscribe footer on API/content-URL
+     * campaigns" is doctrine, not a confirmed Zoho behavior. Per CLAUDE.md §1 (empirical-
+     * verification rule), this flag may ONLY be flipped to false after:
+     *   1. Sending a live Zoho test campaign via the content-URL flow used by dispatchRun().
+     *   2. Confirming empirically that Zoho injects its own unsubscribe footer/link.
+     *   3. Recording `STATUS: 200` + the exact received footer markup in the task/PR notes.
+     * Until then this defaults to true — client campaigns (not just prospects) send via
+     * Zoho when cold-send is disabled (SegmentService::applyColdGateStage only excludes
+     * relationship=prospect), so an opt-out link is a compliance requirement (LCEN/CNIL),
+     * not merely a style choice.
+     *
+     * The normalizer-FAILURE rescue is NOT gated by this flag: when
+     * UnsubscribeHtmlNormalizer::normalize() hits its PCRE failure branch (backtrack/JIT
+     * stack limit, malformed markup) it cannot guarantee the original link survived, so
+     * this method still appends its own footer unconditionally in that case — it is the
+     * last line of defense against a zero-opt-out send. A clean normalize() result that
+     * simply found no unsubscribe link (the common builder-authored case) is what the
+     * flag actually gates. This distinction is read directly off normalize()'s explicit
+     * third return element (`$failed`) — never inferred from global PCRE error state,
+     * which subsequent successful preg_* calls (including later matches within the same
+     * normalize() call) can silently reset.
      */
     public static function prepareHtmlContent(string $html): string
     {
         $html = self::translateMergeTags($html);
-        [$html, $hasUnsubscribeLink] = UnsubscribeHtmlNormalizer::normalize(
+        [$html, $hasUnsubscribeLink, $normalizationFailed] = UnsubscribeHtmlNormalizer::normalize(
             $html,
             '$[LI:UNSUBSCRIBE]$',
         );
 
         if ($hasUnsubscribeLink) {
+            return $html;
+        }
+
+        if (! $normalizationFailed && ! self::shouldAppendUnsubscribeFallback()) {
             return $html;
         }
 
@@ -102,6 +133,20 @@ class ZohoCampaignsDriver implements CampaignsClient
             . '</div>';
 
         return UnsubscribeHtmlNormalizer::insertBeforeDocumentEnd($html, $footer);
+    }
+
+    /**
+     * Read the append_unsubscribe_fallback safety gate, defaulting to true when the
+     * Laravel config repository isn't bound (pure-unit test context with no framework
+     * bootstrap). Never throws — this must be safe to call from any context.
+     */
+    private static function shouldAppendUnsubscribeFallback(): bool
+    {
+        if (! Container::getInstance()->bound('config')) {
+            return true;
+        }
+
+        return (bool) config('services.zoho.append_unsubscribe_fallback', true);
     }
     public function __construct(
         private readonly ZohoCampaignsClient $zohoClient,
@@ -174,6 +219,27 @@ class ZohoCampaignsDriver implements CampaignsClient
         $campaign = $run->campaign;
         $template = $campaign->template ?? $campaign->load('template')->template;
         $sender   = $campaign->senderIdentity ?? $campaign->load('senderIdentity')->senderIdentity;
+
+        // ── 0. Refuse a zero-opt-out send ──────────────────────────────────────
+        // Fail-closed preflight: compose the exact HTML the signed zoho-content
+        // route (routes/web.php) will later serve to Zoho and refuse the ENTIRE
+        // dispatch — before any Zoho API call, so no subscriber/campaign is ever
+        // created for a send that would carry no unsubscribe link — when that
+        // composed HTML carries no $[LI:UNSUBSCRIBE]$ tag. This happens exactly
+        // when append_unsubscribe_fallback is disabled AND the template supplies
+        // no unsubscribe link of its own (builder-authored templates never do —
+        // see prepareHtmlContent()'s docblock). Checking the ACTUAL composed
+        // output (rather than re-deriving the flag + normalizer-failure logic
+        // here) keeps this guard from silently drifting out of sync with
+        // prepareHtmlContent() if that logic ever changes.
+        $preparedHtml = self::prepareHtmlContent((string) $template->html_content);
+        if (! str_contains($preparedHtml, '$[LI:UNSUBSCRIBE]$')) {
+            throw new \RuntimeException(
+                'Envoi Zoho refusé : le contenu composé ne contient aucun lien de désabonnement '
+                . '($[LI:UNSUBSCRIBE]$). Activez services.zoho.append_unsubscribe_fallback '
+                . '(ZOHO_APPEND_UNSUBSCRIBE_FALLBACK=true) ou ajoutez un lien de désabonnement au modèle avant de réessayer.'
+            );
+        }
 
         // ── 1. Resolve the Zoho mailing list key ───────────────────────────────
         // Zoho Campaigns expects an existing list key; arbitrary per-run keys are

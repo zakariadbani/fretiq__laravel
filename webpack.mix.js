@@ -25,6 +25,7 @@ let demo = getDemos()[0];
 
 const dir = 'resources/_keenthemes/src';
 const requiredCustomBackendAssets = [
+    'js/custom/backend/campaign-template-builder.js',
     'js/custom/backend/campaign-template-translations.js',
     'js/custom/backend/crud-charts.js',
     'js/custom/backend/crud-form-handler.js',

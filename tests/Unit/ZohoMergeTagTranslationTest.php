@@ -3,15 +3,44 @@
 namespace Tests\Unit;
 
 use App\Services\Campaign\ZohoCampaignsDriver;
+use Illuminate\Config\Repository as ConfigRepository;
+use Illuminate\Container\Container;
 use PHPUnit\Framework\TestCase;
 
 /**
  * Pure static unit tests for ZohoCampaignsDriver::translateMergeTags().
  *
- * No network, no DB, no Laravel bootstrap required.
+ * No network, no DB, no Laravel bootstrap required. A handful of tests below bind a
+ * bare-minimum Illuminate config repository into the container (no service providers,
+ * no HTTP kernel) purely so ZohoCampaignsDriver::prepareHtmlContent() can read
+ * config('services.zoho.append_unsubscribe_fallback') — this is NOT a full Laravel
+ * framework bootstrap.
  */
 class ZohoMergeTagTranslationTest extends TestCase
 {
+    protected function tearDown(): void
+    {
+        Container::setInstance(null);
+        parent::tearDown();
+    }
+
+    /**
+     * Bind a minimal config repository so prepareHtmlContent()'s
+     * config('services.zoho.append_unsubscribe_fallback') read resolves without
+     * bootstrapping the full framework.
+     */
+    private function bindAppendUnsubscribeFallback(bool $enabled): void
+    {
+        $container = new Container();
+        $container->instance('config', new ConfigRepository([
+            'services' => [
+                'zoho' => [
+                    'append_unsubscribe_fallback' => $enabled,
+                ],
+            ],
+        ]));
+        Container::setInstance($container);
+    }
     // ── Individual placeholder translations ────────────────────────────────────
 
     public function test_contact_name_translates_to_fname_tag_with_fallback(): void
@@ -279,5 +308,79 @@ HTML;
         $this->assertSame(PREG_NO_ERROR, preg_last_error());
         $this->assertSame(1, substr_count($result, '$[LI:UNSUBSCRIBE]$'));
         $this->assertLessThan(strpos($result, 'href="$[LI:UNSUBSCRIBE]$"'), strrpos($result, '</script>'));
+    }
+
+    // ── append_unsubscribe_fallback config gate (Phase 4) ──────────────────────
+
+    public function test_prepare_html_appends_nothing_when_fallback_disabled_and_source_has_no_unsubscribe_link(): void
+    {
+        $this->bindAppendUnsubscribeFallback(false);
+
+        $result = ZohoCampaignsDriver::prepareHtmlContent('<p>Contenu du builder, sans section désabonnement</p>');
+
+        $this->assertSame(0, substr_count($result, '$[LI:UNSUBSCRIBE]$'));
+        $this->assertStringNotContainsString('Se désabonner', $result);
+        $this->assertSame('<p>Contenu du builder, sans section désabonnement</p>', $result);
+    }
+
+    /**
+     * Multiple unsubscribe anchors, with the PATHOLOGICAL one NOT first (a clean,
+     * successfully-substitutable anchor precedes it). Guards against a false negative
+     * where the driver would read "no failure" (e.g. from global PCRE error state,
+     * which later successful preg_* operations can reset) even though normalization
+     * genuinely failed and could not guarantee the original link survived.
+     *
+     * Empirical note: with UnsubscribeHtmlNormalizer's current anchor-matching regex,
+     * a directly-instrumented repro (callback wrapped with a call counter) showed the
+     * outer preg_replace_callback() call fails atomically for the WHOLE call — the
+     * callback is invoked ZERO times, even for the earlier clean anchor — once the
+     * pathological anchor is present anywhere in the subject, regardless of ini
+     * pcre.backtrack_limit (default 1_000_000 already fails at this padding size; the
+     * error is PREG_JIT_STACKLIMIT_ERROR, not PREG_BACKTRACK_LIMIT_ERROR). So a true
+     * "one match callback succeeds, THEN a later match fails" internal sequencing could
+     * NOT be constructed against this regex — PHP/PCRE aborts before invoking any
+     * callback once the pathological content is anywhere in scope. This test therefore
+     * validates the requested input SHAPE (multiple anchors, pathological not first) and
+     * confirms the driver still appends the rescue footer for it; it does not (and per
+     * this empirical finding, currently cannot) additionally prove the callback ran for
+     * the first anchor before the failure was detected. The fix is nonetheless correct
+     * for the false-negative class this guards against: it reads normalize()'s explicit
+     * $failed return element rather than global PCRE error state, so it is not sensitive
+     * to how many matches happened to succeed before the failure was detected.
+     */
+    public function test_prepare_html_still_appends_fallback_on_normalizer_pcre_failure_even_when_flag_disabled(): void
+    {
+        $this->bindAppendUnsubscribeFallback(false);
+
+        $previousLimit = ini_get('pcre.backtrack_limit');
+
+        try {
+            ini_set('pcre.backtrack_limit', '100');
+            $result = ZohoCampaignsDriver::prepareHtmlContent(
+                '<p><a href="{{unsubscribe_url}}">Premier lien</a></p>'
+                    . '<a ' . str_repeat('x', 10000)
+                    . ' href="{{unsubscribe_url}}">Lien pathologique</a>'
+            );
+        } finally {
+            ini_set('pcre.backtrack_limit', (string) $previousLimit);
+        }
+
+        // Rescue holds regardless of the flag: the normalizer could not guarantee
+        // the original link survived, so the driver-owned footer is appended anyway.
+        $this->assertSame(1, substr_count($result, '$[LI:UNSUBSCRIBE]$'));
+        $this->assertSame(1, substr_count($result, 'href="$[LI:UNSUBSCRIBE]$"'));
+        $this->assertStringContainsString('Se désabonner', $result);
+    }
+
+    public function test_prepare_html_still_translates_and_keeps_legacy_unsubscribe_link_when_flag_disabled(): void
+    {
+        $this->bindAppendUnsubscribeFallback(false);
+
+        $input = '<p>Contenu</p><p class="legacy"><a href="{{unsubscribe_url}}">Se désabonner</a></p>';
+
+        $result = ZohoCampaignsDriver::prepareHtmlContent($input);
+
+        $this->assertSame(1, substr_count($result, '$[LI:UNSUBSCRIBE]$'));
+        $this->assertStringContainsString('<p class="legacy"><a href="$[LI:UNSUBSCRIBE]$">Se désabonner</a></p>', $result);
     }
 }

@@ -300,4 +300,36 @@ class ZohoDriverSelectionTest extends TestCase
 
         $this->assertSame('CK-IDENTITY', $summary['campaign_key']);
     }
+
+    /**
+     * Fail-closed preflight (plan item 2): with append_unsubscribe_fallback
+     * disabled and a builder-authored template that carries no unsubscribe
+     * link of its own, dispatchRun() must refuse the ENTIRE send — before any
+     * Zoho HTTP call — rather than silently mailing a list with zero opt-out.
+     */
+    public function test_dispatch_run_refuses_when_fallback_disabled_and_template_has_no_unsubscribe_link(): void
+    {
+        config([
+            'services.zoho.campaigns.list_key'          => 'verified-list-key',
+            'services.zoho.append_unsubscribe_fallback'  => false,
+            'app.url' => 'https://fretiq.example.test',
+        ]);
+
+        $contact = $this->makeClientContact('no-unsub@acme.test');
+        // makeCampaignWithRun() seeds html_content as '<p>Bonjour</p>' — no
+        // unsubscribe link, exactly the builder-authored shape this guards.
+        $run = $this->makeCampaignWithRun($contact);
+
+        $zohoClientMock = \Mockery::mock(\App\Services\Zoho\ZohoCampaignsClient::class);
+        $zohoClientMock->shouldNotReceive('addListSubscribers');
+        $zohoClientMock->shouldNotReceive('createCampaign');
+        $zohoClientMock->shouldNotReceive('sendCampaign');
+
+        $driver = new ZohoCampaignsDriver($zohoClientMock);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/lien de désabonnement/');
+
+        $driver->dispatchRun($run, collect([$contact]));
+    }
 }

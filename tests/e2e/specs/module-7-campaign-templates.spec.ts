@@ -21,7 +21,15 @@ import {
  *   - No hardcoded host — all navigation uses relative paths via CampaignTemplatePage.
  *   - Mutating tests use uniqueName() so rows are distinct across repeated runs.
  *   - No Select2 fields on the template form — no company_id dependency.
- *   - html_content is filled on the underlying textarea directly (TinyMCE enhances on top).
+ *   - Builder vs classic: create always opens in BUILDER mode (slot-based composer,
+ *     `#builder_pane`); `fillAndSubmit`/`fillAndSubmitClassic` switch the page into
+ *     CLASSIC mode (`#classic_pane`, raw html_content textarea, TinyMCE-enhanced) first
+ *     via the "Mode avancé" toggle + Swal confirm, so every pre-existing test below that
+ *     calls fillAndSubmit(...) with FIXTURE_HTML authors a classic (raw-HTML) template —
+ *     and its edit page reopens in classic mode too, since builder_state is cleared
+ *     server-side for classic saves. Dedicated "Builder mode" tests further down exercise
+ *     the composer pane directly (variant selection, slot repeaters, live preview, the
+ *     builder⇄classic toggle, and the saved builder_state round-trip).
  *   - Custom action coverage:
  *       markReviewed — asserts DOM presence and calls the toggle on the Traductions tab.
  *       translate    — asserts DOM presence only; NOT clicked (paid Gemini API call).
@@ -438,6 +446,257 @@ test.describe('Campaign Templates module', () => {
     await templates.openGeneralTab();
     await templates.subjectInput.fill(subject);
 
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.deleteAllByName(name, {
+      search: (q) => templates.search(q),
+      waitForDataTable,
+      confirmDelete,
+    });
+  });
+
+  // ── 9. Builder mode — create, select variants, fill slots, save ───────────
+
+  test('builder create: select variants, fill slots, saved html_content reflects selections', async ({ page }) => {
+    const templates = new CampaignTemplatePage(page);
+    const name      = uniqueName('E2E Builder Template');
+    const subject   = `E2E builder subject ${Date.now()}`;
+    const heroTitle = `Builder Hero ${Date.now()}`;
+
+    await templates.gotoCreate();
+    await expect(page.locator('#form_crud input[name="name"]')).toBeVisible({ timeout: 10000 });
+
+    // Builder is the default pane on create.
+    await expect(templates.builderPane).not.toHaveClass(/d-none/);
+    await expect(templates.classicPane).toHaveClass(/d-none/);
+
+    await templates.nameInput.fill(name);
+    await templates.subjectInput.fill(subject);
+
+    await templates.selectHeaderVariant('logo_tagline');
+    await templates.selectFooterVariant('compact');
+    await templates.selectMiddleVariant('kpi');
+    await templates.fillHeroTitle(heroTitle);
+    await templates.setIntro(['Premier paragraphe e2e.', 'Deuxième paragraphe e2e.']);
+    await templates.setBullets(['Argument un', 'Argument deux', 'Argument trois']);
+    await templates.setKpis([
+      { value: '24h', label: 'Délai e2e' },
+      { value: '99%', label: 'Fiabilité e2e' },
+      { value: '50+', label: 'Clients e2e' },
+    ]);
+    await templates.setCta('chatbot', 'Discuter maintenant e2e');
+
+    // Live preview reflects the selections before we ever submit.
+    await templates.waitForPreviewToContain(heroTitle);
+
+    await templates.saveButton.click();
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
+
+    // Navigate to index, search, open the view page to inspect saved html_content.
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.search(name);
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.clickRowAction(0, 'view');
+
+    await expect(templates.viewPreviewIframe).toBeAttached({ timeout: 10000 });
+    const viewHtml = await templates.getViewPreviewHtml();
+    expect(viewHtml).toContain(heroTitle);
+    expect(viewHtml).toContain('Délai e2e');
+    expect(viewHtml).toContain('Discuter maintenant e2e');
+
+    // Cleanup.
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.deleteAllByName(name, {
+      search: (q) => templates.search(q),
+      waitForDataTable,
+      confirmDelete,
+    });
+  });
+
+  // ── 10. Builder mode — edit round-trip ─────────────────────────────────────
+
+  test('builder edit round-trip: reopens in builder mode with saved selections', async ({ page }) => {
+    const templates = new CampaignTemplatePage(page);
+    const name      = uniqueName('E2E Builder RoundTrip');
+    const subject   = `E2E builder roundtrip subject ${Date.now()}`;
+    const heroTitle = `RoundTrip Hero ${Date.now()}`;
+    const ctaLabel  = 'Demander un devis e2e';
+
+    await templates.gotoCreate();
+    await expect(page.locator('#form_crud input[name="name"]')).toBeVisible({ timeout: 10000 });
+
+    await templates.nameInput.fill(name);
+    await templates.subjectInput.fill(subject);
+    await templates.selectHeaderVariant('logo_tagline');
+    await templates.selectFooterVariant('compact');
+    await templates.selectMiddleVariant('benefits');
+    await templates.fillHeroTitle(heroTitle);
+    await templates.setBenefits([
+      { title: 'Rapide', text: 'Livraison rapide et fiable.' },
+      { title: 'Sûr', text: 'Suivi complet des expéditions.' },
+      { title: 'Économique', text: 'Optimisation des coûts logistiques.' },
+    ]);
+    await templates.setCta('quote', ctaLabel);
+
+    await templates.saveButton.click();
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
+
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.search(name);
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.clickRowAction(0, 'edit');
+    await page.waitForURL((u) => /\/campaign_templates\/\d+\/edit$/.test(u.pathname), { timeout: 15000 });
+    await expect(page.locator('#form_crud input[name="name"]')).toBeVisible({ timeout: 10000 });
+
+    // Edit must reopen in BUILDER mode (a builder_state was persisted).
+    await expect(templates.modeToggle).not.toBeChecked({ timeout: 10000 });
+    await expect(templates.builderPane).not.toHaveClass(/d-none/);
+    await expect(templates.classicPane).toHaveClass(/d-none/);
+
+    // Selections carried over into the re-rendered builder pane.
+    await expect(page.locator('[data-variant-group="header_variant"][data-variant-value="logo_tagline"]'))
+      .toHaveClass(/is-active/);
+    await expect(page.locator('[data-variant-group="footer_variant"][data-variant-value="compact"]'))
+      .toHaveClass(/is-active/);
+    await expect(page.locator('[data-middle-value="benefits"]')).toHaveClass(/is-active/);
+    await expect(templates.heroTitleInput).toHaveValue(heroTitle);
+    await expect(templates.ctaLabelInput).toHaveValue(ctaLabel);
+
+    // The hydrated builder_state hidden input matches what was saved.
+    const state = await templates.getBuilderStateValue();
+    expect(state.header_variant).toBe('logo_tagline');
+    expect(state.footer_variant).toBe('compact');
+    expect(state.middle_variant).toBe('benefits');
+    expect(state.slots.hero_title).toBe(heroTitle);
+    expect(state.cta.intent).toBe('quote');
+    expect(state.cta.label).toBe(ctaLabel);
+
+    // Cleanup.
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.deleteAllByName(name, {
+      search: (q) => templates.search(q),
+      waitForDataTable,
+      confirmDelete,
+    });
+  });
+
+  // ── 11. Classic mode — create round-trip ────────────────────────────────────
+
+  test('classic create: fillAndSubmit persists classic mode, edit reopens in classic', async ({ page }) => {
+    const templates = new CampaignTemplatePage(page);
+    const name    = uniqueName('E2E Classic RoundTrip');
+    const subject = `E2E classic roundtrip subject ${Date.now()}`;
+
+    await templates.gotoCreate();
+    await expect(page.locator('#form_crud input[name="name"]')).toBeVisible({ timeout: 10000 });
+    await templates.fillAndSubmit({ name, subject, htmlContent: FIXTURE_HTML });
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
+
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.search(name);
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.clickRowAction(0, 'edit');
+    await page.waitForURL((u) => /\/campaign_templates\/\d+\/edit$/.test(u.pathname), { timeout: 15000 });
+    await expect(page.locator('#form_crud input[name="name"]')).toBeVisible({ timeout: 10000 });
+
+    // Edit must reopen in CLASSIC mode (builder_state is null for classic-authored templates).
+    await expect(templates.modeToggle).toBeChecked({ timeout: 10000 });
+    await expect(templates.classicPane).not.toHaveClass(/d-none/);
+    await expect(templates.builderPane).toHaveClass(/d-none/);
+    await expect(templates.htmlContentTextarea).toHaveValue(FIXTURE_HTML);
+
+    // Cleanup.
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.deleteAllByName(name, {
+      search: (q) => templates.search(q),
+      waitForDataTable,
+      confirmDelete,
+    });
+  });
+
+  // ── 12. Builder → classic toggle ────────────────────────────────────────────
+
+  test('builder to classic toggle: composes the current builder state into the raw HTML field', async ({ page }) => {
+    const templates = new CampaignTemplatePage(page);
+    const name      = uniqueName('E2E Toggle Template');
+    const subject   = `E2E toggle subject ${Date.now()}`;
+    const heroTitle = `Toggle Hero ${Date.now()}`;
+
+    await templates.gotoCreate();
+    await expect(page.locator('#form_crud input[name="name"]')).toBeVisible({ timeout: 10000 });
+
+    await templates.nameInput.fill(name);
+    await templates.subjectInput.fill(subject);
+    await templates.fillHeroTitle(heroTitle);
+
+    await templates.ensureClassicMode();
+
+    await expect(templates.editorModeInput).toHaveValue('classic');
+    await expect(templates.classicPane).not.toHaveClass(/d-none/);
+    await expect(templates.builderPane).toHaveClass(/d-none/);
+
+    // The classic textarea was populated with the builder's composed HTML.
+    const composedHtml = await templates.htmlContentTextarea.inputValue();
+    expect(composedHtml).toContain(heroTitle);
+
+    await templates.saveButton.click();
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
+
+    // Saved as classic — builder_state is cleared server-side, so edit reopens classic too.
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.search(name);
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.clickRowAction(0, 'edit');
+    await page.waitForURL((u) => /\/campaign_templates\/\d+\/edit$/.test(u.pathname), { timeout: 15000 });
+    await expect(templates.modeToggle).toBeChecked({ timeout: 10000 });
+
+    // Cleanup.
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.deleteAllByName(name, {
+      search: (q) => templates.search(q),
+      waitForDataTable,
+      confirmDelete,
+    });
+  });
+
+  // ── 13. Builder-composed templates never carry unsubscribe markup ──────────
+
+  test('builder-composed template contains no unsubscribe/désabonner markup', async ({ page }) => {
+    const templates = new CampaignTemplatePage(page);
+    const name    = uniqueName('E2E No Unsub Template');
+    const subject = `E2E no-unsub subject ${Date.now()}`;
+
+    await templates.gotoCreate();
+    await expect(page.locator('#form_crud input[name="name"]')).toBeVisible({ timeout: 10000 });
+
+    await templates.nameInput.fill(name);
+    await templates.subjectInput.fill(subject);
+    await templates.selectFooterVariant('detailed');
+
+    await templates.saveButton.click();
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
+
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.search(name);
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.clickRowAction(0, 'view');
+
+    await expect(templates.viewPreviewIframe).toBeAttached({ timeout: 10000 });
+    const viewHtml = (await templates.getViewPreviewHtml()).toLowerCase();
+    expect(viewHtml).not.toContain('unsubscribe');
+    expect(viewHtml).not.toContain('désabonn');
+    expect(viewHtml).not.toContain('desabonn');
+
+    // Cleanup.
     await templates.goto();
     await waitForDataTable(page, 'campaign_template-table');
     await templates.deleteAllByName(name, {

@@ -1,0 +1,222 @@
+<?php
+
+namespace Tests\Unit;
+
+use App\Services\Campaign\TemplateBuilder\SectionCatalog;
+use App\Services\Campaign\TemplateBuilder\TemplateComposer;
+use Tests\TestCase;
+
+/**
+ * TemplateComposerTest — renders every header × footer × middle combination
+ * and asserts the composed HTML is structurally correct, keeps the exact
+ * verbatim CDN image URLs, preserves literal merge tags through Blade,
+ * carries NO unsubscribe/désabonner content, and escapes user-authored slot
+ * copy (XSS guard).
+ *
+ * Uses the real view()->render() pipeline — needs the Laravel app booted, but
+ * no DB.
+ */
+class TemplateComposerTest extends TestCase
+{
+    private function composer(): TemplateComposer
+    {
+        return new TemplateComposer();
+    }
+
+    /**
+     * @param  array<string, mixed>  $slotOverrides
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
+    private function state(string $header, string $footer, string $middle, array $slotOverrides = [], array $overrides = []): array
+    {
+        $slots = [
+            'hero_title' => 'Optimisez vos flux de transport',
+            'intro'      => ['Un premier paragraphe.', 'Un second paragraphe pour {{company.name}}.'],
+            'bullets'    => ['Bullet un', 'Bullet deux', 'Bullet trois'],
+        ];
+
+        if ($middle === 'departures') {
+            $slots['departures'] = [
+                ['origin' => 'Goussainville (France)', 'frequency' => '4 départs par semaine'],
+                ['origin' => 'Barcelone (Espagne)', 'frequency' => '2 à 3 départs par semaine'],
+            ];
+        } elseif ($middle === 'kpi') {
+            $slots['kpis'] = [
+                ['value' => '48 h', 'label' => 'Enlèvement'],
+                ['value' => 'IATA', 'label' => 'Agent agréé'],
+                ['value' => '100 %', 'label' => 'Suivi documentaire'],
+            ];
+        } elseif ($middle === 'benefits') {
+            $slots['benefits'] = [
+                ['title' => 'Réactivité', 'text' => 'Un interlocuteur mobilisé pour vos demandes.'],
+                ['title' => 'Visibilité', 'text' => 'Des informations à chaque étape.'],
+                ['title' => 'Souplesse', 'text' => 'Une réponse adaptée à vos délais.'],
+            ];
+        }
+
+        $slots = array_replace($slots, $slotOverrides);
+
+        return array_replace([
+            'header_variant' => $header,
+            'hero_variant'   => SectionCatalog::heroForHeader($header),
+            'middle_variant' => $middle,
+            'footer_variant' => $footer,
+            'preview_text'   => 'Un aperçu de test pour la campagne.',
+            'cta'            => ['intent' => 'quote', 'label' => 'Demander une cotation'],
+            'slots'          => $slots,
+        ], $overrides);
+    }
+
+    // ── Every header × footer × middle combination ─────────────────────────────
+
+    public function test_every_header_footer_middle_combination_composes_valid_signature_markup(): void
+    {
+        foreach (SectionCatalog::HEADERS as $header) {
+            foreach (SectionCatalog::FOOTERS as $footer) {
+                foreach (SectionCatalog::MIDDLES as $middle) {
+                    $html = $this->composer()->compose($this->state($header, $footer, $middle));
+
+                    $context = "header={$header} footer={$footer} middle={$middle}";
+
+                    // ── Doctype + shell ──────────────────────────────────────
+                    $this->assertStringStartsWith('<!DOCTYPE html', trim($html), $context);
+
+                    // ── Header signature ─────────────────────────────────────
+                    if ($header === 'logo_center') {
+                        $this->assertStringContainsString('width="170"', $html, $context);
+                        $this->assertStringNotContainsString('Transport &amp; logistique', $html, $context);
+                    } else {
+                        $this->assertStringContainsString('Transport &amp; logistique', $html, $context);
+                        $this->assertStringContainsString('width="132"', $html, $context);
+                    }
+
+                    // ── Hero signature ───────────────────────────────────────
+                    if ($header === 'logo_center') {
+                        $this->assertStringContainsString('Optimisez vos flux de transport', $html, $context);
+                        $this->assertStringNotContainsString('Votre fret, notre priorité', $html, $context);
+                    } else {
+                        $this->assertStringContainsString('Votre fret, notre priorité', $html, $context);
+                        $this->assertStringContainsString('class="hero-title"', $html, $context);
+                    }
+
+                    // ── Middle signature ─────────────────────────────────────
+                    if ($middle === 'departures') {
+                        $this->assertStringContainsString('Origine', $html, $context);
+                        $this->assertStringContainsString('Fréquence', $html, $context);
+                        $this->assertStringContainsString('Goussainville (France)', $html, $context);
+                    } elseif ($middle === 'kpi') {
+                        $this->assertStringContainsString('48 h', $html, $context);
+                        $this->assertStringContainsString('Enlèvement', $html, $context);
+                    } else {
+                        $this->assertStringContainsString('Réactivité', $html, $context);
+                        $this->assertStringContainsString('border-top:4px solid', $html, $context);
+                    }
+
+                    // ── Footer signature ─────────────────────────────────────
+                    if ($footer === 'detailed') {
+                        $this->assertStringContainsString("LET'S GROW TOGETHER !", $html, $context);
+                        $this->assertStringContainsString(SectionCatalog::LINKEDIN_ICON_URL, $html, $context);
+                    } else {
+                        $this->assertStringNotContainsString('GROW TOGETHER', $html, $context);
+                        $this->assertStringContainsString('TCL — 353 Bd Mohammed V', $html, $context);
+                    }
+
+                    // ── Exact CDN logo URL, verbatim ─────────────────────────
+                    $this->assertStringContainsString(SectionCatalog::LOGO_WHITE_URL, $html, $context);
+
+                    // ── No unsubscribe content, anywhere ──────────────────────
+                    $lower = mb_strtolower($html);
+                    $this->assertStringNotContainsString('unsubscribe', $lower, $context);
+                    $this->assertStringNotContainsString('désabonner', $lower, $context);
+                    $this->assertStringNotContainsString('{{unsubscribe_url}}', $lower, $context);
+
+                    // ── Literal merge tags survive Blade compilation ──────────
+                    $this->assertStringContainsString('{{contact.first_name}}', $html, $context);
+                    $this->assertStringContainsString('{{company.name}}', $html, $context);
+
+                    // ── CTA href starts with the configured base URL ─────────
+                    $expectedUrl = SectionCatalog::ctaIntents()['quote']['url'];
+                    $this->assertStringContainsString('href="' . $expectedUrl . '"', $html, $context);
+                    $this->assertStringStartsWith(config('prospecting.site.base_url'), $expectedUrl, $context);
+
+                    // ── Preheader contains preview text ───────────────────────
+                    $this->assertStringContainsString('Un aperçu de test pour la campagne.', $html, $context);
+                }
+            }
+        }
+    }
+
+    // ── Note wording sanity (no accidental "Se désabonner" wording variant) ────
+
+    public function test_footer_detailed_has_no_stray_unsubscribe_anchor(): void
+    {
+        $html = $this->composer()->compose($this->state('logo_center', 'detailed', 'departures'));
+
+        $this->assertStringNotContainsString('<a href="{{unsubscribe_url}}"', $html);
+    }
+
+    public function test_footer_compact_keeps_compliance_sentence_without_the_anchor(): void
+    {
+        $html = $this->composer()->compose($this->state('logo_tagline', 'compact', 'benefits'));
+
+        $this->assertStringContainsString('prise de contact professionnelle', $html);
+        $this->assertStringNotContainsString('<a href="{{unsubscribe_url}}"', $html);
+    }
+
+    // ── XSS: script payload in slots stays encoded ──────────────────────────────
+
+    public function test_script_payload_in_hero_title_is_html_escaped(): void
+    {
+        $html = $this->composer()->compose($this->state(
+            'logo_center',
+            'detailed',
+            'departures',
+            slotOverrides: ['hero_title' => '<script>alert(1)</script>']
+        ));
+
+        $this->assertStringNotContainsString('<script>alert(1)</script>', $html);
+        $this->assertStringContainsString('&lt;script&gt;alert(1)&lt;/script&gt;', $html);
+    }
+
+    public function test_script_payload_in_bullet_is_html_escaped(): void
+    {
+        $html = $this->composer()->compose($this->state(
+            'logo_tagline',
+            'compact',
+            'kpi',
+            slotOverrides: ['bullets' => ['<script>alert(2)</script>', 'Bullet normal', 'Bullet trois']]
+        ));
+
+        $this->assertStringNotContainsString('<script>alert(2)</script>', $html);
+        $this->assertStringContainsString('&lt;script&gt;alert(2)&lt;/script&gt;', $html);
+    }
+
+    // ── CTA color follows hero variant ───────────────────────────────────────
+
+    public function test_cta_is_blue_for_white_hero(): void
+    {
+        $html = $this->composer()->compose($this->state('logo_center', 'detailed', 'kpi'));
+
+        $this->assertStringContainsString('border-radius:4px;background-color:#0548a5;', $html);
+    }
+
+    public function test_cta_is_yellow_for_navy_hero(): void
+    {
+        $html = $this->composer()->compose($this->state('logo_tagline', 'compact', 'kpi'));
+
+        // The CTA table cell specifically uses border-radius + the yellow fill.
+        $this->assertStringContainsString('border-radius:4px;background-color:#e3c400;', $html);
+    }
+
+    // ── Invalid state throws ─────────────────────────────────────────────────
+
+    public function test_compose_throws_validation_exception_for_unknown_variant(): void
+    {
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+
+        $this->composer()->compose($this->state('logo_center', 'detailed', 'departures', overrides: [
+            'header_variant' => 'not_a_real_variant',
+        ]));
+    }
+}

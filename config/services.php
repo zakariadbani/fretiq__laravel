@@ -76,6 +76,14 @@ return [
         ],
         'accounts_url'      => env('ZOHO_ACCOUNTS_URL', 'https://accounts.zoho.com'),
         'default_from_email' => env('ZOHO_DEFAULT_FROM_EMAIL', ''),
+        // Safety gate (default ON): ZohoCampaignsDriver::prepareHtmlContent() appends a
+        // driver-owned "Se désabonner" footer when no unsubscribe link is present. This
+        // is the only opt-out mechanism for CLIENT campaigns (SegmentService::applyColdGateStage
+        // only excludes relationship=prospect when cold_send is off — client sends still go
+        // via Zoho) and it MUST stay true until a live Zoho test campaign empirically proves
+        // Zoho injects its own managed unsubscribe footer on API/content-URL campaigns. See
+        // the docblock on ZohoCampaignsDriver::prepareHtmlContent() before ever flipping this.
+        'append_unsubscribe_fallback' => (bool) env('ZOHO_APPEND_UNSUBSCRIBE_FALLBACK', true),
     ],
 
     /*

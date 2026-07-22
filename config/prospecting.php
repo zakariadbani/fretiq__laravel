@@ -53,4 +53,42 @@ return [
     'provider_discovery_monthly_capacity' => env('PROVIDER_DISCOVERY_MONTHLY_CAPACITY') !== null ? (int) env('PROVIDER_DISCOVERY_MONTHLY_CAPACITY') : null,
     'provider_enrich_monthly_capacity'    => env('PROVIDER_ENRICH_MONTHLY_CAPACITY') !== null ? (int) env('PROVIDER_ENRICH_MONTHLY_CAPACITY') : null,
 
+    /*
+    |--------------------------------------------------------------------------
+    | Public site — campaign template builder CTA targets
+    |--------------------------------------------------------------------------
+    | base_url is the public TCL Transport site the "builder" email templates
+    | link to. cta_intents are the fixed set of call-to-action destinations the
+    | builder lets the user pick from — each intent's absolute URL is base_url
+    | joined with its relative `path` (empty string = base_url itself). Adding
+    | a new intent (or changing a path) never requires touching PHP code.
+    |
+    | URL joining (App\Services\Campaign\TemplateBuilder\SectionCatalog::ctaIntents())
+    | rtrim()s base_url and ltrim()s each path before concatenating, so neither
+    | a trailing slash on base_url nor a leading slash on path can produce "//".
+    |
+    | ⚠ PLACEHOLDERS — the paths below are best-effort defaults, not confirmed
+    | production destinations. The real quotation and chatbot landing paths on
+    | tcltransport.com MUST be confirmed (and PROSPECTING_SITE_QUOTE_PATH /
+    | PROSPECTING_SITE_CHATBOT_PATH set accordingly) before any cold send that
+    | relies on these CTA links reaching a real page. `quote` defaults to
+    | 'contact' — the closest static equivalent to the reference templates'
+    | https://www.tcl.ma/contact CTA (docs/mail templates/standard/). `chatbot`
+    | has no known equivalent yet and defaults to '' (site root) until one exists.
+    */
+    'site' => [
+        'base_url' => env('PROSPECTING_SITE_BASE_URL', 'https://tcltransport.com/'),
+
+        'cta_intents' => [
+            'quote' => [
+                'label' => 'Demander une cotation',
+                'path'  => env('PROSPECTING_SITE_QUOTE_PATH', 'contact'),
+            ],
+            'chatbot' => [
+                'label' => 'Poser une question (chatbot)',
+                'path'  => env('PROSPECTING_SITE_CHATBOT_PATH', ''),
+            ],
+        ],
+    ],
+
 ];

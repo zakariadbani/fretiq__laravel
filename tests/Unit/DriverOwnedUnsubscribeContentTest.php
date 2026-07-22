@@ -35,7 +35,12 @@ class DriverOwnedUnsubscribeContentTest extends TestCase
         ));
 
         $this->assertIsString($source);
-        $this->assertStringContainsString('ajouté automatiquement', $source);
+        // Builder-authored templates carry no unsubscribe block at all.
+        $this->assertStringContainsString('ne contiennent aucun bloc de désabonnement', $source);
+        // Zoho Campaigns owns unsubscribe for templates sent through Zoho.
+        $this->assertStringContainsString('Zoho Campaigns gère automatiquement le lien de désabonnement', $source);
+        // The local dev driver still injects a fallback link, for tests only.
+        $this->assertStringContainsString('driver d\'envoi local ajoute lui-même un lien de désabonnement de secours', $source);
         $this->assertStringNotContainsString('Insérez <code>@verbatim{{unsubscribe_url}}@endverbatim</code>', $source);
     }
 

@@ -82,3 +82,4 @@ AGENTS.md
 
 # Codex agent hooks (local tooling)
 .codex/
+.gstack/

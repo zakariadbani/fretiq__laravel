@@ -7,7 +7,14 @@ final class UnsubscribeHtmlNormalizer
     /**
      * Keep at most one clickable target link and remove every stray occurrence.
      *
-     * @return array{0: string, 1: bool} Normalized HTML and whether a link was preserved.
+     * @return array{0: string, 1: bool, 2: bool} Normalized HTML, whether a link was
+     *                                             preserved, and whether normalization
+     *                                             hit a PCRE failure (backtrack/JIT stack
+     *                                             limit) while scanning. Callers that only
+     *                                             need the first two elements can keep
+     *                                             destructuring `[$html, $preserved] = ...`
+     *                                             — PHP list-destructuring of fewer elements
+     *                                             than the array size is safe.
      */
     public static function normalize(string $html, string $target): array
     {
@@ -57,7 +64,7 @@ final class UnsubscribeHtmlNormalizer
         );
 
         if ($normalized === null || $normalizationFailed) {
-            return [strtr(str_replace($target, '', $html), $nonRenderedSections), false];
+            return [strtr(str_replace($target, '', $html), $nonRenderedSections), false, true];
         }
 
         $normalized = str_replace($target, '', $normalized);
@@ -65,7 +72,7 @@ final class UnsubscribeHtmlNormalizer
             $normalized = str_replace($sentinel, $target, $normalized);
         }
 
-        return [strtr($normalized, $nonRenderedSections), $preserved];
+        return [strtr($normalized, $nonRenderedSections), $preserved, false];
     }
 
     public static function insertBeforeDocumentEnd(string $html, string $addition): string

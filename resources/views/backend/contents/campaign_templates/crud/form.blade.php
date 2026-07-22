@@ -23,21 +23,75 @@
     Create mode:
         - Simple header card + minimal nav (Général only — no apercu until record exists).
 
-    html_content is edited with TinyMCE 5 (theme vendor bundle, fullpage plugin
-    for full-document email HTML). The textarea stays in the DOM as source of
-    truth for FormData/FormValidation; tinymce-html-field.js handles sync.
-    No select2 — CampaignTemplate has no enum/relation selects; no width issue.
+    ── Builder vs classic ──────────────────────────────────────────────────
+    $openInBuilder decides which of the two mutually-exclusive panes
+    (#builder_pane / #classic_pane) is visible on load: create always starts
+    in the builder; edit opens the builder iff a builder_state was stored,
+    otherwise it opens classic (raw HTML) — see
+    App\Http\Controllers\Backend\CampaignTemplateController::beforeSave().
+
+    CRITICAL: the html_content textarea only carries `required` +
+    data-tinymce-html-field when NOT $openInBuilder. Rendering those
+    attributes unconditionally would (a) make crud-form-handler.js register
+    a `required` field that stays hidden and can never be filled when the
+    page opens in builder mode, silently blocking every submit, and
+    (b) auto-init TinyMCE on a hidden element. campaign-template-builder.js
+    adds both attributes itself, lazily, the first time the user switches
+    INTO classic mode (mirrors the tinymce-html-field.js safety-net pattern).
+
+    The textarea is also rendered `disabled` whenever $openInBuilder is true —
+    not just non-required. A disabled field is excluded from form submission
+    by the browser itself, independent of any FormValidation [required]
+    snapshot quirk: on a builder-mode EDIT page the textarea still carries the
+    stored HTML value, and `disabled` is the hard guarantee that stale value
+    can never reach the server alongside builder_state. beforeSave() also
+    unconditionally overwrites html_content from the composed builder_state in
+    builder mode, so a disabled/absent submission is safe either way.
+    campaign-template-builder.js re-enables it the first time the user
+    switches INTO classic mode, and re-disables it switching back.
 
     Both form-actions calls are preserved:
         - toolbar variant in @section('toolbar_actions') above.
         - sticky variant at the bottom of <form>.
 --}}
 
+@php
+    /** @var \App\Models\CampaignTemplate $model */
+    $openInBuilder = ! isset($model->id) || filled($model->builder_state ?? null);
+
+    $headerLabels = [
+        'logo_center'  => 'Logo centré',
+        'logo_tagline' => 'Logo + signature',
+    ];
+    $footerLabels = [
+        'detailed' => 'Détaillé',
+        'compact'  => 'Compact',
+    ];
+    $middleLabels = [
+        'departures' => 'Départs',
+        'kpi'        => 'Indicateurs clés',
+        'benefits'   => 'Avantages',
+    ];
+    $middleIcons = [
+        'departures' => 'bi-signpost-2',
+        'kpi'        => 'bi-bar-chart-line',
+        'benefits'   => 'bi-award',
+    ];
+
+    $builderInitialState = ($openInBuilder && isset($model->id) && filled($model->builder_state ?? null))
+        ? $model->builder_state
+        : null;
+@endphp
+
 <form method="POST" action="{{ $route }}" class="form" id="form_crud">
     @csrf
     @if(isset($model) && $model->id)
         @method('PUT')
     @endif
+
+    {{-- Builder mode plumbing — read by campaign-template-builder.js on submit. --}}
+    <input type="hidden" name="editor_mode" id="campaign_template_editor_mode" value="{{ $openInBuilder ? 'builder' : 'classic' }}" />
+    <input type="hidden" name="builder_state" id="campaign_template_builder_state" value="" />
 
     {{-- ── Edit mode: shared hero + tab nav ──────────────────────────── --}}
     @if(isset($model) && $model->id)
@@ -104,6 +158,7 @@
                                 <label class="required fw-semibold fs-6 mb-2">Sujet de l'email</label>
                                 <input type="text"
                                        name="subject"
+                                       id="campaign_template_subject"
                                        class="form-control form-control-solid"
                                        placeholder="Ex : Optimisez votre logistique avec TCL France"
                                        value="{{ old('subject', $model->subject ?? '') }}"
@@ -123,6 +178,7 @@
                                 <label class="fw-semibold fs-6 mb-2">Texte de prévisualisation <span class="text-muted fs-7">(optionnel)</span></label>
                                 <input type="text"
                                        name="preview_text"
+                                       id="campaign_template_preview_text"
                                        class="form-control form-control-solid"
                                        placeholder="Aperçu affiché dans la liste des emails..."
                                        value="{{ old('preview_text', $model->preview_text ?? '') }}"
@@ -138,49 +194,343 @@
                 </div>
             </div>
 
-            {{-- HTML content card --}}
-            <div class="card">
+            {{-- Mode toggle --}}
+            <div class="card mb-5">
                 <div class="card-header border-0 pt-5">
                     <h3 class="card-title fw-bolder m-0">
-                        <i class="bi bi-code-slash text-info fs-3 me-2"></i>
-                        Contenu HTML de l'email
+                        <i class="bi bi-magic text-primary fs-3 me-2"></i>
+                        Composition de l'email
                     </h3>
                     <div class="card-toolbar">
-                        <div class="d-flex gap-2 flex-wrap">
-                            <span class="badge badge-light-primary">
-                                <code class="fs-8">@verbatim{{contact.name}}@endverbatim</code> — Prénom contact
-                            </span>
-                            <span class="badge badge-light-primary">
-                                <code class="fs-8">@verbatim{{company.name}}@endverbatim</code> — Société
-                            </span>
-                        </div>
-                        <div class="form-text text-muted mt-2 fs-8">
-                            Les variables de personnalisation sont converties automatiquement par le driver d'envoi.
+                        <div class="form-check form-switch form-check-custom form-check-solid">
+                            <input class="form-check-input" type="checkbox" id="campaign_template_mode_toggle" {{ $openInBuilder ? '' : 'checked' }} />
+                            <label class="form-check-label fw-semibold" for="campaign_template_mode_toggle">Mode avancé (HTML brut)</label>
                         </div>
                     </div>
                 </div>
                 <div class="card-body border-top p-9">
-
-                    {{-- html_content — TinyMCE WYSIWYG (fullpage : HTML email complet <html><head><style>) --}}
-                    <div class="fv-row mb-0">
-                        <label class="required fw-semibold fs-6 mb-2" for="html_content">Contenu HTML</label>
-
-                        <textarea name="html_content"
-                                  class="form-control form-control-solid font-monospace"
-                                  rows="20"
-                                  id="html_content"
-                                  data-tinymce-html-field
-                                  required>{{ old('html_content', $model->html_content ?? '') }}</textarea>
-
-                        <div class="form-text text-muted mt-1">
-                            HTML complet de l'email. Le lien de désabonnement est ajouté automatiquement lors de l'envoi.
-                            Le placeholder historique <code>@verbatim{{unsubscribe_url}}@endverbatim</code> reste accepté pour conserver un placement personnalisé existant.
-                            Bouton <code>&lt;/&gt;</code> de la barre d'outils pour éditer le code source.
-                        </div>
+                    <div class="text-muted fs-7">
+                        Le générateur compose un email prêt à l'envoi à partir de blocs prédéfinis (en-tête, accroche, contenu, bouton d'action, pied de page) — sans bloc de désabonnement,
+                        Zoho Campaigns s'en charge à l'envoi (voir l'aide sous le champ HTML). Activez le « Mode avancé » pour éditer directement le HTML brut (import Zoho, collage manuel).
                     </div>
-
                 </div>
             </div>
+
+            {{-- ══════════════════════════════════════════════════════════
+                 BUILDER — visible iff $openInBuilder
+                 ══════════════════════════════════════════════════════════ --}}
+            <div id="builder_pane" class="{{ $openInBuilder ? '' : 'd-none' }}">
+
+                {{-- Layout card — header / footer variant pickers + middle-block pills --}}
+                <div class="card mb-5">
+                    <div class="card-header border-0 pt-5">
+                        <h3 class="card-title fw-bolder m-0">
+                            <i class="bi bi-layout-text-window-reverse text-info fs-3 me-2"></i>
+                            Mise en page
+                        </h3>
+                    </div>
+                    <div class="card-body border-top p-9">
+
+                        <div class="row g-6">
+                            <div class="col-lg-6">
+                                <label class="fw-semibold fs-6 mb-3">En-tête</label>
+                                <div class="row g-3" id="builder_header_variants">
+                                    @foreach($builderCatalog['headers'] as $header)
+                                        <div class="col-6">
+                                            <div class="builder-variant-card" data-variant-group="header_variant" data-variant-value="{{ $header }}" tabindex="0" role="button">
+                                                <div class="builder-variant-preview-frame">
+                                                    <iframe class="builder-variant-preview-iframe"
+                                                            srcdoc="{{ $builderVariantPreviews['headers'][$header] }}"
+                                                            sandbox="allow-same-origin"
+                                                            tabindex="-1"
+                                                            title="Aperçu en-tête {{ $headerLabels[$header] ?? $header }}"></iframe>
+                                                </div>
+                                                <div class="builder-variant-card-label">{{ $headerLabels[$header] ?? $header }}</div>
+                                            </div>
+                                        </div>
+                                    @endforeach
+                                </div>
+                            </div>
+
+                            <div class="col-lg-6">
+                                <label class="fw-semibold fs-6 mb-3">Pied de page</label>
+                                <div class="row g-3" id="builder_footer_variants">
+                                    @foreach($builderCatalog['footers'] as $footer)
+                                        <div class="col-6">
+                                            <div class="builder-variant-card" data-variant-group="footer_variant" data-variant-value="{{ $footer }}" tabindex="0" role="button">
+                                                <div class="builder-variant-preview-frame">
+                                                    <iframe class="builder-variant-preview-iframe"
+                                                            srcdoc="{{ $builderVariantPreviews['footers'][$footer] }}"
+                                                            sandbox="allow-same-origin"
+                                                            tabindex="-1"
+                                                            data-scroll="bottom"
+                                                            title="Aperçu pied de page {{ $footerLabels[$footer] ?? $footer }}"></iframe>
+                                                </div>
+                                                <div class="builder-variant-card-label">{{ $footerLabels[$footer] ?? $footer }}</div>
+                                            </div>
+                                        </div>
+                                    @endforeach
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-7">
+                            <label class="fw-semibold fs-6 mb-3">Bloc central</label>
+                            <div class="d-flex gap-2 flex-wrap" id="builder_middle_pills">
+                                @foreach($builderCatalog['middles'] as $middle)
+                                    <button type="button" class="btn btn-sm builder-middle-pill" data-middle-value="{{ $middle }}">
+                                        <i class="bi {{ $middleIcons[$middle] ?? 'bi-square' }} me-1"></i>
+                                        {{ $middleLabels[$middle] ?? $middle }}
+                                    </button>
+                                @endforeach
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                {{-- Content card — AI brief + manual slot editing --}}
+                <div class="card mb-5">
+                    <div class="card-header border-0 pt-5">
+                        <h3 class="card-title fw-bolder m-0">
+                            <i class="bi bi-pencil-square text-success fs-3 me-2"></i>
+                            Contenu
+                            @unless(isset($model) && $model->id)
+                                <span class="badge badge-light-warning fs-8 ms-2">Exemple pré-rempli</span>
+                            @endunless
+                        </h3>
+                    </div>
+                    <div class="card-body border-top p-9">
+
+                        {{-- Every field below starts pre-filled with SAMPLE copy (SectionCatalog::defaultState())
+                             so an untouched save still passes server-side validation — it is NOT ready to send
+                             as-is. Shown only on create, where this risk exists. --}}
+                        @unless(isset($model) && $model->id)
+                            <div class="bg-light-warning border-warning border border-dashed rounded p-4 mb-6 d-flex align-items-start gap-3">
+                                <i class="bi bi-info-circle-fill text-warning fs-3 mt-1 flex-shrink-0"></i>
+                                <div>
+                                    <span class="fw-bold text-gray-800">Contenu d'exemple</span><br>
+                                    <span class="text-muted fs-7">
+                                        Les cartes de mise en page et les champs ci-dessous sont pré-remplis avec un contenu d'exemple —
+                                        personnalisez-les (ou utilisez l'IA) avant d'enregistrer un modèle destiné à l'envoi.
+                                    </span>
+                                </div>
+                            </div>
+                        @endunless
+
+                        @unless($builderHasAiKey)
+                            <div class="bg-light-warning border-warning border border-dashed rounded p-4 mb-6 d-flex align-items-start gap-3">
+                                <i class="bi bi-exclamation-triangle-fill text-warning fs-3 mt-1 flex-shrink-0"></i>
+                                <div>
+                                    <span class="fw-bold text-gray-800">Assistant IA non configuré</span><br>
+                                    <span class="text-muted fs-7">
+                                        L'assistant IA n'est pas activé. Vous pouvez composer le contenu manuellement ci-dessous.
+                                    </span>
+                                </div>
+                            </div>
+                        @endunless
+
+                        <div class="fv-row mb-7">
+                            <label class="fw-semibold fs-6 mb-2">Brief de contenu <span class="text-muted fs-7">(pour l'IA)</span></label>
+                            <textarea id="builder_brief_input"
+                                      class="form-control form-control-solid"
+                                      rows="3"
+                                      maxlength="5000"
+                                      placeholder="Ex : Prospection transitaires France → Espagne/Portugal, insister sur la fréquence des départs et le suivi documentaire."></textarea>
+                            <div class="d-flex justify-content-between align-items-center mt-2">
+                                <div class="form-text text-muted">Décrivez le message en quelques phrases (20 caractères minimum) — l'IA rédige le contenu ci-dessous, à ajuster librement ensuite.</div>
+                                <button type="button"
+                                        class="btn btn-sm btn-primary flex-shrink-0 ms-3"
+                                        id="builder_ai_generate_btn"
+                                        data-kt-indicator="off"
+                                        @unless($builderHasAiKey) disabled @endunless>
+                                    <span class="indicator-label">
+                                        <i class="bi bi-magic me-1"></i>
+                                        Générer avec l'IA
+                                    </span>
+                                    <span class="indicator-progress">
+                                        Génération…
+                                        <span class="spinner-border spinner-border-sm align-middle ms-2"></span>
+                                    </span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <hr class="my-7">
+
+                        <div id="builder_slots_root">
+
+                            {{-- hero_title --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Titre principal</label>
+                                <input type="text" id="slot_hero_title" class="form-control form-control-solid"
+                                       maxlength="{{ $builderCatalog['slotSchema']['hero_title']['max'] }}" />
+                            </div>
+
+                            {{-- intro --}}
+                            <div class="fv-row mb-7">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="fw-semibold fs-6 m-0">Paragraphes d'introduction</label>
+                                    <button type="button" class="btn btn-sm btn-light-primary" id="slot_intro_add">
+                                        <i class="bi bi-plus-lg"></i> Ajouter
+                                    </button>
+                                </div>
+                                <div id="slot_intro_list"></div>
+                                <div class="form-text text-muted">
+                                    {{ $builderCatalog['slotSchema']['intro']['min'] }} à {{ $builderCatalog['slotSchema']['intro']['max'] }} paragraphes.
+                                </div>
+                            </div>
+
+                            {{-- bullets --}}
+                            <div class="fv-row mb-7">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="fw-semibold fs-6 m-0">Pourquoi TCL Transport (arguments)</label>
+                                    <button type="button" class="btn btn-sm btn-light-primary" id="slot_bullets_add">
+                                        <i class="bi bi-plus-lg"></i> Ajouter
+                                    </button>
+                                </div>
+                                <div id="slot_bullets_list"></div>
+                                <div class="form-text text-muted">
+                                    {{ $builderCatalog['slotSchema']['bullets']['min'] }} à {{ $builderCatalog['slotSchema']['bullets']['max'] }} arguments courts.
+                                </div>
+                            </div>
+
+                            {{-- middle-specific — only the active one is visible; the other two stay
+                                 disabled so they're excluded from any future FormData collection
+                                 (defense in depth — none of these controls carry a name attribute,
+                                 the server-side BuilderStateValidator is the single validation
+                                 authority for builder_state). --}}
+                            <div id="slot_middle_departures" class="builder-middle-slot fv-row mb-7">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="fw-semibold fs-6 m-0">Départs (origine / fréquence)</label>
+                                    <button type="button" class="btn btn-sm btn-light-primary" id="slot_departures_add">
+                                        <i class="bi bi-plus-lg"></i> Ajouter
+                                    </button>
+                                </div>
+                                <div id="slot_departures_list"></div>
+                            </div>
+
+                            <div id="slot_middle_kpi" class="builder-middle-slot fv-row mb-7 d-none">
+                                <label class="fw-semibold fs-6 mb-2">Indicateurs clés (3)</label>
+                                <div id="slot_kpis_list"></div>
+                            </div>
+
+                            <div id="slot_middle_benefits" class="builder-middle-slot fv-row mb-7 d-none">
+                                <label class="fw-semibold fs-6 mb-2">Avantages (3)</label>
+                                <div id="slot_benefits_list"></div>
+                            </div>
+
+                            {{-- closing_line — optional; falls back to the default sentence when left empty. --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Phrase de clôture <span class="text-muted fs-7">(optionnel)</span></label>
+                                <textarea id="slot_closing_line"
+                                          class="form-control form-control-solid form-control-sm"
+                                          rows="2"
+                                          maxlength="{{ $builderCatalog['slotSchema']['closing_line']['max'] }}"
+                                          placeholder="N'hésitez pas à revenir vers nous pour toute question ou précision."></textarea>
+                                <div class="form-text text-muted mt-1">
+                                    Laissez vide pour conserver la phrase par défaut. La signature (« Cordialement, L'équipe TCL Transport ») reste fixe.
+                                </div>
+                            </div>
+
+                            {{-- CTA --}}
+                            <div class="row g-6">
+                                <div class="col-lg-6">
+                                    <label class="fw-semibold fs-6 mb-2">Intention du bouton d'action</label>
+                                    <select id="slot_cta_intent" class="form-select form-select-solid">
+                                        @foreach($builderCtaIntents as $key => $intent)
+                                            <option value="{{ $key }}">{{ $intent['label'] }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div class="col-lg-6">
+                                    <label class="fw-semibold fs-6 mb-2">Libellé du bouton</label>
+                                    <input type="text" id="slot_cta_label" class="form-control form-control-solid" maxlength="60" />
+                                </div>
+                            </div>
+
+                        </div>
+                        {{-- end #builder_slots_root --}}
+
+                    </div>
+                </div>
+
+                {{-- Live preview card --}}
+                <div class="card">
+                    <div class="card-header border-0 pt-5">
+                        <h3 class="card-title fw-bolder m-0">
+                            <i class="bi bi-eye text-success fs-3 me-2"></i>
+                            Aperçu en direct
+                        </h3>
+                    </div>
+                    <div class="card-body border-top p-0">
+                        <div id="builder_preview_error" class="alert alert-danger d-none m-5" role="alert"></div>
+                        <iframe id="builder_preview_iframe"
+                                class="w-100 border-0"
+                                style="min-height: 640px;"
+                                sandbox=""
+                                title="Aperçu du générateur"></iframe>
+                    </div>
+                </div>
+
+            </div>
+            {{-- end #builder_pane --}}
+
+            {{-- ══════════════════════════════════════════════════════════
+                 CLASSIC — visible iff NOT $openInBuilder
+                 ══════════════════════════════════════════════════════════ --}}
+            <div id="classic_pane" class="{{ $openInBuilder ? 'd-none' : '' }}">
+
+                {{-- HTML content card --}}
+                <div class="card">
+                    <div class="card-header border-0 pt-5">
+                        <h3 class="card-title fw-bolder m-0">
+                            <i class="bi bi-code-slash text-info fs-3 me-2"></i>
+                            Contenu HTML de l'email
+                        </h3>
+                        <div class="card-toolbar">
+                            <div class="d-flex gap-2 flex-wrap">
+                                <span class="badge badge-light-primary">
+                                    <code class="fs-8">@verbatim{{contact.name}}@endverbatim</code> — Prénom contact
+                                </span>
+                                <span class="badge badge-light-primary">
+                                    <code class="fs-8">@verbatim{{company.name}}@endverbatim</code> — Société
+                                </span>
+                            </div>
+                            <div class="form-text text-muted mt-2 fs-8">
+                                Les variables de personnalisation sont converties automatiquement par le driver d'envoi.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body border-top p-9">
+
+                        {{-- html_content — TinyMCE WYSIWYG (fullpage : HTML email complet <html><head><style>).
+                             `required` + `data-tinymce-html-field` render ONLY when the page opens in classic
+                             mode — see the header comment at the top of this file. --}}
+                        <div class="fv-row mb-0">
+                            <label class="required fw-semibold fs-6 mb-2" for="html_content">Contenu HTML</label>
+
+                            <textarea name="html_content"
+                                      class="form-control form-control-solid font-monospace"
+                                      rows="20"
+                                      id="html_content"
+                                      @unless($openInBuilder) data-tinymce-html-field required @endunless
+                                      @if($openInBuilder) disabled @endif>{{ old('html_content', $model->html_content ?? '') }}</textarea>
+
+                            <div class="form-text text-muted mt-1">
+                                HTML complet de l'email. Les modèles composés avec le générateur ne contiennent aucun bloc de désabonnement :
+                                Zoho Campaigns gère automatiquement le lien de désabonnement lors d'un envoi via Zoho. En développement local,
+                                le driver d'envoi local ajoute lui-même un lien de désabonnement de secours, uniquement pour les tests.
+                                Le placeholder historique <code>@verbatim{{unsubscribe_url}}@endverbatim</code> reste accepté ici pour un placement personnalisé en HTML classique (import Zoho, collage manuel).
+                                Bouton <code>&lt;/&gt;</code> de la barre d'outils pour éditer le code source.
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+            </div>
+            {{-- end #classic_pane --}}
 
         </div>
         {{-- end Général --}}
@@ -203,6 +553,74 @@
 
 @endif
 
+{{-- ── Builder state hydration — Js::from() only, never hand-built JSON ──── --}}
+<script>
+    window.__campaignTemplateBuilder = {
+        catalog:         {!! \Illuminate\Support\Js::from($builderCatalog) !!},
+        ctaIntents:      {!! \Illuminate\Support\Js::from($builderCtaIntents) !!},
+        hasAiKey:        {!! \Illuminate\Support\Js::from($builderHasAiKey) !!},
+        defaultState:    {!! \Illuminate\Support\Js::from($builderDefaultState) !!},
+        initialState:    {!! \Illuminate\Support\Js::from($builderInitialState) !!},
+        openInBuilder:   {!! \Illuminate\Support\Js::from($openInBuilder) !!},
+        previewUrl:      {!! \Illuminate\Support\Js::from(route('admin.campaign_templates.builder_preview')) !!},
+        suggestUrl:      {!! \Illuminate\Support\Js::from(route('admin.campaign_templates.builder_suggest')) !!}
+    };
+</script>
+
+<style>
+    .builder-variant-card {
+        cursor: pointer;
+        border: 2px solid #e4e6ef;
+        border-radius: 8px;
+        overflow: hidden;
+        background: #ffffff;
+        transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    .builder-variant-card:hover {
+        border-color: #b5c3ff;
+    }
+    .builder-variant-card.is-active {
+        border-color: #0548a5;
+        box-shadow: 0 0 0 3px rgba(5, 72, 165, .12);
+    }
+    .builder-variant-preview-frame {
+        position: relative;
+        width: 100%;
+        height: 200px;
+        overflow: hidden;
+        background-color: #f5f8fa;
+    }
+    .builder-variant-preview-frame iframe {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 640px;
+        height: 900px;
+        border: 0;
+        transform: scale(0.34);
+        transform-origin: top left;
+        pointer-events: none;
+    }
+    .builder-variant-card-label {
+        padding: 8px 12px;
+        font-weight: 600;
+        font-size: .925rem;
+        color: #3f4254;
+        text-align: center;
+        border-top: 1px solid #e4e6ef;
+    }
+    .builder-middle-pill {
+        border: 1px solid #e4e6ef;
+        background-color: #ffffff;
+        color: #3f4254;
+    }
+    .builder-middle-pill.is-active {
+        background-color: #0548a5;
+        border-color: #0548a5;
+        color: #ffffff;
+    }
+</style>
+
 @push('scripts')
     @php
         $assetVersion = static function (string $asset): string {
@@ -213,6 +631,8 @@
         };
     @endphp
     <script src="{{ asset('assets/plugins/custom/tinymce/tinymce.js') }}?v={{ $assetVersion('assets/plugins/custom/tinymce/tinymce.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/tinymce-html-field.js') }}?v={{ $assetVersion('assets/js/custom/backend/tinymce-html-field.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/campaign-template-builder.js') }}?v={{ $assetVersion('assets/js/custom/backend/campaign-template-builder.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}?v={{ $assetVersion('assets/js/custom/backend/crud-tabs.js') }}"></script>
     <script>
@@ -244,7 +664,6 @@
             });
         });
     </script>
-    <script src="{{ asset('assets/js/custom/backend/tinymce-html-field.js') }}?v={{ $assetVersion('assets/js/custom/backend/tinymce-html-field.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/campaign-template-translations.js') }}?v={{ $assetVersion('assets/js/custom/backend/campaign-template-translations.js') }}"></script>
 @endpush
 

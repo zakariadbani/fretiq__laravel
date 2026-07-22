@@ -28,8 +28,23 @@ class CampaignTemplate extends Model
         'subject',
         'html_content',
         'preview_text',
+        'builder_state',
         'thumbnail_path',
         'zoho_template_id',
+    ];
+
+    /**
+     * The attributes that should be cast.
+     *
+     * builder_state is nullable JSON — {header_variant, hero_variant,
+     * middle_variant, footer_variant, cta:{intent,label}, slots:{...},
+     * preview_text}. NULL for classic (raw HTML) templates. Never re-parsed
+     * out of html_content — see TemplateComposer docblock.
+     *
+     * @var array<string, string>
+     */
+    protected $casts = [
+        'builder_state' => 'array',
     ];
 
     // ── Relationships ──────────────────────────────────────────────────────────
@@ -172,6 +187,7 @@ class CampaignTemplate extends Model
             'subject'      => 'required|string|max:255',
             'html_content' => 'required|string',
             'preview_text' => 'nullable|string|max:255',
+            'builder_state' => 'nullable|array',
             'thumbnail_path' => 'nullable|string|max:255',
         ];
     }
