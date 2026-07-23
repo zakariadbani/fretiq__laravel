@@ -99,6 +99,25 @@ class GeminiTemplateSuggestionServiceTest extends TestCase
         $this->assertNotNull($result);
     }
 
+    public function test_process_response_returns_normalized_suggestion(): void
+    {
+        $this->setApiKey();
+        $payload = $this->validSuggestionPayload();
+        $payload['middle_variant'] = 'process';
+        $payload['cta_intent'] = 'services';
+        $payload['cta_label'] = 'Découvrir nos services';
+        unset($payload['slots']['kpis']);
+        $payload['slots']['process_steps'] = ['Collecte', 'Acheminement', 'Dégroupement MEAD'];
+        $payload['slots']['process_highlight'] = 'Des solutions logistiques sur mesure.';
+        $this->fakeGemini($this->geminiResponseBody(json_encode($payload)));
+
+        $result = $this->service()->suggest('Présenter la chaîne logistique TCL avec un lien vers les services.');
+
+        $this->assertNotNull($result);
+        $this->assertSame('process', $result['middle_variant']);
+        $this->assertSame('services', $result['cta_intent']);
+    }
+
     // ── Guards — every failure returns null ─────────────────────────────────────
 
     public function test_empty_api_key_returns_null_without_calling_http(): void

@@ -124,7 +124,7 @@ Content brief from the user:
 Rules you MUST follow:
 1. Return ONLY strict JSON — no markdown, no code fences, no extra keys:
    {"subject": "...", "preview_text": "...", "middle_variant": "...", "cta_intent": "...", "cta_label": "...", "slots": {"hero_title": "...", "intro": ["...", "..."], "bullets": ["...", "...", "..."], "<middle-specific key>": [...]}}
-2. Only include the ONE middle-specific slots key that matches your chosen middle_variant (departures, kpis, or benefits) — never include more than one.
+2. Only include the middle-specific slots for your chosen middle_variant: departures, kpis, benefits, or both process_steps and process_highlight for process. Never include slots from another variant.
 3. Never write HTML, markdown, or any markup — plain text only in every field.
 4. Never mention unsubscribing, opting out, or any link/URL text — that is handled outside this content entirely.
 5. You may use ONLY these merge tags, verbatim, and only where natural (never invent others, never use {{unsubscribe_url}}): {$allowedTags}. Do NOT include a greeting ("Bonjour ...") — that line is added automatically.

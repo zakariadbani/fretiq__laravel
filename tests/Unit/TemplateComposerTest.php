@@ -53,6 +53,9 @@ class TemplateComposerTest extends TestCase
                 ['title' => 'Visibilité', 'text' => 'Des informations à chaque étape.'],
                 ['title' => 'Souplesse', 'text' => 'Une réponse adaptée à vos délais.'],
             ];
+        } elseif ($middle === 'process') {
+            $slots['process_steps'] = ['Collecte', 'Acheminement', 'Dégroupement MEAD'];
+            $slots['process_highlight'] = 'Des solutions logistiques sur mesure adaptées à chaque besoin.';
         }
 
         $slots = array_replace($slots, $slotOverrides);
@@ -68,26 +71,45 @@ class TemplateComposerTest extends TestCase
         ], $overrides);
     }
 
-    public function test_every_cta_intent_targets_tcl_transport_root(): void
+    public function test_quote_and_chatbot_cta_intents_keep_tcl_transport_root(): void
     {
-        foreach (SectionCatalog::ctaIntents() as $intent) {
-            $this->assertSame('https://tcltransport.com/', $intent['url']);
-        }
+        $intents = SectionCatalog::ctaIntents();
+
+        $this->assertSame('https://tcltransport.com/', $intents['quote']['url']);
+        $this->assertSame('https://tcltransport.com/', $intents['chatbot']['url']);
     }
 
-    public function test_composed_email_ctas_target_tcl_transport_root(): void
+    public function test_services_cta_targets_tcl_transport_services_page(): void
     {
-        foreach (array_keys(SectionCatalog::ctaIntents()) as $intent) {
-            $html = $this->composer()->compose($this->state(
-                'logo_center',
-                'detailed',
-                'departures',
-                [],
-                ['cta' => ['intent' => $intent, 'label' => 'CTA de test']],
-            ));
+        $this->assertSame(
+            'https://tcltransport.com/nos-services/',
+            SectionCatalog::ctaIntents()['services']['url']
+        );
 
-            $this->assertStringContainsString('href="https://tcltransport.com/"', $html);
-        }
+        $html = $this->composer()->compose($this->state(
+            'logo_center',
+            'detailed',
+            'process',
+            [],
+            ['cta' => ['intent' => 'services', 'label' => 'Découvrir nos services']],
+        ));
+
+        $this->assertStringContainsString('href="https://tcltransport.com/nos-services/"', $html);
+    }
+
+    public function test_default_state_uses_source_backed_process_content(): void
+    {
+        $state = SectionCatalog::defaultState();
+
+        $this->assertSame('process', $state['middle_variant']);
+        $this->assertSame('services', $state['cta']['intent']);
+        $this->assertSame(
+            'TCL Transport : Expertise logistique 3PL pour vos besoins en transport',
+            $state['slots']['hero_title']
+        );
+        $this->assertSame(['Collecte', 'Acheminement', 'Dégroupement MEAD'], $state['slots']['process_steps']);
+        $this->assertStringNotContainsString('Barcelone', json_encode($state));
+        $this->assertStringNotContainsString('ratio volume/coût', json_encode($state));
     }
 
     // ── Every header × footer × middle combination ─────────────────────────────
@@ -130,9 +152,14 @@ class TemplateComposerTest extends TestCase
                     } elseif ($middle === 'kpi') {
                         $this->assertStringContainsString('48 h', $html, $context);
                         $this->assertStringContainsString('Enlèvement', $html, $context);
-                    } else {
+                    } elseif ($middle === 'benefits') {
                         $this->assertStringContainsString('Réactivité', $html, $context);
                         $this->assertStringContainsString('border-top:4px solid', $html, $context);
+                    } else {
+                        $this->assertStringContainsString('Collecte', $html, $context);
+                        $this->assertStringContainsString('Acheminement', $html, $context);
+                        $this->assertStringContainsString('Dégroupement MEAD', $html, $context);
+                        $this->assertStringContainsString('solutions logistiques sur mesure', $html, $context);
                     }
 
                     // ── Footer signature ─────────────────────────────────────
@@ -212,6 +239,19 @@ class TemplateComposerTest extends TestCase
 
         $this->assertStringNotContainsString('<script>alert(2)</script>', $html);
         $this->assertStringContainsString('&lt;script&gt;alert(2)&lt;/script&gt;', $html);
+    }
+
+    public function test_script_payload_in_process_highlight_is_html_escaped(): void
+    {
+        $html = $this->composer()->compose($this->state(
+            'logo_center',
+            'detailed',
+            'process',
+            slotOverrides: ['process_highlight' => '<script>alert(3)</script>']
+        ));
+
+        $this->assertStringNotContainsString('<script>alert(3)</script>', $html);
+        $this->assertStringContainsString('&lt;script&gt;alert(3)&lt;/script&gt;', $html);
     }
 
     // ── CTA color follows hero variant ───────────────────────────────────────

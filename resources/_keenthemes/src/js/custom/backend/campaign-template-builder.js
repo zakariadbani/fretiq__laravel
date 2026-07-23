@@ -4,7 +4,7 @@
  * campaign-template-builder.js — CampaignTemplate "builder" (create/edit).
  *
  * Guided composer for prospection email templates: header/footer variant
- * cards, a middle-block picker (departures | kpi | benefits), an AI
+ * cards, a middle-block picker (process | departures | kpi | benefits), an AI
  * ("Générer avec l'IA") content-brief flow, manual slot editing with
  * repeater bounds mirroring the server (App\Services\Campaign\TemplateBuilder\
  * SectionCatalog / BuilderStateValidator — the single validation authority),
@@ -25,7 +25,10 @@
  *     cta: { intent, label },
  *     slots: {
  *       hero_title, intro: [...], bullets: [...],
- *       departures: [{origin,frequency}] | kpis: [{value,label}] | benefits: [{title,text}]
+ *       process_steps: [...] + process_highlight
+ *         | departures: [{origin,frequency}]
+ *         | kpis: [{value,label}]
+ *         | benefits: [{title,text}]
  *     }
  *   }
  *
@@ -178,10 +181,54 @@ var KTCampaignTemplateBuilder = function () {
         }, 400);
     }
 
+    /**
+     * Keep newly selected middle blocks genuinely empty in builder_state while
+     * still rendering their layout immediately. Store/update validation stays
+     * strict; these labels exist only in the disposable live-preview payload.
+     */
+    function stateForLivePreview() {
+        var previewState = JSON.parse(JSON.stringify(state));
+        var slots = previewState.slots || {};
+
+        function placeholder(value, fallback) {
+            return typeof value === 'string' && value.trim() !== '' ? value : fallback;
+        }
+
+        if (previewState.middle_variant === 'process') {
+            slots.process_steps = (slots.process_steps || ['', '', '']).map(function (step) {
+                return placeholder(step, 'Étape à compléter');
+            });
+            slots.process_highlight = placeholder(slots.process_highlight, 'Message clé à compléter');
+        } else if (previewState.middle_variant === 'departures') {
+            slots.departures = (slots.departures || []).map(function (row) {
+                return {
+                    origin: placeholder(row.origin, 'Origine à compléter'),
+                    frequency: placeholder(row.frequency, 'Fréquence à compléter'),
+                };
+            });
+        } else if (previewState.middle_variant === 'kpi') {
+            slots.kpis = (slots.kpis || []).map(function (row) {
+                return {
+                    value: placeholder(row.value, '—'),
+                    label: placeholder(row.label, 'Indicateur à compléter'),
+                };
+            });
+        } else if (previewState.middle_variant === 'benefits') {
+            slots.benefits = (slots.benefits || []).map(function (row) {
+                return {
+                    title: placeholder(row.title, 'Avantage à compléter'),
+                    text: placeholder(row.text, 'Description à compléter'),
+                };
+            });
+        }
+
+        return previewState;
+    }
+
     function sendPreview(seq) {
         if (!previewIframe) return;
 
-        axiosPost(cfg.previewUrl, { builder_state: state })
+        axiosPost(cfg.previewUrl, { builder_state: stateForLivePreview() })
             .then(function (resp) {
                 if (seq !== previewSeq) return; // stale — a newer request has since been scheduled
                 if (resp.data && resp.data.success) {
@@ -282,7 +329,10 @@ var KTCampaignTemplateBuilder = function () {
     // ── Middle-variant pills ────────────────────────────────────────────────
 
     function ensureMiddleSlotDefaults(variant) {
-        if (variant === 'departures' && !Array.isArray(state.slots.departures)) {
+        if (variant === 'process' && !Array.isArray(state.slots.process_steps)) {
+            state.slots.process_steps = ['', '', ''];
+            state.slots.process_highlight = '';
+        } else if (variant === 'departures' && !Array.isArray(state.slots.departures)) {
             state.slots.departures = [
                 { origin: '', frequency: '' },
                 { origin: '', frequency: '' },
@@ -309,7 +359,7 @@ var KTCampaignTemplateBuilder = function () {
     }
 
     function renderMiddleSlots() {
-        ['departures', 'kpi', 'benefits'].forEach(function (variant) {
+        ['process', 'departures', 'kpi', 'benefits'].forEach(function (variant) {
             var el = document.getElementById('slot_middle_' + variant);
             if (!el) return;
 
@@ -323,6 +373,7 @@ var KTCampaignTemplateBuilder = function () {
         renderDepartures();
         renderKpis();
         renderBenefits();
+        renderProcess();
     }
 
     function selectMiddleVariant(variant) {
@@ -638,6 +689,55 @@ var KTCampaignTemplateBuilder = function () {
         });
     }
 
+    // ── process (fixed 3-step string array + highlight) ───────────────────
+
+    function renderProcess() {
+        var list = document.getElementById('slot_process_steps_list');
+        if (!list) return;
+
+        var steps = state.slots.process_steps || [];
+        list.innerHTML = '';
+
+        steps.forEach(function (step, index) {
+            var wrap = document.createElement('div');
+            wrap.className = 'input-group input-group-sm mb-2';
+
+            var prefix = document.createElement('span');
+            prefix.className = 'input-group-text';
+            prefix.textContent = String(index + 1);
+
+            var input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'form-control form-control-solid';
+            input.maxLength = bounds.process_steps.item_max;
+            input.placeholder = 'Étape logistique';
+            input.value = step || '';
+            input.addEventListener('input', function () {
+                state.slots.process_steps[index] = this.value;
+                schedulePreview();
+                serializeState();
+            });
+
+            wrap.appendChild(prefix);
+            wrap.appendChild(input);
+            list.appendChild(wrap);
+        });
+
+        var highlight = document.getElementById('slot_process_highlight');
+        if (highlight) highlight.value = state.slots.process_highlight || '';
+    }
+
+    function bindProcess() {
+        var highlight = document.getElementById('slot_process_highlight');
+        if (!highlight) return;
+
+        highlight.addEventListener('input', function () {
+            state.slots.process_highlight = this.value;
+            schedulePreview();
+            serializeState();
+        });
+    }
+
     // ── closing_line (optional — falls back server-side when blank) ────────
 
     function renderClosingLine() {
@@ -666,6 +766,13 @@ var KTCampaignTemplateBuilder = function () {
         if (ctaIntentSelect) {
             ctaIntentSelect.addEventListener('change', function () {
                 state.cta.intent = this.value;
+
+                var selectedIntent = cfg.ctaIntents && cfg.ctaIntents[this.value];
+                if (selectedIntent && typeof selectedIntent.label === 'string') {
+                    state.cta.label = selectedIntent.label;
+                    if (ctaLabelInput) ctaLabelInput.value = selectedIntent.label;
+                }
+
                 schedulePreview();
                 serializeState();
             });
@@ -742,6 +849,9 @@ var KTCampaignTemplateBuilder = function () {
             state.slots.kpis = (suggestion.slots.kpis || []).slice();
         } else if (suggestion.middle_variant === 'benefits') {
             state.slots.benefits = (suggestion.slots.benefits || []).slice();
+        } else if (suggestion.middle_variant === 'process') {
+            state.slots.process_steps = (suggestion.slots.process_steps || []).slice();
+            state.slots.process_highlight = suggestion.slots.process_highlight || '';
         }
 
         renderMiddlePills();
@@ -986,6 +1096,7 @@ var KTCampaignTemplateBuilder = function () {
             bindHeroTitle();
             bindIntroBullets();
             bindDepartures();
+            bindProcess();
             bindClosingLine();
             bindCta();
             bindPreviewTextMirror();

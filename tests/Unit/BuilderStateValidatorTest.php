@@ -48,6 +48,9 @@ class BuilderStateValidatorTest extends TestCase
                 ['title' => 'Visibilité', 'text' => 'Informations à chaque étape.'],
                 ['title' => 'Souplesse', 'text' => 'Réponse adaptée à vos délais.'],
             ];
+        } elseif ($middle === 'process') {
+            $slots['process_steps'] = ['Collecte', 'Acheminement', 'Dégroupement MEAD'];
+            $slots['process_highlight'] = 'Des solutions logistiques sur mesure adaptées à chaque besoin.';
         }
 
         $slots = array_replace($slots, $slotOverrides);
@@ -80,6 +83,8 @@ class BuilderStateValidatorTest extends TestCase
         $this->assertArrayHasKey('departures', $result['slots']);
         $this->assertArrayNotHasKey('kpis', $result['slots']);
         $this->assertArrayNotHasKey('benefits', $result['slots']);
+        $this->assertArrayNotHasKey('process_steps', $result['slots']);
+        $this->assertArrayNotHasKey('process_highlight', $result['slots']);
     }
 
     public function test_valid_state_for_each_middle_variant_passes(): void
@@ -299,6 +304,24 @@ class BuilderStateValidatorTest extends TestCase
         $this->validator()->validate($this->validState('departures', slotOverrides: ['departures' => $rows]));
     }
 
+    public function test_process_requires_exactly_three_steps(): void
+    {
+        $this->expectException(ValidationException::class);
+
+        $this->validator()->validate($this->validState('process', slotOverrides: [
+            'process_steps' => ['Collecte', 'Acheminement'],
+        ]));
+    }
+
+    public function test_process_highlight_over_200_chars_is_rejected(): void
+    {
+        $this->expectException(ValidationException::class);
+
+        $this->validator()->validate($this->validState('process', slotOverrides: [
+            'process_highlight' => str_repeat('a', 201),
+        ]));
+    }
+
     public function test_cta_label_over_60_chars_is_rejected(): void
     {
         $this->expectException(ValidationException::class);
@@ -349,6 +372,9 @@ class BuilderStateValidatorTest extends TestCase
                 ['value' => 'IATA', 'label' => 'Agent agréé'],
                 ['value' => '100 %', 'label' => 'Suivi documentaire'],
             ];
+        } elseif ($middle === 'process') {
+            $slots['process_steps'] = ['Collecte', 'Acheminement', 'Dégroupement MEAD'];
+            $slots['process_highlight'] = 'Des solutions logistiques sur mesure.';
         }
 
         return [
@@ -368,6 +394,20 @@ class BuilderStateValidatorTest extends TestCase
         $this->assertNotNull($result);
         $this->assertSame('kpi', $result['middle_variant']);
         $this->assertSame('quote', $result['cta_intent']);
+    }
+
+    public function test_valid_process_suggestion_returns_normalized_array(): void
+    {
+        $suggestion = $this->validSuggestion('process');
+        $suggestion['cta_intent'] = 'services';
+        $suggestion['cta_label'] = 'Découvrir nos services';
+
+        $result = $this->validator()->validateSuggestion($suggestion);
+
+        $this->assertNotNull($result);
+        $this->assertSame('process', $result['middle_variant']);
+        $this->assertSame(['Collecte', 'Acheminement', 'Dégroupement MEAD'], $result['slots']['process_steps']);
+        $this->assertSame('services', $result['cta_intent']);
     }
 
     public function test_suggestion_with_unknown_middle_variant_returns_null(): void

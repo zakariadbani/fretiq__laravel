@@ -66,6 +66,33 @@ class CampaignTemplateBuilderTest extends TestCase
         ];
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    private function validProcessBuilderState(): array
+    {
+        return [
+            'header_variant' => 'logo_center',
+            'hero_variant'   => 'white',
+            'middle_variant' => 'process',
+            'footer_variant' => 'detailed',
+            'preview_text'   => 'Découvrez les solutions logistiques TCL Transport.',
+            'cta' => [
+                'intent' => 'services',
+                'label'  => 'Découvrir nos services',
+            ],
+            'slots' => [
+                'hero_title' => 'TCL Transport : Expertise logistique 3PL pour vos besoins en transport',
+                'intro' => [
+                    'TCL apporte des solutions logistiques sur mesure, de la collecte au dégroupement en magasin sous douane.',
+                ],
+                'bullets' => ['Solutions sur mesure', 'Proximité client', 'Services adaptés à chaque besoin'],
+                'process_steps' => ['Collecte', 'Acheminement', 'Dégroupement MEAD'],
+                'process_highlight' => 'Une chaîne logistique accompagnée de bout en bout.',
+            ],
+        ];
+    }
+
     // ── Create page render (Phase 3 frontend smoke check) ──────────────────────
 
     /**
@@ -96,6 +123,10 @@ class CampaignTemplateBuilderTest extends TestCase
         $response->assertSee('data-preview-size="mobile"', false);
         $response->assertSee('data-preview-canvas="desktop"', false);
         $response->assertSee('campaign-template-create-preview-card', false);
+        $response->assertSee('Chaîne logistique');
+        $response->assertSee('Collecte');
+        $response->assertSee('Contenu TCL vérifié');
+        $response->assertSee('https://tcltransport.com/nos-services/', false);
         $this->assertSame(1, substr_count($response->getContent(), 'id="builder_brief_input"'));
         $response->assertDontSee('data-tinymce-html-field required', false);
     }
@@ -168,6 +199,34 @@ class CampaignTemplateBuilderTest extends TestCase
         $this->assertSame('logo_center', $template->builder_state['header_variant']);
         $this->assertSame('departures', $template->builder_state['middle_variant']);
         $this->assertSame('Optimisez vos flux de test', $template->builder_state['slots']['hero_title']);
+    }
+
+    public function test_process_builder_store_round_trips_source_backed_state_and_services_cta(): void
+    {
+        $response = $this->actingAs($this->superadmin)
+            ->post('/admin/campaign_templates', [
+                'name'          => 'Modèle Chaîne Logistique',
+                'subject'       => 'Expertise logistique TCL',
+                'preview_text'  => 'Valeur remplacée depuis builder_state.',
+                'editor_mode'   => 'builder',
+                'builder_state' => json_encode($this->validProcessBuilderState()),
+            ]);
+
+        $response->assertStatus(200);
+
+        $template = CampaignTemplate::where('name', 'Modèle Chaîne Logistique')->firstOrFail();
+
+        $this->assertSame('process', $template->builder_state['middle_variant']);
+        $this->assertSame(['Collecte', 'Acheminement', 'Dégroupement MEAD'], $template->builder_state['slots']['process_steps']);
+        $this->assertStringContainsString('Dégroupement MEAD', $template->html_content);
+        $this->assertStringContainsString('href="https://tcltransport.com/nos-services/"', $template->html_content);
+
+        $editResponse = $this->actingAs($this->superadmin)
+            ->get('/admin/campaign_templates/' . $template->id . '/edit');
+
+        $editResponse->assertStatus(200);
+        $editResponse->assertSee('Chaîne logistique');
+        $editResponse->assertSee('Dégroupement MEAD');
     }
 
     /**

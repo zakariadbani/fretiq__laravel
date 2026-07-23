@@ -52,7 +52,10 @@ class BuilderStateValidator
 
     private const CTA_KEYS = ['intent', 'label'];
 
-    private const SLOTS_KEYS = ['hero_title', 'intro', 'bullets', 'closing_line', 'departures', 'kpis', 'benefits'];
+    private const SLOTS_KEYS = [
+        'hero_title', 'intro', 'bullets', 'closing_line',
+        'departures', 'kpis', 'benefits', 'process_steps', 'process_highlight',
+    ];
 
     private const DEPARTURE_ITEM_KEYS = ['origin', 'frequency'];
 
@@ -87,6 +90,8 @@ class BuilderStateValidator
         'slots.kpis.*.label',
         'slots.benefits.*.title',
         'slots.benefits.*.text',
+        'slots.process_steps.*',
+        'slots.process_highlight',
     ];
 
     /**
@@ -220,6 +225,10 @@ class BuilderStateValidator
             $rules['slots.benefits']         = ['required', 'array', 'size:' . SectionCatalog::BENEFIT_COUNT];
             $rules['slots.benefits.*.title'] = ['required', 'string', 'max:' . SectionCatalog::BENEFIT_TITLE_MAX];
             $rules['slots.benefits.*.text']  = ['required', 'string', 'max:' . SectionCatalog::BENEFIT_TEXT_MAX];
+        } elseif ($middle === 'process') {
+            $rules['slots.process_steps']     = ['required', 'array', 'size:' . SectionCatalog::PROCESS_STEP_COUNT];
+            $rules['slots.process_steps.*']   = ['required', 'string', 'max:' . SectionCatalog::PROCESS_STEP_MAX];
+            $rules['slots.process_highlight'] = ['required', 'string', 'max:' . SectionCatalog::PROCESS_HIGHLIGHT_MAX];
         }
     }
 
@@ -545,6 +554,12 @@ class BuilderStateValidator
                 'title' => trim((string) $row['title']),
                 'text'  => trim((string) $row['text']),
             ], $slots['benefits']));
+        } elseif ($middle === 'process') {
+            $normalized['process_steps'] = array_values(array_map(
+                fn ($step) => trim((string) $step),
+                $slots['process_steps']
+            ));
+            $normalized['process_highlight'] = trim((string) $slots['process_highlight']);
         }
 
         return $normalized;

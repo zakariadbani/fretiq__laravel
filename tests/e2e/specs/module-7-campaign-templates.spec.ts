@@ -457,6 +457,123 @@ test.describe('Campaign Templates module', () => {
 
   // ── 9. Builder mode — create, select variants, fill slots, save ───────────
 
+  test('builder middle-block clicks immediately replace the live preview', async ({ page }) => {
+    const templates = new CampaignTemplatePage(page);
+    const previewBody = page.frameLocator('#builder_preview_iframe').locator('body');
+
+    await templates.gotoCreate();
+    await expect(page.locator('#form_crud input[name="name"]')).toBeVisible({ timeout: 10000 });
+    await expect(previewBody).toContainText('Dégroupement MEAD');
+
+    await templates.selectMiddleVariant('departures');
+    await expect(previewBody).toContainText('Origine à compléter', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('Dégroupement MEAD');
+    await expect(templates.previewErrorEl).toBeHidden();
+
+    const departuresState = await templates.getBuilderStateValue();
+    expect(departuresState.middle_variant).toBe('departures');
+    expect(departuresState.slots.departures).toEqual([
+      { origin: '', frequency: '' },
+      { origin: '', frequency: '' },
+    ]);
+
+    await templates.selectMiddleVariant('kpi');
+    await expect(previewBody).toContainText('Indicateur à compléter', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('Origine à compléter');
+    await expect(templates.previewErrorEl).toBeHidden();
+
+    await templates.selectMiddleVariant('benefits');
+    await expect(previewBody).toContainText('Avantage à compléter', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('Indicateur à compléter');
+    await expect(templates.previewErrorEl).toBeHidden();
+
+    await templates.selectMiddleVariant('process');
+    await expect(previewBody).toContainText('Dégroupement MEAD', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('Avantage à compléter');
+    await expect(templates.previewErrorEl).toBeHidden();
+  });
+
+  test('builder CTA intent updates its label, state, and live preview', async ({ page }) => {
+    const templates = new CampaignTemplatePage(page);
+    const previewBody = page.frameLocator('#builder_preview_iframe').locator('body');
+
+    await templates.gotoCreate();
+    await expect(templates.ctaIntentSelect).toHaveValue('services');
+    await expect(templates.ctaLabelInput).toHaveValue('Découvrir nos services');
+
+    await templates.ctaIntentSelect.selectOption('quote');
+    await expect(templates.ctaLabelInput).toHaveValue('Demander une cotation');
+    await expect(previewBody).toContainText('Demander une cotation', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('Découvrir nos services');
+
+    const quoteState = await templates.getBuilderStateValue();
+    expect(quoteState.cta).toEqual({
+      intent: 'quote',
+      label: 'Demander une cotation',
+    });
+
+    await templates.ctaIntentSelect.selectOption('chatbot');
+    await expect(templates.ctaLabelInput).toHaveValue('Poser une question');
+    await expect(previewBody).toContainText('Poser une question', { timeout: 8000 });
+
+    await templates.ctaIntentSelect.selectOption('services');
+    await expect(templates.ctaLabelInput).toHaveValue('Découvrir nos services');
+    await expect(previewBody).toContainText('Découvrir nos services', { timeout: 8000 });
+    await expect(templates.previewErrorEl).toBeHidden();
+  });
+
+  test('builder process default: source-backed content previews and round-trips', async ({ page }) => {
+    const templates = new CampaignTemplatePage(page);
+    const name = uniqueName('E2E TCL Process');
+    const subject = `E2E process subject ${Date.now()}`;
+    const highlight = `Accompagnement logistique e2e ${Date.now()}`;
+
+    await templates.gotoCreate();
+    await expect(page.locator('#form_crud input[name="name"]')).toBeVisible({ timeout: 10000 });
+
+    await expect(page.locator('[data-middle-value="process"]')).toHaveClass(/is-active/);
+    await expect(templates.heroTitleInput)
+      .toHaveValue('TCL Transport : Expertise logistique 3PL pour vos besoins en transport');
+    await expect(templates.ctaIntentSelect).toHaveValue('services');
+    await expect(templates.ctaLabelInput).toHaveValue('Découvrir nos services');
+
+    await templates.selectMiddleVariant('departures');
+    await templates.selectMiddleVariant('process');
+    await templates.setProcess(['Collecte e2e', 'Acheminement e2e', 'Dégroupement MEAD e2e'], highlight);
+    await templates.waitForPreviewToContain('Dégroupement MEAD e2e');
+
+    const state = await templates.getBuilderStateValue();
+    expect(state.middle_variant).toBe('process');
+    expect(state.slots.process_steps).toEqual(['Collecte e2e', 'Acheminement e2e', 'Dégroupement MEAD e2e']);
+    expect(state.slots.process_highlight).toBe(highlight);
+    expect(state.cta.intent).toBe('services');
+
+    await templates.nameInput.fill(name);
+    await templates.subjectInput.fill(subject);
+    await templates.saveButton.click();
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
+
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.search(name);
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.clickRowAction(0, 'edit');
+    await page.waitForURL((u) => /\/campaign_templates\/\d+\/edit$/.test(u.pathname), { timeout: 15000 });
+
+    await expect(page.locator('[data-middle-value="process"]')).toHaveClass(/is-active/);
+    const savedState = await templates.getBuilderStateValue();
+    expect(savedState.slots.process_steps[2]).toBe('Dégroupement MEAD e2e');
+    expect(savedState.slots.process_highlight).toBe(highlight);
+
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.deleteAllByName(name, {
+      search: (q) => templates.search(q),
+      waitForDataTable,
+      confirmDelete,
+    });
+  });
+
   test('builder create: select variants, fill slots, saved html_content reflects selections', async ({ page }) => {
     const templates = new CampaignTemplatePage(page);
     const name      = uniqueName('E2E Builder Template');

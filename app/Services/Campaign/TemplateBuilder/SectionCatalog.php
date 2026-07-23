@@ -26,7 +26,7 @@ class SectionCatalog
 
     public const HEROES = ['white', 'navy'];
 
-    public const MIDDLES = ['departures', 'kpi', 'benefits'];
+    public const MIDDLES = ['process', 'departures', 'kpi', 'benefits'];
 
     public const FOOTERS = ['detailed', 'compact'];
 
@@ -57,6 +57,12 @@ class SectionCatalog
     public const BENEFIT_TITLE_MAX = 40;
 
     public const BENEFIT_TEXT_MAX = 160;
+
+    public const PROCESS_STEP_COUNT = 3;
+
+    public const PROCESS_STEP_MAX = 60;
+
+    public const PROCESS_HIGHLIGHT_MAX = 200;
 
     public const DEPARTURES_MIN = 2;
 
@@ -117,7 +123,7 @@ class SectionCatalog
     }
 
     /**
-     * Resolve the configured CTA intents to the fixed TCL Transport site root.
+     * Resolve approved CTA intent paths against the fixed TCL Transport root.
      *
      * @return array<string, array{label: string, url: string}>
      */
@@ -128,9 +134,11 @@ class SectionCatalog
         $intents = [];
 
         foreach ((array) config('prospecting.site.cta_intents', []) as $key => $intent) {
+            $path = ltrim((string) ($intent['path'] ?? ''), '/');
+
             $intents[$key] = [
                 'label' => (string) ($intent['label'] ?? $key),
-                'url'   => $base,
+                'url'   => $base . $path,
             ];
         }
 
@@ -152,28 +160,24 @@ class SectionCatalog
             'hero_variant'   => self::heroForHeader($headerVariant),
             'middle_variant' => self::MIDDLES[0],
             'footer_variant' => self::FOOTERS[0],
-            'preview_text'   => 'Découvrez comment TCL Transport optimise vos flux.',
+            'preview_text'   => 'Découvrez les solutions logistiques sur mesure de TCL Transport.',
             'cta' => [
-                'intent' => 'quote',
-                'label'  => 'Demander une cotation',
+                'intent' => 'services',
+                'label'  => 'Découvrir nos services',
             ],
             'slots' => [
-                'hero_title' => 'Optimisez vos flux de transport',
+                'hero_title' => 'TCL Transport : Expertise logistique 3PL pour vos besoins en transport',
                 'intro' => [
-                    "De nombreuses entreprises paient plus cher qu'elles ne le devraient sur leurs flux de transport.",
-                    'TCL Transport accompagne déjà des entreprises comme {{company.name}} en optimisant le ratio volume/coût.',
+                    "TCL Transport apporte des solutions logistiques sur mesure, de la collecte des marchandises jusqu'au dégroupement dans ses propres magasins sous douane (MEAD).",
                 ],
                 'bullets' => [
-                    'délais maîtrisés et fréquence régulière',
-                    "visibilité complète sur chaque étape de l'expédition",
-                    'optimisation du ratio volume/coût',
+                    'proximité avec chaque client',
+                    'solutions logistiques adaptées à chaque besoin',
+                    'transport routier, maritime, aérien et entreposage',
                 ],
                 'closing_line' => self::DEFAULT_CLOSING_LINE,
-                'departures' => [
-                    ['origin' => 'Goussainville (France)', 'frequency' => 'Départs par semaine'],
-                    ['origin' => 'Barcelone (Espagne)', 'frequency' => 'Départs par semaine'],
-                    ['origin' => 'Porto (Portugal)', 'frequency' => 'Départ par semaine'],
-                ],
+                'process_steps' => ['Collecte', 'Acheminement', 'Dégroupement MEAD'],
+                'process_highlight' => 'Une chaîne logistique accompagnée de bout en bout.',
             ],
         ];
     }
@@ -224,6 +228,17 @@ class SectionCatalog
                     'text'  => ['type' => 'string', 'max' => self::BENEFIT_TEXT_MAX],
                 ],
             ],
+            'process_steps' => [
+                'type'       => 'string[]',
+                'applies_to' => 'process',
+                'count'      => self::PROCESS_STEP_COUNT,
+                'item_max'   => self::PROCESS_STEP_MAX,
+            ],
+            'process_highlight' => [
+                'type'       => 'string',
+                'applies_to' => 'process',
+                'max'        => self::PROCESS_HIGHLIGHT_MAX,
+            ],
         ];
     }
 
@@ -253,6 +268,9 @@ class SectionCatalog
         $benefitCount     = self::BENEFIT_COUNT;
         $benefitTitleMax  = self::BENEFIT_TITLE_MAX;
         $benefitTextMax   = self::BENEFIT_TEXT_MAX;
+        $processStepCount = self::PROCESS_STEP_COUNT;
+        $processStepMax   = self::PROCESS_STEP_MAX;
+        $processHighlightMax = self::PROCESS_HIGHLIGHT_MAX;
         $ctaLabelMax      = self::CTA_LABEL_MAX;
 
         return <<<TXT
@@ -267,6 +285,8 @@ Slot bounds:
 - departures (only when middle_variant=departures): array of {$departuresMin} to {$departuresMax} rows, each {"origin": string, "frequency": string}.
 - kpis (only when middle_variant=kpi): array of exactly {$kpiCount} items, each {"value": string max {$kpiValueMax} chars, "label": string max {$kpiLabelMax} chars}.
 - benefits (only when middle_variant=benefits): array of exactly {$benefitCount} items, each {"title": string max {$benefitTitleMax} chars, "text": string max {$benefitTextMax} chars}.
+- process_steps (only when middle_variant=process): array of exactly {$processStepCount} strings, each max {$processStepMax} characters.
+- process_highlight (only when middle_variant=process): string, max {$processHighlightMax} characters.
 - cta_label: max {$ctaLabelMax} characters.
 TXT;
     }

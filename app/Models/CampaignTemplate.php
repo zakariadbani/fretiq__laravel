@@ -38,7 +38,8 @@ class CampaignTemplate extends Model
      *
      * builder_state is nullable JSON — {header_variant, hero_variant,
      * middle_variant, footer_variant, cta:{intent,label}, slots:{...},
-     * preview_text}. NULL for classic (raw HTML) templates. Never re-parsed
+     * preview_text}. middle_variant supports process, departures, kpi, and
+     * benefits. NULL for classic (raw HTML) templates. Never re-parsed
      * out of html_content — see TemplateComposer docblock.
      *
      * @var array<string, string>

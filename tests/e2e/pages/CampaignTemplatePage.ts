@@ -345,8 +345,8 @@ export class CampaignTemplatePage extends DataTablePage {
     await expect(this.footerVariantCard(variant)).toHaveClass(/is-active/);
   }
 
-  /** Click a middle-block pill ('departures' | 'kpi' | 'benefits') and wait for it to become active. */
-  async selectMiddleVariant(variant: 'departures' | 'kpi' | 'benefits') {
+  /** Click a middle-block pill and wait for it to become active. */
+  async selectMiddleVariant(variant: 'process' | 'departures' | 'kpi' | 'benefits') {
     await this.middlePill(variant).click();
     await expect(this.middlePill(variant)).toHaveClass(/is-active/);
   }
@@ -424,6 +424,16 @@ export class CampaignTemplatePage extends DataTablePage {
       await row.locator('input').nth(0).fill(rows[i].title);
       await row.locator('textarea').fill(rows[i].text);
     }
+  }
+
+  /** Set the source-backed 3-step logistics process and its highlight. */
+  async setProcess(steps: [string, string, string], highlight: string) {
+    const inputs = this.page.locator('#slot_process_steps_list input');
+    await expect(inputs).toHaveCount(3);
+    for (let i = 0; i < steps.length; i++) {
+      await inputs.nth(i).fill(steps[i]);
+    }
+    await this.page.locator('#slot_process_highlight').fill(highlight);
   }
 
   /** Set the CTA intent (select) and label (text input). */

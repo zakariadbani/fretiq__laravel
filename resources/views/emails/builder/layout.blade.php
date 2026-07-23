@@ -57,6 +57,8 @@
     .hero-title{font-size:30px !important;line-height:36px !important;}
     .cta-cell{width:100% !important;}
     .cta-link{display:block !important;}
+    .process-step{display:block !important;width:100% !important;box-sizing:border-box;}
+    .process-arrow{display:block !important;width:100% !important;padding:6px 0 !important;transform:rotate(90deg);}
   }
 </style>
 </head>

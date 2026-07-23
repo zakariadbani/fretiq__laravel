@@ -68,11 +68,13 @@
         'compact'  => 'Compact',
     ];
     $middleLabels = [
+        'process'    => 'Chaîne logistique',
         'departures' => 'Départs',
         'kpi'        => 'Indicateurs clés',
         'benefits'   => 'Avantages',
     ];
     $middleIcons = [
+        'process'    => 'bi-diagram-3',
         'departures' => 'bi-signpost-2',
         'kpi'        => 'bi-bar-chart-line',
         'benefits'   => 'bi-award',
@@ -346,23 +348,23 @@
                             <i class="bi bi-pencil-square text-success fs-3 me-2"></i>
                             Contenu
                             @unless(isset($model) && $model->id)
-                                <span class="badge badge-light-warning fs-8 ms-2">Exemple pré-rempli</span>
+                                <span class="badge badge-light-success fs-8 ms-2">Contenu TCL pré-rempli</span>
                             @endunless
                         </h3>
                     </div>
                     <div class="card-body border-top p-9">
 
-                        {{-- Every field below starts pre-filled with SAMPLE copy (SectionCatalog::defaultState())
-                             so an untouched save still passes server-side validation — it is NOT ready to send
-                             as-is. Shown only on create, where this risk exists. --}}
+                        {{-- Create starts from current public TCL institutional copy. Operational
+                             figures stay empty because prices, volumes and frequencies age quickly. --}}
                         @unless(isset($model) && $model->id)
                             <div class="bg-light-warning border-warning border border-dashed rounded p-4 mb-6 d-flex align-items-start gap-3">
                                 <i class="bi bi-info-circle-fill text-warning fs-3 mt-1 flex-shrink-0"></i>
                                 <div>
-                                    <span class="fw-bold text-gray-800">Contenu d'exemple</span><br>
+                                    <span class="fw-bold text-gray-800">Contenu TCL vérifié</span><br>
                                     <span class="text-muted fs-7">
-                                        Les cartes de mise en page et les champs ci-dessous sont pré-remplis avec un contenu d'exemple —
-                                        personnalisez-les (ou utilisez l'IA) avant d'enregistrer un modèle destiné à l'envoi.
+                                        Le point de départ reprend les informations institutionnelles publiées sur
+                                        <a href="https://tcltransport.com/" target="_blank" rel="noopener noreferrer">tcltransport.com</a>.
+                                        Les prix, volumes, fréquences et chiffres datés ne sont pas pré-remplis.
                                     </span>
                                 </div>
                             </div>
@@ -447,11 +449,21 @@
                                 </div>
                             </div>
 
-                            {{-- middle-specific — only the active one is visible; the other two stay
+                            {{-- middle-specific — only the active one is visible; inactive blocks stay
                                  disabled so they're excluded from any future FormData collection
                                  (defense in depth — none of these controls carry a name attribute,
                                  the server-side BuilderStateValidator is the single validation
                                  authority for builder_state). --}}
+                            <div id="slot_middle_process" class="builder-middle-slot fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Chaîne logistique (3 étapes)</label>
+                                <div id="slot_process_steps_list"></div>
+                                <label class="fw-semibold fs-6 mt-4 mb-2" for="slot_process_highlight">Message clé</label>
+                                <textarea id="slot_process_highlight"
+                                          class="form-control form-control-solid form-control-sm"
+                                          rows="2"
+                                          maxlength="{{ $builderCatalog['slotSchema']['process_highlight']['max'] }}"></textarea>
+                            </div>
+
                             <div id="slot_middle_departures" class="builder-middle-slot fv-row mb-7">
                                 <div class="d-flex justify-content-between align-items-center mb-2">
                                     <label class="fw-semibold fs-6 m-0">Départs (origine / fréquence)</label>

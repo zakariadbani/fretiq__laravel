@@ -57,9 +57,8 @@ return [
     |--------------------------------------------------------------------------
     | Public site — campaign template builder CTA targets
     |--------------------------------------------------------------------------
-    | Every call-to-action in a builder-authored email targets the TCL Transport
-    | site root. The intent changes the button label/purpose only, never its URL.
-    | This destination is deliberately fixed rather than environment-configurable.
+    | Builder calls-to-action target approved TCL Transport pages. Each intent
+    | declares a path relative to the fixed public-site root.
     */
     'site' => [
         'base_url' => 'https://tcltransport.com/',
@@ -67,9 +66,15 @@ return [
         'cta_intents' => [
             'quote' => [
                 'label' => 'Demander une cotation',
+                'path'  => '',
             ],
             'chatbot' => [
-                'label' => 'Poser une question (chatbot)',
+                'label' => 'Poser une question',
+                'path'  => '',
+            ],
+            'services' => [
+                'label' => 'Découvrir nos services',
+                'path'  => 'nos-services/',
             ],
         ],
     ],
