@@ -102,24 +102,26 @@
         ])
 
     @else
-        {{-- ── Create mode: simple header --}}
-        <div class="card mb-5">
-            <div class="card-body py-6">
-                <h2 class="fs-3 fw-bold m-0">
-                    <i class="bi bi-envelope text-primary fs-3 me-2"></i>
-                    Ajouter un modèle d'email
-                </h2>
+        {{-- ── Create mode: guided composer shell --}}
+        <header class="campaign-template-create-head mb-5" data-campaign-template-create-shell>
+            <h1 class="fs-2hx fw-bold text-gray-900 mb-2">Créer un modèle d'email</h1>
+            <p class="fs-6 text-muted mb-0">Composez un email réutilisable pour vos campagnes de prospection.</p>
+        </header>
+
+        <nav class="campaign-template-create-steps mb-5" aria-label="Étapes de création">
+            <div class="campaign-template-create-step is-complete">
+                <span class="campaign-template-create-step-number"><i class="bi bi-check-lg"></i></span>
+                <span><strong>1. Informations</strong><small>Nom, sujet, aperçu</small></span>
             </div>
-        </div>
-        <ul class="nav nav-line-tabs nav-line-tabs-2x border-bottom mb-5 fs-5 fw-bold">
-            <li class="nav-item mt-2">
-                <a class="nav-link text-active-primary ms-0 me-10 py-5 active"
-                   data-bs-toggle="tab" href="#template_general">
-                    <i class="bi bi-envelope me-1"></i>
-                    Général
-                </a>
-            </li>
-        </ul>
+            <div class="campaign-template-create-step is-active" aria-current="step">
+                <span class="campaign-template-create-step-number">2</span>
+                <span><strong>2. Composer</strong><small>Mise en page et contenu</small></span>
+            </div>
+            <div class="campaign-template-create-step">
+                <span class="campaign-template-create-step-number">3</span>
+                <span><strong>3. Vérifier</strong><small>Aperçu et enregistrement</small></span>
+            </div>
+        </nav>
     @endif
 
     {{-- ── Tab content ────────────────────────────────────────────────── --}}
@@ -128,8 +130,13 @@
         {{-- ── Général (default active) ──────────────────────────────── --}}
         <div class="tab-pane fade show active" id="template_general" role="tabpanel">
 
+            @unless(isset($model) && $model->id)
+                <div class="campaign-template-create-workspace">
+                    <div class="campaign-template-create-editor-stack">
+            @endunless
+
             {{-- Main info card --}}
-            <div class="card mb-5">
+            <div class="card mb-5 campaign-template-create-card campaign-template-create-info-card">
                 <div class="card-header border-0 pt-5">
                     <h3 class="card-title fw-bolder m-0">
                         <i class="bi bi-envelope text-primary fs-3 me-2"></i>
@@ -195,7 +202,7 @@
             </div>
 
             {{-- Mode toggle --}}
-            <div class="card mb-5">
+            <div class="card mb-5 campaign-template-create-card campaign-template-create-mode-card">
                 <div class="card-header border-0 pt-5">
                     <h3 class="card-title fw-bolder m-0">
                         <i class="bi bi-magic text-primary fs-3 me-2"></i>
@@ -221,8 +228,51 @@
                  ══════════════════════════════════════════════════════════ --}}
             <div id="builder_pane" class="{{ $openInBuilder ? '' : 'd-none' }}">
 
+                @unless(isset($model) && $model->id)
+                    {{-- The AI entry point is a dedicated create-mode card; edit keeps it inside Content below. --}}
+                    <section class="card mb-5 campaign-template-create-card campaign-template-create-start-card" aria-labelledby="campaign-template-start-title">
+                        <div class="card-header border-0 pt-5">
+                            <h3 class="card-title fw-bolder m-0" id="campaign-template-start-title">
+                                <span class="campaign-template-create-card-icon"><i class="bi bi-stars"></i></span>
+                                Point de départ
+                            </h3>
+                        </div>
+                        <div class="card-body border-top p-9">
+                            @unless($builderHasAiKey)
+                                <div class="bg-light-warning border-warning border border-dashed rounded p-4 mb-6 d-flex align-items-start gap-3">
+                                    <i class="bi bi-exclamation-triangle-fill text-warning fs-3 mt-1 flex-shrink-0"></i>
+                                    <div>
+                                        <span class="fw-bold text-gray-800">Assistant IA non configuré</span><br>
+                                        <span class="text-muted fs-7">L'assistant IA n'est pas activé. Vous pouvez composer le contenu manuellement ci-dessous.</span>
+                                    </div>
+                                </div>
+                            @endunless
+
+                            <div class="fv-row mb-0">
+                                <label class="fw-semibold fs-6 mb-2" for="builder_brief_input">Brief de contenu <span class="text-muted fs-7">(pour l'IA)</span></label>
+                                <div class="campaign-template-create-ai-panel">
+                                    <textarea id="builder_brief_input"
+                                              class="form-control form-control-solid"
+                                              rows="3"
+                                              maxlength="5000"
+                                              placeholder="Ex : Prospection transitaires France → Espagne/Portugal, insister sur la fréquence des départs et le suivi documentaire."></textarea>
+                                    <button type="button"
+                                            class="btn btn-sm btn-primary flex-shrink-0"
+                                            id="builder_ai_generate_btn"
+                                            data-kt-indicator="off"
+                                            @unless($builderHasAiKey) disabled @endunless>
+                                        <span class="indicator-label"><i class="bi bi-magic me-1"></i>Générer avec l'IA</span>
+                                        <span class="indicator-progress">Génération… <span class="spinner-border spinner-border-sm align-middle ms-2"></span></span>
+                                    </button>
+                                </div>
+                                <div class="form-text text-muted mt-2">L'IA prépare une première version. Vous gardez le contrôle sur chaque champ.</div>
+                            </div>
+                        </div>
+                    </section>
+                @endunless
+
                 {{-- Layout card — header / footer variant pickers + middle-block pills --}}
-                <div class="card mb-5">
+                <div class="card mb-5 campaign-template-create-card campaign-template-create-layout-card">
                     <div class="card-header border-0 pt-5">
                         <h3 class="card-title fw-bolder m-0">
                             <i class="bi bi-layout-text-window-reverse text-info fs-3 me-2"></i>
@@ -290,7 +340,7 @@
                 </div>
 
                 {{-- Content card — AI brief + manual slot editing --}}
-                <div class="card mb-5">
+                <div class="card mb-5 campaign-template-create-card campaign-template-create-content-card">
                     <div class="card-header border-0 pt-5">
                         <h3 class="card-title fw-bolder m-0">
                             <i class="bi bi-pencil-square text-success fs-3 me-2"></i>
@@ -318,7 +368,7 @@
                             </div>
                         @endunless
 
-                        @unless($builderHasAiKey)
+                        @if(isset($model) && $model->id && ! $builderHasAiKey)
                             <div class="bg-light-warning border-warning border border-dashed rounded p-4 mb-6 d-flex align-items-start gap-3">
                                 <i class="bi bi-exclamation-triangle-fill text-warning fs-3 mt-1 flex-shrink-0"></i>
                                 <div>
@@ -328,8 +378,9 @@
                                     </span>
                                 </div>
                             </div>
-                        @endunless
+                        @endif
 
+                        @if(isset($model) && $model->id)
                         <div class="fv-row mb-7">
                             <label class="fw-semibold fs-6 mb-2">Brief de contenu <span class="text-muted fs-7">(pour l'IA)</span></label>
                             <textarea id="builder_brief_input"
@@ -357,6 +408,7 @@
                         </div>
 
                         <hr class="my-7">
+                        @endif
 
                         <div id="builder_slots_root">
 
@@ -456,22 +508,35 @@
                 </div>
 
                 {{-- Live preview card --}}
-                <div class="card">
+                @if(isset($model) && $model->id)
+                <aside class="card campaign-template-create-card campaign-template-create-preview-card" aria-label="Aperçu en direct">
                     <div class="card-header border-0 pt-5">
                         <h3 class="card-title fw-bolder m-0">
                             <i class="bi bi-eye text-success fs-3 me-2"></i>
                             Aperçu en direct
                         </h3>
+                        @unless(isset($model) && $model->id)
+                            <div class="campaign-template-preview-tools" role="group" aria-label="Largeur de l'aperçu">
+                                <button type="button" class="campaign-template-preview-size is-active" data-preview-size="desktop" aria-pressed="true">
+                                    <i class="bi bi-display me-1"></i><span>Bureau</span>
+                                </button>
+                                <button type="button" class="campaign-template-preview-size" data-preview-size="mobile" aria-pressed="false">
+                                    <i class="bi bi-phone me-1"></i><span>Mobile</span>
+                                </button>
+                            </div>
+                        @endunless
                     </div>
-                    <div class="card-body border-top p-0">
+                    <div class="card-body border-top p-0 @unless(isset($model) && $model->id) campaign-template-preview-canvas @endunless"
+                         @unless(isset($model) && $model->id) data-preview-canvas="desktop" @endunless>
                         <div id="builder_preview_error" class="alert alert-danger d-none m-5" role="alert"></div>
                         <iframe id="builder_preview_iframe"
                                 class="w-100 border-0"
-                                style="min-height: 640px;"
+                                @if(isset($model) && $model->id) style="min-height: 640px;" @endif
                                 sandbox=""
                                 title="Aperçu du générateur"></iframe>
                     </div>
-                </div>
+                </aside>
+                @endif
 
             </div>
             {{-- end #builder_pane --}}
@@ -532,6 +597,38 @@
             </div>
             {{-- end #classic_pane --}}
 
+            @unless(isset($model) && $model->id)
+                    </div>
+                    {{-- end create editor stack --}}
+
+                    <aside class="card campaign-template-create-card campaign-template-create-preview-card" aria-label="Aperçu en direct">
+                        <div class="card-header border-0 pt-5">
+                            <h3 class="card-title fw-bolder m-0">
+                                <i class="bi bi-eye text-success fs-3 me-2"></i>
+                                Aperçu en direct
+                            </h3>
+                            <div class="campaign-template-preview-tools" role="group" aria-label="Largeur de l'aperçu">
+                                <button type="button" class="campaign-template-preview-size is-active" data-preview-size="desktop" aria-pressed="true">
+                                    <i class="bi bi-display me-1"></i><span>Bureau</span>
+                                </button>
+                                <button type="button" class="campaign-template-preview-size" data-preview-size="mobile" aria-pressed="false">
+                                    <i class="bi bi-phone me-1"></i><span>Mobile</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body border-top p-0 campaign-template-preview-canvas" data-preview-canvas="desktop">
+                            <div id="builder_preview_error" class="alert alert-danger d-none m-5" role="alert"></div>
+                            <iframe id="builder_preview_iframe"
+                                    class="w-100 border-0"
+                                    sandbox=""
+                                    title="Aperçu du générateur"></iframe>
+                        </div>
+                    </aside>
+
+                </div>
+                {{-- end create workspace --}}
+            @endunless
+
         </div>
         {{-- end Général --}}
 
@@ -568,6 +665,188 @@
 </script>
 
 <style>
+    /* Create-only shell inspired by the approved prototype. Edit keeps the
+       established CRUD composition because every selector is rooted here. */
+    .campaign-template-create-head h1 {
+        letter-spacing: -.025em;
+    }
+    .campaign-template-create-steps {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        overflow: hidden;
+        background: var(--bs-body-bg, #fff);
+        border: 1px solid var(--bs-gray-300, #e4e6ef);
+        border-radius: .85rem;
+        box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 24px rgba(16, 24, 40, .04);
+    }
+    .campaign-template-create-step {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: .85rem;
+        min-width: 0;
+        padding: 1.1rem 1.4rem;
+    }
+    .campaign-template-create-step:not(:last-child)::after {
+        position: absolute;
+        top: 1rem;
+        right: 0;
+        bottom: 1rem;
+        width: 1px;
+        background: var(--bs-gray-300, #e4e6ef);
+        content: '';
+    }
+    .campaign-template-create-step-number {
+        display: inline-flex;
+        flex: 0 0 2rem;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        color: var(--bs-gray-600, #7e8299);
+        font-weight: 700;
+        background: var(--bs-gray-200, #eff2f5);
+        border-radius: 50%;
+    }
+    .campaign-template-create-step.is-active .campaign-template-create-step-number {
+        color: #fff;
+        background: var(--bs-primary, #009ef7);
+    }
+    .campaign-template-create-step.is-complete .campaign-template-create-step-number {
+        color: var(--bs-success, #50cd89);
+        background: var(--bs-success-light, #e8fff3);
+    }
+    .campaign-template-create-step strong,
+    .campaign-template-create-step small {
+        display: block;
+    }
+    .campaign-template-create-step strong {
+        color: var(--bs-gray-800, #3f4254);
+        font-size: .95rem;
+    }
+    .campaign-template-create-step small {
+        overflow: hidden;
+        margin-top: .15rem;
+        color: var(--bs-gray-600, #7e8299);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .campaign-template-create-workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1.08fr) minmax(360px, .92fr);
+        gap: 1.25rem;
+        align-items: start;
+    }
+    .campaign-template-create-editor-stack {
+        display: grid;
+        grid-column: 1;
+        gap: 1.25rem;
+        min-width: 0;
+    }
+    .campaign-template-create-editor-stack > #builder_pane:not(.d-none),
+    .campaign-template-create-editor-stack > #classic_pane:not(.d-none) {
+        display: grid;
+        gap: 1.25rem;
+    }
+    .campaign-template-create-editor-stack .campaign-template-create-card {
+        grid-column: 1;
+        margin-bottom: 0 !important;
+    }
+    .campaign-template-create-workspace .campaign-template-create-card {
+        border: 1px solid var(--bs-gray-300, #e4e6ef);
+        border-radius: .85rem;
+        box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 24px rgba(16, 24, 40, .04);
+    }
+    .campaign-template-create-workspace .campaign-template-create-card > .card-header {
+        min-height: auto;
+        padding: 1rem 1.25rem !important;
+    }
+    .campaign-template-create-workspace .campaign-template-create-card > .card-body {
+        padding: 1.25rem !important;
+    }
+    .campaign-template-create-workspace .campaign-template-create-preview-card > .card-body {
+        padding: 0 !important;
+    }
+    .campaign-template-create-card-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        margin-right: .65rem;
+        color: var(--bs-primary, #009ef7);
+        background: var(--bs-primary-light, #f1faff);
+        border-radius: .55rem;
+    }
+    .campaign-template-create-ai-panel {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: .85rem;
+        align-items: end;
+        padding: 1rem;
+        background: var(--bs-primary-light, #f1faff);
+        border: 1px solid rgba(0, 158, 247, .18);
+        border-radius: .7rem;
+    }
+    .campaign-template-create-ai-panel textarea {
+        min-height: 76px;
+        background: var(--bs-body-bg, #fff) !important;
+    }
+    .campaign-template-create-workspace .campaign-template-create-preview-card {
+        position: sticky;
+        z-index: 2;
+        top: 6.5rem;
+        grid-column: 2 !important;
+        overflow: hidden;
+    }
+    .campaign-template-preview-tools {
+        display: inline-flex;
+        gap: .2rem;
+        padding: .2rem;
+        background: var(--bs-gray-200, #eff2f5);
+        border-radius: .55rem;
+    }
+    .campaign-template-preview-size {
+        padding: .45rem .7rem;
+        color: var(--bs-gray-600, #7e8299);
+        font-size: .85rem;
+        font-weight: 600;
+        background: transparent;
+        border: 0;
+        border-radius: .4rem;
+    }
+    .campaign-template-preview-size:hover,
+    .campaign-template-preview-size:focus-visible {
+        color: var(--bs-gray-800, #3f4254);
+    }
+    .campaign-template-preview-size:focus-visible {
+        outline: 2px solid var(--bs-primary, #009ef7);
+        outline-offset: 1px;
+    }
+    .campaign-template-preview-size.is-active {
+        color: var(--bs-gray-800, #3f4254);
+        background: var(--bs-body-bg, #fff);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, .08);
+    }
+    .campaign-template-create-workspace .campaign-template-preview-canvas {
+        min-height: 680px;
+        padding: 1.25rem !important;
+        overflow: auto;
+        background: var(--bs-gray-200, #eff2f5);
+    }
+    .campaign-template-create-workspace .campaign-template-preview-canvas iframe {
+        display: block;
+        max-width: 100%;
+        min-height: 640px;
+        margin: 0 auto;
+        background: #fff;
+        box-shadow: 0 6px 24px rgba(28, 43, 73, .12);
+        transition: width .2s ease;
+    }
+    .campaign-template-create-workspace .campaign-template-preview-canvas[data-preview-canvas="mobile"] iframe {
+        width: 390px !important;
+    }
+
     .builder-variant-card {
         cursor: pointer;
         border: 2px solid #e4e6ef;
@@ -618,6 +897,65 @@
         background-color: #0548a5;
         border-color: #0548a5;
         color: #ffffff;
+    }
+
+    @media (max-width: 1199.98px) {
+        .campaign-template-create-workspace {
+            grid-template-columns: minmax(0, 1fr);
+        }
+        .campaign-template-create-workspace .campaign-template-create-preview-card {
+            position: relative;
+            top: auto;
+            grid-column: 1 !important;
+            grid-row: auto;
+        }
+        .campaign-template-create-workspace .campaign-template-preview-canvas {
+            min-height: 560px;
+        }
+        .campaign-template-create-workspace .campaign-template-preview-canvas iframe {
+            min-height: 520px;
+        }
+    }
+
+    @media (max-width: 767.98px) {
+        .campaign-template-create-step {
+            gap: .5rem;
+            padding: .85rem .65rem;
+        }
+        .campaign-template-create-step-number {
+            flex-basis: 1.75rem;
+            width: 1.75rem;
+            height: 1.75rem;
+        }
+        .campaign-template-create-step strong {
+            font-size: .78rem;
+        }
+        .campaign-template-create-step small {
+            display: none;
+        }
+        .campaign-template-create-ai-panel {
+            grid-template-columns: minmax(0, 1fr);
+        }
+        .campaign-template-create-ai-panel .btn {
+            width: 100%;
+        }
+        .campaign-template-preview-tools span {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+        .campaign-template-create-workspace .campaign-template-preview-canvas {
+            min-height: 500px;
+            padding: .75rem !important;
+        }
+        .campaign-template-create-workspace .campaign-template-preview-canvas iframe {
+            min-height: 475px;
+        }
     }
 </style>
 

@@ -46,7 +46,7 @@ var KTCampaignTemplateBuilder = function () {
     var htmlContentTextarea;
     var briefInput, aiGenerateBtn;
     var heroTitleInput, ctaIntentSelect, ctaLabelInput;
-    var previewIframe, previewErrorEl;
+    var previewIframe, previewErrorEl, previewCanvas, createPreviewCard;
 
     // Mutable module state.
     var state = null;
@@ -137,6 +137,27 @@ var KTCampaignTemplateBuilder = function () {
 
         previewErrorEl.innerHTML = html;
         previewErrorEl.classList.remove('d-none');
+    }
+
+    // Create-mode viewport controls only change the local preview canvas. They
+    // do not mutate builder_state or trigger another server-side composition.
+    function setPreviewSize(size) {
+        if (!previewCanvas || (size !== 'desktop' && size !== 'mobile')) return;
+
+        previewCanvas.setAttribute('data-preview-canvas', size);
+        document.querySelectorAll('[data-preview-size]').forEach(function (button) {
+            var active = button.getAttribute('data-preview-size') === size;
+            button.classList.toggle('is-active', active);
+            button.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+    }
+
+    function bindPreviewSizeControls() {
+        document.querySelectorAll('[data-preview-size]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                setPreviewSize(button.getAttribute('data-preview-size'));
+            });
+        });
     }
 
     /**
@@ -782,6 +803,7 @@ var KTCampaignTemplateBuilder = function () {
     function setBuilderVisible(visible) {
         if (builderPane) builderPane.classList.toggle('d-none', !visible);
         if (classicPane) classicPane.classList.toggle('d-none', visible);
+        if (createPreviewCard) createPreviewCard.classList.toggle('d-none', !visible);
     }
 
     /**
@@ -928,6 +950,8 @@ var KTCampaignTemplateBuilder = function () {
 
         previewIframe = document.getElementById('builder_preview_iframe');
         previewErrorEl = document.getElementById('builder_preview_error');
+        previewCanvas = document.querySelector('[data-preview-canvas]');
+        createPreviewCard = document.querySelector('.campaign-template-create-workspace > .campaign-template-create-preview-card');
     }
 
     return {
@@ -966,6 +990,7 @@ var KTCampaignTemplateBuilder = function () {
             bindCta();
             bindPreviewTextMirror();
             bindAiGenerate();
+            bindPreviewSizeControls();
             bindModeToggle();
             bindSubmitSafetyNet();
 

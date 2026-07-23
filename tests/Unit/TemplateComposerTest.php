@@ -68,6 +68,28 @@ class TemplateComposerTest extends TestCase
         ], $overrides);
     }
 
+    public function test_every_cta_intent_targets_tcl_transport_root(): void
+    {
+        foreach (SectionCatalog::ctaIntents() as $intent) {
+            $this->assertSame('https://tcltransport.com/', $intent['url']);
+        }
+    }
+
+    public function test_composed_email_ctas_target_tcl_transport_root(): void
+    {
+        foreach (array_keys(SectionCatalog::ctaIntents()) as $intent) {
+            $html = $this->composer()->compose($this->state(
+                'logo_center',
+                'detailed',
+                'departures',
+                [],
+                ['cta' => ['intent' => $intent, 'label' => 'CTA de test']],
+            ));
+
+            $this->assertStringContainsString('href="https://tcltransport.com/"', $html);
+        }
+    }
+
     // ── Every header × footer × middle combination ─────────────────────────────
 
     public function test_every_header_footer_middle_combination_composes_valid_signature_markup(): void

@@ -26,7 +26,7 @@ class CampaignTemplateController extends BackendController
      * otherwise invariant, so a stale cache would silently keep showing the
      * old variant card previews.
      */
-    private const VARIANT_PREVIEWS_CACHE_VERSION = 1;
+    private const VARIANT_PREVIEWS_CACHE_VERSION = 2;
 
     // beforeSave() is overridden below (builder-mode composition). `parent::`
     // can't reach it because Crudable is a TRAIT flattened into this class,

@@ -8,6 +8,7 @@ use App\Services\Campaign\TemplateBuilder\SectionCatalog;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -83,7 +84,58 @@ class CampaignTemplateBuilderTest extends TestCase
         $response->assertSee('id="classic_pane"', false);
         $response->assertSee('name="editor_mode"', false);
         $response->assertSee('name="builder_state"', false);
+        $response->assertSee('data-campaign-template-create-shell', false);
+        $response->assertSee("Créer un modèle d'email", false);
+        $response->assertSee('Étapes de création');
+        $response->assertSee('1. Informations');
+        $response->assertSee('2. Composer');
+        $response->assertSee('3. Vérifier');
+        $response->assertSee('campaign-template-create-workspace', false);
+        $response->assertSee('Point de départ');
+        $response->assertSee('data-preview-size="desktop"', false);
+        $response->assertSee('data-preview-size="mobile"', false);
+        $response->assertSee('data-preview-canvas="desktop"', false);
+        $response->assertSee('campaign-template-create-preview-card', false);
+        $this->assertSame(1, substr_count($response->getContent(), 'id="builder_brief_input"'));
         $response->assertDontSee('data-tinymce-html-field required', false);
+    }
+
+    public function test_create_page_does_not_reuse_stale_variant_preview_cache(): void
+    {
+        $stalePreview = '<a href="https://tcltransport.com/contact">Ancien CTA</a>';
+
+        Cache::forever('builder.variant_previews.v1', [
+            'headers' => array_fill_keys(SectionCatalog::HEADERS, $stalePreview),
+            'footers' => array_fill_keys(SectionCatalog::FOOTERS, $stalePreview),
+        ]);
+
+        $response = $this->actingAs($this->superadmin)->get('/admin/campaign_templates/create');
+
+        $response->assertStatus(200);
+        $response->assertDontSee('https://tcltransport.com/contact', false);
+        $response->assertSee('https://tcltransport.com/', false);
+    }
+
+    public function test_edit_page_keeps_existing_shell_without_create_only_preview_controls(): void
+    {
+        $template = CampaignTemplate::create([
+            'name'          => 'Modèle à modifier',
+            'subject'       => 'Sujet existant',
+            'preview_text'  => 'Aperçu existant',
+            'html_content'  => '<p>Contenu existant.</p>',
+            'builder_state' => $this->validBuilderState(),
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/campaign_templates/' . $template->id . '/edit');
+
+        $response->assertStatus(200);
+        $response->assertSee('Modifier le modèle');
+        $response->assertSee('id="builder_pane"', false);
+        $this->assertSame(1, substr_count($response->getContent(), 'id="builder_brief_input"'));
+        $response->assertDontSee('data-campaign-template-create-shell', false);
+        $response->assertDontSee('data-preview-size="desktop"', false);
+        $response->assertDontSee('campaign-template-create-steps mb-5', false);
     }
 
     // ── Store — builder mode ────────────────────────────────────────────────────

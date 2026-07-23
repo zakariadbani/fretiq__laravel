@@ -21,7 +21,7 @@
       </tr>
       <tr>
         <td align="center" style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#c7d2e6;line-height:1.6;padding-bottom:16px;">
-          <a href="mailto:sales@tcl.ma" style="color:#c7d2e6;text-decoration:none;">sales@tcl.ma</a>
+          <a href="mailto:sales@tcltransport.com" style="color:#c7d2e6;text-decoration:none;">sales@tcltransport.com</a>
         </td>
       </tr>
       <tr>

@@ -117,25 +117,20 @@ class SectionCatalog
     }
 
     /**
-     * Resolve the configured CTA intents into absolute URLs.
-     *
-     * rtrim()s base_url and ltrim()s each intent path so neither a trailing
-     * slash on base_url nor a leading slash on path can produce "//".
+     * Resolve the configured CTA intents to the fixed TCL Transport site root.
      *
      * @return array<string, array{label: string, url: string}>
      */
     public static function ctaIntents(): array
     {
-        $base = rtrim((string) config('prospecting.site.base_url', 'https://tcltransport.com/'), '/');
+        $base = rtrim((string) config('prospecting.site.base_url'), '/') . '/';
 
         $intents = [];
 
         foreach ((array) config('prospecting.site.cta_intents', []) as $key => $intent) {
-            $path = ltrim((string) ($intent['path'] ?? ''), '/');
-
             $intents[$key] = [
                 'label' => (string) ($intent['label'] ?? $key),
-                'url'   => $path === '' ? $base . '/' : $base . '/' . $path,
+                'url'   => $base,
             ];
         }
 
