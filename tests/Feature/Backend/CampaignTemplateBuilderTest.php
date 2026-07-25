@@ -124,6 +124,11 @@ class CampaignTemplateBuilderTest extends TestCase
         $response->assertSee('data-preview-canvas="desktop"', false);
         $response->assertSee('campaign-template-create-preview-card', false);
         $response->assertSee('Chaîne logistique');
+        $response->assertSee('Étude de cas');
+        $response->assertSee('Liste de contrôle');
+        $response->assertSee('Solutions');
+        $response->assertSee('Offre');
+        $response->assertSee('Utilisez uniquement des chiffres documentés et à jour.');
         $response->assertSee('Collecte');
         $response->assertSee('Contenu TCL vérifié');
         $response->assertSee('https://tcltransport.com/nos-services/', false);
@@ -227,6 +232,35 @@ class CampaignTemplateBuilderTest extends TestCase
         $editResponse->assertStatus(200);
         $editResponse->assertSee('Chaîne logistique');
         $editResponse->assertSee('Dégroupement MEAD');
+    }
+
+    public function test_offer_builder_store_round_trips_and_reopens(): void
+    {
+        $state = $this->validProcessBuilderState();
+        $state['middle_variant'] = 'offer';
+        unset($state['slots']['process_steps'], $state['slots']['process_highlight']);
+        $state['slots']['offer'] = [
+            'title' => 'Offre fret dédiée',
+            'description' => 'Un schéma conçu pour vos contraintes opérationnelles.',
+            'highlight' => 'Étude personnalisée',
+        ];
+
+        $this->actingAs($this->superadmin)->post('/admin/campaign_templates', [
+            'name' => 'Modèle Offre Dédiée',
+            'subject' => 'Votre schéma transport',
+            'preview_text' => 'Aperçu',
+            'editor_mode' => 'builder',
+            'builder_state' => json_encode($state),
+        ])->assertStatus(200);
+
+        $template = CampaignTemplate::where('name', 'Modèle Offre Dédiée')->firstOrFail();
+        $this->assertSame('offer', $template->builder_state['middle_variant']);
+        $this->assertStringContainsString('Étude personnalisée', $template->html_content);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/campaign_templates/' . $template->id . '/edit')
+            ->assertOk()
+            ->assertSee('Offre fret dédiée');
     }
 
     /**

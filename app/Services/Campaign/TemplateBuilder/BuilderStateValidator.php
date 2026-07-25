@@ -55,6 +55,7 @@ class BuilderStateValidator
     private const SLOTS_KEYS = [
         'hero_title', 'intro', 'bullets', 'closing_line',
         'departures', 'kpis', 'benefits', 'process_steps', 'process_highlight',
+        'case_study', 'checklist_title', 'checklist_items', 'solutions', 'offer',
     ];
 
     private const DEPARTURE_ITEM_KEYS = ['origin', 'frequency'];
@@ -62,6 +63,9 @@ class BuilderStateValidator
     private const KPI_ITEM_KEYS = ['value', 'label'];
 
     private const BENEFIT_ITEM_KEYS = ['title', 'text'];
+    private const CASE_STUDY_KEYS = ['title', 'challenge', 'solution', 'result'];
+    private const SOLUTION_ITEM_KEYS = ['title', 'text'];
+    private const OFFER_KEYS = ['title', 'description', 'highlight'];
 
     /**
      * Rejects a leading "<" immediately followed by a letter, "/", or "!" —
@@ -92,6 +96,17 @@ class BuilderStateValidator
         'slots.benefits.*.text',
         'slots.process_steps.*',
         'slots.process_highlight',
+        'slots.case_study.title',
+        'slots.case_study.challenge',
+        'slots.case_study.solution',
+        'slots.case_study.result',
+        'slots.checklist_title',
+        'slots.checklist_items.*',
+        'slots.solutions.*.title',
+        'slots.solutions.*.text',
+        'slots.offer.title',
+        'slots.offer.description',
+        'slots.offer.highlight',
     ];
 
     /**
@@ -229,6 +244,24 @@ class BuilderStateValidator
             $rules['slots.process_steps']     = ['required', 'array', 'size:' . SectionCatalog::PROCESS_STEP_COUNT];
             $rules['slots.process_steps.*']   = ['required', 'string', 'max:' . SectionCatalog::PROCESS_STEP_MAX];
             $rules['slots.process_highlight'] = ['required', 'string', 'max:' . SectionCatalog::PROCESS_HIGHLIGHT_MAX];
+        } elseif ($middle === 'case_study') {
+            $rules['slots.case_study'] = ['required', 'array'];
+            foreach (self::CASE_STUDY_KEYS as $key) {
+                $rules["slots.case_study.{$key}"] = ['required', 'string', 'max:' . ($key === 'title' ? SectionCatalog::MIDDLE_TITLE_MAX : SectionCatalog::CASE_STUDY_TEXT_MAX)];
+            }
+        } elseif ($middle === 'checklist') {
+            $rules['slots.checklist_title'] = ['required', 'string', 'max:' . SectionCatalog::MIDDLE_TITLE_MAX];
+            $rules['slots.checklist_items'] = ['required', 'array', 'min:' . SectionCatalog::CHECKLIST_MIN, 'max:' . SectionCatalog::CHECKLIST_MAX];
+            $rules['slots.checklist_items.*'] = ['required', 'string', 'max:' . SectionCatalog::CHECKLIST_ITEM_MAX];
+        } elseif ($middle === 'solutions') {
+            $rules['slots.solutions'] = ['required', 'array', 'min:' . SectionCatalog::SOLUTIONS_MIN, 'max:' . SectionCatalog::SOLUTIONS_MAX];
+            $rules['slots.solutions.*.title'] = ['required', 'string', 'max:' . SectionCatalog::SOLUTION_TITLE_MAX];
+            $rules['slots.solutions.*.text'] = ['required', 'string', 'max:' . SectionCatalog::SOLUTION_TEXT_MAX];
+        } elseif ($middle === 'offer') {
+            $rules['slots.offer'] = ['required', 'array'];
+            $rules['slots.offer.title'] = ['required', 'string', 'max:' . SectionCatalog::MIDDLE_TITLE_MAX];
+            $rules['slots.offer.description'] = ['required', 'string', 'max:' . SectionCatalog::OFFER_DESCRIPTION_MAX];
+            $rules['slots.offer.highlight'] = ['required', 'string', 'max:' . SectionCatalog::OFFER_HIGHLIGHT_MAX];
         }
     }
 
@@ -318,8 +351,14 @@ class BuilderStateValidator
             'departures' => self::DEPARTURE_ITEM_KEYS,
             'kpis'       => self::KPI_ITEM_KEYS,
             'benefits'   => self::BENEFIT_ITEM_KEYS,
+            'solutions'  => self::SOLUTION_ITEM_KEYS,
         ] as $slotKey => $itemKeys) {
             $this->rejectItemUnknownKeys($validator, $data['slots'][$slotKey] ?? null, $itemKeys, "slots.{$slotKey}");
+        }
+        foreach (['case_study' => self::CASE_STUDY_KEYS, 'offer' => self::OFFER_KEYS] as $slotKey => $keys) {
+            if (isset($data['slots'][$slotKey]) && is_array($data['slots'][$slotKey])) {
+                $this->rejectUnknownKeys($validator, $data['slots'][$slotKey], $keys, "slots.{$slotKey}");
+            }
         }
     }
 
@@ -391,12 +430,18 @@ class BuilderStateValidator
                 'departures' => self::DEPARTURE_ITEM_KEYS,
                 'kpis'       => self::KPI_ITEM_KEYS,
                 'benefits'   => self::BENEFIT_ITEM_KEYS,
+                'solutions'  => self::SOLUTION_ITEM_KEYS,
             ] as $slotKey => $itemKeys) {
                 if (isset($slots[$slotKey]) && is_array($slots[$slotKey])) {
                     $slots[$slotKey] = array_map(
                         fn ($row) => is_array($row) ? array_intersect_key($row, array_flip($itemKeys)) : $row,
                         $slots[$slotKey]
                     );
+                }
+            }
+            foreach (['case_study' => self::CASE_STUDY_KEYS, 'offer' => self::OFFER_KEYS] as $slotKey => $keys) {
+                if (isset($slots[$slotKey]) && is_array($slots[$slotKey])) {
+                    $slots[$slotKey] = array_intersect_key($slots[$slotKey], array_flip($keys));
                 }
             }
 
@@ -560,6 +605,18 @@ class BuilderStateValidator
                 $slots['process_steps']
             ));
             $normalized['process_highlight'] = trim((string) $slots['process_highlight']);
+        } elseif ($middle === 'case_study') {
+            $normalized['case_study'] = array_map(fn ($value) => trim((string) $value), array_intersect_key($slots['case_study'], array_flip(self::CASE_STUDY_KEYS)));
+        } elseif ($middle === 'checklist') {
+            $normalized['checklist_title'] = trim((string) $slots['checklist_title']);
+            $normalized['checklist_items'] = array_values(array_map(fn ($value) => trim((string) $value), $slots['checklist_items']));
+        } elseif ($middle === 'solutions') {
+            $normalized['solutions'] = array_values(array_map(fn ($row) => [
+                'title' => trim((string) $row['title']),
+                'text' => trim((string) $row['text']),
+            ], $slots['solutions']));
+        } elseif ($middle === 'offer') {
+            $normalized['offer'] = array_map(fn ($value) => trim((string) $value), array_intersect_key($slots['offer'], array_flip(self::OFFER_KEYS)));
         }
 
         return $normalized;

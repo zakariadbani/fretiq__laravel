@@ -464,8 +464,10 @@ test.describe('Campaign Templates module', () => {
     await templates.gotoCreate();
     await expect(page.locator('#form_crud input[name="name"]')).toBeVisible({ timeout: 10000 });
     await expect(previewBody).toContainText('Dégroupement MEAD');
+    await templates.expectOnlyMiddleFormActive('process');
 
     await templates.selectMiddleVariant('departures');
+    await templates.expectOnlyMiddleFormActive('departures');
     await expect(previewBody).toContainText('Origine à compléter', { timeout: 8000 });
     await expect(previewBody).not.toContainText('Dégroupement MEAD');
     await expect(templates.previewErrorEl).toBeHidden();
@@ -478,19 +480,85 @@ test.describe('Campaign Templates module', () => {
     ]);
 
     await templates.selectMiddleVariant('kpi');
+    await templates.expectOnlyMiddleFormActive('kpi');
     await expect(previewBody).toContainText('Indicateur à compléter', { timeout: 8000 });
     await expect(previewBody).not.toContainText('Origine à compléter');
     await expect(templates.previewErrorEl).toBeHidden();
 
     await templates.selectMiddleVariant('benefits');
+    await templates.expectOnlyMiddleFormActive('benefits');
     await expect(previewBody).toContainText('Avantage à compléter', { timeout: 8000 });
     await expect(previewBody).not.toContainText('Indicateur à compléter');
     await expect(templates.previewErrorEl).toBeHidden();
 
-    await templates.selectMiddleVariant('process');
-    await expect(previewBody).toContainText('Dégroupement MEAD', { timeout: 8000 });
+    await templates.selectMiddleVariant('case_study');
+    await templates.expectOnlyMiddleFormActive('case_study');
+    await expect(previewBody).toContainText('Étude de cas à compléter', { timeout: 8000 });
     await expect(previewBody).not.toContainText('Avantage à compléter');
     await expect(templates.previewErrorEl).toBeHidden();
+
+    await templates.selectMiddleVariant('checklist');
+    await templates.expectOnlyMiddleFormActive('checklist');
+    await expect(previewBody).toContainText('Liste de contrôle à compléter', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('Étude de cas à compléter');
+    await expect(templates.previewErrorEl).toBeHidden();
+
+    await templates.selectMiddleVariant('solutions');
+    await templates.expectOnlyMiddleFormActive('solutions');
+    await expect(previewBody).toContainText('Solution à compléter', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('Liste de contrôle à compléter');
+    await expect(templates.previewErrorEl).toBeHidden();
+
+    await templates.selectMiddleVariant('offer');
+    await templates.expectOnlyMiddleFormActive('offer');
+    await expect(previewBody).toContainText('Offre à compléter', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('Solution à compléter');
+    await expect(templates.previewErrorEl).toBeHidden();
+
+    await templates.selectMiddleVariant('process');
+    await templates.expectOnlyMiddleFormActive('process');
+    await expect(previewBody).toContainText('Dégroupement MEAD', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('Offre à compléter');
+    await expect(templates.previewErrorEl).toBeHidden();
+  });
+
+  test('builder offer block saves and reopens with its structured fields', async ({ page }) => {
+    const templates = new CampaignTemplatePage(page);
+    const name = uniqueName('E2E Builder Offer');
+    const title = `Offre dédiée ${Date.now()}`;
+
+    await templates.gotoCreate();
+    await templates.nameInput.fill(name);
+    await templates.subjectInput.fill(`E2E offer subject ${Date.now()}`);
+    await templates.selectMiddleVariant('offer');
+    await templates.setOffer({
+      title,
+      description: 'Un schéma transport adapté à vos contraintes.',
+      highlight: 'Étude personnalisée',
+    });
+    await templates.waitForPreviewToContain(title);
+    await templates.saveButton.click();
+    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
+
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.search(name);
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.clickRowAction(0, 'edit');
+    await page.waitForURL((u) => /\/campaign_templates\/\d+\/edit$/.test(u.pathname), { timeout: 15000 });
+
+    await expect(page.locator('[data-middle-value="offer"]')).toHaveClass(/is-active/);
+    const state = await templates.getBuilderStateValue();
+    expect(state.slots.offer.title).toBe(title);
+    expect(state.slots.offer.highlight).toBe('Étude personnalisée');
+
+    await templates.goto();
+    await waitForDataTable(page, 'campaign_template-table');
+    await templates.deleteAllByName(name, {
+      search: (q) => templates.search(q),
+      waitForDataTable,
+      confirmDelete,
+    });
   });
 
   test('builder CTA intent updates its label, state, and live preview', async ({ page }) => {

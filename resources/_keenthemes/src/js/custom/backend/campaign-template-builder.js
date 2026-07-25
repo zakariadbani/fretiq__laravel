@@ -4,7 +4,7 @@
  * campaign-template-builder.js — CampaignTemplate "builder" (create/edit).
  *
  * Guided composer for prospection email templates: header/footer variant
- * cards, a middle-block picker (process | departures | kpi | benefits), an AI
+ * cards, an eight-variant middle-block picker, an AI
  * ("Générer avec l'IA") content-brief flow, manual slot editing with
  * repeater bounds mirroring the server (App\Services\Campaign\TemplateBuilder\
  * SectionCatalog / BuilderStateValidator — the single validation authority),
@@ -29,6 +29,10 @@
  *         | departures: [{origin,frequency}]
  *         | kpis: [{value,label}]
  *         | benefits: [{title,text}]
+ *         | case_study: {title,challenge,solution,result}
+ *         | checklist_title + checklist_items: [...]
+ *         | solutions: [{title,text}]
+ *         | offer: {title,description,highlight}
  *     }
  *   }
  *
@@ -220,6 +224,24 @@ var KTCampaignTemplateBuilder = function () {
                     text: placeholder(row.text, 'Description à compléter'),
                 };
             });
+        } else if (previewState.middle_variant === 'case_study') {
+            slots.case_study = slots.case_study || {};
+            slots.case_study.title = placeholder(slots.case_study.title, 'Étude de cas à compléter');
+            slots.case_study.challenge = placeholder(slots.case_study.challenge, 'Contrainte à compléter');
+            slots.case_study.solution = placeholder(slots.case_study.solution, 'Réponse TCL à compléter');
+            slots.case_study.result = placeholder(slots.case_study.result, 'Résultat à compléter');
+        } else if (previewState.middle_variant === 'checklist') {
+            slots.checklist_title = placeholder(slots.checklist_title, 'Liste de contrôle à compléter');
+            slots.checklist_items = (slots.checklist_items || ['', '', '']).map(function (item) { return placeholder(item, 'Élément à compléter'); });
+        } else if (previewState.middle_variant === 'solutions') {
+            slots.solutions = (slots.solutions || [{}, {}]).map(function (row) {
+                return { title: placeholder(row.title, 'Solution à compléter'), text: placeholder(row.text, 'Description à compléter') };
+            });
+        } else if (previewState.middle_variant === 'offer') {
+            slots.offer = slots.offer || {};
+            slots.offer.title = placeholder(slots.offer.title, 'Offre à compléter');
+            slots.offer.description = placeholder(slots.offer.description, 'Description à compléter');
+            slots.offer.highlight = placeholder(slots.offer.highlight, 'Point clé à compléter');
         }
 
         return previewState;
@@ -349,6 +371,15 @@ var KTCampaignTemplateBuilder = function () {
                 { title: '', text: '' },
                 { title: '', text: '' },
             ];
+        } else if (variant === 'case_study' && !state.slots.case_study) {
+            state.slots.case_study = { title: '', challenge: '', solution: '', result: '' };
+        } else if (variant === 'checklist' && !Array.isArray(state.slots.checklist_items)) {
+            state.slots.checklist_title = '';
+            state.slots.checklist_items = ['', '', ''];
+        } else if (variant === 'solutions' && !Array.isArray(state.slots.solutions)) {
+            state.slots.solutions = [{ title: '', text: '' }, { title: '', text: '' }];
+        } else if (variant === 'offer' && !state.slots.offer) {
+            state.slots.offer = { title: '', description: '', highlight: '' };
         }
     }
 
@@ -359,7 +390,13 @@ var KTCampaignTemplateBuilder = function () {
     }
 
     function renderMiddleSlots() {
-        ['process', 'departures', 'kpi', 'benefits'].forEach(function (variant) {
+        renderDepartures();
+        renderKpis();
+        renderBenefits();
+        renderProcess();
+        renderNewMiddleFields();
+
+        ['process', 'departures', 'kpi', 'benefits', 'case_study', 'checklist', 'solutions', 'offer'].forEach(function (variant) {
             var el = document.getElementById('slot_middle_' + variant);
             if (!el) return;
 
@@ -369,11 +406,6 @@ var KTCampaignTemplateBuilder = function () {
                 control.disabled = !active;
             });
         });
-
-        renderDepartures();
-        renderKpis();
-        renderBenefits();
-        renderProcess();
     }
 
     function selectMiddleVariant(variant) {
@@ -738,6 +770,112 @@ var KTCampaignTemplateBuilder = function () {
         });
     }
 
+    function makeBoundInput(type, value, maxLength, placeholder, onInput) {
+        var input = document.createElement(type === 'textarea' ? 'textarea' : 'input');
+        if (type !== 'textarea') input.type = 'text';
+        if (type === 'textarea') input.rows = 2;
+        input.className = 'form-control form-control-solid form-control-sm';
+        input.maxLength = maxLength;
+        input.placeholder = placeholder;
+        input.value = value || '';
+        input.addEventListener('input', function () {
+            onInput(this.value);
+            schedulePreview();
+            serializeState();
+        });
+        return input;
+    }
+
+    function renderObjectFields(listId, objectKey, fieldLabels) {
+        var list = document.getElementById(listId);
+        if (!list) return;
+        var schema = bounds[objectKey];
+        var values = state.slots[objectKey] || {};
+        list.innerHTML = '';
+        Object.keys(fieldLabels).forEach(function (key) {
+            var wrap = document.createElement('div');
+            wrap.className = 'mb-2';
+            wrap.appendChild(makeBoundInput(key === 'title' || key === 'highlight' ? 'input' : 'textarea', values[key], schema.fields[key].max, fieldLabels[key], function (value) {
+                state.slots[objectKey][key] = value;
+            }));
+            list.appendChild(wrap);
+        });
+    }
+
+    function renderChecklist() {
+        var title = document.getElementById('slot_checklist_title');
+        if (title) title.value = state.slots.checklist_title || '';
+        var list = document.getElementById('slot_checklist_items_list');
+        if (!list) return;
+        var items = state.slots.checklist_items || [];
+        list.innerHTML = '';
+        items.forEach(function (item, index) {
+            var wrap = document.createElement('div');
+            wrap.className = 'd-flex gap-2 mb-2';
+            wrap.appendChild(makeBoundInput('input', item, bounds.checklist_items.item_max, 'Élément', function (value) { state.slots.checklist_items[index] = value; }));
+            var remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'btn btn-sm btn-icon btn-light-danger';
+            remove.innerHTML = '<i class="bi bi-trash"></i>';
+            remove.disabled = items.length <= bounds.checklist_items.min;
+            remove.addEventListener('click', function () {
+                if (state.slots.checklist_items.length <= bounds.checklist_items.min) return;
+                state.slots.checklist_items.splice(index, 1);
+                renderChecklist(); schedulePreview(); serializeState();
+            });
+            wrap.appendChild(remove);
+            list.appendChild(wrap);
+        });
+        var add = document.getElementById('slot_checklist_items_add');
+        if (add) add.disabled = items.length >= bounds.checklist_items.max;
+    }
+
+    function renderSolutions() {
+        var list = document.getElementById('slot_solutions_list');
+        if (!list) return;
+        var rows = state.slots.solutions || [];
+        list.innerHTML = '';
+        rows.forEach(function (row, index) {
+            var wrap = document.createElement('div');
+            wrap.className = 'row g-2 mb-2';
+            var titleCol = document.createElement('div'); titleCol.className = 'col-4';
+            var textCol = document.createElement('div'); textCol.className = 'col-7';
+            var actionCol = document.createElement('div'); actionCol.className = 'col-1';
+            titleCol.appendChild(makeBoundInput('input', row.title, bounds.solutions.fields.title.max, 'Titre', function (value) { state.slots.solutions[index].title = value; }));
+            textCol.appendChild(makeBoundInput('textarea', row.text, bounds.solutions.fields.text.max, 'Description', function (value) { state.slots.solutions[index].text = value; }));
+            var remove = document.createElement('button');
+            remove.type = 'button'; remove.className = 'btn btn-sm btn-icon btn-light-danger'; remove.innerHTML = '<i class="bi bi-trash"></i>';
+            remove.disabled = rows.length <= bounds.solutions.min;
+            remove.addEventListener('click', function () { if (state.slots.solutions.length <= bounds.solutions.min) return; state.slots.solutions.splice(index, 1); renderSolutions(); schedulePreview(); serializeState(); });
+            actionCol.appendChild(remove);
+            wrap.appendChild(titleCol); wrap.appendChild(textCol); wrap.appendChild(actionCol); list.appendChild(wrap);
+        });
+        var add = document.getElementById('slot_solutions_add');
+        if (add) add.disabled = rows.length >= bounds.solutions.max;
+    }
+
+    function renderNewMiddleFields() {
+        renderObjectFields('slot_case_study_fields', 'case_study', { title: 'Titre', challenge: 'Contrainte', solution: 'Réponse TCL', result: 'Résultat' });
+        renderChecklist();
+        renderSolutions();
+        renderObjectFields('slot_offer_fields', 'offer', { title: 'Titre', description: 'Description', highlight: 'Mise en avant' });
+    }
+
+    function bindNewMiddleFields() {
+        var checklistTitle = document.getElementById('slot_checklist_title');
+        if (checklistTitle) checklistTitle.addEventListener('input', function () { state.slots.checklist_title = this.value; schedulePreview(); serializeState(); });
+        var checklistAdd = document.getElementById('slot_checklist_items_add');
+        if (checklistAdd) checklistAdd.addEventListener('click', function () {
+            if (state.slots.checklist_items.length >= bounds.checklist_items.max) return;
+            state.slots.checklist_items.push(''); renderChecklist(); schedulePreview(); serializeState();
+        });
+        var solutionsAdd = document.getElementById('slot_solutions_add');
+        if (solutionsAdd) solutionsAdd.addEventListener('click', function () {
+            if (state.slots.solutions.length >= bounds.solutions.max) return;
+            state.slots.solutions.push({ title: '', text: '' }); renderSolutions(); schedulePreview(); serializeState();
+        });
+    }
+
     // ── closing_line (optional — falls back server-side when blank) ────────
 
     function renderClosingLine() {
@@ -852,6 +990,15 @@ var KTCampaignTemplateBuilder = function () {
         } else if (suggestion.middle_variant === 'process') {
             state.slots.process_steps = (suggestion.slots.process_steps || []).slice();
             state.slots.process_highlight = suggestion.slots.process_highlight || '';
+        } else if (suggestion.middle_variant === 'case_study') {
+            state.slots.case_study = deepClone(suggestion.slots.case_study || {});
+        } else if (suggestion.middle_variant === 'checklist') {
+            state.slots.checklist_title = suggestion.slots.checklist_title || '';
+            state.slots.checklist_items = (suggestion.slots.checklist_items || []).slice();
+        } else if (suggestion.middle_variant === 'solutions') {
+            state.slots.solutions = deepClone(suggestion.slots.solutions || []);
+        } else if (suggestion.middle_variant === 'offer') {
+            state.slots.offer = deepClone(suggestion.slots.offer || {});
         }
 
         renderMiddlePills();
@@ -1097,6 +1244,7 @@ var KTCampaignTemplateBuilder = function () {
             bindIntroBullets();
             bindDepartures();
             bindProcess();
+            bindNewMiddleFields();
             bindClosingLine();
             bindCta();
             bindPreviewTextMirror();

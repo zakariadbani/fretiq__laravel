@@ -56,6 +56,15 @@ class TemplateComposerTest extends TestCase
         } elseif ($middle === 'process') {
             $slots['process_steps'] = ['Collecte', 'Acheminement', 'Dégroupement MEAD'];
             $slots['process_highlight'] = 'Des solutions logistiques sur mesure adaptées à chaque besoin.';
+        } elseif ($middle === 'case_study') {
+            $slots['case_study'] = ['title' => 'Cas client', 'challenge' => 'Flux irrégulier', 'solution' => 'Pilotage TCL', 'result' => 'Délais stabilisés'];
+        } elseif ($middle === 'checklist') {
+            $slots['checklist_title'] = 'Checklist départ';
+            $slots['checklist_items'] = ['Documents validés', 'Marchandise prête', 'Contact confirmé'];
+        } elseif ($middle === 'solutions') {
+            $slots['solutions'] = [['title' => 'Route', 'text' => 'Départs réguliers'], ['title' => 'Aérien', 'text' => 'Gestion des urgences']];
+        } elseif ($middle === 'offer') {
+            $slots['offer'] = ['title' => 'Offre dédiée', 'description' => 'Une étude adaptée à vos flux.', 'highlight' => 'Étude personnalisée'];
         }
 
         $slots = array_replace($slots, $slotOverrides);
@@ -155,11 +164,24 @@ class TemplateComposerTest extends TestCase
                     } elseif ($middle === 'benefits') {
                         $this->assertStringContainsString('Réactivité', $html, $context);
                         $this->assertStringContainsString('border-top:4px solid', $html, $context);
-                    } else {
+                    } elseif ($middle === 'process') {
                         $this->assertStringContainsString('Collecte', $html, $context);
                         $this->assertStringContainsString('Acheminement', $html, $context);
                         $this->assertStringContainsString('Dégroupement MEAD', $html, $context);
                         $this->assertStringContainsString('solutions logistiques sur mesure', $html, $context);
+                    } elseif ($middle === 'case_study') {
+                        $this->assertStringContainsString('Contrainte', $html, $context);
+                        $this->assertStringContainsString('Réponse TCL', $html, $context);
+                        $this->assertStringContainsString('Résultat', $html, $context);
+                    } elseif ($middle === 'checklist') {
+                        $this->assertStringContainsString('Checklist départ', $html, $context);
+                        $this->assertStringContainsString('Documents validés', $html, $context);
+                    } elseif ($middle === 'solutions') {
+                        $this->assertStringContainsString('Route', $html, $context);
+                        $this->assertStringContainsString('Gestion des urgences', $html, $context);
+                    } else {
+                        $this->assertStringContainsString('Offre dédiée', $html, $context);
+                        $this->assertStringContainsString('Étude personnalisée', $html, $context);
                     }
 
                     // ── Footer signature ─────────────────────────────────────
@@ -194,6 +216,16 @@ class TemplateComposerTest extends TestCase
                 }
             }
         }
+    }
+
+    public function test_new_middle_copy_is_html_escaped(): void
+    {
+        $html = $this->composer()->compose($this->state('logo_center', 'compact', 'offer', [
+            'offer' => ['title' => '<script>alert(1)</script>', 'description' => 'Texte', 'highlight' => 'Important'],
+        ]));
+
+        $this->assertStringNotContainsString('<script>alert(1)</script>', $html);
+        $this->assertStringContainsString('&lt;script&gt;alert(1)&lt;/script&gt;', $html);
     }
 
     // ── Note wording sanity (no accidental "Se désabonner" wording variant) ────

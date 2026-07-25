@@ -26,7 +26,7 @@ class SectionCatalog
 
     public const HEROES = ['white', 'navy'];
 
-    public const MIDDLES = ['process', 'departures', 'kpi', 'benefits'];
+    public const MIDDLES = ['process', 'departures', 'kpi', 'benefits', 'case_study', 'checklist', 'solutions', 'offer'];
 
     public const FOOTERS = ['detailed', 'compact'];
 
@@ -69,6 +69,18 @@ class SectionCatalog
     public const DEPARTURES_MAX = 5;
 
     public const DEPARTURE_FIELD_MAX = 120;
+
+    public const MIDDLE_TITLE_MAX = 80;
+    public const CASE_STUDY_TEXT_MAX = 240;
+    public const CHECKLIST_MIN = 3;
+    public const CHECKLIST_MAX = 5;
+    public const CHECKLIST_ITEM_MAX = 160;
+    public const SOLUTIONS_MIN = 2;
+    public const SOLUTIONS_MAX = 4;
+    public const SOLUTION_TITLE_MAX = 40;
+    public const SOLUTION_TEXT_MAX = 160;
+    public const OFFER_DESCRIPTION_MAX = 240;
+    public const OFFER_HIGHLIGHT_MAX = 100;
 
     public const CTA_LABEL_MAX = 60;
 
@@ -239,6 +251,32 @@ class SectionCatalog
                 'applies_to' => 'process',
                 'max'        => self::PROCESS_HIGHLIGHT_MAX,
             ],
+            'case_study' => [
+                'type' => 'object', 'applies_to' => 'case_study',
+                'fields' => [
+                    'title' => ['type' => 'string', 'max' => self::MIDDLE_TITLE_MAX],
+                    'challenge' => ['type' => 'string', 'max' => self::CASE_STUDY_TEXT_MAX],
+                    'solution' => ['type' => 'string', 'max' => self::CASE_STUDY_TEXT_MAX],
+                    'result' => ['type' => 'string', 'max' => self::CASE_STUDY_TEXT_MAX],
+                ],
+            ],
+            'checklist_title' => ['type' => 'string', 'applies_to' => 'checklist', 'max' => self::MIDDLE_TITLE_MAX],
+            'checklist_items' => ['type' => 'string[]', 'applies_to' => 'checklist', 'min' => self::CHECKLIST_MIN, 'max' => self::CHECKLIST_MAX, 'item_max' => self::CHECKLIST_ITEM_MAX],
+            'solutions' => [
+                'type' => 'object[]', 'applies_to' => 'solutions', 'min' => self::SOLUTIONS_MIN, 'max' => self::SOLUTIONS_MAX,
+                'fields' => [
+                    'title' => ['type' => 'string', 'max' => self::SOLUTION_TITLE_MAX],
+                    'text' => ['type' => 'string', 'max' => self::SOLUTION_TEXT_MAX],
+                ],
+            ],
+            'offer' => [
+                'type' => 'object', 'applies_to' => 'offer',
+                'fields' => [
+                    'title' => ['type' => 'string', 'max' => self::MIDDLE_TITLE_MAX],
+                    'description' => ['type' => 'string', 'max' => self::OFFER_DESCRIPTION_MAX],
+                    'highlight' => ['type' => 'string', 'max' => self::OFFER_HIGHLIGHT_MAX],
+                ],
+            ],
         ];
     }
 
@@ -271,6 +309,17 @@ class SectionCatalog
         $processStepCount = self::PROCESS_STEP_COUNT;
         $processStepMax   = self::PROCESS_STEP_MAX;
         $processHighlightMax = self::PROCESS_HIGHLIGHT_MAX;
+        $middleTitleMax = self::MIDDLE_TITLE_MAX;
+        $caseStudyTextMax = self::CASE_STUDY_TEXT_MAX;
+        $checklistMin = self::CHECKLIST_MIN;
+        $checklistMax = self::CHECKLIST_MAX;
+        $checklistItemMax = self::CHECKLIST_ITEM_MAX;
+        $solutionsMin = self::SOLUTIONS_MIN;
+        $solutionsMax = self::SOLUTIONS_MAX;
+        $solutionTitleMax = self::SOLUTION_TITLE_MAX;
+        $solutionTextMax = self::SOLUTION_TEXT_MAX;
+        $offerDescriptionMax = self::OFFER_DESCRIPTION_MAX;
+        $offerHighlightMax = self::OFFER_HIGHLIGHT_MAX;
         $ctaLabelMax      = self::CTA_LABEL_MAX;
 
         return <<<TXT
@@ -287,6 +336,10 @@ Slot bounds:
 - benefits (only when middle_variant=benefits): array of exactly {$benefitCount} items, each {"title": string max {$benefitTitleMax} chars, "text": string max {$benefitTextMax} chars}.
 - process_steps (only when middle_variant=process): array of exactly {$processStepCount} strings, each max {$processStepMax} characters.
 - process_highlight (only when middle_variant=process): string, max {$processHighlightMax} characters.
+- case_study (only when middle_variant=case_study): {"title": string max {$middleTitleMax} chars, "challenge": string max {$caseStudyTextMax} chars, "solution": string max {$caseStudyTextMax} chars, "result": string max {$caseStudyTextMax} chars}.
+- checklist_title + checklist_items (only when middle_variant=checklist): title max {$middleTitleMax} chars and array of {$checklistMin} to {$checklistMax} strings, each max {$checklistItemMax} chars.
+- solutions (only when middle_variant=solutions): array of {$solutionsMin} to {$solutionsMax} items, each {"title": string max {$solutionTitleMax} chars, "text": string max {$solutionTextMax} chars}.
+- offer (only when middle_variant=offer): {"title": string max {$middleTitleMax} chars, "description": string max {$offerDescriptionMax} chars, "highlight": string max {$offerHighlightMax} chars}.
 - cta_label: max {$ctaLabelMax} characters.
 TXT;
     }

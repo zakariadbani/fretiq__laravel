@@ -72,12 +72,20 @@
         'departures' => 'Départs',
         'kpi'        => 'Indicateurs clés',
         'benefits'   => 'Avantages',
+        'case_study' => 'Étude de cas',
+        'checklist'  => 'Liste de contrôle',
+        'solutions'  => 'Solutions',
+        'offer'      => 'Offre',
     ];
     $middleIcons = [
         'process'    => 'bi-diagram-3',
         'departures' => 'bi-signpost-2',
         'kpi'        => 'bi-bar-chart-line',
         'benefits'   => 'bi-award',
+        'case_study' => 'bi-briefcase',
+        'checklist'  => 'bi-check2-square',
+        'solutions'  => 'bi-grid',
+        'offer'      => 'bi-stars',
     ];
 
     $builderInitialState = ($openInBuilder && isset($model->id) && filled($model->builder_state ?? null))
@@ -476,12 +484,36 @@
 
                             <div id="slot_middle_kpi" class="builder-middle-slot fv-row mb-7 d-none">
                                 <label class="fw-semibold fs-6 mb-2">Indicateurs clés (3)</label>
+                                <div class="form-text text-warning mb-2">Utilisez uniquement des chiffres documentés et à jour.</div>
                                 <div id="slot_kpis_list"></div>
                             </div>
 
                             <div id="slot_middle_benefits" class="builder-middle-slot fv-row mb-7 d-none">
                                 <label class="fw-semibold fs-6 mb-2">Avantages (3)</label>
                                 <div id="slot_benefits_list"></div>
+                            </div>
+
+                            <div id="slot_middle_case_study" class="builder-middle-slot fv-row mb-7 d-none">
+                                <label class="fw-semibold fs-6 mb-2">Étude de cas</label>
+                                <div id="slot_case_study_fields"></div>
+                            </div>
+
+                            <div id="slot_middle_checklist" class="builder-middle-slot fv-row mb-7 d-none">
+                                <label class="fw-semibold fs-6 mb-2">Liste de contrôle</label>
+                                <input id="slot_checklist_title" type="text" class="form-control form-control-solid form-control-sm mb-2" maxlength="{{ $builderCatalog['slotSchema']['checklist_title']['max'] }}" placeholder="Titre de la liste">
+                                <div id="slot_checklist_items_list"></div>
+                                <button type="button" class="btn btn-sm btn-light-primary" id="slot_checklist_items_add"><i class="bi bi-plus-lg"></i> Ajouter</button>
+                            </div>
+
+                            <div id="slot_middle_solutions" class="builder-middle-slot fv-row mb-7 d-none">
+                                <label class="fw-semibold fs-6 mb-2">Solutions</label>
+                                <div id="slot_solutions_list"></div>
+                                <button type="button" class="btn btn-sm btn-light-primary" id="slot_solutions_add"><i class="bi bi-plus-lg"></i> Ajouter</button>
+                            </div>
+
+                            <div id="slot_middle_offer" class="builder-middle-slot fv-row mb-7 d-none">
+                                <label class="fw-semibold fs-6 mb-2">Offre</label>
+                                <div id="slot_offer_fields"></div>
                             </div>
 
                             {{-- closing_line — optional; falls back to the default sentence when left empty. --}}

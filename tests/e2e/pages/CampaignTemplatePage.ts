@@ -346,9 +346,29 @@ export class CampaignTemplatePage extends DataTablePage {
   }
 
   /** Click a middle-block pill and wait for it to become active. */
-  async selectMiddleVariant(variant: 'process' | 'departures' | 'kpi' | 'benefits') {
+  async selectMiddleVariant(variant: 'process' | 'departures' | 'kpi' | 'benefits' | 'case_study' | 'checklist' | 'solutions' | 'offer') {
     await this.middlePill(variant).click();
     await expect(this.middlePill(variant)).toHaveClass(/is-active/);
+  }
+
+  async expectOnlyMiddleFormActive(activeVariant: 'process' | 'departures' | 'kpi' | 'benefits' | 'case_study' | 'checklist' | 'solutions' | 'offer') {
+    const variants = ['process', 'departures', 'kpi', 'benefits', 'case_study', 'checklist', 'solutions', 'offer'] as const;
+
+    for (const variant of variants) {
+      const section = this.page.locator(`#slot_middle_${variant}`);
+      const editableControls = section.locator('input, textarea, select');
+      const allControls = section.locator('input, textarea, select, button');
+
+      if (variant === activeVariant) {
+        await expect(section).toBeVisible();
+        await expect(editableControls.first()).toBeEnabled();
+      } else {
+        await expect(section).toBeHidden();
+        for (let index = 0; index < await allControls.count(); index++) {
+          await expect(allControls.nth(index)).toBeDisabled();
+        }
+      }
+    }
   }
 
   /** Fill the hero_title slot input. */
@@ -434,6 +454,14 @@ export class CampaignTemplatePage extends DataTablePage {
       await inputs.nth(i).fill(steps[i]);
     }
     await this.page.locator('#slot_process_highlight').fill(highlight);
+  }
+
+  async setOffer(data: { title: string; description: string; highlight: string }) {
+    const fields = this.page.locator('#slot_offer_fields input, #slot_offer_fields textarea');
+    await expect(fields).toHaveCount(3);
+    await fields.nth(0).fill(data.title);
+    await fields.nth(1).fill(data.description);
+    await fields.nth(2).fill(data.highlight);
   }
 
   /** Set the CTA intent (select) and label (text input). */

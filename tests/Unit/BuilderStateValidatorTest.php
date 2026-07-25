@@ -51,6 +51,27 @@ class BuilderStateValidatorTest extends TestCase
         } elseif ($middle === 'process') {
             $slots['process_steps'] = ['Collecte', 'Acheminement', 'Dégroupement MEAD'];
             $slots['process_highlight'] = 'Des solutions logistiques sur mesure adaptées à chaque besoin.';
+        } elseif ($middle === 'case_study') {
+            $slots['case_study'] = [
+                'title' => 'Un flux urgent sécurisé',
+                'challenge' => 'Réduire les ruptures sur un axe critique.',
+                'solution' => 'Une réponse TCL coordonnée de bout en bout.',
+                'result' => 'Des livraisons stabilisées.',
+            ];
+        } elseif ($middle === 'checklist') {
+            $slots['checklist_title'] = 'Votre départ est-il prêt ?';
+            $slots['checklist_items'] = ['Documents validés', 'Marchandise prête', 'Contact confirmé'];
+        } elseif ($middle === 'solutions') {
+            $slots['solutions'] = [
+                ['title' => 'Route', 'text' => 'Des départs adaptés à vos délais.'],
+                ['title' => 'Aérien', 'text' => 'Une réponse pour vos urgences.'],
+            ];
+        } elseif ($middle === 'offer') {
+            $slots['offer'] = [
+                'title' => 'Une solution dédiée',
+                'description' => 'Construisons un schéma transport adapté à votre besoin.',
+                'highlight' => 'Étude personnalisée',
+            ];
         }
 
         $slots = array_replace($slots, $slotOverrides);
@@ -93,6 +114,93 @@ class BuilderStateValidatorTest extends TestCase
             $result = $this->validator()->validate($this->validState($middle));
 
             $this->assertSame($middle, $result['middle_variant'], "middle={$middle}");
+        }
+    }
+
+    public function test_new_middle_variants_are_registered_and_normalized(): void
+    {
+        $this->assertSame(
+            ['process', 'departures', 'kpi', 'benefits', 'case_study', 'checklist', 'solutions', 'offer'],
+            SectionCatalog::MIDDLES
+        );
+
+        $caseStudy = $this->validState('case_study');
+        $caseStudy['slots']['case_study']['title'] = '  Un flux urgent sécurisé  ';
+        $result = $this->validator()->validate($caseStudy);
+
+        $this->assertSame('Un flux urgent sécurisé', $result['slots']['case_study']['title']);
+        $this->assertArrayNotHasKey('kpis', $result['slots']);
+    }
+
+    public function test_new_middle_nested_unknown_key_is_rejected(): void
+    {
+        $state = $this->validState('offer');
+        $state['slots']['offer']['html'] = '<b>non</b>';
+
+        try {
+            $this->validator()->validate($state);
+            $this->fail('Expected nested unknown offer key to be rejected.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('slots.offer', $e->errors());
+        }
+    }
+
+    public function test_checklist_cardinality_and_solution_cardinality_are_bounded(): void
+    {
+        foreach ([
+            $this->validState('checklist', ['checklist_items' => ['Un', 'Deux']]),
+            $this->validState('solutions', ['solutions' => [['title' => 'Route', 'text' => 'Texte']]]),
+        ] as $state) {
+            try {
+                $this->validator()->validate($state);
+                $this->fail('Expected bounded collection validation failure.');
+            } catch (ValidationException $e) {
+                $this->assertNotEmpty($e->errors());
+            }
+        }
+    }
+
+    public function test_checklist_with_six_items_is_rejected(): void
+    {
+        $this->expectException(ValidationException::class);
+
+        $this->validator()->validate($this->validState('checklist', [
+            'checklist_items' => ['Un', 'Deux', 'Trois', 'Quatre', 'Cinq', 'Six'],
+        ]));
+    }
+
+    public function test_solutions_with_five_items_is_rejected(): void
+    {
+        $this->expectException(ValidationException::class);
+
+        $this->validator()->validate($this->validState('solutions', [
+            'solutions' => array_fill(0, 5, ['title' => 'Route', 'text' => 'Solution transport.']),
+        ]));
+    }
+
+    public function test_unknown_solution_row_key_is_rejected(): void
+    {
+        $state = $this->validState('solutions');
+        $state['slots']['solutions'][0]['icon'] = 'truck';
+
+        try {
+            $this->validator()->validate($state);
+            $this->fail('Expected unknown solution row key to be rejected.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('slots.solutions.0', $e->errors());
+        }
+    }
+
+    public function test_unknown_merge_tag_in_new_offer_field_is_rejected(): void
+    {
+        $state = $this->validState('offer');
+        $state['slots']['offer']['highlight'] = 'Pour {{contact.phone}}';
+
+        try {
+            $this->validator()->validate($state);
+            $this->fail('Expected merge tag in offer highlight to be rejected.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('slots.offer.highlight', $e->errors());
         }
     }
 
