@@ -19,6 +19,7 @@ use App\Models\SequenceEnrollment;
 use App\Models\SenderIdentity;
 use App\Models\Setting;
 use App\Services\Campaign\CampaignService;
+use App\Services\Campaign\CampaignWaveZohoListSyncService;
 use App\Services\Campaign\CampaignZohoListSyncService;
 use App\Services\Campaign\PacedCampaignBatchService;
 use App\Services\Campaign\PacedSequenceEnrollmentService;
@@ -174,6 +175,7 @@ class CampaignController extends BackendController
             ->distinct()->count('contact_id');
 
         $viewConfig    = CampaignViewConfig::make($campaign, $stats, $recipientsTotal, $currentAudience->count(), $executedRuns->count());
+        $waveData      = $this->campaignWaveData($campaign);
         $enrolledCount = SequenceEnrollment::where('campaign_id', $campaign->id)->count();
         $enrolledCompanyCount = SequenceEnrollment::query()
             ->where('sequence_enrollments.campaign_id', $campaign->id)
@@ -195,9 +197,69 @@ class CampaignController extends BackendController
             ->with('enrolledCount', $enrolledCount)
             ->with('enrolledCompanyCount', $enrolledCompanyCount)
             ->with('pacedProgress', $pacedProgress)
+            ->with('waves', $waveData['waves'])
+            ->with('selectedWave', $waveData['selectedWave'])
+            ->with('selectedWaveRecipients', $waveData['recipients'])
+            ->with('waveEnrollments', $waveData['enrollments'])
+            ->with('legacyWaves', $waveData['legacy'])
             ->with('schedulerHealth', $this->schedulerHealth());
     }
 
+    /** Campaign-specific paced-sequence wave summaries and selected membership. */
+    private function campaignWaveData(Campaign $campaign): array
+    {
+        $empty = ['waves' => collect(), 'selectedWave' => null, 'recipients' => collect(), 'enrollments' => collect(), 'legacy' => collect()];
+        if ($campaign->schedule_type !== 'sequence' || $campaign->sequence_enrollment_mode !== 'paced') {
+            return $empty;
+        }
+
+        $waveRuns = $campaign->runs
+            ->filter(fn (CampaignRun $run) => str_starts_with($run->occurrence_key, 'sequence-wave-'))
+            ->sortByDesc(fn (CampaignRun $run) => (int) substr($run->occurrence_key, strlen('sequence-wave-')))
+            ->values();
+        $waveRuns->each->loadMissing('recipients.contact.company');
+
+        $selectedId = (int) request()->query('wave_id', 0);
+        $selectedWave = $waveRuns->firstWhere('id', $selectedId) ?? $waveRuns->first();
+        $selectedRecipients = $selectedWave?->recipients ?? collect();
+        $selectedContactIds = $selectedRecipients->pluck('contact_id');
+        $enrollments = $selectedContactIds->isEmpty()
+            ? collect()
+            : SequenceEnrollment::query()
+                ->where('campaign_id', $campaign->id)
+                ->whereIn('contact_id', $selectedContactIds)
+                ->with(['contact.company', 'stepSends' => fn ($query) => $query->orderBy('step_no')])
+                ->get()
+                ->keyBy('contact_id');
+
+        $listService = app(CampaignWaveZohoListSyncService::class);
+        $waves = $waveRuns->map(function (CampaignRun $run) use ($listService): array {
+            $number = (int) substr($run->occurrence_key, strlen('sequence-wave-'));
+            $companyCount = $run->recipients->pluck('contact.company_id')->filter()->unique()->count();
+
+            return [
+                'run' => $run,
+                'number' => $number,
+                'list_name' => $listService->listName($run),
+                'contacts' => $run->recipients->count(),
+                'companies' => $companyCount,
+            ];
+        });
+
+        $snapshottedContactIds = $waveRuns->flatMap(fn (CampaignRun $run) => $run->recipients->pluck('contact_id'))->unique();
+        $legacyQuery = SequenceEnrollment::query()
+            ->where('campaign_id', $campaign->id)
+            ->with(['contact.company', 'stepSends' => fn ($query) => $query->orderBy('step_no')]);
+        if ($snapshottedContactIds->isNotEmpty()) {
+            $legacyQuery->whereNotIn('contact_id', $snapshottedContactIds);
+        }
+        $timezone = $campaign->scheduleTimezone();
+        $legacy = $legacyQuery->get()
+            ->groupBy(fn (SequenceEnrollment $enrollment) => $enrollment->created_at->copy()->setTimezone($timezone)->toDateString())
+            ->sortKeysDesc();
+
+        return ['waves' => $waves, 'selectedWave' => $selectedWave, 'recipients' => $selectedRecipients, 'enrollments' => $enrollments, 'legacy' => $legacy];
+    }
     private function schedulerHealth(): array
     {
         $requiredCommands = [

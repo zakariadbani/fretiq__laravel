@@ -137,6 +137,9 @@ class CampaignViewConfig
             ['key' => 'apercu',        'label' => 'Aperçu',        'icon' => 'bi-grid',          'mode' => 'view'],
             ['key' => 'general',       'label' => 'Général',       'icon' => 'bi-megaphone',     'mode' => 'edit'],
             ['key' => 'historique',    'label' => 'Historique',    'icon' => 'bi-clock-history', 'mode' => 'view', 'count' => $runsCount],
+            ...($hasId && $model->schedule_type === 'sequence' && $model->sequence_enrollment_mode === 'paced'
+                ? [['key' => 'vagues', 'label' => 'Vagues', 'icon' => 'bi-layers', 'mode' => 'view']]
+                : []),
             ['key' => 'audience_actuelle', 'label' => 'Audience actuelle', 'icon' => 'bi-people', 'mode' => 'view', 'count' => $currentAudienceTotal],
             ['key' => 'destinataires', 'label' => 'Destinataires', 'icon' => 'bi-envelope',      'mode' => 'view', 'count' => $recipientsTotal],
         ];

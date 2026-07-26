@@ -3,6 +3,9 @@
 namespace Tests\Feature\Backend;
 
 use App\Models\Campaign;
+use App\Jobs\SyncCampaignWaveZohoListJob;
+use App\Models\CampaignRecipient;
+use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
 use App\Models\Company;
 use App\Models\Contact;
@@ -12,12 +15,15 @@ use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStep;
 use App\Models\User;
+use App\Services\Campaign\CampaignWaveZohoListSyncService;
 use App\Services\Campaign\PacedSequenceEnrollmentService;
 use App\Services\Campaign\SegmentService;
+use App\Services\Zoho\ZohoRecipientListGateway;
 use Carbon\Carbon;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Mockery\MockInterface;
 use Tests\TestCase;
 
@@ -30,6 +36,7 @@ class CampaignSequenceProgressiveTest extends TestCase
         parent::setUp();
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
         config(['services.zoho.driver' => 'local']);
+        Queue::fake();
     }
 
     public function test_default_mode_keeps_existing_campaigns_immediate(): void
@@ -68,6 +75,11 @@ class CampaignSequenceProgressiveTest extends TestCase
             ]);
         }
         $this->assertSame(0, SequenceEnrollment::whereHas('contact', fn ($query) => $query->where('company_id', $low->id))->count());
+        $wave = CampaignRun::where('campaign_id', $campaign->id)->where('occurrence_key', 'sequence-wave-000001')->firstOrFail();
+        $this->assertSame('prepared', $wave->status);
+        $this->assertSame('zoho-wave-pending', $wave->driver_ref);
+        $this->assertEqualsCanonicalizing(array_column($highContacts, 'id'), $wave->recipients()->pluck('contact_id')->all());
+        Queue::assertPushed(SyncCampaignWaveZohoListJob::class, fn ($job) => $job->runId === $wave->id);
     }
 
     public function test_second_call_for_same_occurrence_is_a_no_op(): void
@@ -87,6 +99,7 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertTrue($first['processed_due']);
         $this->assertFalse($second['processed_due']);
         $this->assertSame(1, SequenceEnrollment::where('campaign_id', $campaign->id)->count());
+        $this->assertSame(1, CampaignRun::where('campaign_id', $campaign->id)->where('occurrence_key', 'like', 'sequence-wave-%')->count());
     }
 
     public function test_empty_due_audience_advances_cursor_and_can_pick_up_future_company(): void
@@ -246,6 +259,110 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertTrue($campaign->fresh()->next_run_at->isFuture());
     }
 
+    public function test_consecutive_batches_use_stable_wave_numbers(): void
+    {
+        $segment = $this->segment();
+        $sequence = $this->sequence();
+        $firstContact = $this->contact($this->company(90));
+        $secondContact = $this->contact($this->company(10));
+        $campaign = $this->campaign($segment, $sequence, [
+            'daily_company_limit' => 1,
+            'next_run_at' => '2026-07-21 08:00:00',
+        ]);
+        $service = app(PacedSequenceEnrollmentService::class);
+
+        $service->activate($campaign, Carbon::parse('2026-07-21 09:00:00', 'UTC'));
+        $service->evaluateDue($campaign->fresh(), Carbon::parse('2026-07-22 09:00:00', 'UTC'));
+
+        $this->assertSame(
+            ['sequence-wave-000001', 'sequence-wave-000002'],
+            CampaignRun::where('campaign_id', $campaign->id)->orderBy('id')->pluck('occurrence_key')->all(),
+        );
+        $runs = CampaignRun::where('campaign_id', $campaign->id)->orderBy('id')->get();
+        $this->assertSame([$firstContact->id], $runs[0]->recipients()->pluck('contact_id')->all());
+        $this->assertSame([$secondContact->id], $runs[1]->recipients()->pluck('contact_id')->all());
+    }
+
+    public function test_wave_zoho_sync_uses_frozen_membership_and_reuses_key_after_failure(): void
+    {
+        $campaign = $this->campaign($this->segment(), $this->sequence(), ['name' => 'Campagne Test']);
+        $contact = $this->contact($this->company(50));
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'sequence-wave-000001',
+            'run_at' => now(),
+            'status' => 'failed',
+            'driver_ref' => 'zoho-wave-list',
+        ]);
+        CampaignRecipient::create(['campaign_run_id' => $run->id, 'contact_id' => $contact->id, 'status' => 'queued']);
+
+        $gateway = new class implements ZohoRecipientListGateway {
+            public array $emails = [];
+            public array $names = [];
+            public int $ensures = 0;
+            public function ensureCampaignList(int $campaignId, string $listName, array $seedContacts): string
+            {
+                $this->ensures++;
+                $this->names[] = $listName;
+                return 'wave-list-key';
+            }
+            public function listEmails(string $listKey): array { return $this->emails; }
+            public function addContacts(string $listKey, array $contacts): void
+            {
+                $this->emails = array_values(array_unique(array_merge($this->emails, array_column($contacts, 'Contact Email'))));
+            }
+        };
+        $this->app->instance(ZohoRecipientListGateway::class, $gateway);
+        $service = app(CampaignWaveZohoListSyncService::class);
+
+        $service->sync($run);
+        $this->assertSame(['Campagne Test - Wave 001'], $gateway->names);
+        $this->assertSame([$contact->email], $gateway->emails);
+        $this->assertSame('wave-list-key', $run->fresh()->zoho_list_key);
+        $this->assertNull($campaign->fresh()->zoho_list_key);
+
+        (new SyncCampaignWaveZohoListJob($run->id))->failed(new \RuntimeException('temporary'));
+        $this->assertSame('failed', $run->fresh()->status);
+        $service->sync($run->fresh());
+        $this->assertSame('prepared', $run->fresh()->status);
+        $this->assertSame('zoho-wave-synced', $run->fresh()->driver_ref);
+        $this->assertSame(1, $gateway->ensures);
+    }
+
+    public function test_wave_view_shows_explicit_and_legacy_membership(): void
+    {
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
+        $explicit = $this->contact($this->company(50));
+        $legacy = $this->contact($this->company(40));
+        foreach ([$explicit, $legacy] as $contact) {
+            SequenceEnrollment::create([
+                'sequence_id' => $sequence->id,
+                'contact_id' => $contact->id,
+                'campaign_id' => $campaign->id,
+                'current_step' => 0,
+                'status' => 'active',
+                'next_send_at' => now()->addDay(),
+            ]);
+        }
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'sequence-wave-000001',
+            'run_at' => now(),
+            'status' => 'prepared',
+            'driver_ref' => 'zoho-wave-list',
+        ]);
+        CampaignRecipient::create(['campaign_run_id' => $run->id, 'contact_id' => $explicit->id, 'status' => 'queued']);
+        $admin = User::factory()->create(['email_verified_at' => now()]);
+        $admin->assignRole('superadmin');
+
+        $this->actingAs($admin)->get("/admin/campaigns/{$campaign->id}?wave_id={$run->id}#campaign_vagues")
+            ->assertOk()
+            ->assertSee('href="#campaign_vagues"', false)
+            ->assertSee($campaign->name . ' - Wave 001', false)
+            ->assertSee($explicit->email)
+            ->assertSee('Vagues historiques')
+            ->assertSee($legacy->email);
+    }
     private function segment(): Segment
     {
         return Segment::create(['name' => 'Segment ' . uniqid(), 'scope' => 'client']);

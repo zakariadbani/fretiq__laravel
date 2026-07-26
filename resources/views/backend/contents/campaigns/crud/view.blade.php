@@ -280,6 +280,11 @@
         @include('backend.contents.campaigns.partials._historique-tab')
     </div>
 
+    @if($model->schedule_type === 'sequence' && $model->sequence_enrollment_mode === 'paced')
+    <div class="tab-pane fade" id="campaign_vagues" role="tabpanel">
+        @include('backend.contents.campaigns.partials._vagues-tab')
+    </div>
+    @endif
     {{-- ── Tab: Audience actuelle (segment recalculé) ───────────────────────── --}}
     <div class="tab-pane fade" id="campaign_audience_actuelle" role="tabpanel">
         @php($audienceActuelle = $currentAudience ?? collect())

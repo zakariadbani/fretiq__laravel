@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace App\Services\Campaign;
 
+use App\Jobs\SyncCampaignWaveZohoListJob;
 use App\Models\Campaign;
+use App\Models\CampaignRecipient;
+use App\Models\CampaignRun;
 use App\Models\Contact;
 use App\Models\SequenceEnrollment;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /** Atomically enrolls one company-limited business-day batch into a sequence. */
 class PacedSequenceEnrollmentService
@@ -109,17 +113,40 @@ class PacedSequenceEnrollmentService
                 ->take($locked->pacedDailyCompanyLimit());
 
             $enrolled = 0;
+            $waveContacts = collect();
             foreach ($groups as $companyContacts) {
                 foreach ($companyContacts as $contact) {
                     $enrollment = $this->sequenceService->enroll($locked->sequence, $contact, $locked);
                     if ($enrollment?->wasRecentlyCreated) {
                         $enrolled++;
+                        $waveContacts->push($contact);
                     } else {
                         $skipped++;
                     }
                 }
             }
 
+            if ($waveContacts->isNotEmpty()) {
+                $lastWaveNumber = $locked->runs()->where('occurrence_key', 'like', 'sequence-wave-%')->pluck('occurrence_key')->map(fn (string $key): int => (int) substr($key, strlen('sequence-wave-')))->max() ?? 0;
+                $waveRun = CampaignRun::create([
+                    'campaign_id' => $locked->id,
+                    'occurrence_key' => 'sequence-wave-' . str_pad((string) ($lastWaveNumber + 1), 6, '0', STR_PAD_LEFT),
+                    'run_at' => $effectiveRunAt,
+                    'status' => 'prepared',
+                    'driver_ref' => 'zoho-wave-pending',
+                ]);
+                foreach ($waveContacts as $contact) {
+                    CampaignRecipient::create(['campaign_run_id' => $waveRun->id, 'contact_id' => $contact->id, 'status' => 'queued']);
+                }
+                $waveRunId = $waveRun->id;
+                DB::afterCommit(function () use ($waveRunId): void {
+                    try {
+                        SyncCampaignWaveZohoListJob::dispatch($waveRunId);
+                    } catch (\Throwable $exception) {
+                        Log::error('[PacedSequenceEnrollmentService] Unable to dispatch Zoho wave mirror.', ['run_id' => $waveRunId, 'exception' => $exception->getMessage()]);
+                    }
+                });
+            }
             $nextRunAt = $this->computeNextBusinessRun($effectiveRunAt, $timezone);
             while ($nextRunAt->copy()->setTimezone($timezone)->toDateString() <= $localNow->toDateString()) {
                 $nextRunAt = $this->computeNextBusinessRun($nextRunAt, $timezone);
