@@ -349,6 +349,82 @@ class DashboardGeneratedTest extends TestCase
         $this->assertEqualsWithDelta(40.0, (float) $kpis['open_rate'], 0.01,
             'kpis.open_rate must be 40.0 (6 opens / 15 sent × 100)');
     }
+    public function test_dashboard_renders_each_whitelisted_prototype(): void
+    {
+        foreach ([1, 2, 3, 4] as $prototype) {
+            $this->actingAs($this->superadmin)
+                ->get(self::DASHBOARD_URI.'?prototype='.$prototype)
+                ->assertOk()
+                ->assertViewHas('prototype', $prototype)
+                ->assertSee('data-prototype="'.$prototype.'"', false);
+        }
+    }
+
+    public function test_invalid_prototype_falls_back_to_one(): void
+    {
+        $this->actingAs($this->superadmin)
+            ->get(self::DASHBOARD_URI.'?prototype=99')
+            ->assertOk()
+            ->assertViewHas('prototype', 1)
+            ->assertSee('data-prototype="1"', false);
+    }
+
+    public function test_dashboard_view_receives_operational_payload(): void
+    {
+        $response = $this->actingAs($this->superadmin)->get(self::DASHBOARD_URI);
+
+        foreach (['campaigns', 'planning', 'criteria', 'enterprises'] as $key) {
+            $response->assertViewHas($key);
+            $this->assertIsArray($response->viewData($key));
+        }
+
+        $this->assertArrayHasKey('rows', $response->viewData('campaigns'));
+        $this->assertArrayHasKey('upcoming', $response->viewData('planning'));
+        $this->assertArrayHasKey('rows', $response->viewData('criteria'));
+        $this->assertArrayHasKey('recent', $response->viewData('enterprises'));
+    }
+    public function test_planning_counts_are_not_capped_by_display_limit(): void
+    {
+        foreach (range(1, 6) as $index) {
+            $campaign = $this->seedCampaignWithRun();
+            $campaign->update([
+                'is_active' => true,
+                'schedule_type' => 'one_shot',
+                'scheduled_at' => now()->subDays($index),
+            ]);
+        }
+
+        $planning = $this->actingAs($this->superadmin)
+            ->get(self::DASHBOARD_URI.'?prototype=2')
+            ->viewData('planning');
+
+        $this->assertSame(6, $planning['overdue_count']);
+        $this->assertCount(5, $planning['overdue']);
+    }
+
+    public function test_backend_only_user_does_not_receive_protected_detail_rows(): void
+    {
+        Company::create([
+            'name' => 'Entreprise protégée',
+            'relationship' => 'prospect',
+            'source' => 'manual',
+            'qualification_status' => 'pending',
+        ]);
+        \App\Models\ProspectCriteria::create(['name' => 'Critère protégé']);
+        $this->seedCampaignWithRun();
+
+        $user = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
+        $user->givePermissionTo('backend.access');
+
+        $response = $this->actingAs($user)->get(self::DASHBOARD_URI.'?prototype=3');
+
+        $response->assertOk();
+        $this->assertSame([], $response->viewData('campaigns')['rows']);
+        $this->assertSame([], $response->viewData('planning')['upcoming']);
+        $this->assertSame([], $response->viewData('planning')['overdue']);
+        $this->assertSame([], $response->viewData('criteria')['rows']);
+        $this->assertSame([], $response->viewData('enterprises')['recent']);
+    }
 }
 
 // <<<

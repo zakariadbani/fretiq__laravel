@@ -8,360 +8,126 @@
     <x-crud.breadcrumb :items="[['label' => 'Tableau de bord']]" />
 @endsection
 
-{{-- ====================================================================== --}}
-{{-- KPI Cards Row (8 cartes)                                                --}}
-{{-- ====================================================================== --}}
-<div class="row g-5 g-xl-8 mb-8">
+@php
+    $concepts = [
+        1 => ['title' => 'Cockpit exécutif', 'subtitle' => 'La performance et les décisions importantes en un regard.', 'icon' => 'bi-speedometer2'],
+        2 => ['title' => 'Centre de commandement', 'subtitle' => 'Les priorités opérationnelles, échéances et points d’attention.', 'icon' => 'bi-command'],
+        3 => ['title' => 'Pipeline de prospection', 'subtitle' => 'De la découverte des entreprises jusqu’aux résultats des campagnes.', 'icon' => 'bi-funnel'],
+        4 => ['title' => 'Vue portefeuille', 'subtitle' => 'Une lecture équilibrée de chaque pilier de la prospection.', 'icon' => 'bi-grid-1x2'],
+    ];
+    $concept = $concepts[$prototype];
+@endphp
 
-    {{-- Entreprises --}}
-    <div class="col-xl-3 col-md-6">
-        <a href="{{ route('admin.companies.index') }}" class="card bg-body hoverable card-xl-stretch mb-xl-8">
-            <div class="card-body">
-                <i class="bi bi-briefcase fs-2x text-primary"></i>
-                <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['companies']) }}</div>
-                <div class="fw-semibold text-gray-600">Entreprises</div>
-            </div>
-        </a>
-    </div>
-
-    {{-- Contacts --}}
-    <div class="col-xl-3 col-md-6">
-        <a href="{{ route('admin.contacts.index') }}" class="card bg-body hoverable card-xl-stretch mb-xl-8">
-            <div class="card-body">
-                <i class="bi bi-person fs-2x text-info"></i>
-                <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['contacts']) }}</div>
-                <div class="fw-semibold text-gray-600">Contacts</div>
-            </div>
-        </a>
-    </div>
-
-    {{-- Campagnes actives --}}
-    <div class="col-xl-3 col-md-6">
-        <a href="{{ route('admin.campaigns.index') }}" class="card bg-body hoverable card-xl-stretch mb-xl-8">
-            <div class="card-body">
-                <i class="bi bi-rocket fs-2x text-success"></i>
-                <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['active_campaigns']) }}</div>
-                <div class="fw-semibold text-gray-600">Campagnes actives</div>
-            </div>
-        </a>
-    </div>
-
-    {{-- Emails envoyés (30j) --}}
-    <div class="col-xl-3 col-md-6">
-        <div class="card bg-body hoverable card-xl-stretch mb-xl-8">
-            <div class="card-body">
-                <i class="bi bi-envelope fs-2x text-warning"></i>
-                <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['emails_sent_30d']) }}</div>
-                <div class="fw-semibold text-gray-600">Emails envoyés (30j)</div>
-            </div>
-        </div>
-    </div>
-
-    {{-- Taux d'ouverture --}}
-    <div class="col-xl-3 col-md-6">
-        <div class="card bg-body hoverable card-xl-stretch mb-xl-8">
-            <div class="card-body">
-                <i class="bi bi-eye fs-2x text-primary"></i>
-                <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['open_rate'], 1) }} %</div>
-                <div class="fw-semibold text-gray-600">Taux d'ouverture</div>
-                <div class="mt-2">
-                    <div class="progress h-6px bg-light-primary">
-                        <div class="progress-bar bg-primary" style="width: {{ min((float) $kpis['open_rate'], 100) }}%"></div>
-                    </div>
+<div data-testid="dashboard-shell" data-prototype="{{ $prototype }}">
+    <section class="dashboard-hero card border-0 mb-6 overflow-hidden">
+        <div class="card-body p-6 p-lg-8 position-relative">
+            <div class="dashboard-orb dashboard-orb-one"></div>
+            <div class="dashboard-orb dashboard-orb-two"></div>
+            <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-5 position-relative">
+                <div>
+                    <div class="text-white-50 fw-semibold fs-7 text-uppercase ls-1 mb-2">Bonjour, {{ auth()->user()->name }}</div>
+                    <h1 class="text-white fw-bolder fs-2x mb-2">{{ $concept['title'] }}</h1>
+                    <p class="text-white-75 fs-6 mb-0">{{ $concept['subtitle'] }}</p>
+                </div>
+                <div class="d-flex flex-wrap gap-3">
+                    @can('create campaigns')
+                        <a href="{{ route('admin.campaigns.create') }}" class="btn btn-sm btn-light-primary">
+                            <i class="bi bi-plus-lg"></i> Nouvelle campagne
+                        </a>
+                    @endcan
+                    @can('view campaigns')
+                        <a href="{{ route('admin.planner.index') }}" class="btn btn-sm btn-light">
+                            <i class="bi bi-calendar3"></i> Ouvrir le planning
+                        </a>
+                    @endcan
                 </div>
             </div>
         </div>
-    </div>
+    </section>
 
-    {{-- Taux de clic --}}
-    <div class="col-xl-3 col-md-6">
-        <div class="card bg-body hoverable card-xl-stretch mb-xl-8">
-            <div class="card-body">
-                <i class="bi bi-mouse fs-2x text-info"></i>
-                <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['click_rate'], 1) }} %</div>
-                <div class="fw-semibold text-gray-600">Taux de clic</div>
-                <div class="mt-2">
-                    <div class="progress h-6px bg-light-info">
-                        <div class="progress-bar bg-info" style="width: {{ min((float) $kpis['click_rate'], 100) }}%"></div>
-                    </div>
-                </div>
+    <nav class="card mb-6" aria-label="Choisir un prototype" data-testid="dashboard-prototype-switcher">
+        <div class="card-body py-3 px-4">
+            <div class="d-flex flex-nowrap overflow-auto gap-2 dashboard-switcher">
+                @foreach ($concepts as $id => $item)
+                    <a href="{{ route('admin.dashboard', ['prototype' => $id]) }}"
+                       class="btn btn-sm flex-shrink-0 {{ $prototype === $id ? 'btn-primary' : 'btn-light' }}"
+                       @if ($prototype === $id) aria-current="page" @endif>
+                        <i class="bi {{ $item['icon'] }}"></i>
+                        {{ $id }}. {{ $item['title'] }}
+                    </a>
+                @endforeach
             </div>
         </div>
-    </div>
+    </nav>
 
-    {{-- Demandes générées --}}
-    <div class="col-xl-3 col-md-6">
-        <a href="{{ route('admin.demandes.index') }}" class="card bg-body hoverable card-xl-stretch mb-xl-8">
-            <div class="card-body">
-                <i class="bi bi-journal-text fs-2x text-success"></i>
-                <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['demandes']) }}</div>
-                <div class="fw-semibold text-gray-600">Demandes générées</div>
-                @if ($kpis['demandes_30d'] > 0)
-                    <div class="mt-2">
-                        <span class="badge badge-light-success fs-8">+{{ number_format($kpis['demandes_30d']) }} ce mois</span>
-                    </div>
-                @endif
-            </div>
-        </a>
-    </div>
-
-    {{-- Taux de conversion --}}
-    <div class="col-xl-3 col-md-6">
-        <div class="card bg-body hoverable card-xl-stretch mb-xl-8">
-            <div class="card-body">
-                <i class="bi bi-bar-chart fs-2x text-danger"></i>
-                <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($kpis['conversion_rate'], 2) }} %</div>
-                <div class="fw-semibold text-gray-600">Taux de conversion</div>
-                <div class="mt-2">
-                    <div class="progress h-6px bg-light-danger">
-                        <div class="progress-bar bg-danger" style="width: {{ min((float) $kpis['conversion_rate'] * 10, 100) }}%"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
+    @include("backend.contents.dashboard.prototype-{$prototype}")
 </div>
-{{-- end::KPI Cards --}}
 
-{{-- ====================================================================== --}}
-{{-- Empty-state (affiché quand aucune donnée campagne)                      --}}
-{{-- ====================================================================== --}}
-@if ($kpis['emails_sent_30d'] === 0 && $kpis['active_campaigns'] === 0)
-<div class="card mb-8">
-    <div class="card-body text-center py-10">
-        <i class="bi bi-rocket fs-3x text-muted mb-5 d-block"></i>
-        <div class="text-gray-700 fw-semibold fs-5 mb-2">Aucune donnée — lancez votre première campagne</div>
-        <div class="text-muted fs-7">
-            Commencez par l’expéditeur, le segment, le modèle et les prérequis d’envoi. Les indicateurs seront affichés dès que la première campagne tournera.
-        </div>
-        <a href="{{ route('admin.campaigns.create') }}" class="btn btn-primary mt-5">
-            <i class="bi bi-plus-lg fs-4"></i>
-            Créer une campagne
-        </a>
-    </div>
-</div>
-@endif
-
-{{-- ====================================================================== --}}
-{{-- Charts Row : Funnel (BAR) + Engagement (LINE)                          --}}
-{{-- ====================================================================== --}}
-<div class="row g-5 g-xl-8 mb-8">
-
-    {{-- Funnel de prospection --}}
-    <div class="col-xl-6">
-        <div class="card card-xl-stretch mb-5 mb-xl-8">
-            <div class="card-header border-0 pt-5">
-                <h3 class="card-title align-items-start flex-column">
-                    <span class="card-label fw-bold text-gray-900">Funnel de prospection</span>
-                    <span class="text-muted mt-1 fw-semibold fs-7">Du premier contact à la demande</span>
-                </h3>
-            </div>
-            <div class="card-body py-3">
-                @if (array_sum(array_values($funnel)) > 0)
-                    <div id="kt_funnel_chart" style="min-height: 280px;"></div>
-                @else
-                    <div class="text-center text-muted py-10">
-                        <i class="bi bi-bar-chart fs-3x text-muted mb-3 d-block"></i>
-                        Aucune donnée de funnel disponible.
-                    </div>
-                @endif
-            </div>
-        </div>
-    </div>
-
-    {{-- Engagement par semaine --}}
-    <div class="col-xl-6">
-        <div class="card card-xl-stretch mb-5 mb-xl-8">
-            <div class="card-header border-0 pt-5">
-                <h3 class="card-title align-items-start flex-column">
-                    <span class="card-label fw-bold text-gray-900">Engagement (8 dernières semaines)</span>
-                    <span class="text-muted mt-1 fw-semibold fs-7">Ouvertures, clics et réponses</span>
-                </h3>
-            </div>
-            <div class="card-body py-3">
-                @php
-                    $totalEngagement = array_sum($engagementOverTime['series']['opens'])
-                        + array_sum($engagementOverTime['series']['clicks'])
-                        + array_sum($engagementOverTime['series']['replies']);
-                @endphp
-                @if ($totalEngagement > 0)
-                    <div id="kt_engagement_chart" style="min-height: 280px;"></div>
-                @else
-                    <div class="text-center text-muted py-10">
-                        <i class="bi bi-graph-up fs-3x text-muted mb-3 d-block"></i>
-                        Aucune donnée d'engagement disponible.
-                    </div>
-                @endif
-            </div>
-        </div>
-    </div>
-
-</div>
-{{-- end::Charts Row --}}
-
-{{-- ====================================================================== --}}
-{{-- Top Campagnes (table)                                                   --}}
-{{-- ====================================================================== --}}
-<div class="row g-5 g-xl-8">
-    <div class="col-xl-12">
-        <div class="card card-xl-stretch mb-5 mb-xl-8">
-            <div class="card-header border-0 pt-5">
-                <h3 class="card-title align-items-start flex-column">
-                    <span class="card-label fw-bold text-gray-900">Top campagnes</span>
-                    <span class="text-muted mt-1 fw-semibold fs-7">Classées par taux de conversion</span>
-                </h3>
-                <div class="card-toolbar">
-                    <a href="{{ route('admin.campaigns.index') }}" class="btn btn-sm btn-light-primary">Voir tout</a>
-                </div>
-            </div>
-            <div class="card-body py-3">
-                @if (count($topCampaigns) > 0)
-                    <div class="table-responsive">
-                        <table class="table table-row-dashed table-row-gray-300 align-middle gs-0 gy-4">
-                            <thead>
-                                <tr class="fw-bold text-muted">
-                                    <th class="min-w-200px">Campagne</th>
-                                    <th class="min-w-80px text-center">Envoyés</th>
-                                    <th class="min-w-80px text-center">Demandes</th>
-                                    <th class="min-w-100px text-center">Taux de conv.</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach ($topCampaigns as $campaign)
-                                    <tr>
-                                        <td>
-                                            <div class="d-flex align-items-center">
-                                                <div class="symbol symbol-40px me-3">
-                                                    <div class="symbol-label bg-light-primary">
-                                                        <i class="bi bi-rocket fs-3 text-primary"></i>
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <a href="{{ route('admin.campaigns.view', $campaign['id']) }}"
-                                                       class="text-gray-900 fw-bold text-hover-primary fs-6">
-                                                        {{ $campaign['name'] }}
-                                                    </a>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td class="text-center">
-                                            <span class="fw-bold text-gray-900">{{ number_format($campaign['sent']) }}</span>
-                                        </td>
-                                        <td class="text-center">
-                                            <span class="fw-bold text-success">{{ number_format($campaign['demandes']) }}</span>
-                                        </td>
-                                        <td class="text-center">
-                                            <span class="badge badge-light-{{ $campaign['conversion_rate'] >= 2 ? 'success' : ($campaign['conversion_rate'] >= 1 ? 'warning' : 'danger') }}">
-                                                {{ number_format($campaign['conversion_rate'], 2) }} %
-                                            </span>
-                                        </td>
-                                    </tr>
-                                @endforeach
-                            </tbody>
-                        </table>
-                    </div>
-                @else
-                    <div class="text-center text-muted py-10">
-                        <i class="bi bi-rocket fs-3x text-muted mb-3 d-block"></i>
-                        Aucune campagne avec des données de performance.
-                    </div>
-                @endif
-            </div>
-        </div>
-    </div>
-</div>
-{{-- end::Top Campagnes --}}
+@push('styles')
+<style>
+    .dashboard-hero { background: linear-gradient(125deg, #071b33 0%, #123d67 58%, #1769aa 100%); }
+    .dashboard-hero .text-white-75 { color: rgba(255,255,255,.76); }
+    .dashboard-orb { position: absolute; border-radius: 50%; background: rgba(255,255,255,.07); pointer-events: none; }
+    .dashboard-orb-one { width: 260px; height: 260px; right: 7%; top: -160px; }
+    .dashboard-orb-two { width: 150px; height: 150px; right: 28%; bottom: -110px; }
+    .dashboard-switcher { scrollbar-width: thin; }
+    .dashboard-kpi { border: 1px solid var(--bs-gray-200); transition: transform .16s ease, box-shadow .16s ease; }
+    .dashboard-kpi:hover { transform: translateY(-2px); box-shadow: var(--bs-box-shadow-sm); }
+    .dashboard-icon { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border-radius: 12px; }
+    .dashboard-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dashboard-list-row + .dashboard-list-row { border-top: 1px dashed var(--bs-gray-300); }
+    .dashboard-accent { border-left: 4px solid var(--bs-primary); }
+    .dashboard-accent-danger { border-left-color: var(--bs-danger); }
+    .dashboard-accent-success { border-left-color: var(--bs-success); }
+    .dashboard-quadrant { min-height: 420px; }
+    @media (max-width: 767.98px) {
+        .dashboard-hero .card-body { min-height: 250px; }
+        .dashboard-quadrant { min-height: auto; }
+    }
+</style>
+@endpush
 
 @push('scripts')
 <script>
 "use strict";
-
 (function () {
+    if (typeof ApexCharts === 'undefined') return;
 
-    // ── Funnel chart (ApexCharts BAR) ──────────────────────────────────────
-    var funnelEl = document.getElementById('kt_funnel_chart');
-    if (funnelEl && typeof ApexCharts !== 'undefined') {
-        var funnelData = @json($funnel);
-        var funnelLabels = Object.keys(funnelData);
-        var funnelValues = Object.values(funnelData);
-
-        var funnelOptions = {
-            series: [{ name: 'Contacts', data: funnelValues }],
-            chart: {
-                type: 'bar',
-                height: 280,
-                toolbar: { show: false }
-            },
-            plotOptions: {
-                bar: {
-                    horizontal: true,
-                    borderRadius: 4,
-                    dataLabels: { position: 'right' }
-                }
-            },
-            dataLabels: {
-                enabled: true,
-                formatter: function (val) { return val.toLocaleString('fr-FR'); },
-                style: { fontSize: '12px', colors: ['#3F4254'] },
-                offsetX: 8
-            },
-            colors: ['#009EF7'],
-            xaxis: {
-                categories: funnelLabels,
-                labels: {
-                    formatter: function (val) { return val.toLocaleString('fr-FR'); }
-                }
-            },
-            yaxis: { labels: { style: { fontSize: '13px' } } },
-            grid: { borderColor: '#F4F4F4' },
-            tooltip: {
-                y: { formatter: function (val) { return val.toLocaleString('fr-FR') + ' contacts'; } }
-            }
-        };
-
-        var funnelChart = new ApexCharts(funnelEl, funnelOptions);
-        funnelChart.render();
-    }
-
-    // ── Engagement chart (ApexCharts LINE) ────────────────────────────────
-    var engagementEl = document.getElementById('kt_engagement_chart');
-    if (engagementEl && typeof ApexCharts !== 'undefined') {
-        var engagementData = @json($engagementOverTime);
-
-        var engagementOptions = {
+    var engagementEl = document.getElementById('dashboard-engagement-chart');
+    if (engagementEl) {
+        var engagement = @json($engagementOverTime);
+        new ApexCharts(engagementEl, {
             series: [
-                { name: 'Ouvertures', data: engagementData.series.opens },
-                { name: 'Clics',      data: engagementData.series.clicks },
-                { name: 'Réponses',   data: engagementData.series.replies }
+                { name: 'Ouvertures', data: engagement.series.opens },
+                { name: 'Clics', data: engagement.series.clicks },
+                { name: 'Réponses', data: engagement.series.replies }
             ],
-            chart: {
-                type: 'line',
-                height: 280,
-                toolbar: { show: false },
-                zoom: { enabled: false }
-            },
-            colors: ['#009EF7', '#50CD89', '#FFC700'],
+            chart: { type: 'area', height: 300, toolbar: { show: false }, zoom: { enabled: false } },
+            colors: ['#3e97ff', '#50cd89', '#f6c000'],
             stroke: { curve: 'smooth', width: 2 },
-            markers: { size: 4 },
-            xaxis: {
-                categories: engagementData.labels,
-                labels: { rotate: -30, style: { fontSize: '11px' } }
-            },
-            yaxis: {
-                labels: { formatter: function (val) { return Math.round(val); } }
-            },
-            legend: { position: 'top' },
-            grid: { borderColor: '#F4F4F4' },
-            tooltip: {
-                y: { formatter: function (val) { return val + ' contacts'; } }
-            }
-        };
-
-        var engagementChart = new ApexCharts(engagementEl, engagementOptions);
-        engagementChart.render();
+            fill: { type: 'gradient', gradient: { opacityFrom: .22, opacityTo: .03 } },
+            dataLabels: { enabled: false },
+            xaxis: { categories: engagement.labels, labels: { rotate: -25 } },
+            yaxis: { min: 0, labels: { formatter: function (value) { return Math.round(value); } } },
+            grid: { borderColor: '#eff2f5' },
+            legend: { position: 'top', horizontalAlign: 'right' }
+        }).render();
     }
 
+    var funnelEl = document.getElementById('dashboard-funnel-chart');
+    if (funnelEl) {
+        var funnel = @json($funnel);
+        new ApexCharts(funnelEl, {
+            series: [{ name: 'Volume', data: Object.values(funnel) }],
+            chart: { type: 'bar', height: 310, toolbar: { show: false } },
+            colors: ['#3e97ff'],
+            plotOptions: { bar: { horizontal: true, borderRadius: 5, distributed: true } },
+            dataLabels: { enabled: true },
+            xaxis: { categories: Object.keys(funnel), min: 0 },
+            grid: { borderColor: '#eff2f5' },
+            legend: { show: false }
+        }).render();
+    }
 }());
 </script>
 @endpush

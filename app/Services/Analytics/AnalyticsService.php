@@ -8,6 +8,7 @@ use App\Models\CampaignRun;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\Demande;
+use App\Models\ProspectCriteria;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -18,6 +19,24 @@ use Illuminate\Support\Facades\DB;
  */
 class AnalyticsService
 {
+    /** @return array<string, mixed> */
+    public function dashboardData(int $prototype = 1): array
+    {
+        return [
+            'kpis' => $this->dashboardKpis(),
+            'funnel' => in_array($prototype, [1, 3], true) ? $this->funnel() : [],
+            'engagementOverTime' => $prototype === 1
+                ? $this->engagementOverTime()
+                : ['labels' => [], 'series' => ['opens' => [], 'clicks' => [], 'replies' => []]],
+            'topCampaigns' => $prototype === 1 ? $this->topCampaigns() : [],
+            'campaigns' => $prototype === 3
+                ? ['total' => 0, 'active' => 0, 'rows' => []]
+                : $this->campaignOverview(in_array($prototype, [2, 4], true)),
+            'planning' => $this->planningOverview(),
+            'criteria' => $this->criteriaOverview(),
+            'enterprises' => $this->enterpriseOverview(),
+        ];
+    }
     // ── Dashboard KPIs ─────────────────────────────────────────────────────────
 
     /**
@@ -41,7 +60,8 @@ class AnalyticsService
         $since = now()->subDays(30);
 
         // ── Aggregate 30-day run stats in a single query ───────────────────────
-        $runStats = CampaignRun::where('run_at', '>=', $since)
+        $runStats = CampaignRun::executed()
+            ->where('run_at', '>=', $since)
             ->selectRaw('
                 COALESCE(SUM(stats_sent), 0)    AS total_sent,
                 COALESCE(SUM(stats_opened), 0)  AS total_opened,
@@ -208,6 +228,7 @@ class AnalyticsService
     {
         $rows = DB::table('campaign_runs')
             ->join('campaigns', 'campaigns.id', '=', 'campaign_runs.campaign_id')
+            ->where('campaign_runs.status', 'sent')
             ->selectRaw('
                 campaigns.id,
                 campaigns.name,
@@ -235,5 +256,174 @@ class AnalyticsService
             ->values()
             ->take($limit)
             ->all();
+    }
+    /** @return array<string, mixed> */
+    private function campaignOverview(bool $includeRows = true): array
+    {
+        $rows = $includeRows ? Campaign::query()
+            ->withCount(['runs as executed_runs' => fn ($query) => $query->executed()])
+            ->withSum(['runs as sent' => fn ($query) => $query->executed()], 'stats_sent')
+            ->withSum(['runs as opened' => fn ($query) => $query->executed()], 'stats_opened')
+            ->withSum(['runs as clicked' => fn ($query) => $query->executed()], 'stats_clicked')
+            ->orderByDesc('is_active')
+            ->latest('updated_at')
+            ->limit(5)
+            ->get()
+            ->map(function (Campaign $campaign): array {
+                $sent = (int) ($campaign->sent ?? 0);
+
+                return [
+                    'id' => $campaign->id,
+                    'name' => $campaign->name,
+                    'schedule_type' => $campaign->schedule_type,
+                    'schedule_label' => config("global.data.schedule_types.{$campaign->schedule_type}.label", $campaign->schedule_type),
+                    'is_active' => (bool) $campaign->is_active,
+                    'scheduled_at' => $campaign->effectiveScheduledAt(),
+                    'executed_runs' => (int) $campaign->executed_runs,
+                    'sent' => $sent,
+                    'open_rate' => $sent > 0 ? round(((int) $campaign->opened / $sent) * 100, 1) : null,
+                    'click_rate' => $sent > 0 ? round(((int) $campaign->clicked / $sent) * 100, 1) : null,
+                ];
+            })
+            ->all() : [];
+
+        return [
+            'total' => Campaign::count(),
+            'active' => Campaign::where('is_active', true)->count(),
+            'rows' => $rows,
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function planningOverview(): array
+    {
+        $base = Campaign::query()
+            ->where('is_active', true)
+            ->where('schedule_type', '!=', 'sequence')
+            ->whereRaw('COALESCE(next_run_at, scheduled_at) IS NOT NULL');
+
+        $map = static fn (Campaign $campaign): array => [
+            'id' => $campaign->id,
+            'name' => $campaign->name,
+            'schedule_type' => $campaign->schedule_type,
+            'schedule_label' => config("global.data.schedule_types.{$campaign->schedule_type}.label", $campaign->schedule_type),
+            'scheduled_at' => $campaign->effectiveScheduledAt(),
+            'timezone' => $campaign->scheduleTimezone(),
+        ];
+
+        $now = now();
+        $counts = (clone $base)
+            ->selectRaw(
+                'SUM(CASE WHEN COALESCE(next_run_at, scheduled_at) >= ? THEN 1 ELSE 0 END) AS upcoming_count, SUM(CASE WHEN COALESCE(next_run_at, scheduled_at) < ? THEN 1 ELSE 0 END) AS overdue_count',
+                [$now, $now]
+            )
+            ->first();
+
+        $upcoming = (clone $base)
+            ->whereRaw('COALESCE(next_run_at, scheduled_at) >= ?', [$now])
+            ->orderByRaw('COALESCE(next_run_at, scheduled_at)')
+            ->limit(5)
+            ->get()
+            ->map($map)
+            ->all();
+
+        $overdue = (clone $base)
+            ->whereRaw('COALESCE(next_run_at, scheduled_at) < ?', [$now])
+            ->orderByRaw('COALESCE(next_run_at, scheduled_at) DESC')
+            ->limit(5)
+            ->get()
+            ->map($map)
+            ->all();
+
+        return [
+            'upcoming' => $upcoming,
+            'overdue' => $overdue,
+            'upcoming_count' => (int) ($counts->upcoming_count ?? 0),
+            'overdue_count' => (int) ($counts->overdue_count ?? 0),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function criteriaOverview(): array
+    {
+        $rows = ProspectCriteria::query()
+            ->withCount(['companies', 'contacts'])
+            ->with('latestDiscoveryRun')
+            ->orderByDesc('is_active')
+            ->latest('updated_at')
+            ->limit(5)
+            ->get()
+            ->map(function (ProspectCriteria $criteria): array {
+                $run = $criteria->latestDiscoveryRun;
+
+                return [
+                    'id' => $criteria->id,
+                    'name' => $criteria->name,
+                    'is_active' => (bool) $criteria->is_active,
+                    'auto_run' => (bool) $criteria->auto_run,
+                    'auto_enrich' => (bool) $criteria->auto_enrich,
+                    'run_at_hour' => $criteria->run_at_hour,
+                    'companies_count' => (int) $criteria->companies_count,
+                    'contacts_count' => (int) $criteria->contacts_count,
+                    'latest_run_status' => $run?->status,
+                    'latest_run_at' => $run?->finished_at ?? $run?->started_at ?? $run?->created_at,
+                ];
+            })
+            ->all();
+
+        return [
+            'total' => ProspectCriteria::count(),
+            'active' => ProspectCriteria::where('is_active', true)->count(),
+            'auto_run' => ProspectCriteria::where('is_active', true)->where('auto_run', true)->count(),
+            'rows' => $rows,
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function enterpriseOverview(): array
+    {
+        $sources = Company::query()
+            ->selectRaw('source, COUNT(*) AS aggregate')
+            ->groupBy('source')
+            ->pluck('aggregate', 'source')
+            ->map(fn ($count) => (int) $count)
+            ->all();
+
+        $qualification = Company::query()
+            ->selectRaw('qualification_status, COUNT(*) AS aggregate')
+            ->groupBy('qualification_status')
+            ->pluck('aggregate', 'qualification_status')
+            ->map(fn ($count) => (int) $count)
+            ->all();
+
+        $enrichment = Company::query()
+            ->selectRaw("COALESCE(enrichment_status, 'not_attempted') AS status, COUNT(*) AS aggregate")
+            ->groupBy('status')
+            ->pluck('aggregate', 'status')
+            ->map(fn ($count) => (int) $count)
+            ->all();
+
+        return [
+            'total' => Company::count(),
+            'with_contacts' => Company::whereHas('contacts')->count(),
+            'qualification' => $qualification,
+            'sources' => $sources,
+            'enrichment' => $enrichment,
+            'recent' => Company::query()
+                ->withCount('contacts')
+                ->latest()
+                ->limit(5)
+                ->get(['id', 'name', 'source', 'qualification_status', 'enrichment_status', 'created_at'])
+                ->map(fn (Company $company): array => [
+                    'id' => $company->id,
+                    'name' => $company->name,
+                    'source' => $company->source,
+                    'qualification_status' => $company->qualification_status,
+                    'enrichment_status' => $company->enrichment_status,
+                    'contacts_count' => (int) $company->contacts_count,
+                    'created_at' => $company->created_at,
+                ])
+                ->all(),
+        ];
     }
 }
