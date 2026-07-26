@@ -1,22 +1,18 @@
 {{--
-    ProspectCriteria hero action buttons — ACTIONS ONLY, rendered identically on the
-    view page and the edit form (parity is the point; do not re-introduce a mode branch).
+    ProspectCriteria hero action buttons shared by view and edit.
 
-    "Modifier" was removed: the tab bar already cross-links view ↔ edit.
-    "Retour à la liste" was removed: the breadcrumb on both pages already links to the index.
-    Quota badges were removed: quota is not an action — it lives on the index page strip
-    (_quota-strip.blade.php).
-
-    _discovery-script.blade.php installs one delegated handler for every
-    data-discovery-launch control on both pages.
-
-    Variables: $model, and the quota guards $quotaRemaining / $monthlyRemaining /
-    $contactRemaining (null = unlimited/unknown). The edit page gets these via
-    ProspectCriteriaController::getViewVars(); the view page via resolveQuotaVars().
-
-    $isView is still passed by the _header-with-tabs shim but is no longer consumed.
+    Quota badges remain on the index strip; the operational controls below are shared.
+    Variables: $model, $isView, and the injected quota guards.
 --}}
 
+@if($isView)
+    @can('edit prospect_criteria')
+        <a href="{{ route('admin.prospect_criteria.edit', $model->id) }}" class="btn btn-sm btn-primary">
+            <i class="bi bi-pencil me-1"></i>
+            Modifier
+        </a>
+    @endcan
+@endif
 @can('run discovery')
     @php
         // Start disabled when a run is currently in flight (pending or running).

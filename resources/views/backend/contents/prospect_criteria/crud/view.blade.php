@@ -8,6 +8,10 @@
     <x-crud.breadcrumb :items="[['label' => 'Critères de découverte', 'route' => 'admin.prospect_criteria.index'], ['label' => $model->name]]" />
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.prospect_criteria.index'])
+@endsection
+
 {{--
     ProspectCriteria view — hero + tabbar + aperçu contract.
     Native tab pane IDs: criteria_apercu / criteria_resultats.

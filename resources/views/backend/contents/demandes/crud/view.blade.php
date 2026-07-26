@@ -8,6 +8,10 @@
     <x-crud.breadcrumb :items="[['label' => 'Demandes', 'route' => 'admin.demandes.index'], ['label' => $model->contact ? e($model->contact->name) : '#' . $model->id]]" />
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.demandes.index'])
+@endsection
+
 {{--
     Demande view — unified 2-tab UX (clic2loc parity).
     Hero card + shared tab strip via _header-with-tabs partial.

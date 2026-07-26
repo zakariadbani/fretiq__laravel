@@ -8,6 +8,10 @@
     <x-crud.breadcrumb :items="[['label' => 'Segments', 'route' => 'admin.segments.index'], ['label' => $model->name]]" />
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.segments.index'])
+@endsection
+
 {{--
     Segment view — shared hero + 2-tab UX.
     Tab pane IDs: segment_apercu / segment_general.

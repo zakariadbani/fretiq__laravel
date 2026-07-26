@@ -8,6 +8,10 @@
     <x-crud.breadcrumb :items="[['label' => 'Packs', 'route' => 'admin.packages.index'], ['label' => $model->name]]" />
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.packages.index'])
+@endsection
+
 {{-- Shared hero + tab nav --}}
 @include('backend.contents.packages.partials._header-with-tabs', [
     'model'       => $model,

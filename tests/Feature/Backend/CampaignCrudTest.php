@@ -124,6 +124,47 @@ class CampaignCrudTest extends TestCase
             'Edit page must not render the hero AJAX status toggle; status is saved with the form.');
     }
 
+    public function test_campaign_view_renders_toolbar_and_shared_operational_actions(): void
+    {
+        $campaign = $this->makeRecurringCampaign();
+
+        $response = $this->actingAs($this->superadmin)
+            ->get("/admin/campaigns/{$campaign->id}");
+
+        $response->assertStatus(200);
+        $body = $response->getContent();
+
+        $this->assertSame(1, substr_count($body, 'Retour à la liste'));
+        $this->assertStringContainsString('d-flex gap-2 mb-2', $body);
+        $this->assertStringContainsString('id="btn-sync-zoho-list"', $body);
+        $this->assertStringContainsString('id="btn-schedule"', $body);
+        $this->assertStringContainsString('id="btn-send-now"', $body);
+        $this->assertStringContainsString('href="' . route('admin.campaigns.edit', $campaign->id) . '" class="btn btn-sm btn-primary"', $body);
+        $this->assertSame(1, substr_count($body, 'data-campaign-action-handlers'));
+    }
+
+    public function test_campaign_edit_renders_toolbar_and_shared_operational_actions(): void
+    {
+        $campaign = $this->makeRecurringCampaign();
+
+        $response = $this->actingAs($this->superadmin)
+            ->get("/admin/campaigns/{$campaign->id}/edit");
+
+        $response->assertStatus(200);
+        $body = $response->getContent();
+
+        $this->assertSame(1, substr_count($body, 'Retour à la liste'));
+        $this->assertStringContainsString('d-flex gap-2 mb-2', $body);
+        $this->assertStringContainsString('id="btn-sync-zoho-list"', $body);
+        $this->assertStringContainsString('id="btn-schedule"', $body);
+        $this->assertStringContainsString('id="btn-send-now"', $body);
+        $this->assertStringNotContainsString('href="' . route('admin.campaigns.edit', $campaign->id) . '" class="btn btn-sm btn-primary"', $body);
+        $this->assertSame(1, substr_count($body, 'data-campaign-action-handlers'));
+        $this->assertSame(3, substr_count($body, 'if (hasUnsavedCampaignChanges())'));
+        $this->assertStringContainsString('Modifications non enregistrées', $body);
+    }
+
+
     public function test_recurring_campaign_cannot_be_reactivated_without_next_run_at(): void
     {
         $campaign = $this->makeRecurringCampaign(isActive: false, nextRunAt: null);

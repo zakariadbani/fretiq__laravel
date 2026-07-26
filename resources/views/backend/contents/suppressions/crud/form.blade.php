@@ -8,10 +8,24 @@
     <x-crud.breadcrumb :items="[['label' => 'Suppressions', 'route' => 'admin.suppressions.index'], ['label' => isset($model) && $model->id ? 'Modifier' : 'Ajouter']]" />
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.suppressions.index'])
+@endsection
+
 <form method="POST" action="{{ $route }}" class="form" id="form_crud">
     @csrf
     @if(isset($model) && $model->id)
         @method('PUT')
+    @endif
+
+    @if(isset($model) && $model->id)
+        @include('backend.contents.suppressions.partials._header-with-tabs', [
+            'model'       => $model,
+            'currentPage' => 'edit',
+        ])
+
+        <div class="tab-content">
+            <div class="tab-pane fade show active" id="suppression_general" role="tabpanel">
     @endif
 
     <div class="row g-5">
@@ -93,6 +107,11 @@
     </div>
 
     {{-- Action buttons --}}
+    @if(isset($model) && $model->id)
+            </div>
+        </div>
+    @endif
+
     <div class="row g-5 mt-4">
         <div class="col-12">
             <div class="d-flex justify-content-end gap-3">
@@ -120,6 +139,7 @@
 
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
+    <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
 @endpush
 
 </x-default-layout>

@@ -8,6 +8,10 @@
     <x-crud.breadcrumb :items="[['label' => 'Séquences', 'route' => 'admin.sequences.index'], ['label' => $model->name]]" />
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.sequences.index'])
+@endsection
+
 {{--
     Sequence view — hero + tabbar + aperçu + steps contract.
     Tab pane IDs: sequence_apercu / sequence_general / sequence_steps.

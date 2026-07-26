@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Backend;
 
+use App\Crud\ViewConfigs\SuppressionViewConfig;
 use App\DataTables\Backend\SuppressionsDataTable;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
@@ -23,6 +24,7 @@ class SuppressionController extends BackendController
 
         $this->listTitle = 'Suppressions';
         $this->title     = 'email';
+        $this->viewConfigClass = SuppressionViewConfig::class;
 
         $this->bootResource(new BackendResource(
             modelClass:       Suppression::class,

@@ -4,7 +4,7 @@
     $saveAndContinue = $saveAndContinue ?? true;
     $isToolbar       = $variant === 'toolbar';
     $sizeCls         = $isToolbar ? 'btn-sm fw-bold ' : '';
-    $backLabel       = $isToolbar ? 'Retour à la liste' : 'Retour';
+    $backLabel       = $backLabel ?? ($isToolbar ? 'Retour à la liste' : 'Retour');
     $showSaveActions = !$isToolbar;
 @endphp
 

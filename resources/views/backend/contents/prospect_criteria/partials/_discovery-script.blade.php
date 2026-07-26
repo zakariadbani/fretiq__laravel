@@ -15,6 +15,23 @@
     var FATAL_STATUSES = [401, 403, 404, 419];
     var TOAST_OPTIONS = { escapeHtml: true };
     var states = new Map();
+    function blockUnsavedCriteriaAction() {
+        var form = document.getElementById('form_crud');
+        if (!form || form.dataset.cleanSnapshot === undefined) return false;
+
+        var currentSnapshot = new URLSearchParams(new FormData(form)).toString();
+        if (form.dataset.cleanSnapshot === currentSnapshot) return false;
+
+        Swal.fire({
+            icon: 'warning',
+            title: 'Modifications non enregistrées',
+            text: 'Enregistrez les critères avant de lancer cette action.',
+            buttonsStyling: false,
+            confirmButtonText: 'OK',
+            customClass: { confirmButton: 'btn btn-primary' },
+        });
+        return true;
+    }
 
     function showToast(type, message, title) {
         toastr[type](String(message || ''), title, TOAST_OPTIONS);
@@ -789,6 +806,7 @@
         var button = event.target.closest('[data-discovery-launch]');
         if (!button) return;
         event.preventDefault();
+        if (blockUnsavedCriteriaAction()) return;
         launch(button);
     });
 
@@ -811,6 +829,7 @@
 
     window.launchMissingContactEnrichment = function (button) {
         if (!button || button.disabled) return;
+        if (blockUnsavedCriteriaAction()) return;
 
         var scoreInput = document.querySelector('[name="min_score_enrich"]');
         if (scoreInput && String(scoreInput.value || '') !== String(button.dataset.savedMinScore || '')) {

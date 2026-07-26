@@ -8,6 +8,10 @@
     <x-crud.breadcrumb :items="[['label' => 'Modèles d\'email', 'route' => 'admin.campaign_templates.index'], ['label' => $model->name]]" />
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.campaign_templates.index'])
+@endsection
+
 {{--
     CampaignTemplate view — hero + 2-tab UX (contract parity).
     Hero card + shared tab strip via _header-with-tabs partial.

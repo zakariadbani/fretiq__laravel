@@ -8,6 +8,14 @@
     <x-crud.breadcrumb :items="[['label' => 'Entreprises', 'route' => 'admin.companies.index'], ['label' => $model->name]]" />
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', [
+        'variant' => 'toolbar',
+        'backRoute' => $model->qualification_status === 'rejected' ? 'admin.companies.archive' : 'admin.companies.index',
+        'backLabel' => $model->qualification_status === 'rejected' ? 'Retour aux archives' : 'Retour à la liste',
+    ])
+@endsection
+
 {{--
     Company view — unified 5-tab UX (clic2loc parity).
     Hero card + shared tab strip via _header-with-tabs partial.

@@ -8,6 +8,10 @@
     <x-crud.breadcrumb :items="[['label' => 'Contacts', 'route' => 'admin.contacts.index'], ['label' => $model->name]]" />
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.contacts.index'])
+@endsection
+
 {{--
     Contact view — unified 2-tab UX (clic2loc parity).
     Hero card + shared tab strip via _header-with-tabs partial.

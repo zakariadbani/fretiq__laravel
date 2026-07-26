@@ -8,6 +8,10 @@
     <x-crud.breadcrumb :items="[['label' => 'Utilisateurs', 'route' => 'admin.users.index'], ['label' => $model->name]]" />
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.users.index', 'saveAndContinue' => false])
+@endsection
+
 {{--
     User view — hero + tabbar + aperçu contract.
     Tab pane IDs: user_apercu / user_general.

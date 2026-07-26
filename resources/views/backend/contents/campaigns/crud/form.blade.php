@@ -948,6 +948,8 @@
                     } else {
                         sequenceSelect.dispatchEvent(new Event('change', { bubbles: true }));
                     }
+                    // Automatic single-sequence selection is part of the clean initial state.
+                    document.getElementById('form_crud')?.dispatchEvent(new CustomEvent('crud:form-saved', { bubbles: true }));
                 }
             }
 

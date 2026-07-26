@@ -8,6 +8,10 @@
     <x-crud.breadcrumb :items="[['label' => 'Identités d\'expéditeur', 'route' => 'admin.sender_identities.index'], ['label' => $model->name]]" />
 @endsection
 
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.sender_identities.index'])
+@endsection
+
 {{--
     SenderIdentity view — hero + tabbar + aperçu contract.
     Tab pane IDs: sender_apercu / sender_general.

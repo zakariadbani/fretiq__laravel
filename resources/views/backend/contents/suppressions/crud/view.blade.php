@@ -8,24 +8,18 @@
     <x-crud.breadcrumb :items="[['label' => 'Suppressions', 'route' => 'admin.suppressions.index'], ['label' => $model->email]]" />
 @endsection
 
-{{-- Action buttons --}}
-<div class="d-flex align-items-center gap-2 mb-6">
-    @can('view suppressions')
-        <a href="{{ route('admin.suppressions.index') }}" class="btn btn-sm fw-bold btn-light">
-            <i class="bi bi-arrow-left me-1"></i>
-            Retour à la liste
-        </a>
-    @endcan
+@section('toolbar_actions')
+    @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.suppressions.index'])
+@endsection
 
-    @can('edit suppressions')
-        <a href="{{ route('admin.suppressions.edit', $model->id) }}" class="btn btn-sm fw-bold btn-primary">
-            <i class="bi bi-pencil me-1"></i>
-            Modifier
-        </a>
-    @endcan
-</div>
+@include('backend.contents.suppressions.partials._header-with-tabs', [
+    'model'       => $model,
+    'currentPage' => 'view',
+])
 
-<div class="row g-5">
+<div class="tab-content">
+    <div class="tab-pane fade show active" id="suppression_apercu" role="tabpanel">
+        <div class="row g-5">
     <div class="col-lg-6">
         <div class="card">
             <div class="card-header border-0 pt-5">
@@ -93,6 +87,9 @@
 
             </div>
         </div>
+    </div>
+</div>
+
     </div>
 </div>
 

@@ -181,6 +181,97 @@ test.describe('Campaigns module', () => {
     }
   });
 
+  test('operational actions preview pristine state and block unsaved edits', async ({ page }) => {
+    const campaigns = new CampaignPage(page);
+    await page.addInitScript(() => {
+      document.addEventListener('DOMContentLoaded', () => {
+        const select = document.getElementById('sequence_select') as HTMLSelectElement | null;
+        if (!select) return;
+
+        const options = Array.from(select.options).filter(option => option.value !== '');
+        options.slice(1).forEach(option => option.remove());
+        if (options.length === 0) {
+          const option = document.createElement('option');
+          option.value = 'e2e-sequence';
+          option.textContent = 'E2E Sequence';
+          option.dataset.steps = '[]';
+          select.appendChild(option);
+        }
+        select.value = '';
+      }, { once: true });
+    });
+    await campaigns.goto();
+    await waitForDataTable(page, 'campaign-table');
+    await campaigns.clickRowAction(0, 'edit');
+    await expect(campaigns.nameInput).toBeVisible({ timeout: 10000 });
+
+    const initialization = await page.evaluate(() => {
+      const form = document.getElementById('form_crud') as HTMLFormElement | null;
+      const select = document.getElementById('sequence_select') as HTMLSelectElement | null;
+      const options = select ? Array.from(select.options).filter(option => option.value !== '') : [];
+      return {
+        optionCount: options.length,
+        autoSelected: options.length === 1 && select?.value === options[0].value,
+        snapshotMatches: !!form && form.dataset.cleanSnapshot === new URLSearchParams(new FormData(form)).toString(),
+      };
+    });
+    expect(initialization).toEqual({ optionCount: 1, autoSelected: true, snapshotMatches: true });
+    const actionButtons = page.locator('#btn-schedule, #btn-send-now, #btn-sync-zoho-list');
+    expect(await actionButtons.count()).toBeGreaterThanOrEqual(2);
+
+    const actionPaths = new Set<string>();
+    const previewPaths = new Set<string>();
+    for (let i = 0; i < await actionButtons.count(); i++) {
+      const actionUrl = await actionButtons.nth(i).getAttribute('data-url');
+      const previewUrl = await actionButtons.nth(i).getAttribute('data-preview-url');
+      if (actionUrl) actionPaths.add(new URL(actionUrl, page.url()).pathname);
+      if (previewUrl) previewPaths.add(new URL(previewUrl, page.url()).pathname);
+    }
+
+    let previewRequests = 0;
+    let actionRequests = 0;
+    await page.route('**/*', async route => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname;
+
+      if (request.method() === 'POST') {
+        if (actionPaths.has(path)) actionRequests++;
+        await route.abort();
+      } else if (previewPaths.has(path)) {
+        previewRequests++;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ count: 0, company_count: 0, contact_count: 0 }),
+        });
+      } else {
+        await route.continue();
+      }
+    });
+
+    const previewButton = page.locator('#btn-schedule:visible, #btn-send-now:visible').first();
+    await expect(previewButton).toBeVisible();
+    await previewButton.click();
+    await expect(page.locator('.swal2-popup')).not.toContainText('Modifications non enregistrées');
+    await expect(page.locator('.swal2-cancel')).toBeVisible();
+    await page.locator('.swal2-cancel').click();
+    await expect(previewButton).toBeEnabled();
+    expect(previewRequests).toBe(1);
+    expect(actionRequests).toBe(0);
+
+    previewRequests = 0;
+    actionRequests = 0;
+    await campaigns.nameInput.fill('E2E_FIXTURE Campaign modifiée');
+
+    for (let i = 0; i < await actionButtons.count(); i++) {
+      await actionButtons.nth(i).click();
+      await expect(page.locator('.swal2-popup')).toContainText('Modifications non enregistrées');
+      await page.locator('.swal2-confirm').click();
+    }
+
+    expect(previewRequests).toBe(0);
+    expect(actionRequests).toBe(0);
+  });
   // ── 4. View (detail) page ────────────────────────────────────────────────────
 
   test('view: detail page shows campaign name; sendNow button present (not clicked)', async ({ page }) => {

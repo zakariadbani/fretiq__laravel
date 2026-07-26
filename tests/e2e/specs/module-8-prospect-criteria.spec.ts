@@ -1215,6 +1215,26 @@ test.describe('ProspectCriteria module', () => {
     });
   }
 
+  test('edit quick action blocks discovery when criteria have unsaved changes', async ({ page }) => {
+    const pc = new ProspectCriteriaPage(page);
+    const criteriaId = await openFixtureCriteria(page);
+    let discoveryPosts = 0;
+
+    await page.route(`**/admin/prospect_criteria/${criteriaId}/discover`, async route => {
+      discoveryPosts++;
+      await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+    });
+
+    await pc.gotoEdit(criteriaId);
+    const launchButtons = page.locator(`[data-discovery-launch][data-criteria-id="${criteriaId}"]`);
+    await enableInterceptedLaunch(launchButtons);
+    await pc.nameInput.fill('Modification non enregistrée');
+    await launchButtons.first().click();
+
+    await expect(page.locator('.swal2-popup')).toContainText('Modifications non enregistrées');
+    await expect(page.locator('.swal2-popup')).toContainText('Enregistrez les critères');
+    expect(discoveryPosts).toBe(0);
+  });
   test('discovery tracker: network, 408, 425, 429, and 5xx retries follow capped backoff', async ({ page }) => {
     await installDiscoveryPollTimerSpy(page);
     const pc = new ProspectCriteriaPage(page);
@@ -1240,8 +1260,6 @@ test.describe('ProspectCriteria module', () => {
     ];
     const observedAttempts: string[] = [];
     const editUrl = page.url();
-    const nameInput = page.locator('#form_crud input[name="name"]');
-    await nameInput.fill('Modification non enregistrée');
     page.on('framenavigated', frame => {
       if (frame === page.mainFrame()) navigations++;
     });
@@ -1311,7 +1329,6 @@ test.describe('ProspectCriteria module', () => {
     }
 
     await expect(tracker.locator('[data-discovery-error]')).toContainText('Fin contrôlée après les reprises');
-    await expect(nameInput).toHaveValue('Modification non enregistrée');
     expect(page.url()).toBe(editUrl);
     expect(navigations).toBe(0);
     expect(polls).toBe(9);
