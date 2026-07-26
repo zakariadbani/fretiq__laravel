@@ -71,10 +71,10 @@ class ZohoMergeTagTranslationTest extends TestCase
         $this->assertSame('Votre email : $[EMAIL]$', $result);
     }
 
-    public function test_company_name_translates_to_companyname_tag_with_fallback(): void
+    public function test_company_name_translates_to_exact_companyname_tag(): void
     {
         $result = ZohoCampaignsDriver::translateMergeTags('Société : {{company.name}}');
-        $this->assertSame('Société : $[COMPANYNAME|votre entreprise|votre entreprise]$', $result);
+        $this->assertSame('Société : $[COMPANYNAME]$', $result);
     }
 
     public function test_unsubscribe_url_translates_to_zoho_unsubscribe_tag(): void
@@ -96,7 +96,7 @@ HTML;
 
         $expected = <<<'HTML'
 <p>Bonjour $[FNAME|client|client]$,</p>
-<p>Votre société : $[COMPANYNAME|votre entreprise|votre entreprise]$</p>
+<p>Votre société : $[COMPANYNAME]$</p>
 <p>Email : $[EMAIL]$</p>
 <p><a href="$[LI:UNSUBSCRIBE]$">Se désabonner</a></p>
 HTML;
@@ -151,6 +151,29 @@ HTML;
         $this->assertSame(1, substr_count($result, '$[LI:UNSUBSCRIBE]$'));
         $this->assertStringContainsString('<a href="$[LI:UNSUBSCRIBE]$"', $result);
         $this->assertStringContainsString('Se désabonner', $result);
+    }
+
+    public function test_prepare_html_rewrites_legacy_stratus_image_urls(): void
+    {
+        $legacyLogoUrl = 'https://stratus.campaign-image.com/images/17383084625551_t%C3%A9l%C3%A9chargement-removebg-p_zc_v1_1_962996000020175003.png';
+        $legacyLinkedInUrl = 'https://stratus.campaign-image.com/images/17383084636946_linkedin@2x_zc_v1_6_962996000020175003.png';
+        $result = ZohoCampaignsDriver::prepareHtmlContent(
+            '<img src="' . $legacyLogoUrl . '"><img src="' . $legacyLinkedInUrl . '">'
+        );
+
+        $this->assertStringContainsString('https://fretiq.digaevo.com/assets/media/email/tcl-logo-white.png', $result);
+        $this->assertStringContainsString('https://fretiq.digaevo.com/assets/media/email/linkedin.png', $result);
+        $this->assertStringNotContainsString('stratus.campaign-image.com', $result);
+    }
+
+    public function test_prepare_html_translates_company_name_to_exact_companyname_tag(): void
+    {
+        $result = ZohoCampaignsDriver::prepareHtmlContent(
+            '<p>{{company.name}}</p><a href="{{unsubscribe_url}}">unsubscribe</a>'
+        );
+
+        $this->assertStringContainsString('$[COMPANYNAME]$', $result);
+        $this->assertStringNotContainsString('$[COMPANYNAME|', $result);
     }
 
     public function test_prepare_html_keeps_only_first_of_multiple_clickable_unsubscribe_links(): void

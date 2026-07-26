@@ -118,22 +118,14 @@
 
     function serialiseForm(form) {
         if (!form) return '';
-
-        if (typeof tinymce !== 'undefined') {
-            form.querySelectorAll('textarea[id]').forEach(function (textarea) {
-                var editor = tinymce.get(textarea.id);
-                if (editor) {
-                    textarea.value = editor.getContent();
-                }
-            });
-        }
-
         return new URLSearchParams(new FormData(form)).toString();
     }
 
     function installDirtyNavigationGuard() {
         var forms = Array.prototype.slice.call(document.querySelectorAll('#form_crud, #campaign_template_translation_form'));
         if (!forms.length) return;
+
+        var navigationConfirmed = false;
 
         forms.forEach(function (form) {
             form.dataset.cleanSnapshot = serialiseForm(form);
@@ -149,20 +141,24 @@
         };
 
         window.addEventListener('beforeunload', function (event) {
-            if (!hasDirtyForm()) return;
+            if (navigationConfirmed || !hasDirtyForm()) return;
             event.preventDefault();
             event.returnValue = '';
         });
 
         document.addEventListener('click', function (event) {
+            if (event.defaultPrevented || event.button !== 0 ||
+                event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+                return;
+            }
+
             var link = event.target.closest('a[href]');
-            if (!link) return;
+            if (!link || link.hasAttribute('download') || link.target && link.target !== '_self') return;
             if (link.getAttribute('data-bs-toggle') === 'tab') {
                 // Local panes retain the current document and its form data.
                 // Only cross-route navigation can discard unsaved edits.
                 return;
             }
-            if (link.target && link.target !== '_self') return;
 
             var href = link.getAttribute('href') || '';
             if (href === '' || href.charAt(0) === '#') return;
@@ -179,9 +175,17 @@
                 return;
             }
 
-            if (hasDirtyForm() && !window.confirm('Des modifications non enregistrées seront perdues. Continuer ?')) {
-                event.preventDefault();
+            if (!hasDirtyForm()) {
+                navigationConfirmed = true;
+                setTimeout(function () { navigationConfirmed = false; }, 0);
+                return;
             }
+
+            event.preventDefault();
+            if (!window.confirm('Des modifications non enregistrées seront perdues. Continuer ?')) return;
+
+            navigationConfirmed = true;
+            window.location.assign(nextUrl.href);
         });
     }
 
@@ -209,12 +213,6 @@
             link.addEventListener('click', function (event) {
                 var href = link.getAttribute('href');
                 if (!href || !href.startsWith('#')) return;
-
-                if (hasDirtyForm() && !window.confirm('Des modifications non enregistr\u00e9es seront perdues. Continuer ?')) {
-                    event.preventDefault();
-                    event.stopImmediatePropagation();
-                    return;
-                }
 
                 event.preventDefault();
                 event.stopImmediatePropagation();

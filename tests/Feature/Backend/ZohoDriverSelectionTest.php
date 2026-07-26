@@ -52,6 +52,7 @@ class ZohoDriverSelectionTest extends TestCase
             'services.zoho.campaigns.client_id' => 'x',
             'services.zoho.campaigns.client_secret' => 'y',
             'services.zoho.campaigns.list_key' => 'verified-list-key',
+            'services.zoho.campaigns.topic_id' => 'fake-topic-id',
             'prospecting.cold_send_enabled' => true,
             'app.url' => 'https://fretiq.example.test',
         ]);
@@ -63,6 +64,11 @@ class ZohoDriverSelectionTest extends TestCase
             '*oauth/v2/token*' => Http::response([
                 'access_token' => 'fake-at',
                 'expires_in'   => 3600,
+            ], 200),
+
+            '*json/listsubscribe*' => Http::response([
+                'status' => 'success',
+                'code'   => '0',
             ], 200),
 
             '*addlistsubscribersinbulk*' => Http::response([
@@ -224,7 +230,7 @@ class ZohoDriverSelectionTest extends TestCase
 
     /**
      * CampaignService::sendRun() with Zoho driver:
-     *   - calls addlistsubscribersinbulk, createCampaign, sendcampaign
+     *   - calls listsubscribe, createCampaign, sendcampaign
      *   - sets run.status='sent', run.zoho_campaign_key=campaignKey
      *   - marks recipients as 'sent'
      *   - does NOT send any Mail
@@ -244,6 +250,7 @@ class ZohoDriverSelectionTest extends TestCase
 
         $contact = $this->makeClientContact('zoho-run@acme.test');
         $run     = $this->makeCampaignWithRun($contact);
+        $run->campaign()->update(['subject' => 'Bonjour {{company.name}}']);
 
         /** @var CampaignService $service */
         $service = app(CampaignService::class);
@@ -265,8 +272,10 @@ class ZohoDriverSelectionTest extends TestCase
         Mail::assertNothingSent();
 
         // HTTP assertions: all three API endpoints were called
-        Http::assertSent(fn ($req) => str_contains($req->url(), 'addlistsubscribersinbulk'));
-        Http::assertSent(fn ($req) => str_contains($req->url(), 'createCampaign'));
+        Http::assertSent(fn ($req) => str_contains($req->url(), '/json/listsubscribe'));
+        Http::assertSent(fn ($req) => str_contains($req->url(), 'createCampaign')
+            && $req['subject'] === 'Bonjour $[COMPANYNAME]$'
+            && ! str_contains($req['subject'], '$[COMPANYNAME|'));
         Http::assertSent(fn ($req) => str_contains($req->url(), 'sendcampaign'));
     }
 

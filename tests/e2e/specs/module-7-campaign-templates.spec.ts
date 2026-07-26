@@ -387,27 +387,48 @@ test.describe('Campaign Templates module', () => {
     if (!idMatch) throw new Error(`Could not extract template id from edit URL: ${page.url()}`);
     const templateId = idMatch[1];
 
-    let dialogCount = 0;
+    const dialogTypes: string[] = [];
+    let dismissNextConfirm = false;
     page.on('dialog', async (dialog) => {
-      dialogCount++;
-      if (dialogCount !== 2) {
-        await dialog.accept();
-      } else {
+      dialogTypes.push(dialog.type());
+      if (dialog.type() === 'confirm' && dismissNextConfirm) {
+        dismissNextConfirm = false;
         await dialog.dismiss();
+      } else {
+        await dialog.accept();
       }
     });
+
+    await page.waitForFunction(() =>
+      typeof window.tinymce !== 'undefined' && Boolean(window.tinymce.get('tr_en_html')?.initialized)
+    );
+
+    const untouchedEditUrl = page.url();
+    await templates.routeLinks.first().click();
+    await page.waitForURL((url) => url.href !== untouchedEditUrl);
+    expect(dialogTypes.filter((type) => type === 'confirm')).toHaveLength(0);
+    expect(dialogTypes.filter((type) => type === 'beforeunload')).toHaveLength(0);
+
+    await templates.gotoEdit(templateId);
+    await expect(page.locator('#form_crud input[name="name"]')).toBeVisible({ timeout: 10000 });
+    await page.waitForFunction(() =>
+      typeof window.tinymce !== 'undefined' && Boolean(window.tinymce.get('tr_en_html')?.initialized)
+    );
 
     await templates.subjectInput.fill(`${subject} dirty`);
     await templates.openTraductionsTab();
     await expect(page.locator('#template_traductions')).toBeVisible({ timeout: 10000 });
     await expect(page.locator('#form_crud #campaign_template_translation_form')).toHaveCount(0);
-    expect(dialogCount).toBe(1);
+    expect(dialogTypes.filter((type) => type === 'confirm')).toHaveLength(0);
+    expect(dialogTypes.filter((type) => type === 'beforeunload')).toHaveLength(0);
     await expect(templates.stickyFormActions).toHaveClass(/d-none/);
     await expect(templates.translationForm).toBeVisible();
 
     const editUrl = page.url();
+    dismissNextConfirm = true;
     await templates.routeLinks.first().click();
-    expect(dialogCount).toBe(2);
+    expect(dialogTypes.filter((type) => type === 'confirm')).toHaveLength(1);
+    expect(dialogTypes.filter((type) => type === 'beforeunload')).toHaveLength(0);
     expect(page.url()).toBe(editUrl);
 
     let mainSaveRequests = 0;
@@ -444,7 +465,16 @@ test.describe('Campaign Templates module', () => {
 
     await templates.translationSubjectInput.fill(enSubject);
     await templates.openGeneralTab();
-    await templates.subjectInput.fill(subject);
+    await expect(templates.subjectInput).toHaveValue(`${subject} dirty`);
+    await templates.subjectInput.fill(`${subject} dirty again`);
+
+    const dirtyGeneralEditUrl = page.url();
+    await templates.routeLinks.first().click();
+    await page.waitForURL((url) => url.href !== dirtyGeneralEditUrl);
+    expect(new URL(page.url()).pathname)
+      .not.toMatch(new RegExp(`/campaign_templates/${templateId}/edit$`));
+    expect(dialogTypes.filter((type) => type === 'confirm')).toHaveLength(2);
+    expect(dialogTypes.filter((type) => type === 'beforeunload')).toHaveLength(0);
 
     await templates.goto();
     await waitForDataTable(page, 'campaign_template-table');

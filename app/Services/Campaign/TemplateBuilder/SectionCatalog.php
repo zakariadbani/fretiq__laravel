@@ -14,11 +14,20 @@ namespace App\Services\Campaign\TemplateBuilder;
  */
 class SectionCatalog
 {
-    // ── Image URLs (verbatim — see docs/mail templates/standard/README.md) ───
+    // ── Public email image URLs ───────────────────────────────────────────────
 
-    public const LOGO_WHITE_URL = 'https://stratus.campaign-image.com/images/17383084625551_t%C3%A9l%C3%A9chargement-removebg-p_zc_v1_1_962996000020175003.png';
+    public const LOGO_WHITE_URL = 'https://fretiq.digaevo.com/assets/media/email/tcl-logo-white.png';
 
-    public const LINKEDIN_ICON_URL = 'https://stratus.campaign-image.com/images/17383084636946_linkedin@2x_zc_v1_6_962996000020175003.png';
+    public const LINKEDIN_ICON_URL = 'https://fretiq.digaevo.com/assets/media/email/linkedin.png';
+
+    public const LEGACY_LOGO_WHITE_URL = 'https://stratus.campaign-image.com/images/17383084625551_t%C3%A9l%C3%A9chargement-removebg-p_zc_v1_1_962996000020175003.png';
+
+    public const LEGACY_LINKEDIN_ICON_URL = 'https://stratus.campaign-image.com/images/17383084636946_linkedin@2x_zc_v1_6_962996000020175003.png';
+
+    public const LEGACY_IMAGE_URL_MAP = [
+        self::LEGACY_LOGO_WHITE_URL => self::LOGO_WHITE_URL,
+        self::LEGACY_LINKEDIN_ICON_URL => self::LINKEDIN_ICON_URL,
+    ];
 
     // ── Variant registries ─────────────────────────────────────────────────────
 

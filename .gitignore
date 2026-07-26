@@ -34,7 +34,13 @@ auth.json
 /public/build
 /public/hot
 /public/storage
-/public/assets
+/public/assets/*
+!/public/assets/media/
+/public/assets/media/*
+!/public/assets/media/email/
+/public/assets/media/email/*
+!/public/assets/media/email/tcl-logo-white.png
+!/public/assets/media/email/linkedin.png
 /public/mix-manifest.json
 /storage/*.key
 /vendor

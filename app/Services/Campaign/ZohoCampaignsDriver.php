@@ -5,6 +5,7 @@ namespace App\Services\Campaign;
 use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
+use App\Services\Campaign\TemplateBuilder\SectionCatalog;
 use App\Services\Zoho\ZohoCampaignsClient;
 use Illuminate\Container\Container;
 use Illuminate\Support\Collection;
@@ -43,9 +44,9 @@ class ZohoCampaignsDriver implements CampaignsClient
      * directly from Zoho's own merge-tag picker in the campaign editor (not doc-sourced).
      * A prior version of this map used `$[COMPANY]$`, which is not a real Zoho Campaigns
      * merge tag — Zoho emitted it back to recipients literally instead of substituting the
-     * company name. Both the company tag and the first-name tag now use Zoho's documented
-     * pipe-separated fallback form `$[TAG|value_for_email|value_for_social]$` (first value
-     * used in email campaigns) so a contact with a blank field never renders empty.
+     * company name. The company tag must use that exact form: Zoho delivers the
+     * pipe-separated fallback form literally. The first-name tag keeps Zoho's documented
+     * fallback form `$[TAG|value_for_email|value_for_social]$`.
      *
      * NOT MAPPED — {{company.sector}} has no known Zoho Campaigns equivalent and is
      * therefore absent from this map: it passes through to Zoho unchanged (i.e. the
@@ -57,7 +58,7 @@ class ZohoCampaignsDriver implements CampaignsClient
         '{{contact.name}}'       => '$[FNAME|client|client]$',
         '{{contact.first_name}}' => '$[FNAME|client|client]$',
         '{{contact.email}}'      => '$[EMAIL]$',
-        '{{company.name}}'       => '$[COMPANYNAME|votre entreprise|votre entreprise]$',
+        '{{company.name}}'       => '$[COMPANYNAME]$',
         '{{unsubscribe_url}}'    => '$[LI:UNSUBSCRIBE]$',
     ];
 
@@ -113,6 +114,11 @@ class ZohoCampaignsDriver implements CampaignsClient
      */
     public static function prepareHtmlContent(string $html): string
     {
+        $html = str_replace(
+            array_keys(SectionCatalog::LEGACY_IMAGE_URL_MAP),
+            array_values(SectionCatalog::LEGACY_IMAGE_URL_MAP),
+            $html,
+        );
         $html = self::translateMergeTags($html);
         [$html, $hasUnsubscribeLink, $normalizationFailed] = UnsubscribeHtmlNormalizer::normalize(
             $html,
