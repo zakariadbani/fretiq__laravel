@@ -7,7 +7,7 @@
           <img src="{{ $logoWhiteUrl }}" width="132" alt="TCL" style="display:block;width:132px;max-width:100%;height:auto;">
         </td>
         <td valign="middle" align="right" style="font-size:12px;line-height:18px;color:#ffffff;font-weight:bold;letter-spacing:0.8px;text-transform:uppercase;">
-          Transport &amp; logistique
+          {{ $copy['tagline'] }}
         </td>
       </tr>
     </table>

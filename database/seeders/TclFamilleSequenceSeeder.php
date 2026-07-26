@@ -10,6 +10,8 @@ use App\Models\Segment;
 use App\Models\SenderIdentity;
 use App\Models\Sequence;
 use App\Models\SequenceStep;
+use App\Services\Campaign\TemplateBuilder\BuilderStateValidator;
+use App\Services\Campaign\TemplateBuilder\TemplateComposer;
 use Illuminate\Database\Seeder;
 
 /**
@@ -23,8 +25,10 @@ use Illuminate\Database\Seeder;
  *   CampaignTemplate ×4 → Sequence + SequenceStep ×4 → Segment → Campaign
  * Totals: 12 templates, 3 sequences (12 steps), 3 segments, 3 campaigns.
  *
- * Base records use firstOrCreate with stable logical keys; English translations
- * use updateOrCreate so copy and source hashes stay current. NOTHING seeded here is dispatchable until a human
+ * Missing templates and untouched rows from the legacy canonical seeder receive
+ * the builder copy once. Classic/builder edits and manual translations are preserved;
+ * workflow records remain firstOrCreate.
+ * NOTHING seeded here is dispatchable until a human
  * activates it in the back-office:
  *   - Sequence: is_active = false (scheduler requires is_active=true to enroll
  *     contacts or send steps)
@@ -95,38 +99,52 @@ class TclFamilleSequenceSeeder extends Seeder
             3 => $this->famille3Templates(),
         ];
         $englishTranslations = $this->englishTranslations();
+        $composer = app(TemplateComposer::class);
+        $validator = app(BuilderStateValidator::class);
 
         foreach ([1, 2, 3] as $n) {
             $tpl = [];
 
-            foreach ($templates[$n] as $definition) {
-                $template = CampaignTemplate::firstOrCreate(
-                    ['name' => $definition['name']],
-                    [
+            foreach ($templates[$n] as $index => $definition) {
+                $translation = $englishTranslations[$definition['name']];
+                $frState = $validator->validate($this->builderState($definition, $n, $index, 'fr'));
+                $enState = $validator->validate($this->builderState($translation, $n, $index, 'en'));
+
+                $template = CampaignTemplate::firstOrNew(['name' => $definition['name']]);
+                $templateWasWritten = ! $template->exists
+                    || $this->isUntouchedLegacyTemplate($template, $definition);
+
+                if ($templateWasWritten) {
+                    $template->fill([
                         'subject'      => $definition['subject'],
                         'preview_text' => $definition['preview_text'],
-                        'html_content' => $definition['html_content'],
-                    ],
-                );
-                $hashes = $template->sourceHashes();
-                $translation = $englishTranslations[$definition['name']];
+                        'builder_state' => $frState,
+                        'html_content' => $composer->compose($frState),
+                    ])->save();
+                }
 
-                CampaignTemplateTranslation::updateOrCreate(
-                    [
+                $existingTranslation = CampaignTemplateTranslation::where([
+                    'campaign_template_id' => $template->id,
+                    'language' => 'en',
+                ])->first();
+
+                if ($existingTranslation === null || $existingTranslation->is_ai_generated) {
+                    $hashes = $template->sourceHashes();
+
+                    CampaignTemplateTranslation::updateOrCreate([
                         'campaign_template_id' => $template->id,
                         'language' => 'en',
-                    ],
-                    [
+                    ], [
                         'subject' => $translation['subject'],
                         'preview_text' => $translation['preview_text'],
-                        'html_content' => $translation['html_content'],
-                        'is_ai_generated' => true,
+                        'html_content' => $composer->compose($enState, 'en'),
+                        'is_ai_generated' => false,
                         'reviewed_at' => null,
                         'src_subject_hash' => $hashes['subject'],
                         'src_preview_hash' => $hashes['preview'],
                         'src_body_hash' => $hashes['body'],
-                    ],
-                );
+                    ]);
+                }
 
                 $tpl[] = $template;
             }
@@ -204,6 +222,170 @@ class TclFamilleSequenceSeeder extends Seeder
                 ],
             );
         }
+    }
+
+    /** @param array{subject:string,preview_text:string,html_content:string} $definition */
+    private function isUntouchedLegacyTemplate(CampaignTemplate $template, array $definition): bool
+    {
+        if ($template->builder_state !== null || ! $template->created_at?->equalTo($template->updated_at)) {
+            return false;
+        }
+
+        $normalize = static fn (string $html): string => str_replace(["\r\n", "\r"], "\n", trim($html));
+
+        return hash_equals(
+            $normalize($definition['html_content']),
+            $normalize((string) $template->html_content),
+        );
+    }
+
+    /** @param array{subject:string,preview_text:string,html_content:string} $copy */
+    private function builderState(array $copy, int $family, int $index, string $locale): array
+    {
+        if ($family === 1 && $index === 0 && $locale === 'fr') {
+            return $this->canonicalFirstFrenchState();
+        }
+
+        $key = (($family - 1) * 4) + $index;
+        preg_match_all('/<p[^>]*>(.*?)<\/p>/si', $copy['html_content'], $matches);
+        $paragraphs = array_map(static fn (string $html): string => trim(preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8'))), $matches[1]);
+        array_shift($paragraphs); // greeting is fixed chrome
+        array_pop($paragraphs); // signature is fixed chrome
+        $closing = array_pop($paragraphs);
+        if ($key === 11) {
+            $paragraphs = array_values(array_filter(
+                $paragraphs,
+                static fn (string $paragraph): bool => ! str_contains($paragraph, 'visite-virtuelle-360/entrepot/'),
+            ));
+        }
+        if (count($paragraphs) > 3) {
+            $paragraphs = [$paragraphs[0], $paragraphs[1], implode(' ', array_slice($paragraphs, 2))];
+        }
+
+        $english = $locale === 'en';
+        $middles = ['benefits', 'case_study', 'checklist', 'offer', 'departures', 'case_study', 'checklist', 'offer', 'process', 'case_study', 'solutions', 'offer'];
+        $middle = $middles[$key];
+        $slots = [
+            'hero_title' => $copy['subject'],
+            'intro' => $paragraphs,
+            'bullets' => $this->familyBullets($family, $locale),
+            'closing_line' => $closing,
+        ];
+
+        $details = $this->middleDetails($family, $index, $locale);
+
+        if ($family === 1 && $index === 0 && $locale === 'en') {
+            $slots['hero_title'] = 'Secure your imports from Europe and meet your deadlines.';
+        }
+
+        return [
+            'header_variant' => 'logo_tagline', 'hero_variant' => 'navy',
+            'middle_variant' => $middle, 'footer_variant' => 'compact',
+            'preview_text' => $copy['preview_text'],
+            'cta' => ['intent' => $details['intent'], 'label' => $details['label']],
+            'slots' => array_merge($slots, $details['slots']),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function canonicalFirstFrenchState(): array
+    {
+        return [
+            'header_variant' => 'logo_tagline', 'hero_variant' => 'navy', 'middle_variant' => 'benefits', 'footer_variant' => 'compact',
+            'preview_text' => 'Découvrez comment TCL Transport sécurise vos flux logistiques critiques et garantit le respect de vos délais.',
+            'cta' => ['label' => 'Planifier un échange', 'intent' => 'services'],
+            'slots' => $this->canonicalFirstFrenchSlots(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function canonicalFirstFrenchSlots(): array
+    {
+        return [
+            'intro' => $this->canonicalFirstFrenchIntro(),
+            'bullets' => $this->familyBullets(1, 'fr'),
+            'benefits' => $this->canonicalFirstFrenchBenefits(),
+            'hero_title' => 'Sécurisez vos importations depuis l\'Europe et respectez vos délais.',
+            'closing_line' => 'N\'hésitez pas à revenir vers nous pour toute question ou précision.',
+        ];
+    }
+
+    private function canonicalFirstFrenchIntro(): array
+    {
+        return [
+            'Dans votre secteur, un retard de dédouanement ou une rupture de chaîne logistique n\'est jamais anodin.',
+            'Chez TCL Transport, nous accompagnons des acteurs pour les importations depuis l’Europe, avec une gestion dédiée aux marchandises à forte valeur ou soumises à réglementation stricte (traçabilité, température dirigée, documentation export/import).',
+            'Pour vos flux les plus urgents, notre statut d\'agent IATA nous permet d\'opérer directement avec les compagnies aériennes en cargo et en express, sécurisant des délais serrés sans intermédiaire.',
+        ];
+    }
+
+    private function canonicalFirstFrenchBenefits(): array
+    {
+        return [
+            ['text' => 'Accompagnement dédié pour vos produits à forte valeur ou soumis à réglementation stricte (traçabilité, température dirigée, documentation).', 'title' => 'Gestion des marchandises critiques'],
+            ['text' => 'En tant qu\'agent IATA, nous opérons directement avec les compagnies aériennes pour garantir des livraisons cargo et express urgentes.', 'title' => 'Délais aériens sécurisés'],
+            ['text' => 'Évitez les intermédiaires supplémentaires pour une gestion plus rapide et une meilleure maîtrise de vos chaînes d\'approvisionnement.', 'title' => 'Optimisation des flux logistiques'],
+        ];
+    }
+
+    /** @return array<int, string> */
+    private function familyBullets(int $family, string $locale): array
+    {
+        $english = $locale === 'en';
+
+        return match ($family) {
+            1 => $english
+                ? ['Dedicated handling of sensitive or regulated goods', 'Direct airline coordination through our IATA agent status', 'End-to-end customs and documentation control']
+                : ['Gestion dédiée des marchandises sensibles ou réglementées', 'Coordination directe avec les compagnies aériennes grâce à notre statut IATA', 'Maîtrise documentaire et douanière de bout en bout'],
+            2 => $english
+                ? ['Regular departures from France, Spain and Portugal', 'Optimised consolidation to reduce unit transport costs', 'FCL/LCL capacity planned around your volumes']
+                : ['Départs réguliers depuis la France, l’Espagne et le Portugal', 'Groupage optimisé pour réduire le coût unitaire', 'Capacités FCL/LCL planifiées selon vos volumes'],
+            3 => $english
+                ? ['End-to-end logistics management, from sourcing to the project site', 'Flexible customs-bonded storage with WMS and picking', 'Deliveries coordinated with the project schedule']
+                : ['Pilotage logistique de bout en bout, du sourcing au chantier', 'Stockage flexible en MEAD avec WMS et picking', 'Livraisons coordonnées avec le planning du projet'],
+        };
+    }
+
+    /** @return array{intent:string,label:string,slots:array<string,mixed>} */
+    private function middleDetails(int $family, int $index, string $locale): array
+    {
+        $en = $locale === 'en';
+        $key = (($family - 1) * 4) + $index;
+        $label = $en ? 'Discuss your requirements' : 'Échanger sur vos besoins';
+        $details = match ($key) {
+            0 => ['benefits' => $en ? [
+                ['title' => 'Compliance', 'text' => 'Complete export and import documentation.'], ['title' => 'Traceability', 'text' => 'Dedicated handling for sensitive goods.'], ['title' => 'Responsiveness', 'text' => 'Direct IATA air-cargo and express coordination.'],
+            ] : [
+                ['title' => 'Conformité', 'text' => 'Documentation export et import complète.'], ['title' => 'Traçabilité', 'text' => 'Gestion dédiée des marchandises sensibles.'], ['title' => 'Réactivité', 'text' => 'Coordination IATA directe en cargo et express.'],
+            ]],
+            1 => ['case_study' => $en
+                ? ['title' => 'An urgent air-freight shipment', 'challenge' => 'Collection required within 48 hours.', 'solution' => 'Complete documentation tracking through to final delivery.', 'result' => 'A priority flow structured without systematically adding an urgency surcharge.']
+                : ['title' => 'Un transport aérien urgent', 'challenge' => 'Une prise en charge demandée sous 48 heures.', 'solution' => 'Un suivi documentaire complet jusqu’à la livraison finale.', 'result' => 'Un flux prioritaire structuré sans appliquer systématiquement une surcharge d’urgence.']],
+            5 => ['case_study' => $en
+                ? ['title' => 'A practical industrial-flow example', 'challenge' => 'Load factors and departure frequency needed optimising.', 'solution' => 'TCL adjusted consolidation and departures from Europe.', 'result' => 'Lower unit transport costs and more reliable delivery times.']
+                : ['title' => 'Un exemple concret de flux industriels', 'challenge' => 'Le taux de remplissage et la fréquence des départs devaient être optimisés.', 'solution' => 'TCL a ajusté le groupage et les départs depuis l’Europe.', 'result' => 'Un coût unitaire réduit et des délais plus fiables.']],
+            9 => ['case_study' => $en
+                ? ['title' => 'A project managed end to end', 'challenge' => 'Several deliveries had to follow a demanding site schedule.', 'solution' => 'TCL coordinated transport, logistics and flexible temporary MEAD storage.', 'result' => 'Deliveries synchronised with the site schedule.']
+                : ['title' => 'Un projet géré de bout en bout', 'challenge' => 'Plusieurs livraisons devaient suivre un planning chantier serré.', 'solution' => 'TCL a coordonné transport, logistique et stockage temporaire flexible en MEAD.', 'result' => 'Des livraisons synchronisées avec le planning chantier.']],
+            2 => ['checklist_title' => $en ? 'Compliance checklist' : 'Checklist de conformité', 'checklist_items' => $en ? ['Anticipate tighter document checks', 'Prevent customs holds', 'Assess FCL/LCL for regular, less urgent flows'] : ['Anticiper le renforcement des contrôles documentaires', 'Éviter les blocages en douane', 'Évaluer le FCL/LCL pour les flux réguliers moins urgents']],
+            3 => ['offer' => $en ? ['title' => 'Supply-chain review', 'description' => 'A no-obligation review of lead times, bottlenecks and compliance costs.', 'highlight' => '20-minute discussion'] : ['title' => 'Diagnostic de chaîne logistique', 'description' => 'Un regard sans engagement sur les délais, blocages et coûts de non-conformité.', 'highlight' => 'Échange de 20 minutes']],
+            4 => ['departures' => $en ? [['origin' => 'Goussainville, France', 'frequency' => '4 departures per week'], ['origin' => 'Barcelona, Spain', 'frequency' => '2 to 3 departures per week'], ['origin' => 'Porto, Portugal', 'frequency' => '1 departure per week']] : [['origin' => 'Goussainville (France)', 'frequency' => '4 départs par semaine'], ['origin' => 'Barcelone (Espagne)', 'frequency' => '2 à 3 départs par semaine'], ['origin' => 'Porto (Portugal)', 'frequency' => '1 départ par semaine']]],
+            6 => ['checklist_title' => $en ? 'Prepare for volume peaks' : 'Anticiper les pics de volume', 'checklist_items' => $en ? ['Anticipate seasonal volume peaks', 'Avoid spot-rate increases and capacity delays', 'Plan FCL/LCL capacity for larger volumes'] : ['Anticiper les pics saisonniers de volume', 'Éviter les hausses spot et retards liés aux capacités', 'Planifier les capacités FCL/LCL pour les gros volumes']],
+            7 => ['offer' => $en ? ['title' => 'Rate simulation', 'description' => 'A concrete benchmark based on your volumes and shipping frequency.', 'highlight' => 'Simulation within 48 hours'] : ['title' => 'Simulation tarifaire', 'description' => "Une base concrète selon vos volumes et votre fréquence d'expédition.", 'highlight' => 'Simulation sous 48 h']],
+            8 => ['process_steps' => $en ? ['Sourcing', 'Transport and customs', 'Final site delivery'] : ['Sourcing', 'Transport et douane', 'Livraison finale chantier'], 'process_highlight' => $en ? 'Coordination aligned with the project schedule.' : 'Une coordination alignée sur le planning du projet.'],
+            10 => ['solutions' => $en ? [['title' => 'Upstream planning', 'text' => 'Integrate logistics during sourcing and purchasing.'], ['title' => 'Flexible storage', 'text' => 'WMS, picking and inventory management while the project progresses.']] : [['title' => 'Planification amont', 'text' => "Intégrer la logistique dès le sourcing et l'achat."], ['title' => 'Stockage flexible', 'text' => 'WMS, picking et gestion de stock pendant le projet.']]],
+            11 => ['offer' => $en ? ['title' => 'Project planning', 'description' => 'Anticipate lead times, customs and site coordination.', 'highlight' => '20-minute discussion'] : ['title' => 'Planification de projet', 'description' => 'Anticipez délais, douane et coordination chantier.', 'highlight' => 'Échange de 20 minutes']],
+        };
+
+        $intent = match ($key) {
+            3, 4, 5, 7 => 'quote',
+            11 => 'warehouse_tour',
+            default => 'services',
+        };
+
+        return ['intent' => $intent, 'label' => $key === 11
+            ? ($en ? 'Take a 3D tour of our warehouses' : 'Visiter nos entrepôts en 3D')
+            : $label, 'slots' => $details];
     }
 
     /** @return array<string, array{subject: string, preview_text: string, html_content: string}> */
@@ -473,8 +655,8 @@ HTML,
         return [
             [
                 'name'         => 'Famille 1 — Email 1 (J0) — Maîtrise de la contrainte',
-                'subject'      => 'Sécuriser vos importations sensibles depuis l\'Europe — {{company.name}}',
-                'preview_text' => 'Délais critiques, produits sensibles, conformité : une gestion dédiée.',
+                'subject'      => '{{company.name}} — Sécuriser vos flux sans compromis sur les délais',
+                'preview_text' => 'Découvrez comment TCL Transport sécurise vos flux logistiques critiques et garantit le respect de vos délais.',
                 'html_content' => <<<HTML
 <p>Bonjour {{contact.first_name}},</p>
 

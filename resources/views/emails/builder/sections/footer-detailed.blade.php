@@ -10,7 +10,7 @@
         <td align="center" style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#ffffff;font-weight:bold;letter-spacing:0.5px;padding-bottom:14px;">LET'S GROW TOGETHER !</td>
       </tr>
       <tr>
-        <td align="center" style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#c7d2e6;line-height:1.6;padding-bottom:10px;">353 Bd Mohammed V, 7ème étage – Espace Idriss, 20300 Casablanca – Maroc</td>
+        <td align="center" style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#c7d2e6;line-height:1.6;padding-bottom:10px;">{{ $copy['detailed_address'] }}</td>
       </tr>
       <tr>
         <td align="center" style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#c7d2e6;line-height:1.6;padding-bottom:10px;">
@@ -32,7 +32,7 @@
         </td>
       </tr>
       <tr>
-        <td align="center" style="font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#8fa1c7;line-height:1.6;padding-bottom:6px;">Vous recevez cet e-mail dans le cadre d'une communication professionnelle.</td>
+        <td align="center" style="font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#8fa1c7;line-height:1.6;padding-bottom:6px;">{{ $copy['detailed_compliance'] }}</td>
       </tr>
     </table>
   </td>

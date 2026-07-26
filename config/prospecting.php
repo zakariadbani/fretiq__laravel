@@ -76,6 +76,10 @@ return [
                 'label' => 'Découvrir nos services',
                 'path'  => 'nos-services/',
             ],
+            'warehouse_tour' => [
+                'label' => 'Visiter nos entrepôts en 3D',
+                'path'  => 'visite-virtuelle-360/entrepot/',
+            ],
         ],
     ],
 

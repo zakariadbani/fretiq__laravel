@@ -1,7 +1,7 @@
 {{-- why-bullets — "Pourquoi TCL Transport ?" bullet list (lifted from fretiq-standard-01-prospection.html). Fixed title, dynamic bullet items (2-4). --}}
 <tr>
   <td class="pad-mobile" style="padding:0 30px 8px 30px;background-color:#ffffff;">
-    <h2 style="margin:0 0 14px 0;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.4;color:#002e71;font-weight:bold;">Pourquoi TCL Transport ?</h2>
+    <h2 style="margin:0 0 14px 0;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.4;color:#002e71;font-weight:bold;">{{ $copy['why'] }}</h2>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       @foreach ($slots['bullets'] as $bullet)
       <tr>

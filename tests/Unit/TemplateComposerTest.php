@@ -106,6 +106,24 @@ class TemplateComposerTest extends TestCase
         $this->assertStringContainsString('href="https://tcltransport.com/nos-services/"', $html);
     }
 
+    public function test_warehouse_tour_cta_targets_tcl_transport_3d_tour(): void
+    {
+        $this->assertSame(
+            'https://tcltransport.com/visite-virtuelle-360/entrepot/',
+            SectionCatalog::ctaIntents()['warehouse_tour']['url']
+        );
+
+        $html = $this->composer()->compose($this->state(
+            'logo_tagline',
+            'compact',
+            'offer',
+            [],
+            ['cta' => ['intent' => 'warehouse_tour', 'label' => 'Visiter nos entrepôts en 3D']],
+        ));
+
+        $this->assertStringContainsString('href="https://tcltransport.com/visite-virtuelle-360/entrepot/"', $html);
+    }
+
     public function test_default_state_uses_source_backed_process_content(): void
     {
         $state = SectionCatalog::defaultState();
@@ -312,5 +330,25 @@ class TemplateComposerTest extends TestCase
         $this->composer()->compose($this->state('logo_center', 'detailed', 'departures', overrides: [
             'header_variant' => 'not_a_real_variant',
         ]));
+    }
+
+    public function test_english_composition_translates_fixed_chrome(): void
+    {
+        $html = $this->composer()->compose($this->state('logo_tagline', 'compact', 'case_study'), 'en');
+
+        $this->assertStringContainsString('<html lang="en"', $html);
+        $this->assertStringContainsString('Transport &amp; logistics', $html);
+        $this->assertStringContainsString('Your freight, our priority', $html);
+        $this->assertStringContainsString('Why TCL Transport?', $html);
+        $this->assertStringContainsString('Challenge', $html);
+        $this->assertStringContainsString('Kind regards,', $html);
+        $this->assertStringNotContainsString('Pourquoi TCL Transport ?', $html);
+    }
+
+    public function test_compose_rejects_unknown_locale(): void
+    {
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+
+        $this->composer()->compose($this->state('logo_tagline', 'compact', 'benefits'), 'de');
     }
 }

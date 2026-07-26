@@ -6,7 +6,7 @@
 --}}
 <tr>
   <td class="mobile-pad" style="padding:28px 40px;background-color:#002e71;text-align:center;">
-    <p style="margin:0 0 9px;font-size:12px;line-height:19px;color:#dce9f8;">TCL — 353 Bd Mohammed V, 7ème étage – Espace Idriss, 20300 Casablanca – Maroc</p>
-    <p style="margin:0;font-size:12px;line-height:19px;color:#dce9f8;">Vous recevez ce message dans le cadre d'une prise de contact professionnelle.</p>
+    <p style="margin:0 0 9px;font-size:12px;line-height:19px;color:#dce9f8;">{{ $copy['compact_address'] }}</p>
+    <p style="margin:0;font-size:12px;line-height:19px;color:#dce9f8;">{{ $copy['compact_compliance'] }}</p>
   </td>
 </tr>
