@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Carbon;
@@ -136,6 +137,21 @@ class DiscoveryRun extends Model
     }
 
     // ── State helpers ──────────────────────────────────────────────────────────
+
+    /**
+     * Refresh the observable heartbeat. False means this run is no longer 'running'
+     * (another actor terminalized it) — never "the timestamp did not change".
+     *
+     * MySQL reports CHANGED rows, not matched rows, so an `updated_at = now()` write
+     * landing in the same second as the previous one returns 0 affected rows. Ownership
+     * must therefore be re-asserted explicitly, not inferred from that count.
+     */
+    public static function touchHeartbeat(Builder $ownedQuery): bool
+    {
+        (clone $ownedQuery)->where('status', 'running')->update(['updated_at' => now()]);
+
+        return (clone $ownedQuery)->where('status', 'running')->exists();
+    }
 
     /**
      * Whether the run appears stale (in-flight but no heartbeat for too long).

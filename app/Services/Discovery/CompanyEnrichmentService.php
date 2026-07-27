@@ -263,6 +263,10 @@ class CompanyEnrichmentService
     /**
      * Do not leave an orphaned "enriching" badge when provider/upsert code throws.
      * The claim predicate makes this safe against a newer run reclaiming the row.
+     *
+     * Writes enrichment_status to a value it may already hold (retry landing on
+     * the same status). Its affected-row count is therefore never a valid
+     * ownership signal — this write is fire-and-forget, unread by any caller.
      */
     private function markOwnedUnexpectedFailure(Company $company, DiscoveryRun $run): void
     {

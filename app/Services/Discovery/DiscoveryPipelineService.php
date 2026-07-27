@@ -270,6 +270,11 @@ class DiscoveryPipelineService
                 }
 
                 if (! $this->touchHeartbeat($run)) {
+                    Log::info('[DiscoveryPipelineService] Run no longer running — stopping this attempt.', [
+                        'run_id' => $run?->id,
+                        'criteria_id' => $criteria->id,
+                    ]);
+
                     return new DiscoveryPipelineResult($stats, $collectionComplete, false);
                 }
             }
@@ -689,9 +694,7 @@ class DiscoveryPipelineService
             return true;
         }
 
-        return DiscoveryRun::whereKey($run->id)
-            ->where('status', 'running')
-            ->update(['updated_at' => now()]) === 1;
+        return DiscoveryRun::touchHeartbeat(DiscoveryRun::whereKey($run->id));
     }
 
     /**
@@ -779,6 +782,10 @@ class DiscoveryPipelineService
     /**
      * Record a deferral only while no run owns the company. This prevents a
      * losing discovery worker from overwriting an active manual/automatic claim.
+     *
+     * Writes enrichment_status to a value it may already hold (retry landing on
+     * the same status). Its affected-row count is therefore never a valid
+     * ownership signal — this write is fire-and-forget, unread by any caller.
      */
     private function markUnclaimedEnrichmentStatus(Company $company, string $status): void
     {

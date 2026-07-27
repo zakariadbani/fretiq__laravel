@@ -428,13 +428,18 @@ class RunDiscoveryPipelineJob implements ShouldQueue
                 }
 
                 if ($run !== null) {
-                    $heartbeatUpdated = $this->ownedRunQuery()
-                        ->where('status', 'running')
-                        ->update(['updated_at' => now()]);
-
                     // A stale terminalizer may have won between the pipeline return
-                    // and this heartbeat. Do not requeue a now-terminal run.
-                    if ($heartbeatUpdated === 0) {
+                    // and this heartbeat. Do not requeue a now-terminal run. Ownership
+                    // is re-asserted with an explicit exists() check — MySQL's PDO
+                    // driver reports changed rows, not matched rows, so a same-second
+                    // updated_at write returning 0 affected rows must never be read
+                    // as "no longer running" (see DiscoveryRun::touchHeartbeat()).
+                    if (! DiscoveryRun::touchHeartbeat($this->ownedRunQuery())) {
+                        Log::info('[RunDiscoveryPipelineJob] Run no longer running — not requeuing.', [
+                            'run_id' => $this->runId,
+                            'criteria_id' => $this->criteriaId,
+                        ]);
+
                         return;
                     }
                 }
