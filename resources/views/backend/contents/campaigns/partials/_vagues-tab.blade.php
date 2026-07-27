@@ -62,6 +62,23 @@
                     <a href="{{ $zohoCampaignsUrl }}" class="btn btn-sm btn-light-primary" target="_blank" rel="noopener">Ouvrir dans Zoho Campaigns</a>
                 </div>
             @endif
+            @if($selectedWave?->status === 'failed' && $selectedWave?->driver_ref === 'zoho-wave-failed' && blank($selectedWave?->zoho_campaign_key))
+                <div class="px-6 pb-4">
+                    <div class="alert alert-danger d-flex justify-content-between align-items-center flex-wrap gap-3 mb-0">
+                        <div>
+                            <div class="fw-bold">Synchronisation Zoho échouée</div>
+                            <div class="fs-8">{{ $selectedWave->failure_reason }}</div>
+                        </div>
+                        @can('send campaigns')
+                            <form method="POST" action="{{ route('admin.campaigns.retryZohoWave', [$model->id, $selectedWave->id]) }}"
+                                  onsubmit="return confirm('La date de cette vague est passée. Si la synchronisation réussit, la campagne Zoho sera créée et envoyée immédiatement. Continuer ?')">
+                                @csrf
+                                <button type="submit" class="btn btn-sm btn-danger">Relancer la vague Zoho</button>
+                            </form>
+                        @endcan
+                    </div>
+                </div>
+            @endif
             <div class="card-body border-top p-0">
                 @if($selectedWaveRecipients->isEmpty())
                     <div class="p-7 text-center text-muted">Selectionnez une vague pour voir ses contacts.</div>

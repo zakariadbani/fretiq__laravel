@@ -35,7 +35,14 @@ class SyncCampaignWaveZohoListJob implements ShouldQueue, ShouldBeUnique
     public function handle(CampaignWaveZohoListSyncService $service): void
     {
         $run = CampaignRun::find($this->runId);
-        if ($run === null || ! str_starts_with($run->occurrence_key, 'sequence-wave-')) {
+        $retryable = $run !== null
+            && blank($run->zoho_campaign_key)
+            && (
+                $run->status === 'prepared'
+                || ($run->status === 'failed' && $run->driver_ref === 'zoho-wave-failed')
+            )
+            && str_starts_with($run->occurrence_key, 'sequence-wave-');
+        if (! $retryable) {
             return;
         }
         $service->sync($run);

@@ -7,6 +7,7 @@ use App\DataTables\Backend\CampaignsDataTable;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
 use App\Jobs\SendCampaignJob;
+use App\Jobs\SyncCampaignWaveZohoListJob;
 use App\Models\Campaign;
 use App\Models\CampaignCompanyDispatch;
 use App\Models\CampaignRecipient;
@@ -57,7 +58,7 @@ class CampaignController extends BackendController
         $this->middleware('permission:create campaigns')->only(['create', 'store']);
         $this->middleware('permission:edit campaigns')->only(['edit', 'update', 'executeSwitch']);
         $this->middleware('permission:delete campaigns')->only(['delete']);
-        $this->middleware('permission:send campaigns')->only(['dispatchPreview', 'schedule', 'sendNow', 'sequenceAutoEnroll', 'syncZohoList']);
+        $this->middleware('permission:send campaigns')->only(['dispatchPreview', 'schedule', 'sendNow', 'sequenceAutoEnroll', 'syncZohoList', 'retryZohoWave']);
         $this->middleware('permission:create demandes')->only(['markReplied']);
 
         $this->listTitle = 'Campagnes';
@@ -1047,6 +1048,23 @@ class CampaignController extends BackendController
                 'message' => $e->getMessage(),
             ], 422);
         }
+    }
+
+    public function retryZohoWave($id, $runId)
+    {
+        $campaign = Campaign::findOrFail((int) $id);
+        $run = $campaign->runs()->whereKey((int) $runId)->firstOrFail();
+        $retryable = $run->status === 'failed'
+            && $run->driver_ref === 'zoho-wave-failed'
+            && blank($run->zoho_campaign_key)
+            && preg_match('/^sequence-wave-\d{6}$/', $run->occurrence_key) === 1;
+
+        abort_unless($retryable, 409, 'Cette vague Zoho ne peut pas être relancée automatiquement.');
+
+        SyncCampaignWaveZohoListJob::dispatch($run->id);
+
+        return redirect()->to(route('admin.campaigns.view', $campaign->id) . "?wave_id={$run->id}#campaign_vagues")
+            ->with('success', 'Relance Zoho mise en file d’attente. La date est dépassée : après synchronisation, la campagne sera créée et envoyée immédiatement.');
     }
 
     /**
