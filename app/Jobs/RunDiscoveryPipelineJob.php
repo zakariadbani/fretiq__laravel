@@ -36,7 +36,7 @@ use Illuminate\Support\Str;
  *   - Scheduled runs (routes/console.php)
  *   - Manual trigger from the UI (ProspectCriteriaController::discover)
  *
- * Queue: default (database driver in fretiq).
+ * Queue: discovery (database driver in fretiq).
  * Retry policy: up to 20 resumable attempts, with at most 2 thrown exceptions.
  *
  * Concurrency: WithoutOverlapping keyed on criteriaId. A blocked duplicate is
@@ -66,7 +66,9 @@ class RunDiscoveryPipelineJob implements ShouldQueue
     public function __construct(
         private readonly int $criteriaId,
         private readonly ?int $runId = null,
-    ) {}
+    ) {
+        $this->onQueue('discovery');
+    }
 
     /**
      * Prevent concurrent executions for the same criteria.

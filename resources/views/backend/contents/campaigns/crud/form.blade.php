@@ -494,8 +494,12 @@
                                         class="form-select form-select-solid"
                                         data-control="select2"
                                         data-hide-search="true">
+                                    @if(config('services.zoho.driver', 'local') === 'zoho')
+                                        <option value="paced" selected>Progressif</option>
+                                    @else
                                     <option value="immediate" {{ old('sequence_enrollment_mode', $model->sequence_enrollment_mode ?? 'immediate') === 'immediate' ? 'selected' : '' }}>Tous immédiatement</option>
                                     <option value="paced" {{ old('sequence_enrollment_mode', $model->sequence_enrollment_mode ?? 'immediate') === 'paced' ? 'selected' : '' }}>Progressif</option>
+                                    @endif
                                 </select>
                             </div>
                         </div>

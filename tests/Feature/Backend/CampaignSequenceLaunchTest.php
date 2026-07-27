@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Backend;
 
+use App\Jobs\SendSequenceStepJob;
 use App\Mail\SequenceStepMailable;
 use App\Models\Campaign;
 use App\Models\CampaignRun;
@@ -13,6 +14,7 @@ use App\Models\SenderIdentity;
 use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStep;
+use App\Models\SequenceStepSend;
 use App\Models\Suppression;
 use App\Models\User;
 use App\Services\Campaign\CampaignService;
@@ -22,6 +24,7 @@ use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 /**
@@ -42,6 +45,7 @@ class CampaignSequenceLaunchTest extends TestCase
 
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
+        config(['services.zoho.driver' => 'local']);
         Mail::fake();
     }
 
@@ -783,6 +787,54 @@ class CampaignSequenceLaunchTest extends TestCase
                 return true;
             }
         });
+    }
+
+    public function test_due_sequence_smtp_only_dispatches_for_active_local_or_unattributed_enrollments(): void
+    {
+        config(['services.zoho.driver' => 'local']);
+        $sequence = $this->makeSequenceWithSteps();
+        $segment = $this->makeSegment();
+        $localCampaign = $this->makeCampaign($segment, $sequence);
+        $inactiveCampaign = $this->makeCampaign($segment, $sequence);
+        $inactiveCampaign->update(['is_active' => false]);
+        $zohoCampaign = $this->makeCampaign($segment, $sequence);
+        $zohoCampaign->update(['driver' => 'zoho']);
+        $pacedCampaign = $this->makeCampaign($segment, $sequence);
+        $pacedCampaign->update(['sequence_enrollment_mode' => 'paced']);
+        $service = app(SequenceService::class);
+
+        $local = $service->enroll($sequence, $this->makeContact($this->makeCompany()), $localCampaign);
+        $inactive = $service->enroll($sequence, $this->makeContact($this->makeCompany()), $inactiveCampaign);
+        $zoho = $service->enroll($sequence, $this->makeContact($this->makeCompany()), $zohoCampaign);
+        $paced = $service->enroll($sequence, $this->makeContact($this->makeCompany()), $pacedCampaign);
+        $unattributed = $service->enroll($sequence, $this->makeContact($this->makeCompany()));
+        $stopped = $service->enroll($sequence, $this->makeContact($this->makeCompany()));
+        $stopped->update(['status' => 'stopped']);
+        SequenceEnrollment::whereKey([$local->id, $inactive->id, $zoho->id, $paced->id, $unattributed->id, $stopped->id])
+            ->update(['next_send_at' => now()->subMinute()]);
+
+        Queue::fake();
+        $this->assertSame(2, $service->processDue());
+        Queue::assertPushed(SendSequenceStepJob::class, 2);
+        Queue::assertPushed(SendSequenceStepJob::class, fn ($job) => $job->enrollmentId === $local->id);
+        Queue::assertPushed(SendSequenceStepJob::class, fn ($job) => $job->enrollmentId === $unattributed->id);
+
+        $service->sendStep($inactive->fresh());
+        $service->sendStep($zoho->fresh());
+        $service->sendStep($paced->fresh());
+        $service->sendStep($stopped->fresh());
+        Mail::assertNothingSent();
+        $this->assertSame(0, SequenceStepSend::count());
+
+        config(['services.zoho.driver' => 'zoho']);
+        Queue::fake();
+        $this->assertSame(0, $service->processDue());
+        Queue::assertNothingPushed();
+
+        $service->sendStep($local->fresh());
+        $service->sendStep($unattributed->fresh());
+        Mail::assertNothingSent();
+        $this->assertSame(0, SequenceStepSend::count());
     }
 
     /**

@@ -122,13 +122,16 @@ class SequenceService
     {
         $enrollments = SequenceEnrollment::where('status', 'active')
             ->where('next_send_at', '<=', now())
+            ->with('campaign')
             ->get();
 
-        foreach ($enrollments as $enrollment) {
+        $eligible = $enrollments->filter($this->canSendViaSmtp(...));
+
+        foreach ($eligible as $enrollment) {
             SendSequenceStepJob::dispatch($enrollment->id);
         }
 
-        return $enrollments->count();
+        return $eligible->count();
     }
 
     // ── Send a step ────────────────────────────────────────────────────────────
@@ -154,6 +157,10 @@ class SequenceService
     {
         // Always reload with relations to avoid stale state on retry.
         $e->load(['contact.company', 'sequence', 'campaign.senderIdentity']);
+
+        if (! $this->canSendViaSmtp($e)) {
+            return;
+        }
 
         $contact  = $e->contact;
         $sequence = $e->sequence;
@@ -366,5 +373,17 @@ class SequenceService
                 'final_step_no' => $stepNo,
             ]);
         }
+    }
+
+    private function canSendViaSmtp(SequenceEnrollment $enrollment): bool
+    {
+        if ($enrollment->status !== 'active' || config('services.zoho.driver', 'local') === 'zoho') {
+            return false;
+        }
+
+        return $enrollment->campaign === null
+            || ($enrollment->campaign->is_active
+                && $enrollment->campaign->sequence_enrollment_mode === 'immediate'
+                && ! $enrollment->campaign->usesZohoDriver());
     }
 }

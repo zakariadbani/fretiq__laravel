@@ -35,7 +35,9 @@ class SendSequenceStepJob implements ShouldQueue, ShouldBeUnique
 
     public function __construct(
         public readonly int $enrollmentId,
-    ) {}
+    ) {
+        $this->onQueue('campaigns');
+    }
 
     // ── ShouldBeUnique ─────────────────────────────────────────────────────────
 

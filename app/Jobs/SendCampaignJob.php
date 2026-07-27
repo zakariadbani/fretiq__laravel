@@ -35,7 +35,9 @@ class SendCampaignJob implements ShouldQueue, ShouldBeUnique
 
     public function __construct(
         public readonly int $runId,
-    ) {}
+    ) {
+        $this->onQueue('campaigns');
+    }
 
     // ── ShouldBeUnique ─────────────────────────────────────────────────────────
 

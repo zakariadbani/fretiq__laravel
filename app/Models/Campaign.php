@@ -139,6 +139,11 @@ class Campaign extends Model
         return max(1, (int) ($this->daily_company_limit ?? 20));
     }
 
+    public function usesZohoDriver(): bool
+    {
+        return config('services.zoho.driver', 'local') === 'zoho' || $this->driver === 'zoho';
+    }
+
     public function isOverdue(?Carbon $now = null): bool
     {
         $scheduledAt = $this->effectiveScheduledAt();
@@ -196,7 +201,11 @@ class Campaign extends Model
             'sequence_id'        => 'nullable|required_if:schedule_type,sequence|integer|exists:sequences,id',
             'subject'            => 'nullable|string|max:255',
             'schedule_type'      => 'nullable|' . ConfigEnum::in('schedule_types'),
-            'sequence_enrollment_mode' => 'nullable|in:immediate,paced',
+            'sequence_enrollment_mode' => [
+                Rule::requiredIf(fn () => $this->schedule_type === 'sequence' && $this->usesZohoDriver()),
+                'nullable',
+                Rule::in($this->schedule_type === 'sequence' && $this->usesZohoDriver() ? ['paced'] : ['immediate', 'paced']),
+            ],
             'scheduled_at'       => 'nullable|date',
             'recurrence'         => 'nullable|array',
             'next_run_at'        => [

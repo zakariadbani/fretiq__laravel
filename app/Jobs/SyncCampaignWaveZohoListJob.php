@@ -23,7 +23,10 @@ class SyncCampaignWaveZohoListJob implements ShouldQueue, ShouldBeUnique
     public int $tries = 5;
     public int $timeout = 120;
 
-    public function __construct(public readonly int $runId) {}
+    public function __construct(public readonly int $runId)
+    {
+        $this->onQueue('campaigns');
+    }
     public function uniqueId(): string { return (string) $this->runId; }
     public function uniqueFor(): int { return 600; }
     public function middleware(): array { return [(new WithoutOverlapping('zoho-wave-' . $this->runId))->dontRelease()]; }

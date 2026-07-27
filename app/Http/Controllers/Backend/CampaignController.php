@@ -577,7 +577,7 @@ class CampaignController extends BackendController
         // Defensive checks must not assume validated input.
         $scheduleType = $attributes['schedule_type'] ?? 'one_shot';
         $sequenceMode = $scheduleType === 'sequence'
-            ? ($attributes['sequence_enrollment_mode'] ?? 'immediate')
+            ? ($attributes['sequence_enrollment_mode'] ?? (config('services.zoho.driver', 'local') === 'zoho' ? 'paced' : 'immediate'))
             : 'immediate';
         $attributes['sequence_enrollment_mode'] = $sequenceMode;
 

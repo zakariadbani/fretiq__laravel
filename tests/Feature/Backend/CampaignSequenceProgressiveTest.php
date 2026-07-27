@@ -54,6 +54,48 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertSame('immediate', $campaign->sequence_enrollment_mode);
     }
 
+    public function test_zoho_model_validation_only_accepts_paced_sequence_enrollment(): void
+    {
+        $segment = $this->segment();
+        $sequence = $this->sequence();
+        $sender = SenderIdentity::create([
+            'name' => 'Zoho validation sender',
+            'email' => 'zoho-validation@example.test',
+            'is_active' => true,
+        ]);
+        $payload = [
+            'name' => 'Zoho sequence validation',
+            'segment_id' => $segment->id,
+            'sequence_id' => $sequence->id,
+            'sender_identity_id' => $sender->id,
+            'schedule_type' => 'sequence',
+            'sequence_enrollment_mode' => 'immediate',
+            'driver' => 'local',
+        ];
+
+        config(['services.zoho.driver' => 'zoho']);
+        $this->assertTrue((new Campaign())->validator($payload)->errors()->has('sequence_enrollment_mode'));
+
+        config(['services.zoho.driver' => 'local']);
+        $payload['driver'] = 'zoho';
+        $this->assertTrue((new Campaign())->validator($payload)->errors()->has('sequence_enrollment_mode'));
+
+        $payload['driver'] = 'local';
+        $this->assertFalse((new Campaign())->validator($payload)->errors()->has('sequence_enrollment_mode'));
+    }
+
+    public function test_zoho_campaign_form_only_offers_paced_sequence_enrollment(): void
+    {
+        config(['services.zoho.driver' => 'zoho']);
+        $admin = User::factory()->create(['email_verified_at' => now()]);
+        $admin->assignRole('superadmin');
+
+        $this->actingAs($admin)->get('/admin/campaigns/create')
+            ->assertOk()
+            ->assertDontSee('<option value="immediate"', false)
+            ->assertSee('<option value="paced" selected>', false);
+    }
+
     public function test_due_batch_caps_companies_and_enrolls_every_contact_in_each_selected_company(): void
     {
         $segment = $this->segment();
