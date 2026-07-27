@@ -117,7 +117,8 @@
             center: 'title',
             right:  'dayGridMonth,timeGridWeek,timeGridDay'
         },
-        initialView: 'dayGridMonth',
+        initialView: 'timeGridWeek',
+        eventShortHeight: 60,
         locale: 'fr',
         timeZone: plannerTimezone,
         buttonText: {

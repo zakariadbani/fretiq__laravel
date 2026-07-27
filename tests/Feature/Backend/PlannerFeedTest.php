@@ -230,6 +230,15 @@ class PlannerFeedTest extends TestCase
     }
 
 
+    public function test_planner_defaults_to_week_view_with_readable_short_events(): void
+    {
+        $this->actingAs($this->superadmin)
+            ->get('/admin/planner')
+            ->assertOk()
+            ->assertSee("initialView: 'timeGridWeek'", false)
+            ->assertSee('eventShortHeight: 60', false);
+    }
+
     public function test_planner_heading_uses_default_timezone_without_repeating_page_title(): void
     {
         $this->actingAs($this->superadmin)
