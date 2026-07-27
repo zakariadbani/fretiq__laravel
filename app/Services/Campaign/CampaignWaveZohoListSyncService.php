@@ -4,8 +4,14 @@ declare(strict_types=1);
 
 namespace App\Services\Campaign;
 
+use App\Exceptions\ZohoInvalidRecipientException;
+use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
+use App\Models\SequenceEnrollment;
+use App\Models\SequenceStepSend;
+use App\Models\Suppression;
 use App\Services\Zoho\ZohoRecipientListGateway;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /** Mirrors one frozen paced-sequence wave into its own Zoho recipient list. */
@@ -19,7 +25,7 @@ class CampaignWaveZohoListSyncService
     /** @return array{list_key: string, list_name: string, contacts: int} */
     public function sync(CampaignRun $run): array
     {
-        $run->loadMissing(['campaign', 'recipients.contact.company']);
+        $run->loadMissing(['campaign', 'sequenceStep', 'recipients.contact.company']);
         if (! str_starts_with($run->occurrence_key, 'sequence-wave-')) {
             throw new \InvalidArgumentException('Cette execution n\'est pas une vague de sequence.');
         }
@@ -46,14 +52,7 @@ class CampaignWaveZohoListSyncService
         }
         ksort($target);
         if ($target === []) {
-            $run->update([
-                'status' => 'sent',
-                'stats_sent' => 0,
-                'driver_ref' => 'zoho-wave-empty',
-                'finished_at' => now(),
-                'failure_reason' => null,
-            ]);
-            return ['list_key' => '', 'list_name' => $this->listName($run), 'contacts' => 0];
+            return $this->finishEmpty($run, '', $this->listName($run));
         }
 
         $listName = $this->listName($run);
@@ -70,7 +69,31 @@ class CampaignWaveZohoListSyncService
         $missing = array_diff_key($target, $before);
         $toPush = trim((string) config('services.zoho.campaigns.topic_id')) !== '' ? $target : $missing;
         foreach (array_chunk(array_values($toPush), 10) as $chunk) {
-            $this->gateway->addContacts($listKey, $chunk);
+            while ($chunk !== []) {
+                try {
+                    $this->gateway->addContacts($listKey, $chunk);
+                    break;
+                } catch (ZohoInvalidRecipientException $exception) {
+                    $email = $exception->email;
+                    $chunkContainsEmail = collect($chunk)->contains(
+                        fn (array $contact): bool => mb_strtolower(trim((string) ($contact['Contact Email'] ?? ''))) === $email,
+                    );
+
+                    if (! $chunkContainsEmail || ! isset($target[$email]) || ! $this->suppressInvalidRecipient($run, $email)) {
+                        throw $exception;
+                    }
+
+                    unset($target[$email]);
+                    $chunk = array_values(array_filter(
+                        $chunk,
+                        fn (array $contact): bool => mb_strtolower(trim((string) ($contact['Contact Email'] ?? ''))) !== $email,
+                    ));
+                }
+            }
+        }
+
+        if ($target === []) {
+            return $this->finishEmpty($run, $listKey, $listName);
         }
 
         $after = $this->emailsByNormalizedValue($this->gateway->listEmails($listKey));
@@ -78,7 +101,12 @@ class CampaignWaveZohoListSyncService
             throw new \RuntimeException('Zoho ne confirme pas tous les destinataires de la vague.');
         }
 
-        $run->forceFill(['status' => 'scheduled', 'zoho_list_key' => $listKey, 'driver_ref' => 'zoho-wave-synced'])->save();
+        $run->forceFill([
+            'status' => 'scheduled',
+            'zoho_list_key' => $listKey,
+            'driver_ref' => 'zoho-wave-synced',
+            'failure_reason' => null,
+        ])->save();
         return ['list_key' => $listKey, 'list_name' => $listName, 'contacts' => count($target)];
     }
 
@@ -110,5 +138,64 @@ class CampaignWaveZohoListSyncService
             }
         }
         return $result;
+    }
+
+    private function suppressInvalidRecipient(CampaignRun $run, string $email): bool
+    {
+        return DB::transaction(function () use ($run, $email): bool {
+            $recipient = CampaignRecipient::query()
+                ->where('campaign_run_id', $run->id)
+                ->where('status', 'queued')
+                ->whereHas('contact', fn ($query) => $query->where('email', $email))
+                ->with('contact')
+                ->lockForUpdate()
+                ->first();
+
+            if ($recipient?->contact === null || $run->sequenceStep === null) {
+                return false;
+            }
+
+            $enrollment = SequenceEnrollment::query()
+                ->where('campaign_id', $run->campaign_id)
+                ->where('contact_id', $recipient->contact_id)
+                ->where('status', 'active')
+                ->lockForUpdate()
+                ->first();
+
+            if ($enrollment === null) {
+                return false;
+            }
+
+            $recipient->update(['status' => 'skipped', 'skip_reason' => 'invalid_email']);
+            $enrollment->update([
+                'status' => 'stopped',
+                'stopped_reason' => 'invalid_email',
+                'next_send_at' => null,
+            ]);
+            Suppression::firstOrCreate(
+                ['email' => $email],
+                ['contact_id' => $recipient->contact_id, 'reason' => 'invalid_email', 'source' => 'sequence'],
+            );
+            SequenceStepSend::updateOrCreate(
+                ['enrollment_id' => $enrollment->id, 'step_no' => $run->sequenceStep->step_no],
+                ['campaign_run_id' => $run->id, 'status' => 'skipped'],
+            );
+
+            return true;
+        }, 3);
+    }
+
+    /** @return array{list_key: string, list_name: string, contacts: int} */
+    private function finishEmpty(CampaignRun $run, string $listKey, string $listName): array
+    {
+        $run->update([
+            'status' => 'sent',
+            'stats_sent' => 0,
+            'driver_ref' => 'zoho-wave-empty',
+            'finished_at' => now(),
+            'failure_reason' => null,
+        ]);
+
+        return ['list_key' => $listKey, 'list_name' => $listName, 'contacts' => 0];
     }
 }

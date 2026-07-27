@@ -40,6 +40,8 @@ class ObservabilityController extends Controller
 
     public function retryFailedJob(Request $request, string $uuid): RedirectResponse
     {
+        abort_unless($request->user()?->can('send campaigns'), 403);
+
         $retried = $this->observability->retryFailedJob($uuid);
         $this->audit($request, 'failed_job.retry', $uuid, $retried);
 
@@ -50,6 +52,8 @@ class ObservabilityController extends Controller
 
     public function retryAllFailedJobs(Request $request): RedirectResponse
     {
+        abort_unless($request->user()?->can('send campaigns'), 403);
+
         $count = $this->observability->retryAllFailedJobs();
         $this->audit($request, 'failed_job.retry_all', 'all', true, ['count' => $count]);
 

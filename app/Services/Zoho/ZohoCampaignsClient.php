@@ -2,6 +2,7 @@
 
 namespace App\Services\Zoho;
 
+use App\Exceptions\ZohoInvalidRecipientException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -214,6 +215,12 @@ class ZohoCampaignsClient
 
         $payload = $response->json() ?? [];
         $code = (string) ($payload['code'] ?? '0');
+
+        // Live empirical evidence (prod, 2026-07-27):
+        // STATUS: 200 + code 2007 + invalid contact email.
+        if ($code === '2007') {
+            throw new ZohoInvalidRecipientException(mb_strtolower($email), $code);
+        }
 
         if (! in_array($code, self::LISTSUBSCRIBE_ACCEPTED_CODES, true)) {
             throw new \RuntimeException(

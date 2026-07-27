@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Backend;
 
+use App\Exceptions\ZohoInvalidRecipientException;
 use App\Services\Zoho\ZohoCampaignsClient;
 use App\Services\Zoho\ZohoAuthService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -233,11 +234,30 @@ class ZohoCampaignsClientTest extends TestCase
         });
     }
 
+    public function test_topic_subscription_throws_typed_exception_for_zoho_invalid_email(): void
+    {
+        config(['services.zoho.campaigns.topic_id' => 'topic-99']);
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*json/listsubscribe*' => Http::response(['status' => 'error', 'code' => '2007', 'message' => 'invalid contact email'], 200),
+        ]);
+
+        try {
+            $this->makeClient()->addListSubscribers('LK-001', [
+                ['Contact Email' => ' INVALID@EXAMPLE.TEST '],
+            ]);
+            $this->fail('Expected ZohoInvalidRecipientException.');
+        } catch (ZohoInvalidRecipientException $exception) {
+            $this->assertSame('invalid@example.test', $exception->email);
+            $this->assertSame('2007', $exception->zohoCode);
+        }
+    }
+
     /**
      * An API-level error code from /json/listsubscribe (not in the accepted-codes
      * allowlist) must raise a RuntimeException, not be silently swallowed.
      */
-    public function test_add_list_subscribers_with_topic_throws_on_api_level_error(): void
+    public function test_topic_subscription_unknown_error_still_fails_wave(): void
     {
         config(['services.zoho.campaigns.topic_id' => 'topic-99']);
         Http::preventStrayRequests();

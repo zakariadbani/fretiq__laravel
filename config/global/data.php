@@ -160,6 +160,7 @@ return [
         'cold_send_disabled' => 'Envoi à froid désactivé',
         'personal_email' => 'Adresse e-mail personnelle',
         'enrollment_ineligible' => 'Étape de séquence non éligible',
+        'invalid_email' => 'Adresse e-mail invalide',
     ],
 
     //---------------------------------------------------------------------------
@@ -171,6 +172,7 @@ return [
         'manual' => ['label' => 'Manuel',           'color' => 'secondary'],
         'spam' => ['label' => 'Spam',             'color' => 'danger'],
         'complaint' => ['label' => 'Plainte',          'color' => 'danger'],
+        'invalid_email' => ['label' => 'Adresse e-mail invalide', 'color' => 'danger'],
     ],
 
     //---------------------------------------------------------------------------

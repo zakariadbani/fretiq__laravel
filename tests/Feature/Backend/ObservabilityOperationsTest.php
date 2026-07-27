@@ -92,6 +92,31 @@ class ObservabilityOperationsTest extends TestCase
         $this->assertDatabaseCount('jobs', 2);
     }
 
+    public function test_failed_job_retry_requires_send_campaigns_permission(): void
+    {
+        $uuid = $this->insertFailedJob();
+        $operator = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
+        $operator->givePermissionTo(['backend.access', 'manage roles']);
+
+        $this->actingAs($operator)->post("/admin/observability/failed-jobs/{$uuid}/retry")->assertForbidden();
+
+        $this->assertDatabaseHas('failed_jobs', ['uuid' => $uuid]);
+        $this->assertDatabaseCount('jobs', 0);
+    }
+
+    public function test_retry_all_failed_jobs_requires_send_campaigns_permission(): void
+    {
+        $this->insertFailedJob();
+        $this->insertFailedJob();
+        $operator = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
+        $operator->givePermissionTo(['backend.access', 'manage roles']);
+
+        $this->actingAs($operator)->post('/admin/observability/failed-jobs/retry-all')->assertForbidden();
+
+        $this->assertDatabaseCount('failed_jobs', 2);
+        $this->assertDatabaseCount('jobs', 0);
+    }
+
     public function test_scheduler_heartbeat_and_task_switches_are_reported(): void
     {
         $heartbeat = collect(app(Schedule::class)->events())
