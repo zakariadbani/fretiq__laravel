@@ -494,11 +494,13 @@ class CampaignService
 
             DB::transaction(function () use ($run, $summary, &$sentCount) {
                 // Mark all queued recipients as 'sent' (Zoho handles actual delivery).
+                // Zoho sends one campaign to the whole list — the provider id is per-RUN, not per-recipient,
+                // and campaign_recipients.provider_message_id is globally unique. The key lives on
+                // campaign_runs.zoho_campaign_key; derive it per recipient via campaign_run_id.
                 CampaignRecipient::where('campaign_run_id', $run->id)
                     ->where('status', 'queued')
                     ->update([
                         'status'              => 'sent',
-                        'provider_message_id' => 'zoho-' . ($summary['campaign_key'] ?? $run->id),
                         'sent_at'             => now(),
                     ]);
 

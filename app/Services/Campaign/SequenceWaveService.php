@@ -140,10 +140,13 @@ class SequenceWaveService
                 ->lockForUpdate()
                 ->get();
 
+            // Zoho sends one campaign to the whole list — the provider id is per-RUN, not per-recipient,
+            // and campaign_recipients.provider_message_id is globally unique. The key lives on
+            // campaign_runs.zoho_campaign_key; derive it per recipient via campaign_run_id.
             CampaignRecipient::query()
                 ->where('campaign_run_id', $locked->id)
                 ->whereIn('contact_id', $enrollments->pluck('contact_id'))
-                ->update(['status' => 'sent', 'provider_message_id' => $campaignKey, 'sent_at' => now()]);
+                ->update(['status' => 'sent', 'sent_at' => now()]);
 
             foreach ($enrollments as $enrollment) {
                 SequenceStepSend::updateOrCreate(

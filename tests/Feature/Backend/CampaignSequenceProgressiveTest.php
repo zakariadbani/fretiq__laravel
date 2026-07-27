@@ -933,6 +933,36 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertSame(2, CampaignRun::where('campaign_id', $campaign->id)->count());
     }
 
+    public function test_wave_with_multiple_recipients_marks_all_sent_without_provider_id_collision(): void
+    {
+        // Regression for the shared Zoho campaign_key being written into every
+        // recipient row (campaign_recipients.provider_message_id is globally
+        // unique) — see SequenceWaveService::send(). Needs 2+ recipients to
+        // reproduce; a single-recipient run never collides.
+        Mail::fake();
+        $segment = $this->segment();
+        $sequence = $this->sequence();
+        $companyA = $this->company(50);
+        $companyB = $this->company(60);
+        $this->contact($companyA);
+        $this->contact($companyB);
+        $campaign = $this->campaign($segment, $sequence, ['next_run_at' => '2026-07-21 08:00:00']);
+        app(PacedSequenceEnrollmentService::class)->activate($campaign, Carbon::parse('2026-07-21 09:00:00', 'UTC'));
+        $run = CampaignRun::where('campaign_id', $campaign->id)->where('occurrence_key', 'sequence-wave-000001')->firstOrFail();
+        $run->update(['zoho_list_key' => 'list-multi', 'status' => 'scheduled']);
+
+        $this->mock(ZohoCampaignsDriver::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('dispatchRun')->once()->andReturn(['campaign_key' => 'zoho-shared-key']);
+        });
+
+        app(SequenceWaveService::class)->send($run);
+
+        $run->refresh();
+        $this->assertSame('sent', $run->status);
+        $this->assertSame(2, $run->stats_sent);
+        $this->assertSame(2, CampaignRecipient::where('campaign_run_id', $run->id)->where('status', 'sent')->count());
+    }
+
     public function test_legacy_paced_enrollment_is_adopted_and_existing_job_skips_smtp(): void
     {
         Mail::fake();

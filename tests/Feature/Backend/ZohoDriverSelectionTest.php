@@ -284,6 +284,40 @@ class ZohoDriverSelectionTest extends TestCase
         Http::assertSent(fn ($req) => str_contains($req->url(), 'sendcampaign'));
     }
 
+    /**
+     * Regression: CampaignService::sendViaZoho() used to write the single
+     * shared Zoho campaign_key into provider_message_id for every recipient
+     * row — a globally-unique column — which collides as soon as a Zoho
+     * one-shot run has 2+ recipients. Every prior test here only ever sent
+     * to collect([$contact]).
+     */
+    public function test_zoho_one_shot_run_with_multiple_recipients_marks_all_sent_without_collision(): void
+    {
+        $this->setZohoDriver();
+        $this->fakeZohoHttp('CK-RUN-MULTI');
+
+        $this->app->bind(
+            CampaignsClient::class,
+            fn () => config('services.zoho.driver', 'local') === 'zoho'
+                ? new ZohoCampaignsDriver(app(\App\Services\Zoho\ZohoCampaignsClient::class))
+                : new LocalCampaignsDriver(),
+        );
+
+        $contactA = $this->makeClientContact('zoho-multi-a@acme.test');
+        $this->makeClientContact('zoho-multi-b@acme.test');
+        $run = $this->makeCampaignWithRun($contactA);
+
+        /** @var CampaignService $service */
+        $service = app(CampaignService::class);
+        $service->sendRun($run);
+
+        $run->refresh();
+        $this->assertSame('sent', $run->status);
+        $this->assertSame(2, $run->stats_sent);
+        $this->assertSame(2, CampaignRecipient::where('campaign_run_id', $run->id)->where('status', 'sent')->count());
+        Mail::assertNothingSent();
+    }
+
     public function test_dispatch_run_caps_campaign_name_while_preserving_traceable_suffix(): void
     {
         config([

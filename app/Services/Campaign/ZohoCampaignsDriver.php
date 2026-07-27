@@ -333,14 +333,12 @@ class ZohoCampaignsDriver implements CampaignsClient
             $run->update(['zoho_campaign_key' => $campaignKey]);
         }
 
-        if ($run->sequence_step_id !== null
-            && $hadCampaignKey
+        if ($hadCampaignKey
             && $run->driver_ref === 'zoho-send-uncertain') {
             throw new \RuntimeException('Envoi Zoho incertain : reconciliation manuelle requise.');
         }
 
-        if ($run->sequence_step_id !== null
-            && $hadCampaignKey
+        if ($hadCampaignKey
             && $run->driver_ref === 'zoho-send-attempted') {
             return [
                 'list_key' => $listKey,
