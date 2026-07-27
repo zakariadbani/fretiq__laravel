@@ -249,6 +249,35 @@ class DiscoveryJobLifecycleTest extends TestCase
         $this->assertNotNull($fresh->finished_at);
     }
 
+    public function test_search_provider_down_terminalizes_immediately_without_releasing_or_exhausting_retries(): void
+    {
+        $criteria = $this->criteria();
+        $run = $this->discoveryRun($criteria);
+        // needsContinuation is also true here (collectionComplete: false) — the
+        // searchProviderDown branch must win BEFORE the retry block even
+        // considers releasing the job for another attempt.
+        $this->bindPipeline($this->pipelineResult(
+            collectionComplete: false,
+            snapshotDrained: false,
+            searchProviderDown: true,
+        ));
+
+        $job = (new RunDiscoveryPipelineJob($criteria->id, $run->id))->withFakeQueueInteractions();
+        $job->job->attempts = 1;
+        $job->handle();
+
+        $job->assertNotReleased();
+        $job->assertNotFailed();
+
+        $fresh = $run->fresh();
+        $this->assertSame('failed', $fresh->status);
+        $this->assertSame(
+            'Service de recherche momentanément indisponible (quota de découverte épuisé) — réessayez plus tard.',
+            $fresh->error,
+        );
+        $this->assertNotNull($fresh->finished_at);
+    }
+
     public function test_failed_hook_only_terminalizes_an_active_run(): void
     {
         $criteria = $this->criteria();
@@ -558,8 +587,11 @@ class DiscoveryJobLifecycleTest extends TestCase
         app()->instance(DiscoveryPipelineService::class, $pipeline);
     }
 
-    private function pipelineResult(bool $collectionComplete, bool $snapshotDrained): DiscoveryPipelineResult
-    {
+    private function pipelineResult(
+        bool $collectionComplete,
+        bool $snapshotDrained,
+        bool $searchProviderDown = false,
+    ): DiscoveryPipelineResult {
         return new DiscoveryPipelineResult(
             stats: [
                 'companies' => 0,
@@ -572,6 +604,7 @@ class DiscoveryJobLifecycleTest extends TestCase
             ],
             collectionComplete: $collectionComplete,
             snapshotDrained: $snapshotDrained,
+            searchProviderDown: $searchProviderDown,
         );
     }
 

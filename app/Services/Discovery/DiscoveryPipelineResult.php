@@ -19,11 +19,18 @@ final class DiscoveryPipelineResult implements ArrayAccess
 
     /**
      * @param  array{companies:int,contacts:int,skipped:int,low_score:int,new:int,contacts_consumed:int,excluded:int}  $stats
+     * @param  bool  $searchProviderDown  True when the search provider (SerpAPI) is
+     *                                    down and this run has no usable candidates
+     *                                    to fall back on — distinct from
+     *                                    $providerUnavailable elsewhere, which means
+     *                                    Hunter. The job terminalizes the run
+     *                                    instead of releasing it for another retry.
      */
     public function __construct(
         public readonly array $stats,
         public readonly bool $collectionComplete,
         public readonly bool $snapshotDrained,
+        public readonly bool $searchProviderDown = false,
     ) {
         $this->needsContinuation = ! ($collectionComplete && $snapshotDrained);
     }
@@ -41,6 +48,7 @@ final class DiscoveryPipelineResult implements ArrayAccess
             'collection_complete' => $this->collectionComplete,
             'snapshot_drained' => $this->snapshotDrained,
             'needs_continuation' => $this->needsContinuation,
+            'search_provider_down' => $this->searchProviderDown,
         ];
     }
 

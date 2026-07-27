@@ -143,6 +143,7 @@ final class DiscoveryProgressPresenter
             'Exécution obsolète remplacée par une nouvelle réservation.',
             'La découverte d’entreprises ne peut pas démarrer : la clé API du fournisseur de recherche n’est pas configurée.',
             'La découverte d’entreprises ne peut pas démarrer : aucune requête ni aucun moteur de recherche n’est activé.',
+            'Service de recherche momentanément indisponible (quota de découverte épuisé) — réessayez plus tard.',
         ];
 
         if (in_array($error, $curated, true)

@@ -411,6 +411,53 @@ class CompanyDiscoveryCollectionLifecycleTest extends TestCase
         $this->assertFalse($result->terminal);
     }
 
+    public function test_all_429_responses_with_an_empty_snapshot_signals_search_provider_down_and_stops_after_one_call(): void
+    {
+        $this->useLiveDriver('test-key');
+        $criteria = $this->makeCriteria();
+        $run = $this->makeRun($criteria, searchesReserved: 10);
+
+        Http::fake([
+            '*' => Http::response(['error' => 'quota exceeded'], 429),
+        ]);
+
+        $result = $this->service->discoverForRun($criteria, $run, 10);
+
+        $this->assertTrue($result->searchProviderDown);
+        $this->assertSame([], $result->candidates);
+        // Debit-before-network-IO invariant is preserved: searches_consumed still
+        // equals the attempts actually made, even though the loop stopped cold on
+        // the very first 429 instead of burning the rest of the reservation.
+        $this->assertSame(1, $run->fresh()->searches_consumed);
+        Http::assertSentCount(1);
+    }
+
+    public function test_all_429_responses_with_a_preloaded_snapshot_drains_existing_candidates_instead_of_signaling_down(): void
+    {
+        $this->useLiveDriver('test-key');
+        $criteria = $this->makeCriteria();
+        $snapshot = [[
+            'domain' => 'already-collected.test',
+            'title' => null,
+            'snippet' => null,
+            'url' => 'https://already-collected.test',
+        ]];
+        // consumed must match count($snapshot) or discoverForRun() short-circuits
+        // before ever calling the provider (durable candidates awaiting processing).
+        $run = $this->makeRun($criteria, searchesReserved: 10, consumed: 1, snapshot: $snapshot);
+
+        Http::fake([
+            '*' => Http::response(['error' => 'quota exceeded'], 429),
+        ]);
+
+        $result = $this->service->discoverForRun($criteria, $run, 10);
+
+        $this->assertTrue($result->terminal);
+        $this->assertFalse($result->searchProviderDown);
+        $this->assertSame($snapshot, $result->candidates);
+        Http::assertSentCount(1);
+    }
+
     public function test_non_running_run_is_not_debited_or_sent_to_the_provider(): void
     {
         $this->useLiveDriver('test-key');

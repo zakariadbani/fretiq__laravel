@@ -149,7 +149,7 @@ class CompanyDiscoveryService
             return new DiscoveryCollectionResult($snapshot, false);
         }
 
-        $snapshot = $this->discoverFromSerpApiBySearchBudget(
+        [$snapshot, $providerOutage] = $this->discoverFromSerpApiBySearchBudget(
             $criteria,
             $run,
             $searchBudget,
@@ -163,12 +163,30 @@ class CompanyDiscoveryService
         $freshCursors = $this->normaliseCursors($freshCriteria->discovery_cursors ?? [], $queries);
 
         $terminal = $this->isLiveCollectionTerminal($freshRun, $searchBudget, $queries, $freshCursors);
+        $searchProviderDown = false;
+
+        // The provider stopped responding this invocation. Split by whether there
+        // is already-paid-for work to fall back on: an empty snapshot means the
+        // run truly has nothing, so the job must terminalize it; a non-empty
+        // snapshot means candidates exist to process, so collection is simply
+        // done (stop asking a dead provider) and processing drains what's there.
+        if ($providerOutage) {
+            if ($snapshot === []) {
+                $searchProviderDown = true;
+            } else {
+                $terminal = true;
+                Log::warning('[CompanyDiscoveryService] Search provider outage detected mid-run — draining already-collected candidates instead of retrying the provider.', [
+                    'criteria_id' => $criteria->id,
+                    'run_id' => $run->id,
+                ]);
+            }
+        }
 
         if ($terminal) {
             $this->markCollectionComplete($freshCriteria, $freshRun);
         }
 
-        return new DiscoveryCollectionResult($snapshot, $terminal);
+        return new DiscoveryCollectionResult($snapshot, $terminal, $searchProviderDown);
     }
 
     /**
@@ -501,6 +519,13 @@ class CompanyDiscoveryService
     /**
      * Live SerpAPI run mode where the budget is provider search calls. Each call
      * appends up to PAGE_SIZE new candidates to the durable run snapshot.
+     *
+     * @return array{0: list<array<string, mixed>>, 1: bool} [$snapshot, $providerOutage].
+     *         $providerOutage is invocation-scoped — it means a 429 (quota
+     *         exhausted) was hit and the collection loop stopped immediately
+     *         rather than burning the rest of the reservation on a dead
+     *         provider. It says nothing about whether the run holds usable
+     *         work; the caller decides that from $snapshot.
      */
     private function discoverFromSerpApiBySearchBudget(
         ProspectCriteria $criteria,
@@ -539,13 +564,13 @@ class CompanyDiscoveryService
 
                 $timeoutSeconds = $this->requestTimeoutSeconds($workDeadlineAt);
                 if ($timeoutSeconds === null) {
-                    return $snapshot;
+                    return [$snapshot, false];
                 }
 
                 // Debit durably before network I/O. HTTP errors and exceptions still
                 // consume a SerpAPI attempt and retries can never exceed the reservation.
                 if (! $this->reserveSerpApiAttempt($run)) {
-                    return $this->snapshot($run->fresh());
+                    return [$this->snapshot($run->fresh()), false];
                 }
 
                 $attempts++;
@@ -575,6 +600,17 @@ class CompanyDiscoveryService
                         'status' => $response->status(),
                     ]);
 
+                    // A 429 means the provider's quota is exhausted for every
+                    // stream — grinding through the remaining streams would just
+                    // burn the rest of the reservation on guaranteed failures.
+                    // Stop this invocation cold (not a bare `break`, which would
+                    // only exit this foreach and let the outer while re-enter).
+                    // A one-off 5xx on a single stream is NOT scoped here — it
+                    // `continue`s so the other streams still get their turn.
+                    if ($response->status() === 429) {
+                        return [$snapshot, true];
+                    }
+
                     continue;
                 }
 
@@ -582,7 +618,7 @@ class CompanyDiscoveryService
 
                 $committed = $this->appendPage($criteria, $run, $queries, $query, $start, $pageCandidates, $exhausted, $nextStart, $nextParams);
                 if (! $committed) {
-                    return $this->snapshot($run->fresh());
+                    return [$this->snapshot($run->fresh()), false];
                 }
 
                 $snapshot = $this->snapshot($run->fresh());
@@ -595,7 +631,7 @@ class CompanyDiscoveryService
             }
         }
 
-        return $snapshot;
+        return [$snapshot, false];
     }
 
     /**

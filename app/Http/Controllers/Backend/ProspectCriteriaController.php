@@ -73,7 +73,7 @@ class ProspectCriteriaController extends BackendController
      */
     public function index(DiscoveryQuotaService $quotaService)
     {
-        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining, $activeDailyLimitSum, $dailyQuotaSummary, $monthlyQuotaSummary, $quotaMeters] = $this->resolveQuotaVars($quotaService);
+        [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining, $activeDailyLimitSum, $dailyQuotaSummary, $monthlyQuotaSummary, $quotaMeters, $providerSearchesLeft] = $this->resolveQuotaVars($quotaService);
 
         return $this->currentDataTable->render(
             'backend.contents.prospect_criteria.crud.index',
@@ -89,6 +89,7 @@ class ProspectCriteriaController extends BackendController
                 'dailyQuotaSummary' => $dailyQuotaSummary,
                 'monthlyQuotaSummary' => $monthlyQuotaSummary,
                 'quotaMeters' => $quotaMeters,
+                'providerSearchesLeft' => $providerSearchesLeft,
             ]
         );
     }
@@ -224,9 +225,12 @@ class ProspectCriteriaController extends BackendController
      *
      * The 9th value (displayMeters()) is the render-ready meter set consumed by
      * the index quota strip and the view hero badge; the first 8 are kept as-is
-     * because other partials still read them individually.
+     * because other partials still read them individually. The 10th value is the
+     * live provider account balance (CompanyDiscoveryService::accountUsage(),
+     * already cached 10 min there) — null on a `local` driver, which the strip
+     * partial must render as "hidden", never a fake "0 crédits restants".
      *
-     * @return array{0: ?int, 1: ?\App\Models\Package, 2: ?int, 3: ?int, 4: ?int, 5: ?int, 6: array, 7: array, 8: array}
+     * @return array{0: ?int, 1: ?\App\Models\Package, 2: ?int, 3: ?int, 4: ?int, 5: ?int, 6: array, 7: array, 8: array, 9: ?int}
      */
     private function resolveQuotaVars(DiscoveryQuotaService $quotaService): array
     {
@@ -234,6 +238,7 @@ class ProspectCriteriaController extends BackendController
             $dailyQuotaSummary = $quotaService->dailyDisplaySummary();
             $monthlyQuotaSummary = $quotaService->monthlyDisplaySummary();
             $quotaMeters = $quotaService->displayMeters();
+            $providerSearchesLeft = app(CompanyDiscoveryService::class)->accountUsage()['total_searches_left'] ?? null;
 
             return [
                 $quotaService->remainingTodayForDisplay(),
@@ -247,10 +252,11 @@ class ProspectCriteriaController extends BackendController
                 $dailyQuotaSummary,
                 $monthlyQuotaSummary,
                 $quotaMeters,
+                $providerSearchesLeft,
             ];
         } catch (\Illuminate\Database\QueryException $e) {
             // Quota tables not yet migrated — treat as unlimited.
-            return [null, null, null, null, null, null, [], [], []];
+            return [null, null, null, null, null, null, [], [], [], null];
         }
     }
 

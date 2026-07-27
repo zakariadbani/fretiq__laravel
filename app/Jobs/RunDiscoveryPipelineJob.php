@@ -54,6 +54,16 @@ class RunDiscoveryPipelineJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
+    /**
+     * Curated message for a total search-provider outage (e.g. SerpAPI quota
+     * exhausted — every call 429s). Must also be whitelisted in
+     * DiscoveryProgressPresenter::publicError() or the progress strip/listing
+     * column fall back to the generic UNEXPECTED_FAILURE_MESSAGE while the
+     * history partial (which prints raw $run->error) shows this real text —
+     * inconsistent copy across the two channels.
+     */
+    private const SEARCH_PROVIDER_DOWN_MESSAGE = 'Service de recherche momentanément indisponible (quota de découverte épuisé) — réessayez plus tard.';
+
     /** @var int Maximum number of resumable attempts before marking as failed. */
     public int $tries = 20;
 
@@ -411,6 +421,22 @@ class RunDiscoveryPipelineJob implements ShouldQueue
 
             if (! $result instanceof DiscoveryPipelineResult) {
                 throw new \UnexpectedValueException('Le pipeline de découverte doit retourner un DiscoveryPipelineResult.');
+            }
+
+            // A total search-provider outage with no usable candidates collected.
+            // Checked BEFORE the retry block: releasing this job would just repeat
+            // the exact same outage on every retry until $tries is exhausted, and
+            // $this->fail() would overwrite this curated message with
+            // UNEXPECTED_FAILURE_MESSAGE via the failed() hook. Terminalize now.
+            if ($result->searchProviderDown) {
+                Log::info('[RunDiscoveryPipelineJob] Search provider signaled down with no usable candidates collected — terminalizing without exhausting retries.', [
+                    'run_id' => $this->runId,
+                    'criteria_id' => $this->criteriaId,
+                ]);
+
+                $this->terminalizeActiveRun(self::SEARCH_PROVIDER_DOWN_MESSAGE);
+
+                return;
             }
 
             if (! $result->isComplete() || $backlogNeedsContinuation) {

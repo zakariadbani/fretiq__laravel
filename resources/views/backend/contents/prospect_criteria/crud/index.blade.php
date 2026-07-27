@@ -10,9 +10,10 @@
 
 {{-- Quota meters + over-reservation banner (was an inline toolbar badge) --}}
 @include('backend.contents.prospect_criteria.partials._quota-strip', [
-    'quotaMeters'         => $quotaMeters ?? [],
-    'quotaPackage'        => $quotaPackage ?? null,
-    'activeDailyLimitSum' => $activeDailyLimitSum ?? null,
+    'quotaMeters'          => $quotaMeters ?? [],
+    'quotaPackage'         => $quotaPackage ?? null,
+    'activeDailyLimitSum'  => $activeDailyLimitSum ?? null,
+    'providerSearchesLeft' => $providerSearchesLeft ?? null,
 ])
 
 <div class="card">

@@ -46,6 +46,7 @@ class DiscoveryPipelineResultTest extends TestCase
             'collection_complete' => false,
             'snapshot_drained' => true,
             'needs_continuation' => true,
+            'search_provider_down' => false,
         ], $result->toArray());
     }
 }

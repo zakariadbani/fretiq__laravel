@@ -6,18 +6,35 @@
     DiscoveryQuotaService::displayMeters(); this partial only formats.
 
     Variables:
-        $quotaMeters         array     displayMeters() output, keyed company|contacts (default [])
-        $quotaPackage        ?Package  active package (default null)
-        $activeDailyLimitSum ?int      sum of daily_limit across ACTIVE criteria (default null)
+        $quotaMeters          array     displayMeters() output, keyed company|contacts (default [])
+        $quotaPackage         ?Package  active package (default null)
+        $activeDailyLimitSum  ?int      sum of daily_limit across ACTIVE criteria (default null)
+        $providerSearchesLeft ?int      live search-provider account balance (default null)
 
     Renders nothing when $quotaMeters is empty (quota tables not yet migrated).
+    The provider-balance card is independent of $quotaMeters — it is hidden
+    (never shown as "0") whenever $providerSearchesLeft is null, which is the
+    normal state on a `local`-driver dev box. Never names the provider — generic
+    "crédits de découverte" per project convention.
 --}}
 
 @php
-    $quotaMeters         = $quotaMeters         ?? [];
-    $quotaPackage        = $quotaPackage        ?? null;
-    $activeDailyLimitSum = $activeDailyLimitSum ?? null;
+    $quotaMeters          = $quotaMeters          ?? [];
+    $quotaPackage         = $quotaPackage         ?? null;
+    $activeDailyLimitSum  = $activeDailyLimitSum  ?? null;
+    $providerSearchesLeft = $providerSearchesLeft ?? null;
 @endphp
+
+@if($providerSearchesLeft !== null)
+    <div class="row g-5 mb-6">
+        <div class="col-md-6 col-xl-4">
+            <x-crud.stat-card icon="bi-battery-charging"
+                              color="info"
+                              label="Crédits de découverte restants"
+                              :value="$providerSearchesLeft" />
+        </div>
+    </div>
+@endif
 
 @if(! empty($quotaMeters))
 

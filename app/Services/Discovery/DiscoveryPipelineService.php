@@ -208,6 +208,8 @@ class DiscoveryPipelineService
         // Only queued discovery runs use shared SerpAPI cursor/snapshot pagination.
         $isDiscoveryRun = $run !== null && ($run->type ?? 'discovery') === 'discovery';
 
+        $searchProviderDown = false;
+
         if ($isDiscoveryRun) {
             $collection = $this->discovery->discoverForRun(
                 $criteria,
@@ -217,6 +219,7 @@ class DiscoveryPipelineService
             );
             $allCandidates = $collection->candidates;
             $collectionComplete = $collection->terminal;
+            $searchProviderDown = $collection->searchProviderDown;
         } else {
             $allCandidates = $this->discovery->discover($criteria, $candidateLimit);
             $collectionComplete = true;
@@ -681,6 +684,7 @@ class DiscoveryPipelineService
             $stats,
             $collectionComplete,
             ($offset + $scannedThisAttempt) >= count($allCandidates),
+            $searchProviderDown,
         );
     }
 
