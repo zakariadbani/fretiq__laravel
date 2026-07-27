@@ -73,12 +73,13 @@ Route::post('/u/{contact}/one-click', [UnsubscribeController::class, 'oneClick']
 
 // Public, signed HTML import URL used by Zoho Campaigns createCampaign.
 Route::get('/campaign-runs/{run}/zoho-content', function (CampaignRun $run) {
-    $run->load('campaign.template');
+    $run->load(['campaign.template', 'sequenceStep.template']);
 
-    abort_unless($run->campaign?->template, 404);
+    $template = $run->sequenceStep?->template ?? $run->campaign?->template;
+    abort_unless($template, 404);
 
     return response(
-        ZohoCampaignsDriver::prepareHtmlContent($run->campaign->template->html_content),
+        ZohoCampaignsDriver::prepareHtmlContent($template->html_content),
         200,
         ['Content-Type' => 'text/html; charset=UTF-8'],
     );

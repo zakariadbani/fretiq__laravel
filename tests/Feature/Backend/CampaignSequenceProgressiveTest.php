@@ -4,6 +4,8 @@ namespace Tests\Feature\Backend;
 
 use App\Models\Campaign;
 use App\Jobs\SyncCampaignWaveZohoListJob;
+use App\Jobs\SendSequenceStepJob;
+use App\Jobs\SendSequenceWaveStepJob;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
@@ -14,16 +16,22 @@ use App\Models\SenderIdentity;
 use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStep;
+use App\Models\SequenceStepSend;
 use App\Models\User;
 use App\Services\Campaign\CampaignWaveZohoListSyncService;
 use App\Services\Campaign\PacedSequenceEnrollmentService;
 use App\Services\Campaign\SegmentService;
+use App\Services\Campaign\SequenceWaveService;
+use App\Services\Campaign\ZohoCampaignsDriver;
+use App\Services\Zoho\ZohoCampaignsClient;
 use App\Services\Zoho\ZohoRecipientListGateway;
 use Carbon\Carbon;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\URL;
 use Mockery\MockInterface;
 use Tests\TestCase;
 
@@ -77,9 +85,12 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertSame(0, SequenceEnrollment::whereHas('contact', fn ($query) => $query->where('company_id', $low->id))->count());
         $wave = CampaignRun::where('campaign_id', $campaign->id)->where('occurrence_key', 'sequence-wave-000001')->firstOrFail();
         $this->assertSame('prepared', $wave->status);
+        $this->assertSame(1, $wave->sequenceStep->step_no);
         $this->assertSame('zoho-wave-pending', $wave->driver_ref);
         $this->assertEqualsCanonicalizing(array_column($highContacts, 'id'), $wave->recipients()->pluck('contact_id')->all());
         Queue::assertPushed(SyncCampaignWaveZohoListJob::class, fn ($job) => $job->runId === $wave->id);
+        Queue::assertNotPushed(SendSequenceStepJob::class);
+        $this->assertSame(0, SequenceEnrollment::where('campaign_id', $campaign->id)->whereNotNull('next_send_at')->count());
     }
 
     public function test_second_call_for_same_occurrence_is_a_no_op(): void
@@ -198,16 +209,16 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertNull($campaign->daily_company_limit);
     }
 
-    public function test_zoho_driver_rejects_progressive_sequence_activation(): void
+    public function test_zoho_driver_accepts_progressive_sequence_activation(): void
     {
         $campaign = $this->campaign($this->segment(), $this->sequence(), [
             'driver' => 'zoho',
             'next_run_at' => now()->subMinute(),
         ]);
 
-        $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('pilote local');
-        app(PacedSequenceEnrollmentService::class)->activate($campaign);
+        $result = app(PacedSequenceEnrollmentService::class)->activate($campaign);
+
+        $this->assertTrue($campaign->fresh()->is_active);
     }
 
     public function test_progressive_view_uses_limited_batch_confirmation_and_next_batch_cta(): void
@@ -316,15 +327,17 @@ class CampaignSequenceProgressiveTest extends TestCase
         $service = app(CampaignWaveZohoListSyncService::class);
 
         $service->sync($run);
-        $this->assertSame(['Campagne Test - Wave 001'], $gateway->names);
+        $this->assertCount(1, $gateway->names);
+        $this->assertMatchesRegularExpression('/^Campagne Test - Wave 001 - A[a-f0-9]{8}$/', $gateway->names[0]);
         $this->assertSame([$contact->email], $gateway->emails);
         $this->assertSame('wave-list-key', $run->fresh()->zoho_list_key);
         $this->assertNull($campaign->fresh()->zoho_list_key);
 
         (new SyncCampaignWaveZohoListJob($run->id))->failed(new \RuntimeException('temporary'));
         $this->assertSame('failed', $run->fresh()->status);
-        $service->sync($run->fresh());
-        $this->assertSame('prepared', $run->fresh()->status);
+        (new SyncCampaignWaveZohoListJob($run->id))->handle($service);
+        $this->assertSame('scheduled', $run->fresh()->status);
+        Queue::assertPushed(SendSequenceWaveStepJob::class, fn ($job) => $job->runId === $run->id);
         $this->assertSame('zoho-wave-synced', $run->fresh()->driver_ref);
         $this->assertSame(1, $gateway->ensures);
     }
@@ -362,6 +375,333 @@ class CampaignSequenceProgressiveTest extends TestCase
             ->assertSee($explicit->email)
             ->assertSee('Vagues historiques')
             ->assertSee($legacy->email);
+    }
+    public function test_legacy_paced_enrollment_with_queued_step_send_is_adopted_without_smtp(): void
+    {
+        Mail::fake();
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
+        $contact = $this->contact($this->company(50));
+        $enrollment = SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $contact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+            'next_send_at' => now()->subMinute(),
+        ]);
+        SequenceStepSend::create(['enrollment_id' => $enrollment->id, 'step_no' => 1, 'status' => 'queued']);
+
+        (new SendSequenceStepJob($enrollment->id))->handle();
+        app(SequenceWaveService::class)->recover();
+
+        Mail::assertNothingSent();
+        $run = CampaignRun::where('campaign_id', $campaign->id)->where('occurrence_key', 'like', 'sequence-wave-legacy-%')->firstOrFail();
+        $this->assertSame($sequence->steps()->firstOrFail()->id, $run->sequence_step_id);
+        $this->assertDatabaseHas('campaign_recipients', ['campaign_run_id' => $run->id, 'contact_id' => $contact->id, 'status' => 'queued']);
+        $this->assertNull($enrollment->fresh()->next_send_at);
+    }
+
+    public function test_attempted_campaign_key_finalizes_without_duplicate_zoho_calls(): void
+    {
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
+        $contact = $this->contact($this->company(50));
+        SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $contact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+            'next_send_at' => null,
+        ]);
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $sequence->steps()->firstOrFail()->id,
+            'occurrence_key' => 'sequence-wave-000099',
+            'run_at' => now(),
+            'status' => 'scheduled',
+            'zoho_list_key' => 'list-existing',
+            'zoho_campaign_key' => 'campaign-existing',
+            'driver_ref' => 'zoho-send-attempted',
+        ]);
+        CampaignRecipient::create(['campaign_run_id' => $run->id, 'contact_id' => $contact->id, 'status' => 'queued']);
+        $client = \Mockery::mock(ZohoCampaignsClient::class);
+        $client->shouldNotReceive('createCampaign');
+        $client->shouldNotReceive('sendCampaign');
+        $client->shouldNotReceive('addListSubscribers');
+        $this->app->instance(ZohoCampaignsDriver::class, new ZohoCampaignsDriver($client));
+
+        app(SequenceWaveService::class)->send($run);
+
+        $this->assertSame('sent', $run->fresh()->status);
+        $this->assertSame('zoho', $run->fresh()->driver_ref);
+    }
+
+    public function test_definite_send_failure_retries_but_ambiguous_failure_requires_manual_reconciliation(): void
+    {
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
+        $contact = $this->contact($this->company(50));
+        $step = $sequence->steps()->firstOrFail();
+        $makeRun = fn (string $key) => CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $step->id,
+            'occurrence_key' => $key,
+            'run_at' => now(),
+            'status' => 'scheduled',
+            'zoho_list_key' => 'list-existing',
+            'zoho_campaign_key' => 'campaign-existing',
+            'driver_ref' => 'zoho-send-failed',
+        ]);
+
+        $retryRun = $makeRun('sequence-wave-000097');
+        $retryClient = \Mockery::mock(ZohoCampaignsClient::class);
+        $attempts = 0;
+        $retryClient->shouldReceive('sendCampaign')->twice()->andReturnUsing(function () use (&$attempts): array {
+            if (++$attempts === 1) {
+                throw new \RuntimeException('sendCampaign échoué (HTTP 400): rejected');
+            }
+            return [];
+        });
+        $driver = new ZohoCampaignsDriver($retryClient);
+        try { $driver->dispatchRun($retryRun, collect([$contact])); } catch (\RuntimeException) {}
+        $this->assertSame('zoho-send-failed', $retryRun->fresh()->driver_ref);
+        $driver->dispatchRun($retryRun->fresh(), collect([$contact]));
+        $this->assertSame('zoho-send-attempted', $retryRun->fresh()->driver_ref);
+
+        $uncertainRun = $makeRun('sequence-wave-000098');
+        $uncertainClient = \Mockery::mock(ZohoCampaignsClient::class);
+        $uncertainClient->shouldReceive('sendCampaign')->once()->andThrow(new \RuntimeException('socket timeout'));
+        $uncertainDriver = new ZohoCampaignsDriver($uncertainClient);
+        try { $uncertainDriver->dispatchRun($uncertainRun, collect([$contact])); } catch (\RuntimeException) {}
+        $this->assertSame('zoho-send-uncertain', $uncertainRun->fresh()->driver_ref);
+        $this->expectException(\RuntimeException::class);
+        $uncertainDriver->dispatchRun($uncertainRun->fresh(), collect([$contact]));
+    }
+    public function test_signed_zoho_content_uses_the_run_step_template(): void
+    {
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
+        $step = $sequence->steps()->firstOrFail();
+        $step->template->update(['html_content' => '<p>Immutable step content</p>']);
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $step->id,
+            'occurrence_key' => 'sequence-wave-000001',
+            'run_at' => now(),
+            'status' => 'prepared',
+        ]);
+
+        $url = URL::temporarySignedRoute('campaigns.zoho-content', now()->addMinute(), ['run' => $run->id]);
+
+        $this->get($url)->assertOk()->assertSee('Immutable step content');
+    }
+    public function test_two_step_wave_sends_through_zoho_and_never_smtp(): void
+    {
+        Mail::fake();
+        $segment = $this->segment();
+        $sequence = $this->sequence();
+        $template = CampaignTemplate::create([
+            'name' => 'Template step 2',
+            'subject' => 'Second',
+            'html_content' => '<p>Second step</p>',
+        ]);
+        SequenceStep::create([
+            'sequence_id' => $sequence->id,
+            'step_no' => 2,
+            'delay_days' => 2,
+            'template_id' => $template->id,
+            'subject' => 'Etape 2',
+        ]);
+        $contact = $this->contact($this->company(50));
+        $campaign = $this->campaign($segment, $sequence, ['next_run_at' => '2026-07-21 08:00:00']);
+        app(PacedSequenceEnrollmentService::class)->activate($campaign, Carbon::parse('2026-07-21 09:00:00', 'UTC'));
+        $first = CampaignRun::where('campaign_id', $campaign->id)->where('occurrence_key', 'sequence-wave-000001')->firstOrFail();
+        $first->update(['zoho_list_key' => 'list-step-1', 'status' => 'scheduled']);
+
+        $this->mock(ZohoCampaignsDriver::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('dispatchRun')->twice()->andReturn(
+                ['campaign_key' => 'zoho-step-1'],
+                ['campaign_key' => 'zoho-step-2'],
+            );
+        });
+        $service = app(SequenceWaveService::class);
+        $service->send($first);
+
+        $child = CampaignRun::where('campaign_id', $campaign->id)
+            ->where('occurrence_key', 'sequence-wave-000001-step-002')
+            ->firstOrFail();
+        $this->assertSame(2, $child->sequenceStep->step_no);
+        $this->assertTrue($child->run_at->greaterThanOrEqualTo(now()->addDays(2)->subMinute()));
+        $child->update(['zoho_list_key' => 'list-step-2', 'status' => 'scheduled', 'run_at' => now()]);
+        $service->send($child);
+
+        Mail::assertNothingSent();
+        $this->assertSame('completed', SequenceEnrollment::where('campaign_id', $campaign->id)->where('contact_id', $contact->id)->firstOrFail()->status);
+        $this->assertSame(2, SequenceStepSend::whereHas('enrollment', fn ($query) => $query->where('campaign_id', $campaign->id))->where('status', 'sent')->count());
+        $this->assertSame(2, CampaignRun::where('campaign_id', $campaign->id)->count());
+    }
+    public function test_legacy_paced_enrollment_is_adopted_and_existing_job_skips_smtp(): void
+    {
+        Mail::fake();
+        Queue::fake();
+        $contact = $this->contact($this->company(50));
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
+        $enrollment = SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $contact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+            'next_send_at' => now()->subMinute(),
+        ]);
+
+        app(SequenceWaveService::class)->recover();
+        (new SendSequenceStepJob($enrollment->id))->handle();
+
+        $this->assertNull($enrollment->fresh()->next_send_at);
+        $this->assertDatabaseHas('campaign_runs', [
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $sequence->steps()->firstOrFail()->id,
+            'status' => 'prepared',
+        ]);
+        Queue::assertPushed(SyncCampaignWaveZohoListJob::class);
+        Mail::assertNothingSent();
+    }
+
+    public function test_paused_or_inactive_wave_is_deferred_without_send(): void
+    {
+        $contact = $this->contact($this->company(50));
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence(), [
+            'next_run_at' => now()->subMinute(),
+        ]);
+        app(PacedSequenceEnrollmentService::class)->activate($campaign);
+        $run = CampaignRun::where('campaign_id', $campaign->id)->firstOrFail();
+        $run->update(['zoho_list_key' => 'deferred-list', 'status' => 'scheduled']);
+        $enrollment = SequenceEnrollment::where('campaign_id', $campaign->id)
+            ->where('contact_id', $contact->id)
+            ->firstOrFail();
+        $enrollment->update(['status' => 'paused']);
+
+        $this->mock(ZohoCampaignsDriver::class, fn (MockInterface $mock) => $mock->shouldNotReceive('dispatchRun'));
+        $service = app(SequenceWaveService::class);
+        $service->send($run);
+        $this->assertSame('scheduled', $run->fresh()->status);
+        $this->assertSame('queued', $run->recipients()->firstOrFail()->status);
+
+        $enrollment->update(['status' => 'active']);
+        $sequence->update(['is_active' => false]);
+        $service->send($run->fresh());
+        $this->assertSame('scheduled', $run->fresh()->status);
+    }
+
+    public function test_existing_attempted_zoho_campaign_is_not_created_or_sent_again(): void
+    {
+        $contact = $this->contact($this->company(50));
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $sequence->steps()->firstOrFail()->id,
+            'occurrence_key' => 'sequence-wave-000001',
+            'run_at' => now(),
+            'status' => 'sending',
+            'zoho_list_key' => 'list-existing',
+            'zoho_campaign_key' => 'campaign-existing',
+            'driver_ref' => 'zoho-send-attempted',
+        ]);
+        $client = \Mockery::mock(\App\Services\Zoho\ZohoCampaignsClient::class);
+        $client->shouldNotReceive('createCampaign');
+        $client->shouldNotReceive('sendCampaign');
+
+        $summary = (new ZohoCampaignsDriver($client))->dispatchRun($run, collect([$contact->load('company')]));
+
+        $this->assertSame('send_already_attempted', $summary['status']);
+        $this->assertSame('campaign-existing', $summary['campaign_key']);
+    }
+    public function test_audience_rebuild_clears_old_campaign_key_and_sends_only_the_new_campaign(): void
+    {
+        Queue::fake();
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
+        $step = $sequence->steps()->firstOrFail();
+        $contacts = collect([$this->contact($this->company(50)), $this->contact($this->company(40))]);
+        foreach ($contacts as $contact) {
+            SequenceEnrollment::create([
+                'sequence_id' => $sequence->id,
+                'contact_id' => $contact->id,
+                'campaign_id' => $campaign->id,
+                'current_step' => 0,
+                'status' => 'active',
+                'next_send_at' => null,
+            ]);
+        }
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $step->id,
+            'occurrence_key' => 'sequence-wave-000096',
+            'run_at' => now(),
+            'status' => 'scheduled',
+            'zoho_list_key' => 'old-list',
+            'zoho_campaign_key' => 'old-campaign',
+            'driver_ref' => 'zoho-send-failed',
+        ]);
+        foreach ($contacts as $contact) {
+            CampaignRecipient::create(['campaign_run_id' => $run->id, 'contact_id' => $contact->id, 'status' => 'queued']);
+        }
+        \App\Models\Suppression::create(['email' => $contacts[0]->email, 'contact_id' => $contacts[0]->id]);
+        $this->mock(ZohoCampaignsDriver::class, fn (MockInterface $mock) => $mock->shouldNotReceive('dispatchRun'));
+
+        app(SequenceWaveService::class)->send($run);
+
+        $run->refresh();
+        $this->assertNull($run->zoho_list_key);
+        $this->assertNull($run->zoho_campaign_key);
+        $client = \Mockery::mock(ZohoCampaignsClient::class);
+        $client->shouldReceive('createCampaign')->once()->andReturn(['campaignkey' => 'new-campaign']);
+        $client->shouldReceive('sendCampaign')->once()->with('new-campaign')->andReturn([]);
+        $client->shouldNotReceive('addListSubscribers');
+        $this->app->instance(ZohoCampaignsDriver::class, new ZohoCampaignsDriver($client));
+        $run->update(['zoho_list_key' => 'new-list', 'status' => 'scheduled']);
+
+        app(SequenceWaveService::class)->send($run->fresh());
+
+        $this->assertSame('new-campaign', $run->fresh()->zoho_campaign_key);
+        $this->assertSame('sent', $run->fresh()->status);
+    }
+    public function test_suppressed_contact_is_removed_before_the_next_wave_step(): void
+    {
+        $contact = $this->contact($this->company(50));
+        $sequence = $this->sequence();
+        $template = CampaignTemplate::create([
+            'name' => 'Suppression step 2',
+            'subject' => 'Second',
+            'html_content' => '<p>Second step</p>',
+        ]);
+        SequenceStep::create([
+            'sequence_id' => $sequence->id,
+            'step_no' => 2,
+            'delay_days' => 1,
+            'template_id' => $template->id,
+        ]);
+        $campaign = $this->campaign($this->segment(), $sequence, ['next_run_at' => now()->subMinute()]);
+        app(PacedSequenceEnrollmentService::class)->activate($campaign);
+        $first = CampaignRun::where('campaign_id', $campaign->id)->firstOrFail();
+        $first->update(['zoho_list_key' => 'step-1-list', 'status' => 'scheduled']);
+        $this->mock(ZohoCampaignsDriver::class, fn (MockInterface $mock) => $mock
+            ->shouldReceive('dispatchRun')->once()->andReturn(['campaign_key' => 'step-1-key']));
+        $service = app(SequenceWaveService::class);
+        $service->send($first);
+        $child = CampaignRun::where('campaign_id', $campaign->id)
+            ->where('occurrence_key', 'like', '%-step-002')
+            ->firstOrFail();
+        \App\Models\Suppression::create(['email' => $contact->email, 'contact_id' => $contact->id]);
+
+        $eligible = $service->eligibleContacts($child);
+
+        $this->assertTrue($eligible->isEmpty());
+        $this->assertSame('stopped', SequenceEnrollment::where('campaign_id', $campaign->id)->firstOrFail()->status);
+        $this->assertSame('skipped', $child->recipients()->firstOrFail()->status);
+        $this->assertDatabaseHas('sequence_step_sends', [
+            'campaign_run_id' => $child->id,
+            'step_no' => 2,
+            'status' => 'skipped',
+        ]);
     }
     private function segment(): Segment
     {

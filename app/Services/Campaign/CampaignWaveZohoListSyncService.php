@@ -11,7 +11,10 @@ use Illuminate\Support\Str;
 /** Mirrors one frozen paced-sequence wave into its own Zoho recipient list. */
 class CampaignWaveZohoListSyncService
 {
-    public function __construct(private readonly ZohoRecipientListGateway $gateway) {}
+    public function __construct(
+        private readonly ZohoRecipientListGateway $gateway,
+        private readonly SequenceWaveService $waveService,
+    ) {}
 
     /** @return array{list_key: string, list_name: string, contacts: int} */
     public function sync(CampaignRun $run): array
@@ -21,10 +24,17 @@ class CampaignWaveZohoListSyncService
             throw new \InvalidArgumentException('Cette execution n\'est pas une vague de sequence.');
         }
 
+        if ($this->waveService->isDeferred($run)) {
+            return [
+                'list_key' => (string) ($run->zoho_list_key ?? ''),
+                'list_name' => $this->listName($run),
+                'contacts' => $run->recipients->where('status', 'queued')->count(),
+            ];
+        }
+
         $target = [];
-        foreach ($run->recipients as $recipient) {
-            $contact = $recipient->contact;
-            $email = mb_strtolower(trim((string) $contact?->email));
+        foreach ($this->waveService->eligibleContacts($run) as $contact) {
+            $email = mb_strtolower(trim((string) $contact->email));
             if ($email === '') {
                 continue;
             }
@@ -36,7 +46,8 @@ class CampaignWaveZohoListSyncService
         }
         ksort($target);
         if ($target === []) {
-            throw new \LogicException('La vague Zoho ne contient aucun destinataire avec une adresse e-mail.');
+            $run->update(['status' => 'sent', 'stats_sent' => 0, 'finished_at' => now()]);
+            return ['list_key' => '', 'list_name' => $this->listName($run), 'contacts' => 0];
         }
 
         $listName = $this->listName($run);
@@ -61,16 +72,21 @@ class CampaignWaveZohoListSyncService
             throw new \RuntimeException('Zoho ne confirme pas tous les destinataires de la vague.');
         }
 
-        $run->forceFill(['status' => 'prepared', 'zoho_list_key' => $listKey, 'driver_ref' => 'zoho-wave-synced'])->save();
+        $run->forceFill(['status' => 'scheduled', 'zoho_list_key' => $listKey, 'driver_ref' => 'zoho-wave-synced'])->save();
         return ['list_key' => $listKey, 'list_name' => $listName, 'contacts' => count($target)];
     }
 
     public function listName(CampaignRun $run): string
     {
-        $run->loadMissing('campaign');
-        preg_match('/^sequence-wave-(\d+)$/', $run->occurrence_key, $matches);
+        $run->loadMissing(['campaign', 'recipients']);
+        preg_match('/^sequence-wave-(\d+)(?:-step-(\d+))?$/', $run->occurrence_key, $matches);
         $waveNumber = max(1, (int) ($matches[1] ?? 1));
         $suffix = ' - Wave ' . str_pad((string) $waveNumber, 3, '0', STR_PAD_LEFT);
+        if (isset($matches[2])) {
+            $suffix .= ' - Step ' . str_pad($matches[2], 3, '0', STR_PAD_LEFT);
+        }
+        $contactIds = $run->recipients->where('status', 'queued')->pluck('contact_id')->sort()->values()->implode(',');
+        $suffix .= ' - A' . substr(sha1($contactIds), 0, 8);
         $campaignName = trim((string) preg_replace('/\s+/', ' ', preg_replace('/[^A-Za-z0-9]+/', ' ', Str::ascii((string) $run->campaign?->name))));
         $campaignName = $campaignName !== '' ? $campaignName : 'Campaign ' . $run->campaign_id;
 

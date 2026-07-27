@@ -25,6 +25,7 @@ class SequenceStepSend extends Model
      */
     protected $fillable = [
         'enrollment_id',
+        'campaign_run_id',
         'step_no',
         'provider_message_id',
         'status',
@@ -53,6 +54,11 @@ class SequenceStepSend extends Model
     }
 
     // ── Validation ─────────────────────────────────────────────────────────────
+
+    public function campaignRun(): BelongsTo
+    {
+        return $this->belongsTo(CampaignRun::class);
+    }
 
     /**
      * Validation rules for the model.

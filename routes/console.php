@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Setting;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -19,16 +20,14 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-/*
-|--------------------------------------------------------------------------
-| Sprint 1 scheduler stub
-|--------------------------------------------------------------------------
-| Real campaign/sequence commands arrive in Phase 3.
-| This placeholder proves scheduler wiring is in place.
-| Example cadence the engine will use (no-op placeholder for now):
-*/
+$automationEnabled = fn (string $job): \Closure => fn (): bool => (bool) Setting::get('automatisation.cron_enabled', true)
+    && (bool) Setting::get("automatisation.{$job}", true);
 
-Schedule::command('inspire')->hourly();
+// Independent heartbeat: proves the OS cron reached Laravel even when business automations are paused.
+Schedule::call(fn () => Setting::set(
+    'observability.scheduler.last_tick_at',
+    now()->utc()->toIso8601String(),
+))->name('observability:scheduler-heartbeat')->everyMinute();
 
 /*
 |--------------------------------------------------------------------------
@@ -40,7 +39,8 @@ Schedule::command('inspire')->hourly();
 
 Schedule::command('campaigns:dispatch-due')
     ->everyMinute()
-    ->withoutOverlapping();
+    ->withoutOverlapping()
+    ->when($automationEnabled('campaigns_dispatch_due'));
 
 /*
 |--------------------------------------------------------------------------
@@ -53,15 +53,18 @@ Schedule::command('campaigns:dispatch-due')
 
 Schedule::command('campaigns:generate-runs')
     ->everyMinute()
-    ->withoutOverlapping();
+    ->withoutOverlapping()
+    ->when($automationEnabled('campaigns_generate_runs'));
 
 Schedule::command('sequences:process')
     ->everyMinute()
-    ->withoutOverlapping();
+    ->withoutOverlapping()
+    ->when($automationEnabled('sequences_process'));
 
 Schedule::command('campaigns:sync-sequence-enrollments')
     ->everyMinute()
-    ->withoutOverlapping();
+    ->withoutOverlapping()
+    ->when($automationEnabled('campaigns_sync_sequence_enrollments'));
 
 /*
 |--------------------------------------------------------------------------
@@ -77,7 +80,8 @@ Schedule::command('campaigns:sync-sequence-enrollments')
 
 Schedule::command('campaign:sync-stats')
     ->everyFifteenMinutes()
-    ->withoutOverlapping();
+    ->withoutOverlapping()
+    ->when($automationEnabled('campaign_sync_stats'));
 
 /*
 |--------------------------------------------------------------------------
@@ -91,7 +95,8 @@ Schedule::command('campaign:sync-stats')
 
 Schedule::command('discovery:terminalize-stale')
     ->everyMinute()
-    ->withoutOverlapping();
+    ->withoutOverlapping()
+    ->when($automationEnabled('discovery_terminalize_stale'));
 
 /*
 |--------------------------------------------------------------------------
@@ -105,4 +110,5 @@ Schedule::command('discovery:terminalize-stale')
 
 Schedule::command('prospect:auto-discover')
     ->hourly()
-    ->withoutOverlapping();
+    ->withoutOverlapping()
+    ->when($automationEnabled('prospect_auto_discover'));

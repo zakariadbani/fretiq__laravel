@@ -145,6 +145,61 @@ class SettingController extends Controller
                 ],
             ],
         ],
+        'automatisation' => [
+            'label'       => 'Automatisations',
+            'enabled'     => true,
+            'description' => 'Activez ou suspendez les commandes lancées automatiquement par le planificateur Laravel.',
+            'fields'      => [
+                'cron_enabled' => [
+                    'type'    => 'boolean',
+                    'label'   => 'Activer le Cron',
+                    'default' => true,
+                    'help'    => 'Interrupteur global : lorsqu\'il est désactivé, aucune commande planifiée ci-dessous ne démarre. Les commandes manuelles et les jobs déjà en file continuent.',
+                ],
+                'campaigns_dispatch_due' => [
+                    'type'    => 'boolean',
+                    'label'   => 'Envoyer les campagnes dues',
+                    'default' => true,
+                    'help'    => 'campaigns:dispatch-due - toutes les minutes.',
+                ],
+                'campaigns_generate_runs' => [
+                    'type'    => 'boolean',
+                    'label'   => 'Générer les exécutions de campagnes',
+                    'default' => true,
+                    'help'    => 'campaigns:generate-runs - toutes les minutes.',
+                ],
+                'sequences_process' => [
+                    'type'    => 'boolean',
+                    'label'   => 'Traiter les séquences',
+                    'default' => true,
+                    'help'    => 'sequences:process - toutes les minutes.',
+                ],
+                'campaigns_sync_sequence_enrollments' => [
+                    'type'    => 'boolean',
+                    'label'   => 'Synchroniser les inscriptions aux séquences',
+                    'default' => true,
+                    'help'    => 'campaigns:sync-sequence-enrollments - toutes les minutes.',
+                ],
+                'campaign_sync_stats' => [
+                    'type'    => 'boolean',
+                    'label'   => 'Synchroniser les statistiques des campagnes',
+                    'default' => true,
+                    'help'    => 'campaign:sync-stats - toutes les 15 minutes.',
+                ],
+                'discovery_terminalize_stale' => [
+                    'type'    => 'boolean',
+                    'label'   => 'Clôturer les découvertes bloquées',
+                    'default' => true,
+                    'help'    => 'discovery:terminalize-stale - toutes les minutes.',
+                ],
+                'prospect_auto_discover' => [
+                    'type'    => 'boolean',
+                    'label'   => 'Lancer la découverte automatique',
+                    'default' => true,
+                    'help'    => 'prospect:auto-discover - toutes les heures.',
+                ],
+            ],
+        ],
 
         // ── Placeholder tabs (enabled=false) ─────────────────────────────────────
         'envoi_identites' => [
@@ -226,47 +281,49 @@ class SettingController extends Controller
         $activeTab = $request->input('active_tab', 'decouverte');
 
         // ── Validation ──────────────────────────────────────────────────────────
-        $request->validate(
-            [
-                'settings.decouverte.min_score_enrich' => 'required|integer|between:0,100',
-                'settings.decouverte.timezone'         => 'required|string|in:Europe/Paris,UTC',
-                'settings.decouverte.blocked_domains'  => 'nullable|string|max:20000',
-                'settings.decouverte.blocked_url_extensions' => 'nullable|string|max:500',
-                'settings.decouverte.homepage_excerpt_chars' => 'nullable|integer|between:500,8000',
-                'settings.decouverte.homepage_cache_days'    => 'nullable|integer|between:1,90',
-                'settings.decouverte.homepage_timeout'       => 'nullable|integer|between:1,30',
-                'settings.decouverte.run_time_budget'        => 'nullable|integer|between:30,240',
-                'settings.decouverte.discovery_engines'      => 'required|array|min:1',
-                'settings.decouverte.discovery_engines.*'    => [
-                    'required',
-                    'string',
-                    'distinct',
-                    Rule::in($this->engineRegistry->ids()),
+        if ($request->has('settings.decouverte')) {
+            $request->validate(
+                [
+                    'settings.decouverte.min_score_enrich' => 'required|integer|between:0,100',
+                    'settings.decouverte.timezone'         => 'required|string|in:Europe/Paris,UTC',
+                    'settings.decouverte.blocked_domains'  => 'nullable|string|max:20000',
+                    'settings.decouverte.blocked_url_extensions' => 'nullable|string|max:500',
+                    'settings.decouverte.homepage_excerpt_chars' => 'nullable|integer|between:500,8000',
+                    'settings.decouverte.homepage_cache_days'    => 'nullable|integer|between:1,90',
+                    'settings.decouverte.homepage_timeout'       => 'nullable|integer|between:1,30',
+                    'settings.decouverte.run_time_budget'        => 'nullable|integer|between:30,240',
+                    'settings.decouverte.discovery_engines'      => 'required|array|min:1',
+                    'settings.decouverte.discovery_engines.*'    => [
+                        'required',
+                        'string',
+                        'distinct',
+                        Rule::in($this->engineRegistry->ids()),
+                    ],
                 ],
-            ],
-            [
-                'settings.decouverte.min_score_enrich.required'  => 'Le score minimal est obligatoire.',
-                'settings.decouverte.min_score_enrich.integer'   => 'Le score minimal doit être un entier.',
-                'settings.decouverte.min_score_enrich.between'   => 'Le score minimal doit être compris entre 0 et 100.',
-                'settings.decouverte.timezone.required'          => 'Le fuseau horaire est obligatoire.',
-                'settings.decouverte.timezone.in'                => 'Le fuseau horaire doit être Europe/Paris ou UTC.',
-                'settings.decouverte.blocked_domains.string'     => 'La liste des domaines exclus doit être du texte.',
-                'settings.decouverte.blocked_domains.max'        => 'La liste des domaines exclus ne peut pas dépasser 20000 caractères.',
-                'settings.decouverte.blocked_url_extensions.string' => 'La liste des extensions exclues doit être du texte.',
-                'settings.decouverte.blocked_url_extensions.max'    => 'La liste des extensions exclues ne peut pas dépasser 500 caractères.',
-                'settings.decouverte.homepage_excerpt_chars.integer' => 'La longueur de l\'extrait doit être un entier.',
-                'settings.decouverte.homepage_excerpt_chars.between' => 'La longueur de l\'extrait doit être comprise entre 500 et 8000 caractères.',
-                'settings.decouverte.homepage_cache_days.integer'    => 'La durée du cache doit être un entier.',
-                'settings.decouverte.homepage_cache_days.between'    => 'La durée du cache doit être comprise entre 1 et 90 jours.',
-                'settings.decouverte.homepage_timeout.integer'       => 'Le délai d\'attente doit être un entier.',
-                'settings.decouverte.homepage_timeout.between'       => 'Le délai d\'attente doit être compris entre 1 et 30 secondes.',
-            ]
-        );
+                [
+                    'settings.decouverte.min_score_enrich.required'  => 'Le score minimal est obligatoire.',
+                    'settings.decouverte.min_score_enrich.integer'   => 'Le score minimal doit être un entier.',
+                    'settings.decouverte.min_score_enrich.between'   => 'Le score minimal doit être compris entre 0 et 100.',
+                    'settings.decouverte.timezone.required'          => 'Le fuseau horaire est obligatoire.',
+                    'settings.decouverte.timezone.in'                => 'Le fuseau horaire doit être Europe/Paris ou UTC.',
+                    'settings.decouverte.blocked_domains.string'     => 'La liste des domaines exclus doit être du texte.',
+                    'settings.decouverte.blocked_domains.max'        => 'La liste des domaines exclus ne peut pas dépasser 20000 caractères.',
+                    'settings.decouverte.blocked_url_extensions.string' => 'La liste des extensions exclues doit être du texte.',
+                    'settings.decouverte.blocked_url_extensions.max'    => 'La liste des extensions exclues ne peut pas dépasser 500 caractères.',
+                    'settings.decouverte.homepage_excerpt_chars.integer' => 'La longueur de l\'extrait doit être un entier.',
+                    'settings.decouverte.homepage_excerpt_chars.between' => 'La longueur de l\'extrait doit être comprise entre 500 et 8000 caractères.',
+                    'settings.decouverte.homepage_cache_days.integer'    => 'La durée du cache doit être un entier.',
+                    'settings.decouverte.homepage_cache_days.between'    => 'La durée du cache doit être comprise entre 1 et 90 jours.',
+                    'settings.decouverte.homepage_timeout.integer'       => 'Le délai d\'attente doit être un entier.',
+                    'settings.decouverte.homepage_timeout.between'       => 'Le délai d\'attente doit être compris entre 1 et 30 secondes.',
+                ]
+            );
+        }
 
         // ── Persist within a transaction ────────────────────────────────────────
         DB::transaction(function () use ($request) {
             foreach ($this->tabs as $group => $tabConfig) {
-                if (! ($tabConfig['enabled'] ?? false)) {
+                if (! ($tabConfig['enabled'] ?? false) || ! $request->has("settings.{$group}")) {
                     continue;
                 }
 

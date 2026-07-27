@@ -77,6 +77,7 @@ class PacedSequenceEnrollmentService
             }
 
             $locked->loadMissing(['segment', 'sequence']);
+            $firstStep = $locked->sequence->steps()->orderBy('step_no')->firstOrFail();
             $contacts = $this->segmentService->resolve($locked->segment);
             $existingContactIds = SequenceEnrollment::query()
                 ->where('sequence_id', $locked->sequence_id)
@@ -118,6 +119,7 @@ class PacedSequenceEnrollmentService
                 foreach ($companyContacts as $contact) {
                     $enrollment = $this->sequenceService->enroll($locked->sequence, $contact, $locked);
                     if ($enrollment?->wasRecentlyCreated) {
+                        $enrollment->update(['next_send_at' => null]);
                         $enrolled++;
                         $waveContacts->push($contact);
                     } else {
@@ -130,6 +132,7 @@ class PacedSequenceEnrollmentService
                 $lastWaveNumber = $locked->runs()->where('occurrence_key', 'like', 'sequence-wave-%')->pluck('occurrence_key')->map(fn (string $key): int => (int) substr($key, strlen('sequence-wave-')))->max() ?? 0;
                 $waveRun = CampaignRun::create([
                     'campaign_id' => $locked->id,
+                    'sequence_step_id' => $firstStep->id,
                     'occurrence_key' => 'sequence-wave-' . str_pad((string) ($lastWaveNumber + 1), 6, '0', STR_PAD_LEFT),
                     'run_at' => $effectiveRunAt,
                     'status' => 'prepared',
@@ -178,9 +181,6 @@ class PacedSequenceEnrollmentService
     {
         if ($campaign->schedule_type !== 'sequence' || $campaign->sequence_enrollment_mode !== 'paced') {
             throw new \InvalidArgumentException('Cette campagne n’est pas une séquence progressive.');
-        }
-        if ($campaign->driver === 'zoho' || config('services.zoho.driver', 'local') === 'zoho') {
-            throw new \InvalidArgumentException('Les séquences progressives sont disponibles uniquement avec le pilote local.');
         }
         if ($campaign->next_run_at === null || (int) $campaign->daily_company_limit < 1) {
             throw new \InvalidArgumentException('Définissez le premier lot et le nombre de sociétés par jour.');

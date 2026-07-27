@@ -3,7 +3,11 @@
 namespace App\Providers;
 
 use App\Core\KTBootstrap;
+use App\Services\Analytics\QueueObservabilityService;
+use Illuminate\Console\Events\ScheduledTaskFailed;
+use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Database\Schema\Builder;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -34,7 +38,7 @@ class AppServiceProvider extends ServiceProvider
                 ? new \App\Services\Campaign\ZohoCampaignsDriver(
                     zohoClient: app(\App\Services\Zoho\ZohoCampaignsClient::class),
                 )
-                : new \App\Services\Campaign\LocalCampaignsDriver(),
+                : new \App\Services\Campaign\LocalCampaignsDriver,
         );
 
         $this->app->singleton(
@@ -68,9 +72,9 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(
             \App\Services\Campaign\CampaignService::class,
             fn ($app) => new \App\Services\Campaign\CampaignService(
-                segmentService:   $app->make(\App\Services\Campaign\SegmentService::class),
-                sendWindowGuard:  $app->make(\App\Services\Campaign\SendWindowGuard::class),
-                sequenceService:  $app->make(\App\Services\Campaign\SequenceService::class),
+                segmentService: $app->make(\App\Services\Campaign\SegmentService::class),
+                sendWindowGuard: $app->make(\App\Services\Campaign\SendWindowGuard::class),
+                sequenceService: $app->make(\App\Services\Campaign\SequenceService::class),
             ),
         );
 
@@ -92,6 +96,14 @@ class AppServiceProvider extends ServiceProvider
     {
         // Update defaultStringLength
         Builder::defaultStringLength(191);
+
+        Event::listen(ScheduledTaskFinished::class, fn (ScheduledTaskFinished $event) => QueueObservabilityService::recordScheduledResult(
+            $event->task,
+            $event->task->exitCode === 0 ? 'success' : 'failed',
+        )
+        );
+        Event::listen(ScheduledTaskFailed::class, fn (ScheduledTaskFailed $event) => QueueObservabilityService::recordScheduledResult($event->task, 'failed')
+        );
 
         KTBootstrap::init();
     }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Services\Campaign\SequenceService;
+use App\Services\Campaign\SequenceWaveService;
 use Illuminate\Console\Command;
 
 /**
@@ -35,8 +36,9 @@ class SequencesProcess extends Command
     /**
      * Execute the command.
      */
-    public function handle(): int
+    public function handle(SequenceWaveService $waveService): int
     {
+        $waveService->recover();
         $count = app(SequenceService::class)->processDue();
 
         $this->info("{$count} inscription(s) de séquence mise(s) en file d'attente.");

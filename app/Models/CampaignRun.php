@@ -27,6 +27,7 @@ class CampaignRun extends Model
      */
     protected $fillable = [
         'campaign_id',
+        'sequence_step_id',
         'occurrence_key',
         'run_at',
         'status',
@@ -41,6 +42,7 @@ class CampaignRun extends Model
         'zoho_list_key',
         'zoho_campaign_key',
         'driver_ref',
+        'failure_reason',
         'started_at',
         'finished_at',
     ];
@@ -64,6 +66,11 @@ class CampaignRun extends Model
     public function campaign(): BelongsTo
     {
         return $this->belongsTo(Campaign::class);
+    }
+
+    public function sequenceStep(): BelongsTo
+    {
+        return $this->belongsTo(SequenceStep::class);
     }
 
     /**

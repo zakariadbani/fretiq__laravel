@@ -108,6 +108,15 @@ class SendSequenceStepJob implements ShouldQueue, ShouldBeUnique
             return;
         }
 
+        $enrollment->loadMissing('campaign');
+        if ($enrollment->campaign?->schedule_type === 'sequence'
+            && $enrollment->campaign?->sequence_enrollment_mode === 'paced') {
+            Log::info('[SendSequenceStepJob] Paced enrollment is handled by Zoho waves - skipping SMTP.', [
+                'enrollment_id' => $this->enrollmentId,
+            ]);
+            return;
+        }
+
         // Guard against processing an enrollment that was stopped/completed between
         // dispatch and execution (e.g. manual unsubscribe, reply handler).
         if ($enrollment->status !== 'active') {

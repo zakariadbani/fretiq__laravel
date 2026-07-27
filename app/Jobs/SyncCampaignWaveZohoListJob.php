@@ -36,11 +36,15 @@ class SyncCampaignWaveZohoListJob implements ShouldQueue, ShouldBeUnique
             return;
         }
         $service->sync($run);
+        $run->refresh();
+        if ($run->status === 'scheduled') {
+            SendSequenceWaveStepJob::dispatch($run->id)->delay($run->run_at);
+        }
     }
 
     public function failed(Throwable $exception): void
     {
-        CampaignRun::whereKey($this->runId)->update(['status' => 'failed', 'driver_ref' => 'zoho-wave-failed']);
+        CampaignRun::whereKey($this->runId)->update(['status' => 'failed', 'driver_ref' => 'zoho-wave-failed', 'failure_reason' => mb_substr($exception->getMessage(), 0, 500)]);
         Log::error('[SyncCampaignWaveZohoListJob] Zoho wave mirror failed.', ['run_id' => $this->runId, 'exception' => $exception->getMessage()]);
     }
 }

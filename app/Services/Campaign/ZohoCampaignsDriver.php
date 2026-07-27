@@ -223,7 +223,8 @@ class ZohoCampaignsDriver implements CampaignsClient
     public function dispatchRun(CampaignRun $run, Collection $contacts): array
     {
         $campaign = $run->campaign;
-        $template = $campaign->template ?? $campaign->load('template')->template;
+        $run->loadMissing('sequenceStep.template');
+        $template = $run->sequenceStep?->template ?? $campaign->template ?? $campaign->load('template')->template;
         $sender   = $campaign->senderIdentity ?? $campaign->load('senderIdentity')->senderIdentity;
 
         // ── 0. Refuse a zero-opt-out send ──────────────────────────────────────
@@ -250,7 +251,7 @@ class ZohoCampaignsDriver implements CampaignsClient
         // ── 1. Resolve the Zoho mailing list key ───────────────────────────────
         // Zoho Campaigns expects an existing list key; arbitrary per-run keys are
         // not auto-created by the bulk-subscriber endpoint.
-        $listKey = trim((string) ($campaign->zoho_list_key ?: config('services.zoho.campaigns.list_key')));
+        $listKey = trim((string) ($run->zoho_list_key ?: $campaign->zoho_list_key ?: config('services.zoho.campaigns.list_key')));
         if ($listKey === '') {
             throw new \RuntimeException('Préparation Zoho incomplète : aucune liste Zoho vérifiée n’est associée à cette campagne.');
         }
@@ -272,12 +273,14 @@ class ZohoCampaignsDriver implements CampaignsClient
             'count'    => count($contactPayload),
         ]);
 
-        $this->zohoClient->addListSubscribers($listKey, $contactPayload);
+        if ($run->sequence_step_id === null) {
+            $this->zohoClient->addListSubscribers($listKey, $contactPayload);
+        }
 
         // ── 3. Create the campaign in Zoho ─────────────────────────────────────
         // Translate local placeholders ({{contact.name}} etc.) to Zoho merge tags
         // before submitting to the API — recipients would otherwise see literal braces.
-        $subject    = self::translateMergeTags($campaign->subject ?: $template->subject);
+        $subject = self::translateMergeTags($run->sequenceStep?->subject ?: $campaign->subject ?: $template->subject);
         $contentUrl = URL::temporarySignedRoute('campaigns.zoho-content', now()->addDays(7), ['run' => $run->id]);
         // The campaign's own selected sender identity is used first — each campaign
         // sends from the sender the user picked at creation time. ZOHO_DEFAULT_FROM_EMAIL
@@ -296,41 +299,74 @@ class ZohoCampaignsDriver implements CampaignsClient
             'list_key'  => $listKey,
         ]);
 
-        $createResponse = $this->zohoClient->createCampaign(
-            name:        'fretiq-' . $run->id . '-' . now()->format('Ymd'),
-            subject:     $subject,
-            fromEmail:   $fromEmail,
-            listKey:     $listKey,
-            contentUrl:  $contentUrl,
-        );
-
-        // Extract the campaign key from Zoho's response.
-        // UNVERIFIED — field name 'campaignkey' is per documentation; may differ in live response.
-        $campaignKey = $createResponse['campaignKey']
-            ?? $createResponse['campaignkey']
-            ?? $createResponse['data']['campaignkey']
-            ?? $createResponse['data']['campaignKey']
-            ?? null;
-
-        if (! $campaignKey) {
-            throw new \RuntimeException(
-                '[ZohoCampaignsDriver] Zoho n\'a pas retourné de campaignkey. Réponse : ' . json_encode($createResponse)
+        $campaignKey = trim((string) $run->zoho_campaign_key);
+        $hadCampaignKey = $campaignKey !== '';
+        if (! $hadCampaignKey) {
+            $createResponse = $this->zohoClient->createCampaign(
+                name:        'fretiq-' . $run->id . '-' . now()->format('Ymd'),
+                subject:     $subject,
+                fromEmail:   $fromEmail,
+                listKey:     $listKey,
+                contentUrl:  $contentUrl,
             );
+
+            $campaignKey = $createResponse['campaignKey']
+                ?? $createResponse['campaignkey']
+                ?? $createResponse['data']['campaignkey']
+                ?? $createResponse['data']['campaignKey']
+                ?? null;
+
+            if (! $campaignKey) {
+                throw new \RuntimeException(
+                    '[ZohoCampaignsDriver] Zoho did not return a campaignkey. Response: ' . json_encode($createResponse)
+                );
+            }
+            $run->update(['zoho_campaign_key' => $campaignKey]);
         }
 
-        // ── 4. Trigger the send ────────────────────────────────────────────────
+        if ($run->sequence_step_id !== null
+            && $hadCampaignKey
+            && $run->driver_ref === 'zoho-send-uncertain') {
+            throw new \RuntimeException('Envoi Zoho incertain : reconciliation manuelle requise.');
+        }
+
+        if ($run->sequence_step_id !== null
+            && $hadCampaignKey
+            && $run->driver_ref === 'zoho-send-attempted') {
+            return [
+                'list_key' => $listKey,
+                'campaign_key' => $campaignKey,
+                'contacts_subscribed' => count($contactPayload),
+                'status' => 'send_already_attempted',
+            ];
+        }
+
+        // ponytail: at-most-once marker may miss a send if the worker dies before the provider request;
+        // replace with provider-status reconciliation once that endpoint is empirically verified.
+        $run->update(['driver_ref' => 'zoho-send-attempted']);
+
         Log::info('[ZohoCampaignsDriver] Déclenchement de l\'envoi Zoho.', [
             'run_id'       => $run->id,
             'campaign_key' => $campaignKey,
         ]);
 
-        $this->zohoClient->sendCampaign($campaignKey);
+        try {
+            $this->zohoClient->sendCampaign($campaignKey);
+        } catch (\Throwable $exception) {
+            $message = $exception->getMessage();
+            $definiteRejection = str_contains($message, 'sendCampaign')
+                && (str_contains($message, '(HTTP') || str_contains($message, 'erreur API'));
+            $run->update(['driver_ref' => $definiteRejection ? 'zoho-send-failed' : 'zoho-send-uncertain']);
+            throw $exception;
+        }
 
         // ── 5. Persist Zoho keys on the run ───────────────────────────────────
         $run->update([
             'zoho_list_key'     => $listKey,
             'zoho_campaign_key' => $campaignKey,
-            'driver_ref'        => $this->driverName(),
+            'driver_ref'        => $run->sequence_step_id !== null
+                ? 'zoho-send-attempted'
+                : $this->driverName(),
         ]);
 
         Log::info('[ZohoCampaignsDriver] Run dispatché via Zoho Campaigns.', [

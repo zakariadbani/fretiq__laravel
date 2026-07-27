@@ -146,11 +146,11 @@ class CampaignService
         $isPacedSequence = $campaign->schedule_type === 'sequence'
             && $campaign->sequence_enrollment_mode === 'paced';
 
-        if (($campaign->schedule_type === 'paced' || $isPacedSequence) && $this->usesZohoDriver($campaign)) {
+        if ($campaign->schedule_type === 'paced' && $this->usesZohoDriver($campaign)) {
             $messages[] = 'L’envoi progressif est indisponible avec le pilote Zoho tant que l’envoi par lot n’a pas été vérifié.';
         } elseif ($this->usesZohoDriver($campaign)) {
             $listKey = trim((string) ($campaign->zoho_list_key ?: config('services.zoho.campaigns.list_key')));
-            if ($listKey === '') {
+            if (! $isPacedSequence && $listKey === '') {
                 $messages[] = 'Préparation Zoho incomplète : ajoutez et vérifiez la liste Zoho dédiée avant de lancer l’envoi.';
             }
 

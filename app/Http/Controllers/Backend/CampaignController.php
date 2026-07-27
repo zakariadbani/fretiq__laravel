@@ -214,7 +214,7 @@ class CampaignController extends BackendController
         }
 
         $waveRuns = $campaign->runs
-            ->filter(fn (CampaignRun $run) => str_starts_with($run->occurrence_key, 'sequence-wave-'))
+            ->filter(fn (CampaignRun $run) => preg_match('/^sequence-wave-\d{6}$/', $run->occurrence_key) === 1)
             ->sortByDesc(fn (CampaignRun $run) => (int) substr($run->occurrence_key, strlen('sequence-wave-')))
             ->values();
         $waveRuns->each->loadMissing('recipients.contact.company');

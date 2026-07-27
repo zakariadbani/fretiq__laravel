@@ -51,6 +51,16 @@ class SettingsSeeder extends Seeder
                 'daily_cap'   => 200,
                 'send_window' => 'Mon-Fri 09:00-17:00',
             ],
+            'automatisation' => [
+                'cron_enabled'                        => true,
+                'campaigns_dispatch_due'              => true,
+                'campaigns_generate_runs'             => true,
+                'sequences_process'                   => true,
+                'campaigns_sync_sequence_enrollments' => true,
+                'campaign_sync_stats'                 => true,
+                'discovery_terminalize_stale'         => true,
+                'prospect_auto_discover'              => true,
+            ],
         ];
     }
 

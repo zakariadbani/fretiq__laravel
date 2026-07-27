@@ -116,6 +116,9 @@ class SettingsModuleTest extends TestCase
 
         // Follow redirect and check flash message
         $response->assertSessionHas('success');
+
+        // A partial settings request must not create or disable another group.
+        $this->assertDatabaseMissing('settings', ['group_name' => 'automatisation']);
     }
 
     // ── Validation error ─────────────────────────────────────────────────────────
@@ -259,5 +262,55 @@ class SettingsModuleTest extends TestCase
         $this->assertDatabaseMissing('settings', [
             'group_name' => 'hacker_group',
         ]);
+    }
+
+    public function test_automation_tab_renders_all_scheduler_switches(): void
+    {
+        $response = $this->actingAs($this->admin)->get('/admin/settings');
+
+        $response->assertOk()
+            ->assertSee('Automatisations')
+            ->assertSee('setting_automatisation_cron_enabled', false)
+            ->assertSee('setting_automatisation_campaigns_dispatch_due', false)
+            ->assertSee('setting_automatisation_campaigns_generate_runs', false)
+            ->assertSee('setting_automatisation_sequences_process', false)
+            ->assertSee('setting_automatisation_campaigns_sync_sequence_enrollments', false)
+            ->assertSee('setting_automatisation_campaign_sync_stats', false)
+            ->assertSee('setting_automatisation_discovery_terminalize_stale', false)
+            ->assertSee('setting_automatisation_prospect_auto_discover', false);
+    }
+
+    public function test_automation_only_save_persists_switches_without_touching_discovery(): void
+    {
+        Setting::set('decouverte.min_score_enrich', 75);
+
+        $this->actingAs($this->admin)
+            ->post('/admin/settings/save', [
+                'active_tab' => 'automatisation',
+                'settings' => [
+                    'automatisation' => [
+                        'cron_enabled' => '0',
+                        'campaigns_dispatch_due' => '1',
+                        'campaigns_generate_runs' => '0',
+                        'sequences_process' => '1',
+                        'campaigns_sync_sequence_enrollments' => '0',
+                        'campaign_sync_stats' => '1',
+                        'discovery_terminalize_stale' => '0',
+                        'prospect_auto_discover' => '1',
+                    ],
+                ],
+            ])
+            ->assertRedirect(route('admin.settings.index').'#kt_tab_automatisation')
+            ->assertSessionHas('success');
+
+        $this->assertSame(75, Setting::get('decouverte.min_score_enrich'));
+        $this->assertFalse((bool) Setting::get('automatisation.cron_enabled'));
+        $this->assertTrue((bool) Setting::get('automatisation.campaigns_dispatch_due'));
+        $this->assertFalse((bool) Setting::get('automatisation.campaigns_generate_runs'));
+        $this->assertTrue((bool) Setting::get('automatisation.sequences_process'));
+        $this->assertFalse((bool) Setting::get('automatisation.campaigns_sync_sequence_enrollments'));
+        $this->assertTrue((bool) Setting::get('automatisation.campaign_sync_stats'));
+        $this->assertFalse((bool) Setting::get('automatisation.discovery_terminalize_stale'));
+        $this->assertTrue((bool) Setting::get('automatisation.prospect_auto_discover'));
     }
 }
