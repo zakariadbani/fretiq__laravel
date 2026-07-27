@@ -46,7 +46,7 @@ class BuilderStateValidator
      * which used to mean an attacker could pad the payload with any number
      * of never-validated keys that the merge-tag scan still recursed into.
      */
-    private const STATE_KEYS = ['header_variant', 'hero_variant', 'middle_variant', 'footer_variant', 'cta', 'preview_text', 'slots'];
+    private const STATE_KEYS = ['header_variant', 'hero_variant', 'middle_variant', 'footer_variant', 'include_first_name', 'cta', 'preview_text', 'slots'];
 
     private const SUGGESTION_KEYS = ['subject', 'preview_text', 'middle_variant', 'cta_intent', 'cta_label', 'slots'];
 
@@ -200,6 +200,7 @@ class BuilderStateValidator
             // absent/blank (closing-signature.blade.php). The signature block
             // itself ("Cordialement, L'équipe TCL Transport") stays fixed.
             'slots.closing_line' => ['nullable', 'string', 'max:' . SectionCatalog::CLOSING_LINE_MAX],
+            'include_first_name' => ['sometimes', 'boolean'],
             'preview_text'      => ['nullable', 'string', 'max:' . SectionCatalog::PREVIEW_TEXT_MAX],
         ];
 
@@ -538,6 +539,7 @@ class BuilderStateValidator
             'hero_variant'   => $state['hero_variant'],
             'middle_variant' => $middle,
             'footer_variant' => $state['footer_variant'],
+            'include_first_name' => (bool) ($state['include_first_name'] ?? true),
             'cta' => [
                 'intent' => $state['cta']['intent'],
                 'label'  => trim((string) $state['cta']['label']),

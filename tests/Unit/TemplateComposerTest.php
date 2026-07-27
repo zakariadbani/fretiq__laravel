@@ -138,6 +138,23 @@ class TemplateComposerTest extends TestCase
         $this->assertStringNotContainsString('Barcelone', json_encode($state));
         $this->assertStringNotContainsString('ratio volume/coût', json_encode($state));
     }
+    public function test_first_name_can_be_excluded_from_both_heroes_in_french_and_english(): void
+    {
+        foreach (SectionCatalog::HEADERS as $header) {
+            foreach (['fr' => 'Bonjour,', 'en' => 'Hello,'] as $locale => $greeting) {
+                $html = $this->composer()->compose($this->state(
+                    $header,
+                    'compact',
+                    'process',
+                    overrides: ['include_first_name' => false],
+                ), $locale);
+
+                $this->assertStringContainsString('>' . $greeting . '</p>', $html, "header={$header} locale={$locale}");
+                $this->assertStringNotContainsString('{{contact.first_name}}', $html, "header={$header} locale={$locale}");
+            }
+        }
+    }
+
 
     // ── Every header × footer × middle combination ─────────────────────────────
 

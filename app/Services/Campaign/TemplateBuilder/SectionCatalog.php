@@ -181,6 +181,7 @@ class SectionCatalog
             'hero_variant'   => self::heroForHeader($headerVariant),
             'middle_variant' => self::MIDDLES[0],
             'footer_variant' => self::FOOTERS[0],
+            'include_first_name' => true,
             'preview_text'   => 'Découvrez les solutions logistiques sur mesure de TCL Transport.',
             'cta' => [
                 'intent' => 'services',

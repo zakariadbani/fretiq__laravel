@@ -107,6 +107,22 @@ class BuilderStateValidatorTest extends TestCase
         $this->assertArrayNotHasKey('process_steps', $result['slots']);
         $this->assertArrayNotHasKey('process_highlight', $result['slots']);
     }
+    public function test_include_first_name_defaults_true_preserves_false_and_rejects_non_boolean(): void
+    {
+        $legacy = $this->validator()->validate($this->validState());
+        $disabled = $this->validator()->validate($this->validState(overrides: [
+            'include_first_name' => false,
+        ]));
+
+        $this->assertTrue($legacy['include_first_name']);
+        $this->assertFalse($disabled['include_first_name']);
+
+        $invalid = $this->validState(overrides: ['include_first_name' => 'yes']);
+
+        $this->expectException(ValidationException::class);
+        $this->validator()->validate($invalid);
+    }
+
 
     public function test_valid_state_for_each_middle_variant_passes(): void
     {

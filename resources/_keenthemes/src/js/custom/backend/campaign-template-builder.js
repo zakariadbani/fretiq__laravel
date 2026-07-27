@@ -52,7 +52,7 @@ var KTCampaignTemplateBuilder = function () {
     var builderPane, classicPane, modeToggle, editorModeInput, builderStateInput;
     var htmlContentTextarea;
     var briefInput, aiGenerateBtn;
-    var heroTitleInput, ctaIntentSelect, ctaLabelInput;
+    var heroTitleInput, includeFirstNameInput, ctaIntentSelect, ctaLabelInput;
     var previewIframe, previewErrorEl, previewCanvas, createPreviewCard;
 
     // Mutable module state.
@@ -926,6 +926,21 @@ var KTCampaignTemplateBuilder = function () {
 
     // ── preview_text (top-level field, shared with the model column) ───────
 
+    function renderIncludeFirstName() {
+        if (includeFirstNameInput) {
+            includeFirstNameInput.checked = state.include_first_name;
+        }
+    }
+
+    function bindIncludeFirstName() {
+        if (!includeFirstNameInput) return;
+        includeFirstNameInput.addEventListener('change', function () {
+            state.include_first_name = this.checked;
+            schedulePreview();
+            serializeState();
+        });
+    }
+
     /**
      * Mirrors state.preview_text into the visible #campaign_template_preview_text
      * input — the hidden builder_state must always reflect the visible form.
@@ -957,6 +972,7 @@ var KTCampaignTemplateBuilder = function () {
         renderMiddlePills();
         renderMiddleSlots(); // also renders departures/kpis/benefits
         renderHeroTitle();
+        renderIncludeFirstName();
         renderIntro();
         renderBullets();
         renderClosingLine();
@@ -1202,6 +1218,7 @@ var KTCampaignTemplateBuilder = function () {
         aiGenerateBtn = document.getElementById('builder_ai_generate_btn');
 
         heroTitleInput = document.getElementById('slot_hero_title');
+        includeFirstNameInput = document.getElementById('slot_include_first_name');
         ctaIntentSelect = document.getElementById('slot_cta_intent');
         ctaLabelInput = document.getElementById('slot_cta_label');
 
@@ -1227,6 +1244,7 @@ var KTCampaignTemplateBuilder = function () {
 
             bounds = cfg.catalog.slotSchema;
             state = deepClone(cfg.initialState || cfg.defaultState);
+            state.include_first_name = state.include_first_name !== false;
             classicEditorInited = !cfg.openInBuilder;
 
             // Edit mode: the preview_text COLUMN (this input's server-rendered
@@ -1241,6 +1259,7 @@ var KTCampaignTemplateBuilder = function () {
             bindVariantCards();
             bindMiddlePills();
             bindHeroTitle();
+            bindIncludeFirstName();
             bindIntroBullets();
             bindDepartures();
             bindProcess();

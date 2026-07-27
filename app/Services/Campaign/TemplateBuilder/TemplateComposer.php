@@ -50,6 +50,7 @@ class TemplateComposer
             'heroVariant'     => $validated['hero_variant'],
             'middleVariant'   => $validated['middle_variant'],
             'footerVariant'   => $validated['footer_variant'],
+            'includeFirstName' => $validated['include_first_name'],
             'slots'           => $validated['slots'],
             'ctaLabel'        => $validated['cta']['label'],
             'ctaUrl'          => $ctaIntents[$intentKey]['url'],

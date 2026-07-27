@@ -429,6 +429,18 @@
                                        maxlength="{{ $builderCatalog['slotSchema']['hero_title']['max'] }}" />
                             </div>
 
+                            <div class="fv-row mb-7">
+                                <div class="form-check form-check-custom form-check-solid">
+                                    <input class="form-check-input" type="checkbox" id="slot_include_first_name" />
+                                    <label class="form-check-label fw-semibold" for="slot_include_first_name">
+                                        Ajouter le pr&eacute;nom du contact &agrave; la salutation
+                                    </label>
+                                </div>
+                                <div class="form-text text-muted mt-2">
+                                    D&eacute;cochez pour afficher simplement &laquo; Bonjour, &raquo;.
+                                </div>
+                            </div>
+
                             {{-- intro --}}
                             <div class="fv-row mb-7">
                                 <div class="d-flex justify-content-between align-items-center mb-2">
