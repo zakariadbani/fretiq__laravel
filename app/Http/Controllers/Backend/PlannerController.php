@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Backend;
 
 use App\Http\Controllers\Controller;
+use App\Models\Setting;
 use App\Services\Analytics\PlannerService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -28,7 +29,9 @@ class PlannerController extends Controller
     {
         addVendors(['fullcalendar']);
 
-        return view('backend.contents.planner.index');
+        return view('backend.contents.planner.index', [
+            'plannerTimezone' => Setting::get('decouverte.timezone', 'Europe/Paris'),
+        ]);
     }
 
     /**

@@ -95,6 +95,9 @@ class ProspectCriteriaViewConfig
             ['key' => 'automatisation', 'label' => 'Automatisation', 'icon' => 'bi-robot', 'mode' => 'edit'],
             ['key' => 'resultats',  'label' => 'Résultats',  'icon' => 'bi-building-check',  'mode' => 'view', 'count' => $discoveredCount],
         ];
+        if ($hasId && auth()->user()?->can('run discovery')) {
+            $tabs[] = ['key' => 'hunter_discover', 'label' => 'Discover IA', 'icon' => 'bi-stars', 'mode' => 'view'];
+        }
 
         // ── Detail rows ───────────────────────────────────────────────────────
         $detailRows = [];

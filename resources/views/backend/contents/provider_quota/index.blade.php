@@ -133,8 +133,8 @@
             <div class="card-header border-0 pt-6">
                 <div class="card-title">
                     <div>
-                        <h3 class="card-label fw-bold fs-4 mb-0">Enrichissement contacts · Hunter</h3>
-                        <div class="text-muted fs-7 mt-1">Recherches d'entreprises, distinctes des contacts créés</div>
+                        <h3 class="card-label fw-bold fs-4 mb-0">Quota contacts</h3>
+                        <div class="text-muted fs-7 mt-1">Recherches de contacts, distinctes des contacts créés</div>
                     </div>
                 </div>
             </div>
@@ -155,11 +155,11 @@
                     @endphp
 
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="fw-semibold text-gray-700"><i class="bi bi-search me-1"></i> Recherches - Utilisé / Total</span>
+                        <span class="fw-semibold text-gray-700"><i class="bi bi-search me-1"></i> Recherches de contacts - Utilisé / Total</span>
                         <span class="fw-bold text-gray-800">{{ $quotaValue($hunterSearchesUsed, $hunterSearchesTotal) }}</span>
                     </div>
                     <div class="text-muted fs-7 mb-1">Disponible / Total : {{ $quotaValue($hunterSearchesAvailable, $hunterSearchesTotal) }}</div>
-                    <div class="text-muted fs-7 mb-2">Bundles d’enrichissement réservés aujourd’hui : {{ $hunterSearchesReserved }}</div>
+                    <div class="text-muted fs-7 mb-2">Quota contacts réservé aujourd’hui : {{ $hunterSearchesReserved }}</div>
                     @if($hunterSearchesUsed !== null && $hunterSearchesTotal !== null)
                         <div class="progress h-8px mb-6">
                             <div class="progress-bar {{ $barClass($hunterSearchesUsed, $hunterSearchesTotal) }}" style="width: {{ $pct($hunterSearchesUsed, $hunterSearchesTotal) }}%"></div>

@@ -7,6 +7,9 @@ use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
+use App\Models\Setting;
+use App\Models\Sequence;
+use App\Models\SequenceStep;
 use App\Models\User;
 use App\Services\Analytics\PlannerService;
 use Carbon\Carbon;
@@ -118,6 +121,51 @@ class PlannerFeedTest extends TestCase
         ]);
     }
 
+
+    private function makePacedSequence(Carbon $nextRunAt, array $overrides = []): Campaign
+    {
+        $sequence = Sequence::create([
+            'name' => 'Sequence planner ' . uniqid(),
+            'is_active' => true,
+            'stop_on_reply' => false,
+        ]);
+        $template = CampaignTemplate::create([
+            'name' => 'Sequence template ' . uniqid(),
+            'subject' => 'Sequence subject',
+            'html_content' => '<p>Sequence</p>',
+        ]);
+        SequenceStep::create([
+            'sequence_id' => $sequence->id,
+            'step_no' => 1,
+            'delay_days' => 0,
+            'template_id' => $template->id,
+        ]);
+        SequenceStep::create([
+            'sequence_id' => $sequence->id,
+            'step_no' => 2,
+            'delay_days' => 1,
+            'template_id' => $template->id,
+        ]);
+        $segment = Segment::create(['name' => 'Sequence segment ' . uniqid(), 'scope' => 'client']);
+        $sender = SenderIdentity::create([
+            'name' => 'Sequence sender ' . uniqid(),
+            'email' => uniqid('sequence_') . '@tcl.test',
+        ]);
+
+        return Campaign::create(array_merge([
+            'name' => 'Sequence campaign ' . uniqid(),
+            'segment_id' => $segment->id,
+            'sequence_id' => $sequence->id,
+            'sender_identity_id' => $sender->id,
+            'schedule_type' => 'sequence',
+            'sequence_enrollment_mode' => 'paced',
+            'daily_company_limit' => 12,
+            'next_run_at' => $nextRunAt,
+            'timezone' => 'UTC',
+            'is_active' => true,
+            'sequence_auto_enroll_enabled' => true,
+        ], $overrides));
+    }
     // ── Existing service-level tests (must stay green) ─────────────────────────
 
     /**
@@ -181,6 +229,26 @@ class PlannerFeedTest extends TestCase
             ->assertStatus(200);
     }
 
+
+    public function test_planner_heading_uses_default_timezone_without_repeating_page_title(): void
+    {
+        $this->actingAs($this->superadmin)
+            ->get('/admin/planner')
+            ->assertOk()
+            ->assertSee('data-timezone="Europe/Paris"', false)
+            ->assertDontSee('<h2 class="card-title fw-bold">Planning des campagnes</h2>', false);
+    }
+
+    public function test_planner_heading_uses_configured_timezone(): void
+    {
+        Setting::set('decouverte.timezone', 'UTC');
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/planner')
+            ->assertOk()
+            ->assertSee('data-timezone="UTC"', false)
+            ->assertSee('(UTC)');
+    }
     /**
      * GET /admin/planner/feed returns a 200 JSON array containing the seeded event.
      */
@@ -427,6 +495,155 @@ class PlannerFeedTest extends TestCase
         Carbon::setTestNow();
     }
 
+
+    public function test_active_paced_sequence_projects_only_its_next_wave(): void
+    {
+        $nextRunAt = Carbon::parse('2026-07-28 09:00:00', 'UTC');
+        $campaign = $this->makePacedSequence($nextRunAt);
+        CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'sequence-wave-000003',
+            'run_at' => Carbon::parse('2026-07-20 09:00:00', 'UTC'),
+            'status' => 'sent',
+        ]);
+
+        $events = app(PlannerService::class)->runsFeed(
+            '2026-07-27T00:00:00+00:00',
+            '2026-07-30T00:00:00+00:00',
+        );
+        $projected = collect($events)->where('extendedProps.eventKind', 'sequence-wave-projection')->values();
+
+        $this->assertCount(1, $projected);
+        $this->assertSame(4, $projected[0]['extendedProps']['waveNumber']);
+        $this->assertSame(1, $projected[0]['extendedProps']['stepNumber']);
+        $this->assertSame(12, $projected[0]['extendedProps']['companyLimit']);
+        $this->assertTrue($projected[0]['extendedProps']['launchable']);
+    }
+
+    public function test_inactive_paced_sequence_is_gray_and_not_launchable_but_stays_in_range_only(): void
+    {
+        $campaign = $this->makePacedSequence(
+            Carbon::parse('2026-07-28 09:00:00', 'UTC'),
+            ['is_active' => false],
+        );
+
+        $inside = app(PlannerService::class)->runsFeed(
+            '2026-07-28T00:00:00+00:00',
+            '2026-07-29T00:00:00+00:00',
+        );
+        $event = collect($inside)->firstWhere('id', 'projected-sequence-' . $campaign->id . '-20260728090000');
+
+        $this->assertNotNull($event);
+        $this->assertFalse($event['extendedProps']['launchable']);
+        $this->assertSame('secondary', $event['extendedProps']['statusColor']);
+        $this->assertSame("Inactive \u{2014} ne sera pas lanc\u{00E9}e", $event['extendedProps']['statusLabel']);
+
+        $outside = app(PlannerService::class)->runsFeed(
+            '2026-07-29T00:00:00+00:00',
+            '2026-07-30T00:00:00+00:00',
+        );
+        $this->assertNull(collect($outside)->firstWhere('id', 'projected-sequence-' . $campaign->id . '-20260728090000'));
+    }
+
+
+    public function test_paced_sequence_missing_required_configuration_is_not_launchable(): void
+    {
+        $nextRunAt = Carbon::parse('2026-07-28 09:00:00', 'UTC');
+        $campaign = $this->makePacedSequence($nextRunAt);
+        $campaign->sequence->steps()->delete();
+
+        $events = app(PlannerService::class)->runsFeed(
+            '2026-07-28T00:00:00+00:00',
+            '2026-07-29T00:00:00+00:00',
+        );
+        $event = collect($events)->firstWhere(
+            'id',
+            'projected-sequence-' . $campaign->id . '-20260728090000',
+        );
+
+        $this->assertNotNull($event);
+        $this->assertFalse($event['extendedProps']['launchable']);
+        $this->assertNull($event['extendedProps']['stepNumber']);
+        $this->assertSame('secondary', $event['extendedProps']['statusColor']);
+    }
+    public function test_materialized_sequence_waves_expose_numeric_step_and_legacy_metadata(): void
+    {
+        $campaign = $this->makePacedSequence(Carbon::parse('2026-08-01 09:00:00', 'UTC'));
+        $stepTwo = $campaign->sequence->steps()->where('step_no', 2)->firstOrFail();
+        $base = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'sequence-wave-000007',
+            'run_at' => '2026-07-25 09:00:00',
+            'status' => 'sent',
+        ]);
+        $child = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $stepTwo->id,
+            'occurrence_key' => 'sequence-wave-000007-step-002',
+            'run_at' => '2026-07-26 09:00:00',
+            'status' => 'scheduled',
+        ]);
+        $legacy = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'sequence-wave-legacy-contact-1',
+            'run_at' => '2026-07-27 09:00:00',
+            'status' => 'sent',
+        ]);
+
+        $events = collect(app(PlannerService::class)->runsFeed());
+        $baseEvent = $events->firstWhere('id', (string) $base->id);
+        $childEvent = $events->firstWhere('id', (string) $child->id);
+        $legacyEvent = $events->firstWhere('id', (string) $legacy->id);
+
+        $this->assertSame(7, $baseEvent['extendedProps']['waveNumber']);
+        $this->assertSame(1, $baseEvent['extendedProps']['stepNumber']);
+        $this->assertStringContainsString("Vague 7 \u{00B7} \u{00C9}tape 1", $baseEvent['title']);
+        $this->assertSame(2, $childEvent['extendedProps']['stepNumber']);
+        $this->assertStringContainsString("Vague 7 \u{00B7} \u{00C9}tape 2", $childEvent['title']);
+        $this->assertNull($legacyEvent['extendedProps']['waveNumber']);
+        $this->assertNotSame(0, $legacyEvent['extendedProps']['waveNumber']);
+    }
+
+    public function test_follow_up_at_next_run_timestamp_does_not_suppress_projected_base_wave(): void
+    {
+        $nextRunAt = Carbon::parse('2026-07-28 09:00:00', 'UTC');
+        $campaign = $this->makePacedSequence($nextRunAt);
+        $stepTwo = $campaign->sequence->steps()->where('step_no', 2)->firstOrFail();
+        CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $stepTwo->id,
+            'occurrence_key' => 'sequence-wave-000002-step-002',
+            'run_at' => $nextRunAt,
+            'status' => 'scheduled',
+        ]);
+
+        $events = collect(app(PlannerService::class)->runsFeed(
+            '2026-07-28T00:00:00+00:00',
+            '2026-07-29T00:00:00+00:00',
+        ));
+
+        $this->assertNotNull($events->firstWhere('id', 'projected-sequence-' . $campaign->id . '-20260728090000'));
+        $this->assertCount(2, $events->filter(fn (array $event): bool => Carbon::parse($event['start'])->utc()->eq($nextRunAt)));
+    }
+
+    public function test_materialized_base_wave_at_next_run_timestamp_suppresses_projection(): void
+    {
+        $nextRunAt = Carbon::parse('2026-07-28 09:00:00', 'UTC');
+        $campaign = $this->makePacedSequence($nextRunAt);
+        CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'sequence-wave-000002',
+            'run_at' => $nextRunAt,
+            'status' => 'scheduled',
+        ]);
+
+        $events = collect(app(PlannerService::class)->runsFeed(
+            '2026-07-28T00:00:00+00:00',
+            '2026-07-29T00:00:00+00:00',
+        ));
+
+        $this->assertNull($events->firstWhere('id', 'projected-sequence-' . $campaign->id . '-20260728090000'));
+    }
     // ── Controller tests — schedule() recurring branch ─────────────────────────
 
     /**

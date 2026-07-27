@@ -11,7 +11,11 @@
 {{-- Carte calendrier Metronic : header avec légende des statuts depuis config --}}
 <div class="card">
     <div class="card-header">
-        <h2 class="card-title fw-bold">Planning des campagnes</h2>
+        <h2
+            id="planner-current-time"
+            class="card-title fw-bold"
+            data-timezone="{{ $plannerTimezone }}"
+        >{{ now($plannerTimezone)->format('H:i:s') }} ({{ $plannerTimezone }})</h2>
         <div class="card-toolbar">
             <div class="d-flex flex-wrap align-items-center gap-4">
                 @foreach (config('global.data.campaign_run_statuses', []) as $status)
@@ -53,6 +57,24 @@
                         <div class="fs-6 text-muted" data-kt-planner="event_start"></div>
                     </div>
                 </div>
+                <div class="mb-7">
+                    <div class="d-none mb-3" data-kt-planner-row="sequenceName">
+                        <span class="text-muted fw-semibold me-2">S&eacute;quence :</span>
+                        <span class="fw-bold" data-kt-planner-value="sequenceName"></span>
+                    </div>
+                    <div class="d-none mb-3" data-kt-planner-row="waveNumber">
+                        <span class="text-muted fw-semibold me-2">Vague :</span>
+                        <span class="fw-bold" data-kt-planner-value="waveNumber"></span>
+                    </div>
+                    <div class="d-none mb-3" data-kt-planner-row="stepNumber">
+                        <span class="text-muted fw-semibold me-2">&Eacute;tape :</span>
+                        <span class="fw-bold" data-kt-planner-value="stepNumber"></span>
+                    </div>
+                    <div class="d-none" data-kt-planner-row="companyLimit">
+                        <span class="text-muted fw-semibold me-2">Maximum de soci&eacute;t&eacute;s :</span>
+                        <span class="fw-bold" data-kt-planner-value="companyLimit"></span>
+                    </div>
+                </div>
                 <div class="d-flex justify-content-end">
                     <a href="#" class="btn btn-primary" data-kt-planner="event_link">Voir la campagne</a>
                 </div>
@@ -66,6 +88,23 @@
 "use strict";
 
 (function () {
+    var plannerTimezone = @json($plannerTimezone);
+    var clockEl = document.getElementById('planner-current-time');
+    var clockFormatter = new Intl.DateTimeFormat('fr-FR', {
+        timeZone: plannerTimezone,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23'
+    });
+
+    function updateClock() {
+        clockEl.textContent = clockFormatter.format(new Date()) + ' (' + plannerTimezone + ')';
+    }
+
+    updateClock();
+    window.setInterval(updateClock, 1000);
+
     var calendarEl = document.getElementById('kt_calendar_app');
     if (!calendarEl || typeof FullCalendar === 'undefined') { return; }
 
@@ -97,6 +136,17 @@
             if (!modal) { return; }
 
             var props = info.event.extendedProps || {};
+
+            ['sequenceName', 'waveNumber', 'stepNumber', 'companyLimit'].forEach(function (key) {
+                var row = modalEl.querySelector('[data-kt-planner-row="' + key + '"]');
+                var value = modalEl.querySelector('[data-kt-planner-value="' + key + '"]');
+                var visible = props[key] !== null && props[key] !== undefined && props[key] !== '';
+
+                row.classList.toggle('d-none', !visible);
+                if (visible) {
+                    value.textContent = props[key];
+                }
+            });
 
             modalEl.querySelector('[data-kt-planner="event_name"]').textContent = info.event.title;
 

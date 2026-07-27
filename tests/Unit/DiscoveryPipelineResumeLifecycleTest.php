@@ -140,6 +140,7 @@ class DiscoveryPipelineResumeLifecycleTest extends TestCase
             'daily_limit' => 1,
             'auto_enrich' => true,
             'min_score_enrich' => 50,
+            'countries' => ['MA'],
         ]);
         $criteria->exists = true;
 
@@ -194,7 +195,13 @@ class DiscoveryPipelineResumeLifecycleTest extends TestCase
         $enrichment = Mockery::mock(CompanyEnrichmentService::class);
         $enrichment->shouldReceive('enrichClaimed')
             ->once()
-            ->andReturn(['outcome' => 'hunter_empty', 'contacts_count' => 0]);
+            ->andReturnUsing(function (Company $company, DiscoveryRun $ownedRun, ?int $timeout, ?string $fallbackCountry): array {
+                $this->assertNull($company->country);
+                $this->assertSame('MA', $fallbackCountry);
+                $company->forceFill(['country' => 'FR'])->save();
+
+                return ['outcome' => 'hunter_empty', 'contacts_count' => 0];
+            });
 
         $pipeline = new DiscoveryPipelineService(
             $discovery,
@@ -216,6 +223,7 @@ class DiscoveryPipelineResumeLifecycleTest extends TestCase
 
         $this->assertFalse($partial->isComplete());
         $this->assertSame(0, (int) $run->fresh()->consumed);
+        $this->assertNull(Company::firstOrFail()->country);
 
         $completed = $pipeline->run($criteria, 1, $run->fresh(), 1);
 
@@ -223,6 +231,7 @@ class DiscoveryPipelineResumeLifecycleTest extends TestCase
         $this->assertSame(1, $scoreCalls, 'The paid scoring result must survive continuation.');
         $this->assertSame(1, (int) $run->fresh()->consumed);
         $this->assertSame(1, (int) $run->fresh()->new_companies_count, 'A company inserted before pausing must still be counted as new after continuation.');
+        $this->assertSame('FR', Company::firstOrFail()->country);
     }
 
     private function createTables(): void

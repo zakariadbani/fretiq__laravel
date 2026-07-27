@@ -133,7 +133,7 @@
                                                     @if($isRejected)
                                                         <span class="badge badge-light-danger" title="{{ $company->ai_explanation }}">Exclue (IA)</span>
                                                     @elseif($company->enrichment_status === 'skipped_low_score')
-                                                        <span class="badge badge-light-warning">Sous le seuil Hunter</span>
+                                                        <span class="badge badge-light-warning">Sous le seuil de contacts</span>
                                                     @else
                                                         <span class="badge badge-light-success">Non exclue</span>
                                                     @endif

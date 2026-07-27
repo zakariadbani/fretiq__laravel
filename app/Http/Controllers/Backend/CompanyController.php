@@ -311,12 +311,12 @@ class CompanyController extends BackendController
         } catch (QuotaExhaustedException $e) {
             return response()->json([
                 'message' => 'error',
-                'text' => 'Solde du jour épuisé — recharge demain à minuit.',
+                'text' => 'Quota contacts atteint.',
             ], 422);
         } catch (EnrichmentInFlightException $e) {
             return response()->json([
                 'message' => 'error',
-                'text' => 'Enrichissement déjà en cours pour cette entreprise.',
+                'text' => 'Recherche de contacts en cours.',
             ], 409);
         } catch (QuotaLockUnavailableException $e) {
             return response()->json([
@@ -326,14 +326,14 @@ class CompanyController extends BackendController
         } catch (\Throwable $e) {
             return response()->json([
                 'message' => 'error',
-                'text' => "Erreur lors de l'enrichissement — réessayez.",
+                'text' => "Échec de la recherche de contacts.",
             ], 500);
         }
 
         if ($result['outcome'] === 'provider_failed') {
             return response()->json([
                 'message' => 'success',
-                'text' => 'Aucun contact trouvé pour ce domaine — 1 crédit consommé.',
+                'text' => 'Recherche de contacts indisponible — 1 crédit consommé.',
             ], 200);
         }
 

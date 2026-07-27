@@ -260,7 +260,7 @@ class CompanyManualEnrichTest extends TestCase
 
         $response->assertStatus(422);
         $this->assertStringContainsString(
-            'Solde du jour épuisé',
+            'Quota contacts atteint',
             $response->json('text') ?? '',
             'Response must indicate quota exhaustion'
         );
@@ -376,7 +376,7 @@ class CompanyManualEnrichTest extends TestCase
 
         $response->assertStatus(409);
         $this->assertStringContainsString(
-            'déjà en cours',
+            'Recherche de contacts en cours',
             $response->json('text') ?? '',
             'Response must mention in-flight enrichment'
         );

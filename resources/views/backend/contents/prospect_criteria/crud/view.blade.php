@@ -64,6 +64,12 @@
     </div>
     {{-- end Résultats --}}
 
+    @can('run discovery')
+        <div class="tab-pane fade" id="criteria_hunter_discover" role="tabpanel">
+            @include('backend.contents.prospect_criteria.partials._hunter-discover', ['model' => $model])
+        </div>
+    @endcan
+
     {{--
         Général and Automatisation are NOT native panes here — they
         deep-link to the edit page via the tab nav. No pane divs are needed.
@@ -75,6 +81,9 @@
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
     @include('backend.contents.prospect_criteria.partials._discovery-script')
+    @can('run discovery')
+        @include('backend.contents.prospect_criteria.partials._hunter-discover-script', ['model' => $model])
+    @endcan
 @endpush
 
 </x-default-layout>

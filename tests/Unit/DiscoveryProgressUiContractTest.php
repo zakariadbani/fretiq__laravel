@@ -287,7 +287,7 @@ class DiscoveryProgressUiContractTest extends TestCase
         $this->assertStringContainsString('entreprise(s) enregistrée(s)', $queryResults);
         $this->assertStringContainsString('non exclue(s)', $queryResults);
         $this->assertStringContainsString("\$company->enrichment_status === 'skipped_low_score'", $queryResults);
-        $this->assertStringContainsString('badge-light-warning">Sous le seuil Hunter', $queryResults);
+        $this->assertStringContainsString('badge-light-warning">Sous le seuil de contacts', $queryResults);
         $this->assertStringContainsString('badge-light-success">Non exclue', $queryResults);
         $this->assertStringContainsString('Entreprises enregistrées non exclues', $results);
         $this->assertStringContainsString('Voir les entreprises enregistrées', $results);

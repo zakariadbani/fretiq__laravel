@@ -95,7 +95,13 @@ class SequenceWaveService
         $contacts = $this->eligibleContacts($run);
         $sendAlreadyAttempted = $run->zoho_campaign_key && $run->driver_ref === 'zoho-send-attempted';
         if ($contacts->isEmpty() && ! $sendAlreadyAttempted) {
-            $run->update(['status' => 'sent', 'stats_sent' => 0, 'finished_at' => now()]);
+            $run->update([
+                'status' => 'sent',
+                'stats_sent' => 0,
+                'driver_ref' => 'zoho-wave-empty',
+                'finished_at' => now(),
+                'failure_reason' => null,
+            ]);
             return;
         }
 

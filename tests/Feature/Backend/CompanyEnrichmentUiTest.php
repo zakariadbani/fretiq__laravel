@@ -117,7 +117,7 @@ class CompanyEnrichmentUiTest extends TestCase
     }
 
     /**
-     * NULL enrichment_status must render as an explicit « Hunter non tenté » — telling
+     * NULL enrichment_status must render as an explicit « Recherche de contacts non effectuée » — telling
      * "never attempted" apart from "attempted, found nothing" is the whole point
      * of the column, so a muted dash would defeat it.
      */
@@ -137,7 +137,7 @@ class CompanyEnrichmentUiTest extends TestCase
         $response = $this->actingAs($user)->get("/admin/companies/{$company->id}");
 
         $response->assertOk();
-        $response->assertSee('Hunter non tenté', false);
+        $response->assertSee('Recherche de contacts non effectuée', false);
     }
 
     public function test_view_page_labels_a_provider_failure_distinctly(): void
@@ -157,7 +157,7 @@ class CompanyEnrichmentUiTest extends TestCase
         $response = $this->actingAs($user)->get("/admin/companies/{$company->id}");
 
         $response->assertOk();
-        $response->assertSee('Échec Hunter — à réessayer', false);
+        $response->assertSee('Échec de la recherche de contacts', false);
         $response->assertSee('badge-light-danger', false);
         $response->assertDontSee('Aucun email trouvé — ', false);
     }

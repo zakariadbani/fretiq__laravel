@@ -348,6 +348,7 @@ class BacklogFirstDiscoveryTest extends TestCase
         $discoveryStartedAt = 0.0;
         $discoveryDeadline = null;
         $pipeline = \Mockery::mock(DiscoveryPipelineService::class);
+        $pipeline->shouldReceive('countryFallback')->once()->andReturn(null);
         $pipeline->shouldReceive('run')
             ->once()
             ->andReturnUsing(function (

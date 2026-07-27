@@ -418,9 +418,10 @@ class DiscoveryPipelineService
                 // Persist the candidate before attempting to claim it. Automatic
                 // eligibility and the contact debit are then checked against this
                 // durable row under the quota service's admission lock.
+                $deferCountry = $shouldEnrich || ($run !== null && $passesEnrichmentGate);
                 $company = $this->upsertCompany(
                     $criteria, $domain, $candidate, null,
-                    $score, $explanation, $autoScoring, $excluded, $enrichmentStatus
+                    $score, $explanation, $autoScoring, $excluded, $enrichmentStatus, $deferCountry
                 );
 
                 // A paid score may have been checkpointed after this run inserted
@@ -488,6 +489,7 @@ class DiscoveryPipelineService
                             $claimed,
                             $run,
                             $hunterTimeout,
+                            $this->countryFallback($criteria, $candidate),
                         );
                         $contactCount = $outcome['contacts_count'];
 
@@ -536,6 +538,7 @@ class DiscoveryPipelineService
                         $autoScoring,
                         $excluded,
                         $directStatus,
+                        $enrichment === null,
                     );
 
                     $contactCount = $enrichment !== null
@@ -979,6 +982,7 @@ class DiscoveryPipelineService
      * @param  bool  $scored  Whether scoring ran for this candidate.
      * @param  bool  $excluded  Whether the scorer flagged this candidate for rejection.
      * @param  string|null  $enrichmentStatus  Enrichment audit status (null = do not touch the column).
+     * @param  bool  $deferCountry  Leave fallback empty until an eligible Hunter attempt resolves.
      */
     private function upsertCompany(
         ProspectCriteria $criteria,
@@ -989,7 +993,8 @@ class DiscoveryPipelineService
         ?string $explanation,
         bool $scored,
         bool $excluded = false,
-        ?string $enrichmentStatus = null
+        ?string $enrichmentStatus = null,
+        bool $deferCountry = false,
     ): Company {
         /** @var Company|null $existing */
         $existing = Company::withRejected()->where('domain', $domain)->first();
@@ -997,22 +1002,20 @@ class DiscoveryPipelineService
         $isClient = $existing && $existing->relationship === 'client';
 
         $enrichedSector = $enrichment['industry'] ?? null;
-        $enrichedCountry = $this->mapIso2($enrichment['country'] ?? null);
+        $hunterCountry = $this->mapIso2($enrichment['country'] ?? null);
 
         // Forward-compatible candidate metadata (Google Maps discovery source).
         // FALLBACKS ONLY — used when Hunter supplied nothing for the field AND the
         // existing row is empty for it. Never overwrites data we already hold.
         $candidateSector = $candidate['sector_hint'] ?? null;
-        $candidateCountry = $this->mapIso2($candidate['country'] ?? null);
+        $fallbackCountry = $this->countryFallback($criteria, $candidate);
         $candidatePhone = $candidate['phone'] ?? null;
 
         if ($enrichedSector === null && $candidateSector !== null && empty($existing?->sector)) {
             $enrichedSector = $candidateSector;
         }
 
-        if ($enrichedCountry === null && $candidateCountry !== null && empty($existing?->country)) {
-            $enrichedCountry = $candidateCountry;
-        }
+        $resolvedCountry = $hunterCountry ?? $fallbackCountry;
 
         // Build attributes to set / update
         $attributes = [
@@ -1038,8 +1041,8 @@ class DiscoveryPipelineService
             $attributes['sector'] = $enrichedSector;
         }
 
-        if (! $existing || $enrichedCountry !== null) {
-            $attributes['country'] = $enrichedCountry;
+        if (! $deferCountry && empty($existing?->country) && $resolvedCountry !== null) {
+            $attributes['country'] = $resolvedCountry;
         }
 
         // Only write enrichment_data when enrichment ran — do not null-wipe
@@ -1084,6 +1087,20 @@ class DiscoveryPipelineService
             'domain' => $domain,
             'discovery_query' => $candidate['discovery_query'] ?? null,
         ]));
+    }
+
+    /**
+     * Candidate country first, then the criterion only when it names one country.
+     * Used by queued backlog processing after the first upsert deliberately defers it.
+     */
+    public function countryFallback(ProspectCriteria $criteria, array $candidate): ?string
+    {
+        $countries = $criteria->countries;
+        $criteriaCountry = is_array($countries) && count($countries) === 1
+            ? $this->mapIso2(array_values($countries)[0])
+            : null;
+
+        return $this->mapIso2($candidate['country'] ?? null) ?? $criteriaCountry;
     }
 
     /**

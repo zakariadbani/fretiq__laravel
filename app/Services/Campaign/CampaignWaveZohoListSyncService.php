@@ -46,7 +46,13 @@ class CampaignWaveZohoListSyncService
         }
         ksort($target);
         if ($target === []) {
-            $run->update(['status' => 'sent', 'stats_sent' => 0, 'finished_at' => now()]);
+            $run->update([
+                'status' => 'sent',
+                'stats_sent' => 0,
+                'driver_ref' => 'zoho-wave-empty',
+                'finished_at' => now(),
+                'failure_reason' => null,
+            ]);
             return ['list_key' => '', 'list_name' => $this->listName($run), 'contacts' => 0];
         }
 

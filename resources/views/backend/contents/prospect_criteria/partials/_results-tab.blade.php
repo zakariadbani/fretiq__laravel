@@ -164,14 +164,14 @@
                                         ? config('global.data.company_enrichment_statuses.' . $enrichmentStatus)
                                         : config('global.data.company_enrichment_status_null');
                                     $enrichmentLabelOverrides = [
-                                        'hunter_failed' => 'Échec de l’enrichissement — à réessayer',
-                                        'enriching' => 'Enrichissement de contacts en cours',
-                                        'skipped_budget' => 'Reporté — quota d’enrichissement',
-                                        'skipped_provider_unavailable' => 'Reporté — service d’enrichissement indisponible',
+                                        'hunter_failed' => 'Échec de la recherche de contacts',
+                                        'enriching' => 'Recherche de contacts en cours',
+                                        'skipped_budget' => 'Quota contacts atteint',
+                                        'skipped_provider_unavailable' => 'Recherche de contacts indisponible',
                                     ];
                                     if ($enrichmentCfg) {
                                         $enrichmentCfg['label'] = $enrichmentStatus === null
-                                            ? 'Enrichissement de contacts non tenté'
+                                            ? 'Recherche de contacts non effectuée'
                                             : ($enrichmentLabelOverrides[$enrichmentStatus] ?? $enrichmentCfg['label']);
                                     }
                                 @endphp

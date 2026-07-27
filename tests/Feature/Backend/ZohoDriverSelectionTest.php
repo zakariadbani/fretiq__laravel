@@ -108,7 +108,11 @@ class ZohoDriverSelectionTest extends TestCase
         ]);
     }
 
-    private function makeCampaignWithRun(Contact $contact, string $senderEmail = 'noreply@tcl.test'): CampaignRun
+    private function makeCampaignWithRun(
+        Contact $contact,
+        string $senderEmail = 'noreply@tcl.test',
+        string $campaignName = 'Campagne Zoho Test',
+    ): CampaignRun
     {
         $segment  = Segment::create(['name' => 'Clients', 'scope' => 'client']);
         $template = CampaignTemplate::create([
@@ -121,7 +125,7 @@ class ZohoDriverSelectionTest extends TestCase
             'email' => $senderEmail,
         ]);
         $campaign = Campaign::create([
-            'name'               => 'Campagne Zoho Test',
+            'name'               => $campaignName,
             'segment_id'         => $segment->id,
             'template_id'        => $template->id,
             'sender_identity_id' => $sender->id,
@@ -274,9 +278,44 @@ class ZohoDriverSelectionTest extends TestCase
         // HTTP assertions: all three API endpoints were called
         Http::assertSent(fn ($req) => str_contains($req->url(), '/json/listsubscribe'));
         Http::assertSent(fn ($req) => str_contains($req->url(), 'createCampaign')
+            && $req['campaignname'] === "Fretiq Campagne Zoho Test - C{$run->campaign_id} - R{$run->id} - " . now()->format('Ymd')
             && $req['subject'] === 'Bonjour $[COMPANYNAME]$'
             && ! str_contains($req['subject'], '$[COMPANYNAME|'));
         Http::assertSent(fn ($req) => str_contains($req->url(), 'sendcampaign'));
+    }
+
+    public function test_dispatch_run_caps_campaign_name_while_preserving_traceable_suffix(): void
+    {
+        config([
+            'services.zoho.campaigns.list_key' => 'verified-list-key',
+            'app.url' => 'https://fretiq.example.test',
+        ]);
+
+        $contact = $this->makeClientContact('long-name@acme.test');
+        $run = $this->makeCampaignWithRun(
+            $contact,
+            campaignName: str_repeat('Long   Name ', 20),
+        );
+        $suffix = " - C{$run->campaign_id} - R{$run->id} - " . now()->format('Ymd');
+        $createdName = null;
+
+        $zohoClient = \Mockery::mock(\App\Services\Zoho\ZohoCampaignsClient::class);
+        $zohoClient->shouldReceive('addListSubscribers')->once()->andReturn([]);
+        $zohoClient->shouldReceive('createCampaign')
+            ->once()
+            ->withArgs(function ($name) use (&$createdName): bool {
+                $createdName = $name;
+
+                return true;
+            })
+            ->andReturn(['campaignKey' => 'CK-LONG-NAME']);
+        $zohoClient->shouldReceive('sendCampaign')->once()->andReturn([]);
+
+        (new ZohoCampaignsDriver($zohoClient))->dispatchRun($run, collect([$contact]));
+
+        $this->assertLessThanOrEqual(191, mb_strlen($createdName));
+        $this->assertStringEndsWith($suffix, $createdName);
+        $this->assertDoesNotMatchRegularExpression('/\s{2,}/', $createdName);
     }
 
     /**

@@ -101,6 +101,7 @@ return [
     'hunter' => [
         'api_key' => env('HUNTER_API_KEY'),
         'driver'  => env('DISCOVERY_DRIVER', 'local'),
+        'discover_timeout' => 20,
     ],
 
     'gemini' => [

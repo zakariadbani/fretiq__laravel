@@ -466,7 +466,7 @@ class ProspectCriteriaTest extends TestCase
         $response->assertSee('3 enregistrée(s)', false);
         $response->assertSee('2 non exclue(s)', false);
         $response->assertSee('1 exclue(s)', false);
-        $response->assertSee('Sous le seuil Hunter', false);
+        $response->assertSee('Sous le seuil de contacts', false);
         $response->assertSee('Non exclue', false);
         $response->assertSee('Détails', false);
         $response->assertSee('Entreprises enregistrées non exclues (2)', false);
@@ -567,7 +567,7 @@ class ProspectCriteriaTest extends TestCase
 
         $response->assertSee('Enrichi', false);
         $response->assertSee('Aucun email trouvé', false);
-        $response->assertSee('Échec de l’enrichissement — à réessayer', false);
+        $response->assertSee('Échec de la recherche de contacts', false);
         $resultsTable = strstr($response->getContent(), 'Entreprises enregistrées non exclues (3)') ?: $response->getContent();
         $withContactPosition = strpos($resultsTable, 'Entreprise avec contact');
         $withoutEmailPosition = strpos($resultsTable, 'Entreprise sans email');
@@ -725,7 +725,7 @@ class ProspectCriteriaTest extends TestCase
         $tabKeys = array_column($config['tabs'], 'key');
 
         $this->assertNotContains('historique', $tabKeys);
-        $this->assertSame(['apercu', 'general', 'automatisation', 'resultats'], $tabKeys);
+        $this->assertSame(['apercu', 'general', 'automatisation', 'resultats', 'hunter_discover'], $tabKeys);
     }
 
     public function test_running_discovery_renders_success_objective_and_attempt_quota_separately(): void

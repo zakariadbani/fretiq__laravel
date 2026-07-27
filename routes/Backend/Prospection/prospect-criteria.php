@@ -7,6 +7,8 @@ Route::controller(ProspectCriteriaController::class)->prefix('admin')->name('adm
     Route::get('/prospect_criteria', 'index')->name('prospect_criteria.index');
     Route::get('/prospect_criteria/create', 'create')->name('prospect_criteria.create');
     Route::post('/prospect_criteria', 'store')->name('prospect_criteria.store');
+    Route::post('/prospect_criteria/{id}/hunter-discover/preview', 'hunterDiscoverPreview')->middleware('throttle:5,1')->name('prospect_criteria.hunter_discover_preview');
+    Route::post('/prospect_criteria/{id}/hunter-discover/import', 'hunterDiscoverImport')->name('prospect_criteria.hunter_discover_import');
     Route::post('/prospect_criteria/{id}/discover', 'discover')->name('prospect_criteria.discover');
     Route::get('/prospect_criteria/{id}/contact-enrichment/preview', 'contactEnrichmentPreview')->name('prospect_criteria.contact_enrichment_preview');
     Route::post('/prospect_criteria/{id}/contact-enrichment', 'dispatchContactEnrichment')->name('prospect_criteria.contact_enrichment_dispatch');

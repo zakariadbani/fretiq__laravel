@@ -23,7 +23,7 @@ export class PlannerPage {
   /**
    * Card title — always present in the Blade markup.
    */
-  readonly cardTitle: Locator;
+  readonly currentTime: Locator;
 
   /**
    * FullCalendar mount point — always present in the Blade markup.
@@ -34,7 +34,7 @@ export class PlannerPage {
   constructor(page: Page) {
     this.page = page;
 
-    this.cardTitle = page.locator('h2.card-title', { hasText: 'Planning des campagnes' }).first();
+    this.currentTime = page.locator('#planner-current-time');
     this.calendarContainer = page.locator('#kt_calendar_app');
   }
 

@@ -36,7 +36,7 @@ class AudienceLanguageSplitTest extends TestCase
             'prospecting.cold_send_enabled' => false,
             'translation.base_language'     => 'fr',
             'translation.target_languages'  => ['en'],
-            'translation.francophone_countries' => ['FR', 'BE', 'LU', 'MC', 'CH', 'CA'],
+            'translation.francophone_countries' => ['FR', 'BE', 'LU', 'MC', 'CH', 'CA', 'MA'],
         ]);
 
         $this->adminUser = User::factory()->create([
@@ -154,6 +154,21 @@ class AudienceLanguageSplitTest extends TestCase
     }
 
     // ── Warning logic ─────────────────────────────────────────────────────────
+
+    public function test_moroccan_contact_is_counted_as_french_not_english(): void
+    {
+        $segment = $this->makeSegment();
+        $this->makeClientContactWithCountry('MA', 'ma@test.test');
+
+        $data = $this->actingAs($this->adminUser)
+            ->postJson('/admin/campaigns/audience-language-split', [
+                'segment_id' => $segment->id,
+            ])
+            ->json();
+
+        $this->assertSame(1, $data['fr']);
+        $this->assertSame(0, $data['en']);
+    }
 
     public function test_warning_true_when_en_contacts_exist_and_no_en_translation(): void
     {

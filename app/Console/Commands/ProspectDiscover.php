@@ -43,7 +43,7 @@ class ProspectDiscover extends Command
      *
      * @var string
      */
-    protected $description = 'Run the cold-discovery pipeline (SerpAPI → Hunter → Company/Contact upsert)';
+    protected $description = 'Lance le pipeline de prospection (SerpAPI → Recherche de contacts → import entreprises/contacts)';
 
     /**
      * Execute the console command.
@@ -73,7 +73,7 @@ class ProspectDiscover extends Command
         if ($driver !== 'local') {
             $this->warn(
                 'Real driver active (DISCOVERY_DRIVER='.$driver.'). '.
-                'This run WILL consume SerpAPI and Hunter API credits.'
+                'Cette exécution consommera des crédits SerpAPI et du quota contacts.'
             );
         }
 

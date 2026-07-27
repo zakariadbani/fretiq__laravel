@@ -53,6 +53,11 @@ class LanguageResolverTest extends TestCase
         $this->assertSame('fr', $this->resolver->forCountry('CA'));
     }
 
+    public function test_ma_resolves_to_french(): void
+    {
+        $this->assertSame('fr', $this->resolver->forCountry('MA'));
+    }
+
     // ── Non-francophone countries → 'en' ──────────────────────────────────────
 
     public function test_de_resolves_to_english(): void

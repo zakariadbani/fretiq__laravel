@@ -37,7 +37,7 @@ return [
     | receive the FR base template rather than an EN translation.
     | Add Maghreb / African francophone codes here when needed.
     */
-    'francophone_countries' => ['FR', 'BE', 'LU', 'MC', 'CH', 'CA'],
+    'francophone_countries' => ['FR', 'BE', 'LU', 'MC', 'CH', 'CA', 'MA'],
 
     /*
     |--------------------------------------------------------------------------

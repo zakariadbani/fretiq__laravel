@@ -35,7 +35,7 @@ class ReclassifyContactEmailKind extends Command
      *
      * @var string
      */
-    protected $description = 'Reclassifie email_kind de tous les contacts par domaine (corrige le bug Hunter type=personal).';
+    protected $description = 'Reclassifie email_kind de tous les contacts par domaine (corrige l’ancienne classification type=personal).';
 
     /**
      * Execute the command.

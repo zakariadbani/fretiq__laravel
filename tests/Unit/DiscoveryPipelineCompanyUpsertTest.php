@@ -57,10 +57,10 @@ class DiscoveryPipelineCompanyUpsertTest extends TestCase
         return $method->invokeArgs($service, $args);
     }
 
-    private function makeCriteria(): ProspectCriteria
+    private function makeCriteria(?array $countries = null): ProspectCriteria
     {
         $criteria = new ProspectCriteria();
-        $criteria->forceFill(['id' => 42]);
+        $criteria->forceFill(['id' => 42, 'countries' => $countries]);
         $criteria->exists = true;
 
         return $criteria;
@@ -182,6 +182,83 @@ class DiscoveryPipelineCompanyUpsertTest extends TestCase
         ]);
 
         $this->assertSame('Hunter Sector', $company->sector);
+        $this->assertSame('IT', $company->country);
+    }
+
+    public function test_sole_criteria_country_fills_a_new_company_as_last_fallback(): void
+    {
+        $company = $this->upsert([
+            $this->makeCriteria(['MA']),
+            'criteria-country.test',
+            ['title' => 'Criteria Country'],
+            null, null, null, false, false, null,
+        ]);
+
+        $this->assertSame('MA', $company->country);
+    }
+
+    public function test_zero_or_multiple_criteria_countries_do_not_infer_a_country(): void
+    {
+        foreach ([[], ['MA', 'FR']] as $index => $countries) {
+            $company = $this->upsert([
+                $this->makeCriteria($countries),
+                "ambiguous-country-{$index}.test",
+                ['title' => 'Ambiguous Country'],
+                null, null, null, false, false, null,
+            ]);
+
+            $this->assertNull($company->country);
+        }
+    }
+
+    public function test_existing_country_is_never_overwritten_by_any_discovery_source(): void
+    {
+        Company::create([
+            'domain' => 'preserved-country.test',
+            'name' => 'Preserved Country',
+            'country' => 'FR',
+            'relationship' => 'prospect',
+            'source' => 'manual',
+        ]);
+
+        $company = $this->upsert([
+            $this->makeCriteria(['MA']),
+            'preserved-country.test',
+            ['title' => 'Preserved Country', 'country' => 'Espagne'],
+            ['organization' => 'Preserved Country', 'industry' => null, 'country' => 'Italie', 'emails' => [], 'raw' => []],
+            null, null, false, false, null,
+        ]);
+
+        $this->assertSame('FR', $company->country);
+    }
+
+    public function test_hunter_beats_a_deferred_fallback_in_a_two_call_flow(): void
+    {
+        $criteria = $this->makeCriteria(['MA']);
+        $candidate = ['title' => 'Two Call', 'country' => 'Espagne'];
+
+        $company = $this->upsert([
+            $criteria,
+            'two-call-country.test',
+            $candidate,
+            null, null, null, false, false, null, true,
+        ]);
+        $this->assertNull($company->country);
+
+        $company = $this->upsert([
+            $criteria,
+            'two-call-country.test',
+            $candidate,
+            [
+                'organization' => 'Two Call',
+                'industry' => null,
+                'country' => 'Italie',
+                'emails' => [],
+                'raw' => [],
+            ],
+            null, null, false, false, null,
+        ]);
+
         $this->assertSame('IT', $company->country);
     }
 

@@ -11,6 +11,7 @@ use Illuminate\Container\Container;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Str;
 
 /**
  * ZohoCampaignsDriver — CampaignsClient implementation backed by Zoho Campaigns API.
@@ -302,8 +303,10 @@ class ZohoCampaignsDriver implements CampaignsClient
         $campaignKey = trim((string) $run->zoho_campaign_key);
         $hadCampaignKey = $campaignKey !== '';
         if (! $hadCampaignKey) {
+            $nameSuffix = " - C{$campaign->id} - R{$run->id} - " . now()->format('Ymd');
+            $name = 'Fretiq ' . Str::limit(Str::squish((string) $campaign->name), 191 - mb_strlen('Fretiq ' . $nameSuffix), '') . $nameSuffix;
             $createResponse = $this->zohoClient->createCampaign(
-                name:        'fretiq-' . $run->id . '-' . now()->format('Ymd'),
+                name:        $name,
                 subject:     $subject,
                 fromEmail:   $fromEmail,
                 listKey:     $listKey,

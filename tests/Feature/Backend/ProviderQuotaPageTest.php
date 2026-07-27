@@ -73,7 +73,7 @@ class ProviderQuotaPageTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertSee('SerpAPI');
-        $response->assertSee('Hunter');
+        $response->assertSee('Quota contacts');
         $response->assertSee('Non disponible');
         $response->assertSeeText('Utilisation des quotas');
         $response->assertSeeText('Une sur-réservation indique que les réservations dépassent la capacité disponible');
@@ -131,7 +131,7 @@ class ProviderQuotaPageTest extends TestCase
         $response->assertSeeText('120 / 500');
         $response->assertSeeText('30 / 100');
         $response->assertSeeText('Disponible / Total : 380 / 500');
-        $response->assertSeeText('Bundles d’enrichissement réservés aujourd’hui : 0');
+        $response->assertSeeText('Quota contacts réservé aujourd’hui : 0');
         $response->assertSee('Starter');
         $response->assertSee('Utilisé / Total', false);
         $response->assertSee('Réservé / Total', false);
@@ -173,11 +173,11 @@ class ProviderQuotaPageTest extends TestCase
         $response = $this->actingAs($this->superadmin)->get(route('admin.provider-quota.index'));
 
         $response->assertStatus(200);
-        $response->assertSee('Recherches - Utilisé / Total', false);
+        $response->assertSee('Recherches de contacts - Utilisé / Total', false);
         $response->assertSee('Vérifications - Utilisé / Total', false);
         $response->assertSeeText($expectedSearches);
         $response->assertSeeText('Disponible / Total : '.$expectedSearchesAvailable);
-        $response->assertSeeText('Bundles d’enrichissement réservés aujourd’hui : '.$searchesReserved);
+        $response->assertSeeText('Quota contacts réservé aujourd’hui : '.$searchesReserved);
         $response->assertSeeText($expectedVerifications);
         $response->assertDontSeeText('Réservé / Total');
         $response->assertDontSeeText('Restant / Total');
@@ -226,7 +226,7 @@ class ProviderQuotaPageTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertSeeText('Disponible / Total : —');
-        $response->assertSeeText('Bundles d’enrichissement réservés aujourd’hui : 7');
+        $response->assertSeeText('Quota contacts réservé aujourd’hui : 7');
         $response->assertDontSeeText('Réservé / Total');
         $response->assertDontSeeText('Restant / Total');
         $response->assertDontSeeText('Surquota');

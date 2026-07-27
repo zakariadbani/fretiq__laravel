@@ -13,6 +13,7 @@
 
     // Status chip definitions (order matches UX spec).
     $statusesCfg = config('global.data.campaign_recipient_statuses', []);
+    $skipReasons = config('global.data.campaign_recipient_skip_reasons', []);
 
     // URL builder — merges $overrides into current filter params, excludes recipients_page.
     $destUrl = function (array $overrides = []) use ($recipientFilters, $model) {
@@ -202,6 +203,9 @@
                         <td>
                             @if($statusCfg)
                                 <span class="badge badge-light-{{ $statusCfg['color'] }}">{{ $statusCfg['label'] }}</span>
+                                @if($statusKey === 'skipped')
+                                    <div class="text-muted fs-8 mt-1">{{ $skipReasons[$row->skip_reason] ?? 'Raison non précisée' }}</div>
+                                @endif
                             @else
                                 <span class="text-muted">—</span>
                             @endif

@@ -71,6 +71,7 @@ class CompanyEnrichmentService
         Company $company,
         DiscoveryRun $run,
         ?int $timeoutSeconds = null,
+        ?string $fallbackCountry = null,
     ): array {
         try {
             $hunterResult = $this->hunter->domainSearchResult(
@@ -103,7 +104,7 @@ class CompanyEnrichmentService
                 ? Company::ENRICHMENT_ENRICHED
                 : Company::ENRICHMENT_HUNTER_EMPTY;
 
-            $persisted = $this->persistOwnedOutcome($company, $run, $requestedStatus, $enrichment);
+            $persisted = $this->persistOwnedOutcome($company, $run, $requestedStatus, $enrichment, $fallbackCountry);
             $this->completeManualRun($run);
 
             return [
@@ -133,8 +134,9 @@ class CompanyEnrichmentService
         DiscoveryRun $run,
         string $status,
         ?array $enrichment,
+        ?string $fallbackCountry = null,
     ): array {
-        return DB::transaction(function () use ($company, $run, $status, $enrichment): array {
+        return DB::transaction(function () use ($company, $run, $status, $enrichment, $fallbackCountry): array {
             // Criteria-owned claims serialize on criterion -> run -> company.
             // Standalone manual claims have no criterion row, so their stable
             // order is company -> run. Mirroring both admission paths prevents
@@ -179,8 +181,9 @@ class CompanyEnrichmentService
                     $attributes['sector'] = $enrichment['industry'];
                 }
 
-                if (! empty($enrichment['country'])) {
-                    $attributes['country'] = $this->mapIso2($enrichment['country']);
+                $resolvedCountry = $this->mapIso2($enrichment['country'] ?? null) ?? $this->mapIso2($fallbackCountry);
+                if ($resolvedCountry !== null && empty($ownedCompany->country)) {
+                    $attributes['country'] = $resolvedCountry;
                 }
             }
 

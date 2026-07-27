@@ -49,17 +49,17 @@ return [
     'company_enrichment_statuses' => [
         'enriched' => ['label' => 'Enrichi',                         'color' => 'success'],
         'hunter_empty' => ['label' => 'Aucun email trouvé',              'color' => 'warning'],
-        'hunter_failed' => ['label' => 'Échec Hunter — à réessayer',      'color' => 'danger'],
-        'enriching' => ['label' => 'Recherche Hunter en cours',        'color' => 'primary'],
-        'skipped_low_score' => ['label' => 'Score insuffisant',               'color' => 'warning'],
+        'hunter_failed' => ['label' => 'Échec de la recherche de contacts',      'color' => 'danger'],
+        'enriching' => ['label' => 'Recherche de contacts en cours',        'color' => 'primary'],
+        'skipped_low_score' => ['label' => 'Sous le seuil de contacts',               'color' => 'warning'],
         'skipped_enrich_off' => ['label' => 'Enrichissement désactivé',        'color' => 'secondary'],
-        'skipped_budget' => ['label' => 'Reporté — quota Hunter',          'color' => 'warning'],
-        'skipped_provider_unavailable' => ['label' => 'Reporté — Hunter indisponible',   'color' => 'warning'],
+        'skipped_budget' => ['label' => 'Quota contacts atteint',          'color' => 'warning'],
+        'skipped_provider_unavailable' => ['label' => 'Recherche de contacts indisponible',   'color' => 'warning'],
         'skipped_excluded' => ['label' => 'Exclue de l’enrichissement',      'color' => 'secondary'],
     ],
 
     // Rendered when companies.enrichment_status IS NULL (never attempted).
-    'company_enrichment_status_null' => ['label' => 'Hunter non tenté', 'color' => 'secondary'],
+    'company_enrichment_status_null' => ['label' => 'Recherche de contacts non effectuée', 'color' => 'secondary'],
 
     //---------------------------------------------------------------------------
     // Contacts — statut
@@ -153,6 +153,13 @@ return [
         'replied' => ['label' => 'Répondu',       'color' => 'success'],
         'unsubscribed' => ['label' => 'Désinscrit',    'color' => 'warning'],
         'skipped' => ['label' => 'Ignoré',        'color' => 'dark'],
+    ],
+
+    'campaign_recipient_skip_reasons' => [
+        'suppressed' => 'Contact supprimé',
+        'cold_send_disabled' => 'Envoi à froid désactivé',
+        'personal_email' => 'Adresse e-mail personnelle',
+        'enrollment_ineligible' => 'Étape de séquence non éligible',
     ],
 
     //---------------------------------------------------------------------------

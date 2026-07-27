@@ -338,7 +338,12 @@ class RunDiscoveryPipelineJob implements ShouldQueue
 
                     try {
                         $claimed = $quota->claimAutomaticEnrichment((int) $companyId, $run);
-                        $outcome = $enrichment->enrichClaimed($claimed, $run, $timeout);
+                        $candidate = collect($run->candidates_snapshot ?? [])->first(
+                            fn ($item): bool => is_array($item)
+                                && ($item['domain'] ?? null) === $claimed->domain,
+                        );
+                        $fallbackCountry = $pipeline->countryFallback($criteria, is_array($candidate) ? $candidate : []);
+                        $outcome = $enrichment->enrichClaimed($claimed, $run, $timeout, $fallbackCountry);
 
                         if ($outcome['outcome'] === 'provider_failed') {
                             $providerCircuitOpen = true;

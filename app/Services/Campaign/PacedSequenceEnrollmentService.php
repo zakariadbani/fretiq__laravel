@@ -53,7 +53,7 @@ class PacedSequenceEnrollmentService
                 ]);
             }
 
-            if (! $locked->sequence_auto_enroll_enabled || $locked->next_run_at === null) {
+            if (! $locked->is_active || ! $locked->sequence_auto_enroll_enabled || $locked->next_run_at === null) {
                 return $this->result($locked, false);
             }
 

@@ -1,5 +1,6 @@
 @php
-    $sequenceStepStatuses = config('global.data.sequence_step_statuses', []);
+    $recipientStatuses = config('global.data.campaign_recipient_statuses', []);
+    $skipReasons = config('global.data.campaign_recipient_skip_reasons', []);
     $enrollmentStatuses = config('global.data.sequence_enrollment_statuses', []);
     $selectedSummary = ($waves ?? collect())->first(fn ($wave) => $selectedWave && $wave['run']->id === $selectedWave->id);
     $zohoCampaignsUrl = preg_replace('#/api/.*$#', '', (string) config('services.zoho.campaigns.api_url', 'https://campaigns.zoho.com/api/v1.1'));
@@ -23,10 +24,14 @@
                                 <div class="fw-bold fs-6">Vague {{ str_pad((string) $wave['number'], 3, '0', STR_PAD_LEFT) }}</div>
                                 <div class="text-muted fs-7">{{ $wave['run']->run_at?->copy()->setTimezone($model->scheduleTimezone())->format('d/m/Y H:i') }}</div>
                             </div>
-                            @if($wave['run']->status === 'failed' || $wave['run']->driver_ref === 'zoho-wave-failed')
+                            @if($wave['empty'])
+                                <span class="badge badge-light-secondary">Aucun contact éligible</span>
+                            @elseif($wave['run']->status === 'failed' || $wave['run']->driver_ref === 'zoho-wave-failed')
                                 <span class="badge badge-light-danger">Echec Zoho</span>
                             @elseif($wave['run']->driver_ref === 'zoho-wave-synced')
                                 <span class="badge badge-light-success">Synchronisee</span>
+                            @elseif($wave['run']->status === 'sent' && (filled($wave['run']->zoho_campaign_key) || $wave['run']->driver_ref === 'zoho'))
+                                <span class="badge badge-light-success">Envoyée</span>
                             @else
                                 <span class="badge badge-light-warning">En attente Zoho</span>
                             @endif
@@ -69,14 +74,24 @@
                                 @php
                                     $enrollment = $waveEnrollments->get($recipient->contact_id);
                                     $latestSend = $enrollment?->stepSends?->sortByDesc('step_no')->first();
-                                    $stepNo = $latestSend?->step_no ?? max(1, ((int) ($enrollment?->current_step ?? 0)) + 1);
-                                    $stepCfg = $sequenceStepStatuses[$latestSend?->status ?? 'queued'] ?? ['label' => 'En attente', 'color' => 'secondary'];
+                                    $stepNo = $selectedWave?->sequenceStep?->step_no ?? $latestSend?->step_no ?? max(1, ((int) ($enrollment?->current_step ?? 0)) + 1);
+                                    $statusCfg = $recipientStatuses[$recipient->status] ?? null;
                                     $enrollmentCfg = $enrollmentStatuses[$enrollment?->status ?? 'active'] ?? ['label' => 'Active', 'color' => 'secondary'];
                                 @endphp
                                 <tr>
                                     <td class="ps-6"><span class="fw-semibold">{{ $recipient->contact?->email ?? '--' }}</span><div class="text-muted fs-8">{{ $recipient->contact?->company?->name ?? '--' }}</div></td>
                                     <td><span class="badge badge-light-primary">Etape {{ $stepNo }}</span><div class="text-muted fs-8 mt-1">{{ $latestSend?->sent_at?->format('d/m/Y H:i') ?? '--' }}</div></td>
-                                    <td><span class="badge badge-light-{{ $stepCfg['color'] }}">{{ $stepCfg['label'] }}</span><div class="mt-1"><span class="badge badge-light-{{ $enrollmentCfg['color'] }}">{{ $enrollmentCfg['label'] }}</span></div></td>
+                                    <td>
+                                        @if($statusCfg)
+                                            <span class="badge badge-light-{{ $statusCfg['color'] }}">{{ $statusCfg['label'] }}</span>
+                                        @else
+                                            <span class="text-muted">—</span>
+                                        @endif
+                                        @if($recipient->status === 'skipped')
+                                            <div class="text-muted fs-8 mt-1">{{ $skipReasons[$recipient->skip_reason] ?? 'Raison non précisée' }}</div>
+                                        @endif
+                                        <div class="mt-1"><span class="badge badge-light-{{ $enrollmentCfg['color'] }}">{{ $enrollmentCfg['label'] }}</span></div>
+                                    </td>
                                     <td><div><span class="text-muted fs-8">Dernier :</span> {{ $enrollment?->last_sent_at?->format('d/m/Y H:i') ?? '--' }}</div><div><span class="text-muted fs-8">Prochain :</span> {{ $enrollment?->next_send_at?->format('d/m/Y H:i') ?? '--' }}</div></td>
                                 </tr>
                             @endforeach

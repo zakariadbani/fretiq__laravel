@@ -1221,7 +1221,7 @@ class DiscoveryQuotaService
             $this->assertClaimAvailable($company, $freshRun->id);
 
             if ((int) $freshRun->contact_consumed >= (int) $freshRun->contact_credits_reserved) {
-                throw new QuotaExhaustedException('Limite Hunter de cette exécution atteinte.');
+                throw new QuotaExhaustedException('Quota contacts atteint.');
             }
 
             if ((int) $freshRun->successful_enrichments

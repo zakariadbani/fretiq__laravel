@@ -217,7 +217,7 @@ class CampaignController extends BackendController
             ->filter(fn (CampaignRun $run) => preg_match('/^sequence-wave-\d{6}$/', $run->occurrence_key) === 1)
             ->sortByDesc(fn (CampaignRun $run) => (int) substr($run->occurrence_key, strlen('sequence-wave-')))
             ->values();
-        $waveRuns->each->loadMissing('recipients.contact.company');
+        $waveRuns->each->loadMissing(['sequenceStep', 'recipients.contact.company']);
 
         $selectedId = (int) request()->query('wave_id', 0);
         $selectedWave = $waveRuns->firstWhere('id', $selectedId) ?? $waveRuns->first();
@@ -243,6 +243,15 @@ class CampaignController extends BackendController
                 'list_name' => $listService->listName($run),
                 'contacts' => $run->recipients->count(),
                 'companies' => $companyCount,
+                'empty' => $run->driver_ref === 'zoho-wave-empty'
+                    || (
+                        $run->status === 'sent'
+                        && $run->stats_sent !== null
+                        && (int) $run->stats_sent === 0
+                        && blank($run->zoho_campaign_key)
+                        && $run->recipients->isNotEmpty()
+                        && $run->recipients->every(fn (CampaignRecipient $recipient) => $recipient->status === 'skipped')
+                    ),
             ];
         });
 

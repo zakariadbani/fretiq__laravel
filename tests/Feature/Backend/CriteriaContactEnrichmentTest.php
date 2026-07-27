@@ -715,6 +715,34 @@ class CriteriaContactEnrichmentTest extends TestCase
         $this->assertNull($company->fresh()->enrichment_claim_run_id);
     }
 
+    public function test_claimed_enrichment_preserves_existing_country_and_prefers_hunter_over_deferred_fallback(): void
+    {
+        config(['services.hunter.driver' => 'local']);
+        $criteria = $this->criteria();
+
+        $existing = $this->company($criteria, [
+            'domain' => 'geodis.com',
+            'country' => 'MA',
+        ]);
+        app(CompanyEnrichmentService::class)->enrich($existing);
+        $this->assertSame('MA', $existing->fresh()->country);
+
+        $deferred = $this->company($criteria, [
+            'domain' => 'bolloretransport.com',
+        ]);
+        $quota = app(DiscoveryQuotaService::class);
+        $run = $quota->reserveManualEnrichment($deferred);
+
+        app(CompanyEnrichmentService::class)->enrichClaimed(
+            $deferred->fresh(),
+            $run,
+            null,
+            'MA',
+        );
+
+        $this->assertSame('FR', $deferred->fresh()->country);
+    }
+
     public function test_late_provider_outcome_cannot_overwrite_a_newer_claim(): void
     {
         Setting::set('decouverte.auto_scoring', false);

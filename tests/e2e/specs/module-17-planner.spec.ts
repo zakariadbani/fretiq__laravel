@@ -36,11 +36,11 @@ test.describe('Planner module', () => {
 
   // ── 2. Card title renders ────────────────────────────────────────────────
 
-  test('card title "Planning des campagnes" is visible', async ({ page }) => {
+  test('configured-timezone clock is visible', async ({ page }) => {
     const planner = new PlannerPage(page);
     await planner.goto();
 
-    await expect(planner.cardTitle).toBeVisible({ timeout: 10000 });
+    await expect(planner.currentTime).toBeVisible({ timeout: 10000 });
   });
 
   // ── 3. FullCalendar container is in the DOM ───────────────────────────────
