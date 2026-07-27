@@ -119,6 +119,7 @@
         },
         initialView: 'dayGridMonth',
         locale: 'fr',
+        timeZone: plannerTimezone,
         buttonText: {
             today:  "Aujourd'hui",
             month:  'Mois',
@@ -154,8 +155,12 @@
             statusEl.className = 'badge badge-light-' + (props.statusColor || 'secondary');
             statusEl.textContent = props.statusLabel || '';
 
-            modalEl.querySelector('[data-kt-planner="event_start"]').textContent = info.event.start
-                ? info.event.start.toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short' })
+            modalEl.querySelector('[data-kt-planner="event_start"]').textContent = info.event.startStr
+                ? new Date(info.event.startStr).toLocaleString('fr-FR', {
+                    dateStyle: 'full',
+                    timeStyle: 'short',
+                    timeZone: plannerTimezone
+                })
                 : '';
 
             var linkEl = modalEl.querySelector('[data-kt-planner="event_link"]');

@@ -339,7 +339,8 @@ class ZohoDriverSelectionTest extends TestCase
         $zohoClientMock->shouldReceive('addListSubscribers')->once()->andReturn([]);
         $zohoClientMock->shouldReceive('createCampaign')
             ->once()
-            ->withArgs(fn ($name, $subject, $fromEmail, $listKey, $contentUrl) => $fromEmail === 'identity@example.com')
+            ->withArgs(fn ($name, $subject, $fromEmail, $fromName, $listKey, $contentUrl) =>
+                $fromEmail === 'identity@example.com' && $fromName === 'TCL France')
             ->andReturn(['campaignKey' => 'CK-IDENTITY']);
         $zohoClientMock->shouldReceive('sendCampaign')->once()->andReturn([]);
 

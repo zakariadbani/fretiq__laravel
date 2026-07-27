@@ -82,22 +82,25 @@ class PlannerService
      *
      * @param  string|null  $start  ISO date string (inclusive), or null for no lower bound.
      * @param  string|null  $end    ISO date string (exclusive), or null for no upper bound.
+     * @param  string       $timezone  Timezone for bounds without an explicit offset.
      * @return array<int, array<string, mixed>>
      */
-    public function runsFeed(?string $start = null, ?string $end = null): array
+    public function runsFeed(?string $start = null, ?string $end = null, string $timezone = 'UTC'): array
     {
         $statusConfig = config('global.data.campaign_run_statuses', []);
+        $startUtc = $start !== null ? Carbon::parse($start, $timezone)->utc() : null;
+        $endUtc = $end !== null ? Carbon::parse($end, $timezone)->utc() : null;
 
         // ── 1. Real runs ───────────────────────────────────────────────────────
         $query = CampaignRun::with(['campaign.sequence.steps', 'sequenceStep'])
             ->orderBy('run_at');
 
-        if ($start !== null) {
-            $query->where('run_at', '>=', $start);
+        if ($startUtc !== null) {
+            $query->where('run_at', '>=', $startUtc);
         }
 
-        if ($end !== null) {
-            $query->where('run_at', '<', $end);
+        if ($endUtc !== null) {
+            $query->where('run_at', '<', $endUtc);
         }
 
         $runs   = $query->get();
@@ -160,8 +163,8 @@ class PlannerService
             // Parse window bounds to UTC Carbons.
             // FullCalendar sends tz-offset ISO strings (e.g. 2026-05-31T00:00:00+02:00).
             // Carbon::parse() handles these correctly; ->utc() normalises for comparison.
-            $windowStart = $start ? Carbon::parse($start)->utc() : now()->utc();
-            $windowEnd   = $end   ? Carbon::parse($end)->utc()   : now()->utc()->addMonths(3);
+            $windowStart = $startUtc ?? now()->utc();
+            $windowEnd = $endUtc ?? now()->utc()->addMonths(3);
 
             // Build dedup hash from the real-run results (O(1) lookup below).
             // Key: "{campaign_id}|{YmdHis}" — exact-timestamp match.

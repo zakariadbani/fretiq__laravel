@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Backend;
 use App\Http\Controllers\Controller;
 use App\Models\Setting;
 use App\Services\Analytics\PlannerService;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -45,7 +46,17 @@ class PlannerController extends Controller
         $start  = $request->query('start') ?: null;
         $end    = $request->query('end')   ?: null;
 
-        $events = app(PlannerService::class)->runsFeed($start, $end);
+        $plannerTimezone = Setting::get('decouverte.timezone', 'Europe/Paris');
+        $events = app(PlannerService::class)->runsFeed($start, $end, $plannerTimezone);
+
+        foreach ($events as &$event) {
+            if (! empty($event['start'])) {
+                $event['start'] = Carbon::parse($event['start'])
+                    ->setTimezone($plannerTimezone)
+                    ->toIso8601String();
+            }
+        }
+        unset($event);
 
         return response()->json($events);
     }

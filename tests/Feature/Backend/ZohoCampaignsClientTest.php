@@ -413,6 +413,7 @@ class ZohoCampaignsClientTest extends TestCase
             name:       'Test Campaign',
             subject:    'Hello Subject',
             fromEmail:  'sender@fretiq.fr',
+            fromName:   'TCL France',
             listKey:    'LK-001',
             contentUrl: 'https://fretiq.test/campaign-runs/1/zoho-content?signature=fake',
         );
@@ -425,6 +426,7 @@ class ZohoCampaignsClientTest extends TestCase
                 && str_contains($request->header('Authorization')[0] ?? '', 'Zoho-oauthtoken')
                 && $request['campaignname'] === 'Test Campaign'
                 && $request['from_email'] === 'sender@fretiq.fr'
+                && $request['from_name'] === 'TCL France'
                 && $request['list_details'] === json_encode(['LK-001' => []])
                 && $request['content_url'] === 'https://fretiq.test/campaign-runs/1/zoho-content?signature=fake'
                 && $request['resfmt'] === 'JSON';

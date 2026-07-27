@@ -398,9 +398,8 @@ class ZohoCampaignsClient
     /**
      * Create a new campaign in Zoho Campaigns.
      *
-     * UNVERIFIED — endpoint/params not live-tinker-confirmed (Zoho Campaigns OAuth
-     * not provisioned). Per the empirical-verification rule, run a live tinker
-     * POST + record STATUS 200 before relying on this in production.
+     * Live-verified 2026-07-27: from_name accepted with STATUS 200 and the
+     * campaign was created as a draft without calling sendCampaign.
      *
      * Documented endpoint: POST /createCampaign
      * Returns a campaign key in the response payload (field: 'campaignKey').
@@ -408,6 +407,7 @@ class ZohoCampaignsClient
      * @param  string  $name        Internal campaign name visible in Zoho UI.
      * @param  string  $subject     Email subject line.
      * @param  string  $fromEmail   Sender email address (must be verified in Zoho Campaigns).
+     * @param  string  $fromName    Sender display name.
      * @param  string  $listKey     Target mailing list key.
      * @param  string  $contentUrl  Public URL where Zoho can import the campaign HTML.
      * @return array               Decoded JSON response; typically contains 'campaignkey'.
@@ -418,6 +418,7 @@ class ZohoCampaignsClient
         string $name,
         string $subject,
         string $fromEmail,
+        string $fromName,
         string $listKey,
         string $contentUrl,
     ): array {
@@ -428,6 +429,7 @@ class ZohoCampaignsClient
             'campaignname' => $name,
             'subject'      => $subject,
             'from_email'   => $fromEmail,
+            'from_name'    => $fromName,
             'list_details' => json_encode([$listKey => []]),
             'content_url'  => $contentUrl,
         ];

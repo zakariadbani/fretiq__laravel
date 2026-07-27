@@ -292,6 +292,7 @@ class ZohoCampaignsDriver implements CampaignsClient
         $fromEmail = ($sender?->email)
             ?: config('services.zoho.default_from_email')
             ?: config('mail.from.address', 'noreply@fretiq.fr');
+        $fromName = $sender?->name ?: config('mail.from.name', 'Fretiq');
 
         Log::info('[ZohoCampaignsDriver] Création de la campagne Zoho.', [
             'run_id'    => $run->id,
@@ -309,6 +310,7 @@ class ZohoCampaignsDriver implements CampaignsClient
                 name:        $name,
                 subject:     $subject,
                 fromEmail:   $fromEmail,
+                fromName:    $fromName,
                 listKey:     $listKey,
                 contentUrl:  $contentUrl,
             );

@@ -249,6 +249,24 @@ class PlannerFeedTest extends TestCase
             ->assertSee('data-timezone="UTC"', false)
             ->assertSee('(UTC)');
     }
+
+    public function test_planner_calendar_and_modal_use_configured_timezone(): void
+    {
+        $content = $this->actingAs($this->superadmin)
+            ->get('/admin/planner')
+            ->assertOk()
+            ->getContent();
+
+        $this->assertMatchesRegularExpression(
+            '/new\s+FullCalendar\.Calendar\(\s*calendarEl\s*,\s*\{(?:(?!eventClick\s*:)[\s\S])*?\btimeZone\s*:\s*plannerTimezone/',
+            $content,
+        );
+        $this->assertMatchesRegularExpression(
+            '/new\s+Date\(\s*info\.event\.startStr\s*\)\.toLocaleString\(\s*\'fr-FR\'\s*,\s*\{(?=[^}]*\btimeZone\s*:\s*plannerTimezone)[^}]*\}\s*\)/',
+            $content,
+        );
+    }
+
     /**
      * GET /admin/planner/feed returns a 200 JSON array containing the seeded event.
      */
@@ -270,6 +288,53 @@ class PlannerFeedTest extends TestCase
 
         $this->assertSame($this->campaign->name, $event['title'],
             'The feed event title must match the campaign name');
+    }
+
+    public function test_planner_feed_converts_event_start_to_configured_timezone(): void
+    {
+        Setting::set('decouverte.timezone', 'Europe/Paris');
+        $this->run->update(['run_at' => Carbon::parse('2026-07-01 09:00:00', 'UTC')]);
+
+        $event = collect($this->actingAs($this->superadmin)
+            ->getJson('/admin/planner/feed')
+            ->assertOk()
+            ->json())
+            ->firstWhere('id', (string) $this->run->id);
+
+        $this->assertSame('2026-07-01T11:00:00+02:00', $event['start']);
+    }
+
+    public function test_planner_feed_uses_configured_timezone_for_offsetless_bounds(): void
+    {
+        Setting::set('decouverte.timezone', 'Europe/Paris');
+        $this->run->update(['run_at' => Carbon::parse('2026-06-30 22:00:00', 'UTC')]);
+
+        $events = collect($this->actingAs($this->superadmin)
+            ->getJson('/admin/planner/feed?start=2026-07-01T00:00:00&end=2026-07-01T01:00:00&timeZone=Europe%2FParis')
+            ->assertOk()
+            ->json());
+
+        $this->assertNotNull($events->firstWhere('id', (string) $this->run->id));
+    }
+
+    public function test_offsetless_planner_bounds_respect_spring_forward_day(): void
+    {
+        $this->run->update(['run_at' => Carbon::parse('2026-03-28 23:00:00', 'UTC')]);
+        $exclusiveEnd = CampaignRun::create([
+            'campaign_id' => $this->campaign->id,
+            'occurrence_key' => 'spring-forward-exclusive-end',
+            'run_at' => Carbon::parse('2026-03-29 22:00:00', 'UTC'),
+            'status' => 'scheduled',
+        ]);
+
+        $events = collect(app(PlannerService::class)->runsFeed(
+            '2026-03-29T00:00:00',
+            '2026-03-30T00:00:00',
+            'Europe/Paris',
+        ));
+
+        $this->assertNotNull($events->firstWhere('id', (string) $this->run->id));
+        $this->assertNull($events->firstWhere('id', (string) $exclusiveEnd->id));
     }
 
     /**
