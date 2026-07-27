@@ -62,7 +62,7 @@
                     <a href="{{ $zohoCampaignsUrl }}" class="btn btn-sm btn-light-primary" target="_blank" rel="noopener">Ouvrir dans Zoho Campaigns</a>
                 </div>
             @endif
-            @if($selectedWave?->status === 'failed' && $selectedWave?->driver_ref === 'zoho-wave-failed' && blank($selectedWave?->zoho_campaign_key))
+            @if($selectedWave?->status === 'failed' && $selectedWave->canResyncZohoWave())
                 <div class="px-6 pb-4">
                     <div class="alert alert-danger d-flex justify-content-between align-items-center flex-wrap gap-3 mb-0">
                         <div>

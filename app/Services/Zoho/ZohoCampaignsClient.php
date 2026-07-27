@@ -264,7 +264,7 @@ class ZohoCampaignsClient
 
         // Idempotent recovery: Zoho reports the deterministic name already exists (2205) —
         // an earlier prep created the list but never persisted its key. Recover by name
-        // instead of dead-locking. Same predicate as the throw in assertRecipientListSuccess,
+        // instead of dead-locking. Same predicate as the throw in assertZohoSuccess,
         // so it fires only for that exact response; code 0/absent is untouched below.
         if (! $response->failed() && (string) ($payload['code'] ?? '') === '2205') {
             $existingKey = $this->findRecipientListKeyByName($listName);
@@ -278,7 +278,7 @@ class ZohoCampaignsClient
             throw new \RuntimeException('[ZohoCampaignsClient] createRecipientList : liste « ' . $listName . ' » déjà présente sur Zoho mais introuvable dans getmailinglists — récupération impossible.');
         }
 
-        $payload = $this->assertRecipientListSuccess($response, 'createRecipientList');
+        $payload = $this->assertZohoSuccess($response, 'createRecipientList');
         $listKey = trim((string) ($payload['listkey'] ?? $payload['listKey'] ?? ''));
         if ($listKey === '') {
             throw new \RuntimeException('[ZohoCampaignsClient] createRecipientList erreur API Zoho : clé de liste absente.');
@@ -310,7 +310,7 @@ class ZohoCampaignsClient
                 'fromindex' => $fromIndex,
                 'range' => $range,
             ]);
-            $payload = $this->assertRecipientListSuccess($response, 'listRecipientEmails');
+            $payload = $this->assertZohoSuccess($response, 'listRecipientEmails');
             $details = $payload['list_of_details'] ?? [];
             if (! is_array($details)) {
                 $details = [];
@@ -357,7 +357,7 @@ class ZohoCampaignsClient
                 'fromindex' => $fromIndex,
                 'range'     => $range,
             ]);
-            $payload = $this->assertRecipientListSuccess($response, 'getMailingLists');
+            $payload = $this->assertZohoSuccess($response, 'getMailingLists');
             $lists = $payload['list_of_details'] ?? [];
             if (! is_array($lists)) { $lists = []; }
             foreach ($lists as $l) { if (is_array($l)) { $all[] = $l; } }
@@ -388,14 +388,25 @@ class ZohoCampaignsClient
         return count($matches) === 1 ? array_key_first($matches) : '';
     }
 
-    private function assertRecipientListSuccess(\Illuminate\Http\Client\Response $response, string $operation): array
-    {
+    /**
+     * @param string[] $acceptedCodes API-level `code` values that mean success. Zoho is
+     *        inconsistent across endpoint families: the recipient-list endpoints return
+     *        code "0" (live-verified 2026-07-21), while createCampaign returns code "200"
+     *        with message "Campaign created successfully" (live-verified 2026-07-27).
+     *        An absent `code` key is treated as success.
+     */
+    private function assertZohoSuccess(
+        \Illuminate\Http\Client\Response $response,
+        string $operation,
+        array $acceptedCodes = ['0'],
+    ): array {
         if ($response->failed()) {
             throw new \RuntimeException('[ZohoCampaignsClient] ' . $operation . ' échoué (HTTP ' . $response->status() . ') : ' . $response->body());
         }
 
         $payload = $response->json() ?? [];
-        if (($payload['status'] ?? null) === 'error' || (string) ($payload['code'] ?? '0') !== '0') {
+        if (($payload['status'] ?? null) === 'error'
+            || ! in_array((string) ($payload['code'] ?? '0'), $acceptedCodes, true)) {
             throw new \RuntimeException('[ZohoCampaignsClient] ' . $operation . ' erreur API Zoho : ' . $response->body());
         }
 
@@ -452,13 +463,7 @@ class ZohoCampaignsClient
             ->asForm()
             ->post($this->apiUrl . '/createCampaign', $payload);
 
-        if ($response->failed()) {
-            throw new \RuntimeException(
-                '[ZohoCampaignsClient] createCampaign échoué (HTTP ' . $response->status() . '): ' . $response->body()
-            );
-        }
-
-        $payload = $response->json() ?? [];
+        $payload = $this->assertZohoSuccess($response, 'createCampaign', ['0', '200']);
 
         Log::info('[ZohoCampaignsClient] createCampaign', [
             'name'        => $name,
@@ -510,6 +515,7 @@ class ZohoCampaignsClient
         Log::info('[ZohoCampaignsClient] sendCampaign', [
             'campaign_key' => $campaignKey,
             'status'       => $response->status(),
+            'body'         => $response->body(),
         ]);
 
         return $payload;

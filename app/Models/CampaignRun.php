@@ -120,6 +120,20 @@ class CampaignRun extends Model
         return $this->status === 'sent';
     }
 
+    /**
+     * True when this wave can be re-driven toward Zoho. A blank zoho_campaign_key means
+     * no Zoho campaign is currently persisted for the run, so re-driving cannot orphan
+     * one. This is NOT a lifetime invariant — SequenceWaveService:112-117 deliberately
+     * nulls the key when the audience shifted. The real at-most-once send guards live at
+     * ZohoCampaignsDriver:332-347.
+     */
+    public function canResyncZohoWave(): bool
+    {
+        return in_array($this->status, ['prepared', 'failed'], true)
+            && blank($this->zoho_campaign_key)
+            && str_starts_with((string) $this->occurrence_key, 'sequence-wave-');
+    }
+
     /** @param Builder<CampaignRun> $query */
     public function scopeExecuted(Builder $query): Builder
     {

@@ -5,6 +5,7 @@ namespace App\Services\Campaign;
 use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
+use App\Services\Campaign\CampaignWaveZohoListSyncService;
 use App\Services\Campaign\TemplateBuilder\SectionCatalog;
 use App\Services\Zoho\ZohoCampaignsClient;
 use Illuminate\Container\Container;
@@ -305,7 +306,10 @@ class ZohoCampaignsDriver implements CampaignsClient
         $hadCampaignKey = $campaignKey !== '';
         if (! $hadCampaignKey) {
             $nameSuffix = " - C{$campaign->id} - R{$run->id} - " . now()->format('Ymd');
-            $name = 'Fretiq ' . Str::limit(Str::squish((string) $campaign->name), 191 - mb_strlen('Fretiq ' . $nameSuffix), '') . $nameSuffix;
+            // Zoho createCampaign rejects some special characters (`&` confirmed) with
+            // code 7006. Sanitize before Str::limit so the 191-char budget still holds.
+            $safeName = CampaignWaveZohoListSyncService::sanitizeCampaignName($campaign->name, $campaign->id);
+            $name = 'Fretiq ' . Str::limit($safeName, 191 - mb_strlen('Fretiq ' . $nameSuffix), '') . $nameSuffix;
             $createResponse = $this->zohoClient->createCampaign(
                 name:        $name,
                 subject:     $subject,

@@ -7,6 +7,7 @@ use App\DataTables\Backend\CampaignsDataTable;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
 use App\Jobs\SendCampaignJob;
+use App\Jobs\SendSequenceWaveStepJob;
 use App\Jobs\SyncCampaignWaveZohoListJob;
 use App\Models\Campaign;
 use App\Models\CampaignCompanyDispatch;
@@ -1054,14 +1055,17 @@ class CampaignController extends BackendController
     {
         $campaign = Campaign::findOrFail((int) $id);
         $run = $campaign->runs()->whereKey((int) $runId)->firstOrFail();
-        $retryable = $run->status === 'failed'
-            && $run->driver_ref === 'zoho-wave-failed'
-            && blank($run->zoho_campaign_key)
-            && preg_match('/^sequence-wave-\d{6}$/', $run->occurrence_key) === 1;
+        abort_unless(
+            $run->status === 'failed'
+                && $run->canResyncZohoWave()
+                && preg_match('/^sequence-wave-\d{6}$/', $run->occurrence_key) === 1,
+            409,
+            'Cette vague Zoho ne peut pas être relancée automatiquement.'
+        );
 
-        abort_unless($retryable, 409, 'Cette vague Zoho ne peut pas être relancée automatiquement.');
-
-        SyncCampaignWaveZohoListJob::dispatch($run->id);
+        filled($run->zoho_list_key)
+            ? SendSequenceWaveStepJob::dispatch($run->id)
+            : SyncCampaignWaveZohoListJob::dispatch($run->id);
 
         return redirect()->to(route('admin.campaigns.view', $campaign->id) . "?wave_id={$run->id}#campaign_vagues")
             ->with('success', 'Relance Zoho mise en file d’attente. La date est dépassée : après synchronisation, la campagne sera créée et envoyée immédiatement.');

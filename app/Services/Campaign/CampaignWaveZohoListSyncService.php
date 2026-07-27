@@ -12,6 +12,7 @@ use App\Models\SequenceStepSend;
 use App\Models\Suppression;
 use App\Services\Zoho\ZohoRecipientListGateway;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /** Mirrors one frozen paced-sequence wave into its own Zoho recipient list. */
@@ -121,10 +122,25 @@ class CampaignWaveZohoListSyncService
         }
         $contactIds = $run->recipients->where('status', 'queued')->pluck('contact_id')->sort()->values()->implode(',');
         $suffix .= ' - A' . substr(sha1($contactIds), 0, 8);
-        $campaignName = trim((string) preg_replace('/\s+/', ' ', preg_replace('/[^A-Za-z0-9]+/', ' ', Str::ascii((string) $run->campaign?->name))));
-        $campaignName = $campaignName !== '' ? $campaignName : 'Campaign ' . $run->campaign_id;
+        $campaignName = self::sanitizeCampaignName($run->campaign?->name, $run->campaign_id);
 
         return Str::limit($campaignName, 191 - strlen($suffix), '') . $suffix;
+    }
+
+    /**
+     * Strip a campaign name down to [A-Za-z0-9 ] before sending it to Zoho.
+     * Live-verified (2026-07-27): `&` is rejected by createCampaign with code
+     * 7006 ("CampaignName cannot contain special characters"); an em dash (—)
+     * is accepted. The charset here is kept deliberately narrow — it's the
+     * empirically-proven-safe set, not a claim that every excluded character
+     * (beyond `&`) is actually rejected by Zoho.
+     */
+    public static function sanitizeCampaignName(?string $name, int $campaignId): string
+    {
+        $clean = trim((string) preg_replace('/\s+/', ' ',
+            preg_replace('/[^A-Za-z0-9]+/', ' ', Str::ascii((string) $name))));
+
+        return $clean !== '' ? $clean : 'Campaign ' . $campaignId;
     }
 
     /** @param string[] $emails */
@@ -188,6 +204,12 @@ class CampaignWaveZohoListSyncService
     /** @return array{list_key: string, list_name: string, contacts: int} */
     private function finishEmpty(CampaignRun $run, string $listKey, string $listName): array
     {
+        Log::warning('[CampaignWaveZohoListSyncService] Wave has no eligible contacts left; marking sent as empty.', [
+            'run_id' => $run->id,
+            'list_key' => $listKey,
+            'list_name' => $listName,
+        ]);
+
         $run->update([
             'status' => 'sent',
             'stats_sent' => 0,

@@ -491,6 +491,64 @@ class ZohoCampaignsClientTest extends TestCase
     }
 
     /**
+     * Regression test: a successful createCampaign response carries code
+     * "200" (not "0" like the recipient-list endpoints) — live-verified
+     * 2026-07-27. Must not throw. A "code":7006 body (special characters in
+     * the campaign name) must still throw.
+     */
+    public function test_create_campaign_accepts_code_200_and_still_rejects_code_7006(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*createCampaign*' => Http::response([
+                'campaign_name' => 'Fretiq Probe Sanitized C0 R901 - 20260727',
+                'code'          => '200',
+                'campaign_status' => 'Draft',
+                'campaignKey'   => '3z4cb2c8fake',
+                'message'       => 'Campaign created successfully',
+                'version'       => '1.1',
+                'uri'           => '/api/v1.1/createCampaign',
+            ], 200),
+        ]);
+
+        $result = $this->makeClient()->createCampaign(
+            name:       'Fretiq Probe Sanitized C0 R901 - 20260727',
+            subject:    'Hello Subject',
+            fromEmail:  'sender@fretiq.fr',
+            fromName:   'TCL France',
+            listKey:    'LK-001',
+            contentUrl: 'https://fretiq.test/campaign-runs/1/zoho-content?signature=fake',
+        );
+
+        $this->assertSame('3z4cb2c8fake', $result['campaignKey']);
+    }
+
+    public function test_create_campaign_throws_on_code_7006_special_characters(): void
+    {
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*createCampaign*' => Http::response([
+                'code'    => 7006,
+                'message' => 'CampaignName cannot contain special characters',
+                'version' => '1.1',
+                'uri'     => '/api/v1.1/createCampaign',
+            ], 200),
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+
+        $this->makeClient()->createCampaign(
+            name:       'Fretiq Probe & Ampersand',
+            subject:    'Hello Subject',
+            fromEmail:  'sender@fretiq.fr',
+            fromName:   'TCL France',
+            listKey:    'LK-001',
+            contentUrl: 'https://fretiq.test/campaign-runs/1/zoho-content?signature=fake',
+        );
+    }
+
+    /**
      * getCampaignReport calls GET /campaignreports and returns the
      * raw decoded payload (stats parsing happens in SyncCampaignStatsJob).
      */
