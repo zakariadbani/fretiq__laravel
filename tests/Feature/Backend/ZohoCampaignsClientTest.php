@@ -207,6 +207,32 @@ class ZohoCampaignsClientTest extends TestCase
         $this->assertArrayNotHasKey('Company Name', $seenContactInfo[1]);
     }
 
+    public function test_add_list_subscribers_with_topic_truncates_company_name_to_100_characters(): void
+    {
+        config(['services.zoho.campaigns.topic_id' => 'topic-99']);
+        $company = str_repeat('É', 101);
+
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*json/listsubscribe*' => Http::response(['status' => 'success', 'code' => '0'], 200),
+        ]);
+
+        $this->makeClient()->addListSubscribers('LK-001', [
+            ['Contact Email' => 'jean@acme.test', 'Company' => $company],
+        ]);
+
+        Http::assertSent(function (\Illuminate\Http\Client\Request $request) use ($company) {
+            if ($request->url() !== $this->baseUrl . '/json/listsubscribe') {
+                return false;
+            }
+
+            $companyName = json_decode($request['contactinfo'], true)['Company Name'];
+
+            return mb_strlen($companyName) === 100
+                && $companyName === mb_substr($company, 0, 100);
+        });
+    }
+
     /**
      * An API-level error code from /json/listsubscribe (not in the accepted-codes
      * allowlist) must raise a RuntimeException, not be silently swallowed.

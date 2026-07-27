@@ -190,7 +190,7 @@ class ZohoCampaignsClient
         }
         $company = trim((string) ($contact['Company'] ?? ''));
         if ($company !== '') {
-            $contactInfo['Company Name'] = $company;
+            $contactInfo['Company Name'] = mb_substr($company, 0, 100);
         }
 
         $response = Http::withHeaders([
