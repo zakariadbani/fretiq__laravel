@@ -67,7 +67,7 @@ class SendSequenceStepJob implements ShouldQueue, ShouldBeUnique
     public function middleware(): array
     {
         return [
-            (new WithoutOverlapping((string) $this->enrollmentId))->dontRelease(),
+            (new WithoutOverlapping('sequence-enrollment-v2-' . $this->enrollmentId))->dontRelease()->expireAfter($this->timeout + 60),
         ];
     }
 

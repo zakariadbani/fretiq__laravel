@@ -28,7 +28,7 @@ class SendSequenceWaveStepJob implements ShouldQueue, ShouldBeUnique
     }
     public function uniqueId(): string { return (string) $this->runId; }
     public function uniqueFor(): int { return 600; }
-    public function middleware(): array { return [(new WithoutOverlapping('zoho-wave-send-' . $this->runId))->releaseAfter(30)]; }
+    public function middleware(): array { return [(new WithoutOverlapping('zoho-wave-send-v2-' . $this->runId))->releaseAfter(30)->expireAfter($this->timeout + 60)]; }
     public function backoff(): array { return [10, 30, 60, 120]; }
 
     public function handle(SequenceWaveService $service): void

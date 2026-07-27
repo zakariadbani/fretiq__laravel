@@ -71,7 +71,7 @@ class SendCampaignJob implements ShouldQueue, ShouldBeUnique
     public function middleware(): array
     {
         return [
-            (new WithoutOverlapping((string) $this->runId))->dontRelease(),
+            (new WithoutOverlapping('campaign-run-v2-' . $this->runId))->dontRelease()->expireAfter($this->timeout + 60),
         ];
     }
 

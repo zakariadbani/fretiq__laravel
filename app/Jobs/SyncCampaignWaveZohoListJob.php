@@ -29,7 +29,7 @@ class SyncCampaignWaveZohoListJob implements ShouldQueue, ShouldBeUnique
     }
     public function uniqueId(): string { return (string) $this->runId; }
     public function uniqueFor(): int { return 600; }
-    public function middleware(): array { return [(new WithoutOverlapping('zoho-wave-' . $this->runId))->dontRelease()]; }
+    public function middleware(): array { return [(new WithoutOverlapping('zoho-wave-sync-v2-' . $this->runId))->dontRelease()->expireAfter($this->timeout + 60)]; }
     public function backoff(): array { return [10, 30, 60, 120]; }
 
     public function handle(CampaignWaveZohoListSyncService $service): void
