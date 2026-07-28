@@ -306,6 +306,88 @@ class CampaignSequenceProgressiveTest extends TestCase
             ->assertSee('Vérifier le lot · 23/07 14:30');
     }
 
+    public function test_progressive_campaign_overview_shows_company_and_wave_progress(): void
+    {
+        $sequence = $this->sequence();
+        $companyOne = $this->company(90);
+        $companyTwo = $this->company(60);
+        $companyThree = $this->company(30);
+        $this->contact($companyOne);
+        $sentContact = $this->contact($companyOne);
+        $openedContact = $this->contact($companyTwo);
+        $enrolledContact = $this->contact($companyThree);
+        $campaign = $this->campaign($this->segment(), $sequence, ['daily_company_limit' => 2]);
+        $openedEnrollment = SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $openedContact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 1,
+            'status' => 'active',
+        ]);
+        $sentEnrollment = SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $sentContact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 1,
+            'status' => 'active',
+        ]);
+        SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $enrolledContact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+        ]);
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $sequence->steps()->firstOrFail()->id,
+            'occurrence_key' => 'sequence-wave-000001',
+            'run_at' => now(),
+            'status' => 'sent',
+        ]);
+        CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $sequence->steps()->firstOrFail()->id,
+            'occurrence_key' => 'sequence-wave-000001-step-002',
+            'run_at' => now(),
+            'status' => 'sent',
+        ]);
+        CampaignRecipient::create([
+            'campaign_run_id' => $run->id,
+            'contact_id' => $sentContact->id,
+            'status' => 'sent',
+        ]);
+        SequenceStepSend::create([
+            'enrollment_id' => $sentEnrollment->id,
+            'campaign_run_id' => $run->id,
+            'step_no' => 1,
+            'status' => 'queued',
+            'sent_at' => now(),
+        ]);
+        SequenceStepSend::create([
+            'enrollment_id' => $openedEnrollment->id,
+            'campaign_run_id' => $run->id,
+            'step_no' => 1,
+            'status' => 'opened',
+            'sent_at' => null,
+        ]);
+        $admin = User::factory()->create(['email_verified_at' => now()]);
+        $admin->assignRole('superadmin');
+
+        $this->actingAs($admin)->get("/admin/campaigns/{$campaign->id}")
+            ->assertOk()
+            ->assertSee('data-progress-audience-companies="3"', false)
+            ->assertSee('data-progress-contacted-companies="2"', false)
+            ->assertSee('data-progress-remaining-companies="1"', false)
+            ->assertSee('data-progress-audience-contacts="4"', false)
+            ->assertSee('data-progress-enrolled-companies="3"', false)
+            ->assertSee('data-progress-waves-created="1"', false)
+            ->assertSee('data-progress-waves-completed="1"', false)
+            ->assertSee('data-progress-waves-remaining="1"', false)
+            ->assertSee('data-progress-waves-total="2"', false)
+            ->assertSee('data-progress-percent="67"', false);
+    }
+
     public function test_sequence_form_help_is_neutral_about_enrollment_timing(): void
     {
         $admin = User::factory()->create(['email_verified_at' => now()]);
@@ -536,6 +618,300 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertDatabaseHas('sequence_enrollments', ['campaign_id' => $campaign->id, 'contact_id' => $invalid->id, 'status' => 'stopped', 'stopped_reason' => 'invalid_email']);
         $this->assertDatabaseHas('sequence_step_sends', ['campaign_run_id' => $run->id, 'step_no' => $step->step_no, 'status' => 'skipped']);
         Queue::assertNotPushed(SendSequenceWaveStepJob::class);
+    }
+
+    /**
+     * Regression anchor for the verified-code carve-out: code 2005 (not just
+     * 2007) must also take the full permanent path even with zero acceptances
+     * in the wave — the branch must key off isVerifiedInvalidEmail(), not a
+     * hardcoded '2007' check.
+     */
+    public function test_wave_sync_with_only_verified_code_2005_rejection_finishes_without_send(): void
+    {
+        $sequence = $this->sequence();
+        $campaign = $this->campaign($this->segment(), $sequence);
+        $invalid = $this->contact($this->company(50));
+        SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $invalid->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+        ]);
+        $step = $sequence->steps()->firstOrFail();
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $step->id,
+            'occurrence_key' => 'sequence-wave-000001',
+            'run_at' => now(),
+            'status' => 'failed',
+            'zoho_list_key' => 'wave-list-key',
+            'driver_ref' => 'zoho-wave-failed',
+            'failure_reason' => 'invalid contact email',
+        ]);
+        CampaignRecipient::create(['campaign_run_id' => $run->id, 'contact_id' => $invalid->id, 'status' => 'queued']);
+
+        $gateway = new class($invalid->email) implements ZohoRecipientListGateway
+        {
+            public function __construct(private readonly string $invalidEmail) {}
+
+            public function ensureCampaignList(int $campaignId, string $listName, array $seedContacts): string
+            {
+                return 'wave-list-key';
+            }
+
+            public function listEmails(string $listKey): array
+            {
+                return [];
+            }
+
+            public function addContacts(string $listKey, array $contacts): void
+            {
+                throw new ZohoInvalidRecipientException($this->invalidEmail, '2005');
+            }
+        };
+        $this->app->instance(ZohoRecipientListGateway::class, $gateway);
+
+        (new SyncCampaignWaveZohoListJob($run->id))->handle(app(CampaignWaveZohoListSyncService::class));
+
+        $run->refresh();
+        $this->assertSame('sent', $run->status);
+        $this->assertSame(0, (int) $run->stats_sent);
+        $this->assertSame('zoho-wave-empty', $run->driver_ref);
+        $this->assertNotNull($run->finished_at);
+        $this->assertNull($run->failure_reason);
+        $this->assertDatabaseHas('campaign_recipients', ['campaign_run_id' => $run->id, 'contact_id' => $invalid->id, 'status' => 'skipped', 'skip_reason' => 'invalid_email']);
+        $this->assertDatabaseHas('suppressions', ['email' => $invalid->email, 'reason' => 'invalid_email', 'source' => 'sequence']);
+        $this->assertDatabaseHas('sequence_enrollments', ['campaign_id' => $campaign->id, 'contact_id' => $invalid->id, 'status' => 'stopped', 'stopped_reason' => 'invalid_email']);
+        $this->assertDatabaseHas('sequence_step_sends', ['campaign_run_id' => $run->id, 'step_no' => $step->step_no, 'status' => 'skipped']);
+        Queue::assertNotPushed(SendSequenceWaveStepJob::class);
+    }
+
+    /**
+     * The "if one contact succeeds, continue" safety valve: an unverified
+     * rejection code (not live-proven address-level) alongside a contact
+     * Zoho actually accepted must only skip that one contact for this wave —
+     * no Suppression, enrollment stays active — and the rest of the wave
+     * still schedules for send.
+     */
+    public function test_wave_sync_skips_unverified_rejection_for_wave_only_and_schedules_remaining_audience(): void
+    {
+        $sequence = $this->sequence();
+        $campaign = $this->campaign($this->segment(), $sequence);
+        $valid = $this->contact($this->company(50));
+        $bad = $this->contact($this->company(50));
+        foreach ([$valid, $bad] as $contact) {
+            SequenceEnrollment::create([
+                'sequence_id' => $sequence->id,
+                'contact_id' => $contact->id,
+                'campaign_id' => $campaign->id,
+                'current_step' => 0,
+                'status' => 'active',
+            ]);
+        }
+        $step = $sequence->steps()->firstOrFail();
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $step->id,
+            'occurrence_key' => 'sequence-wave-000001',
+            'run_at' => now(),
+            'status' => 'failed',
+            'zoho_list_key' => 'wave-list-key',
+            'driver_ref' => 'zoho-wave-failed',
+            'failure_reason' => 'unknown code',
+        ]);
+        foreach ([$valid, $bad] as $contact) {
+            CampaignRecipient::create(['campaign_run_id' => $run->id, 'contact_id' => $contact->id, 'status' => 'queued']);
+        }
+
+        $gateway = new class($bad->email) implements ZohoRecipientListGateway
+        {
+            public array $emails = [];
+
+            public function __construct(private readonly string $badEmail) {}
+
+            public function ensureCampaignList(int $campaignId, string $listName, array $seedContacts): string
+            {
+                return 'wave-list-key';
+            }
+
+            public function listEmails(string $listKey): array
+            {
+                return $this->emails;
+            }
+
+            public function addContacts(string $listKey, array $contacts): void
+            {
+                if (in_array($this->badEmail, array_column($contacts, 'Contact Email'), true)) {
+                    throw new ZohoInvalidRecipientException($this->badEmail, '2008');
+                }
+                $this->emails = array_values(array_unique(array_merge($this->emails, array_column($contacts, 'Contact Email'))));
+            }
+        };
+        $this->app->instance(ZohoRecipientListGateway::class, $gateway);
+
+        (new SyncCampaignWaveZohoListJob($run->id))->handle(app(CampaignWaveZohoListSyncService::class));
+
+        $this->assertSame([$valid->email], $gateway->emails);
+        $this->assertDatabaseHas('campaign_recipients', ['campaign_run_id' => $run->id, 'contact_id' => $bad->id, 'status' => 'skipped', 'skip_reason' => 'zoho_rejected']);
+        $this->assertDatabaseHas('campaign_recipients', ['campaign_run_id' => $run->id, 'contact_id' => $valid->id, 'status' => 'queued']);
+        $this->assertDatabaseMissing('suppressions', ['email' => $bad->email]);
+        $this->assertDatabaseHas('sequence_enrollments', ['campaign_id' => $campaign->id, 'contact_id' => $bad->id, 'status' => 'active', 'stopped_reason' => null]);
+        $this->assertDatabaseHas('sequence_step_sends', ['campaign_run_id' => $run->id, 'step_no' => $step->step_no, 'status' => 'skipped']);
+        $run->refresh();
+        $this->assertSame('scheduled', $run->status);
+        $this->assertSame('zoho-wave-synced', $run->driver_ref);
+        $this->assertNull($run->failure_reason);
+        Queue::assertPushed(SendSequenceWaveStepJob::class, fn ($job) => $job->runId === $run->id);
+    }
+
+    /**
+     * Zero acceptances plus only-unverified rejections is the systemic-failure
+     * shape the corroboration guard exists for (e.g. a bad topic_id) — sync()
+     * must fail loudly and write nothing. Exactly one eligible contact in the
+     * fixture, so the "no rows" assertions actually test the wave wrote
+     * nothing rather than merely not writing for a second, unrelated contact.
+     */
+    public function test_wave_sync_with_only_unverified_rejections_and_zero_acceptances_fails_loudly(): void
+    {
+        $sequence = $this->sequence();
+        $campaign = $this->campaign($this->segment(), $sequence);
+        $bad = $this->contact($this->company(50));
+        SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $bad->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+        ]);
+        $step = $sequence->steps()->firstOrFail();
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $step->id,
+            'occurrence_key' => 'sequence-wave-000001',
+            'run_at' => now(),
+            'status' => 'failed',
+            'zoho_list_key' => 'wave-list-key',
+            'driver_ref' => 'zoho-wave-failed',
+            'failure_reason' => 'unknown code',
+        ]);
+        CampaignRecipient::create(['campaign_run_id' => $run->id, 'contact_id' => $bad->id, 'status' => 'queued']);
+
+        $gateway = new class($bad->email) implements ZohoRecipientListGateway
+        {
+            public function __construct(private readonly string $badEmail) {}
+
+            public function ensureCampaignList(int $campaignId, string $listName, array $seedContacts): string
+            {
+                return 'wave-list-key';
+            }
+
+            public function listEmails(string $listKey): array
+            {
+                return [];
+            }
+
+            public function addContacts(string $listKey, array $contacts): void
+            {
+                throw new ZohoInvalidRecipientException($this->badEmail, '2008');
+            }
+        };
+        $this->app->instance(ZohoRecipientListGateway::class, $gateway);
+
+        try {
+            app(CampaignWaveZohoListSyncService::class)->sync($run);
+            $this->fail('Expected RuntimeException.');
+        } catch (\RuntimeException $exception) {
+            $this->assertNotInstanceOf(ZohoInvalidRecipientException::class, $exception);
+            $this->assertStringContainsString('2008', $exception->getMessage());
+        }
+
+        $this->assertDatabaseHas('campaign_recipients', ['campaign_run_id' => $run->id, 'contact_id' => $bad->id, 'status' => 'queued']);
+        $this->assertDatabaseMissing('suppressions', ['email' => $bad->email]);
+        $this->assertDatabaseMissing('sequence_step_sends', ['campaign_run_id' => $run->id]);
+        $this->assertDatabaseHas('sequence_enrollments', ['campaign_id' => $campaign->id, 'contact_id' => $bad->id, 'status' => 'active']);
+        $this->assertSame('failed', $run->fresh()->status);
+    }
+
+    /**
+     * Two bad addresses with DIFFERENT unverified codes alongside one good
+     * contact: both must be skipped wave-only (not just the first one seen),
+     * and the wave still completes for the good contact.
+     */
+    public function test_wave_sync_skips_multiple_contacts_with_different_unverified_codes(): void
+    {
+        $sequence = $this->sequence();
+        $campaign = $this->campaign($this->segment(), $sequence);
+        $good = $this->contact($this->company(50));
+        $badA = $this->contact($this->company(50));
+        $badB = $this->contact($this->company(50));
+        foreach ([$good, $badA, $badB] as $contact) {
+            SequenceEnrollment::create([
+                'sequence_id' => $sequence->id,
+                'contact_id' => $contact->id,
+                'campaign_id' => $campaign->id,
+                'current_step' => 0,
+                'status' => 'active',
+            ]);
+        }
+        $step = $sequence->steps()->firstOrFail();
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $step->id,
+            'occurrence_key' => 'sequence-wave-000001',
+            'run_at' => now(),
+            'status' => 'failed',
+            'zoho_list_key' => 'wave-list-key',
+            'driver_ref' => 'zoho-wave-failed',
+            'failure_reason' => 'unknown codes',
+        ]);
+        foreach ([$good, $badA, $badB] as $contact) {
+            CampaignRecipient::create(['campaign_run_id' => $run->id, 'contact_id' => $contact->id, 'status' => 'queued']);
+        }
+
+        $gateway = new class($badA->email, $badB->email) implements ZohoRecipientListGateway
+        {
+            public array $emails = [];
+
+            public function __construct(
+                private readonly string $badEmailA,
+                private readonly string $badEmailB,
+            ) {}
+
+            public function ensureCampaignList(int $campaignId, string $listName, array $seedContacts): string
+            {
+                return 'wave-list-key';
+            }
+
+            public function listEmails(string $listKey): array
+            {
+                return $this->emails;
+            }
+
+            public function addContacts(string $listKey, array $contacts): void
+            {
+                $chunkEmails = array_column($contacts, 'Contact Email');
+                if (in_array($this->badEmailA, $chunkEmails, true)) {
+                    throw new ZohoInvalidRecipientException($this->badEmailA, '2008');
+                }
+                if (in_array($this->badEmailB, $chunkEmails, true)) {
+                    throw new ZohoInvalidRecipientException($this->badEmailB, '2009');
+                }
+                $this->emails = array_values(array_unique(array_merge($this->emails, $chunkEmails)));
+            }
+        };
+        $this->app->instance(ZohoRecipientListGateway::class, $gateway);
+
+        (new SyncCampaignWaveZohoListJob($run->id))->handle(app(CampaignWaveZohoListSyncService::class));
+
+        $this->assertSame([$good->email], $gateway->emails);
+        $this->assertDatabaseHas('campaign_recipients', ['campaign_run_id' => $run->id, 'contact_id' => $badA->id, 'status' => 'skipped', 'skip_reason' => 'zoho_rejected']);
+        $this->assertDatabaseHas('campaign_recipients', ['campaign_run_id' => $run->id, 'contact_id' => $badB->id, 'status' => 'skipped', 'skip_reason' => 'zoho_rejected']);
+        $this->assertDatabaseHas('campaign_recipients', ['campaign_run_id' => $run->id, 'contact_id' => $good->id, 'status' => 'queued']);
+        $run->refresh();
+        $this->assertSame('scheduled', $run->status);
+        $this->assertSame('zoho-wave-synced', $run->driver_ref);
+        Queue::assertPushed(SendSequenceWaveStepJob::class, fn ($job) => $job->runId === $run->id);
     }
 
     public function test_empty_wave_sync_finishes_without_calling_zoho(): void

@@ -139,20 +139,41 @@ class CriteriaContactEnrichmentService
         return $fresh !== null && ! $this->discovery->isBlockedDomain($fresh->domain);
     }
 
-    /** @return array{effective_min_score:int,eligible_count:int,success_target:int,attempt_limit:int,callable_count:int,limiting_factors:list<string>,limit_note:string} */
+    /**
+     * @return array{
+     *     effective_min_score:int,
+     *     companies_count:int,
+     *     with_contacts_count:int,
+     *     without_contacts_count:int,
+     *     eligible_count:int,
+     *     ineligible_count:int,
+     *     quota_deferred_count:int,
+     *     batch_deferred_count:int,
+     *     success_target:int,
+     *     attempt_limit:int,
+     *     callable_count:int,
+     *     limiting_factors:list<string>,
+     *     limit_note:string
+     * }
+     */
     public function snapshot(ProspectCriteria $criteria): array
     {
         $eligible = $this->eligibleIds($criteria)->count();
-        $caps = ['eligible' => $eligible, 'batch_safety' => self::BATCH_SAFETY_MAX];
+        $companies = $criteria->companies()->count();
+        $withContacts = $criteria->companies()->whereHas('contacts')->count();
+        $withoutContacts = $companies - $withContacts;
+        $quotaCaps = ['eligible' => $eligible];
         $daily = $this->quota->contactRemainingTodayForDisplay();
         $monthly = $this->quota->monthlyContactRemainingForDisplay();
         if ($daily !== null) {
-            $caps['daily_quota'] = $daily;
+            $quotaCaps['daily_quota'] = $daily;
         }
         if ($monthly !== null) {
-            $caps['monthly_quota'] = $monthly;
+            $quotaCaps['monthly_quota'] = $monthly;
         }
 
+        $quotaCapacity = max(0, min($quotaCaps));
+        $caps = [...$quotaCaps, 'batch_safety' => self::BATCH_SAFETY_MAX];
         $attemptLimit = max(0, min($caps));
         $configuredTarget = max(1, min((int) ($criteria->contact_limit ?? self::BATCH_SAFETY_MAX), self::BATCH_SAFETY_MAX));
         $successTarget = $configuredTarget;
@@ -165,7 +186,13 @@ class CriteriaContactEnrichmentService
 
         return [
             'effective_min_score' => $this->effectiveMinScore($criteria),
+            'companies_count' => $companies,
+            'with_contacts_count' => $withContacts,
+            'without_contacts_count' => $withoutContacts,
             'eligible_count' => $eligible,
+            'ineligible_count' => max(0, $withoutContacts - $eligible),
+            'quota_deferred_count' => max(0, $eligible - $quotaCapacity),
+            'batch_deferred_count' => max(0, $quotaCapacity - $attemptLimit),
             'success_target' => $successTarget,
             'attempt_limit' => $attemptLimit,
             'callable_count' => $attemptLimit,

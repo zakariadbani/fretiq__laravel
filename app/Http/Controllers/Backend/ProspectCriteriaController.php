@@ -105,7 +105,11 @@ class ProspectCriteriaController extends BackendController
      * @param  int  $id
      * @return \Illuminate\Http\RedirectResponse|\Illuminate\View\View
      */
-    public function view($id, DiscoveryQuotaService $quotaService)
+    public function view(
+        $id,
+        DiscoveryQuotaService $quotaService,
+        CriteriaContactEnrichmentService $contactEnrichmentService,
+    )
     {
         // Resolve the model via parent Crudable logic.
         $model = $this->currentModel->find((int) $id);
@@ -153,6 +157,7 @@ class ProspectCriteriaController extends BackendController
             ->with('model', $model);
 
         [$quotaRemaining, $quotaPackage, $contactRemaining, $monthlyRemaining, $monthlyContactRemaining, $activeDailyLimitSum, $dailyQuotaSummary, $monthlyQuotaSummary, $quotaMeters] = $this->resolveQuotaVars($quotaService);
+        $contactCoverage = $contactEnrichmentService->snapshot($model);
 
         $viewConfig = \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::make(
             $model,
@@ -160,6 +165,7 @@ class ProspectCriteriaController extends BackendController
                 'discovered_total' => $resultCompanies->total(),
                 'quota_tz' => $quotaService->quotaTz(),
                 'quota_exhausted' => $quotaRemaining === 0 || $monthlyRemaining === 0,
+                'contact_coverage' => $contactCoverage,
             ]
         );
         $view->with('viewConfig', $viewConfig);

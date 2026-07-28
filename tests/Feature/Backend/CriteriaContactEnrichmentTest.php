@@ -322,6 +322,51 @@ class CriteriaContactEnrichmentTest extends TestCase
         $this->assertContains('batch_safety', $snapshot['limiting_factors']);
     }
 
+    public function test_snapshot_reports_contact_coverage_and_quota_deferrals(): void
+    {
+        $criteria = $this->criteria();
+        $withContact = $this->company($criteria);
+        Contact::create([
+            'company_id' => $withContact->id,
+            'email' => uniqid().'@example.com',
+            'name' => 'Contact existant',
+        ]);
+        foreach (range(1, 3) as $i) {
+            $this->company($criteria, ['domain' => "eligible-{$i}.example.com"]);
+        }
+        $this->company($criteria, ['ai_score' => 49]);
+        $this->assignPackage(1, null);
+
+        $snapshot = app(CriteriaContactEnrichmentService::class)->snapshot($criteria);
+
+        $this->assertSame(5, $snapshot['companies_count']);
+        $this->assertSame(1, $snapshot['with_contacts_count']);
+        $this->assertSame(4, $snapshot['without_contacts_count']);
+        $this->assertSame(3, $snapshot['eligible_count']);
+        $this->assertSame(1, $snapshot['ineligible_count']);
+        $this->assertSame(1, $snapshot['callable_count']);
+        $this->assertSame(2, $snapshot['quota_deferred_count']);
+        $this->assertSame(0, $snapshot['batch_deferred_count']);
+        $this->assertSame(
+            $snapshot['without_contacts_count'],
+            $snapshot['eligible_count'] + $snapshot['ineligible_count'],
+        );
+        $this->assertSame(
+            $snapshot['eligible_count'],
+            $snapshot['callable_count']
+                + $snapshot['quota_deferred_count']
+                + $snapshot['batch_deferred_count'],
+        );
+
+        $this->actingAs($this->allowed)
+            ->get(route('admin.prospect_criteria.view', $criteria))
+            ->assertOk()
+            ->assertSee('Entreprises avec contacts')
+            ->assertSee('Entreprises sans contacts')
+            ->assertSee('Enrichissables maintenant')
+            ->assertSee('En attente du quota');
+    }
+
     public function test_fresh_recheck_rejects_each_stale_candidate_change(): void
     {
         $criteria = $this->criteria();

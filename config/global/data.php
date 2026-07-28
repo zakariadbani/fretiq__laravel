@@ -161,6 +161,7 @@ return [
         'personal_email' => 'Adresse e-mail personnelle',
         'enrollment_ineligible' => 'Étape de séquence non éligible',
         'invalid_email' => 'Adresse e-mail invalide',
+        'zoho_rejected' => 'Refus Zoho (code non vérifié)',
     ],
 
     //---------------------------------------------------------------------------

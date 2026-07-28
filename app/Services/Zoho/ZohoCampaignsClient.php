@@ -174,8 +174,13 @@ class ZohoCampaignsClient
      * @param  array<string, string>  $contact  Must contain 'Contact Email'; may contain
      *                                          'First Name' and 'Company'.
      *
-     * @throws \RuntimeException  If the HTTP request fails, or Zoho returns an API-level
-     *                            error code not in self::LISTSUBSCRIBE_ACCEPTED_CODES.
+     * @throws \App\Exceptions\ZohoInvalidRecipientException  If Zoho returns any API-level code
+     *                            not in self::LISTSUBSCRIBE_ACCEPTED_CODES. /json/listsubscribe is
+     *                            called once per contact, so any rejection concerns that email only —
+     *                            skippable, does not fail the whole sync (see
+     *                            ZohoInvalidRecipientException::isVerifiedInvalidEmail() for the
+     *                            live-proven address-level subset).
+     * @throws \RuntimeException  If the HTTP request itself fails (auth / 429 / 5xx).
      */
     private function subscribeContactWithTopic(string $listKey, array $contact, string $topicId): array
     {
@@ -214,18 +219,20 @@ class ZohoCampaignsClient
         }
 
         $payload = $response->json() ?? [];
-        $code = (string) ($payload['code'] ?? '0');
 
-        // Live empirical evidence (prod, 2026-07-27):
-        // STATUS: 200 + code 2007 + invalid contact email.
-        if ($code === '2007') {
-            throw new ZohoInvalidRecipientException(mb_strtolower($email), $code);
-        }
+        // A {"status":"error"} body with no `code` key must not silently read as
+        // accepted (the '0' default) — that would disarm the wave-sync corroboration
+        // guard downstream. No live evidence such a payload exists; this only
+        // matters because of the inversion below.
+        $code = (string) ($payload['code'] ?? (($payload['status'] ?? null) === 'error' ? 'error' : '0'));
 
+        // Every /json/listsubscribe call targets exactly one contact, so any code
+        // Zoho doesn't report as accepted is this contact's problem alone — never
+        // fatal to the wave. See ZohoInvalidRecipientException::VERIFIED_INVALID_EMAIL_CODES
+        // for the live-proven address-level codes (2005, 2007); every other code
+        // still only skips this contact but is treated as unverified by the caller.
         if (! in_array($code, self::LISTSUBSCRIBE_ACCEPTED_CODES, true)) {
-            throw new \RuntimeException(
-                '[ZohoCampaignsClient] subscribeContactWithTopic erreur API Zoho pour ' . $email . ' : ' . $response->body()
-            );
+            throw new ZohoInvalidRecipientException(mb_strtolower($email), $code);
         }
 
         return $payload;

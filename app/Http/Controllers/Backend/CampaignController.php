@@ -184,6 +184,63 @@ class CampaignController extends BackendController
             ->join('contacts', 'contacts.id', '=', 'sequence_enrollments.contact_id')
             ->distinct()
             ->count('contacts.company_id');
+        $campaignProgress = null;
+        if ($campaign->schedule_type === 'sequence' && $campaign->sequence_enrollment_mode === 'paced') {
+            $currentCompanyIds = $currentAudience
+                ->pluck('company_id')
+                ->filter()
+                ->map(fn ($companyId) => (int) $companyId)
+                ->unique()
+                ->values();
+            $contactedCompanyIds = SequenceEnrollment::query()
+                ->where('sequence_enrollments.campaign_id', $campaign->id)
+                ->join('contacts', 'contacts.id', '=', 'sequence_enrollments.contact_id')
+                ->whereNotNull('contacts.company_id')
+                ->whereHas('stepSends', fn ($query) => $query
+                    ->whereNotNull('sent_at')
+                    ->orWhereIn('status', ['sent', 'opened']))
+                ->distinct()
+                ->pluck('contacts.company_id')
+                ->map(fn ($companyId) => (int) $companyId);
+            $contactedCompanies = $currentCompanyIds->intersect($contactedCompanyIds)->count();
+            $existingSequenceContactIds = SequenceEnrollment::query()
+                ->where('sequence_id', $campaign->sequence_id)
+                ->pluck('contact_id')
+                ->mapWithKeys(fn ($contactId) => [(int) $contactId => true])
+                ->all();
+            $eligibleRemainingCompanies = $currentAudience
+                ->reject(fn ($contact) => isset($existingSequenceContactIds[(int) $contact->id]))
+                ->pluck('company_id')
+                ->filter()
+                ->map(fn ($companyId) => (int) $companyId)
+                ->unique()
+                ->count();
+            $baseWaves = $campaign->runs
+                ->filter(fn (CampaignRun $run) => preg_match('/^sequence-wave-\d{6}$/', $run->occurrence_key) === 1);
+            $dailyLimit = max(1, $campaign->pacedDailyCompanyLimit());
+            $projectedRemainingWaves = (int) ceil($eligibleRemainingCompanies / $dailyLimit);
+
+            $campaignProgress = [
+                'audience_companies' => $currentCompanyIds->count(),
+                'audience_contacts' => $currentAudience->count(),
+                'enrolled_companies' => $enrolledCompanyCount,
+                'contacted_companies' => $contactedCompanies,
+                'remaining_companies' => $currentCompanyIds->count() - $contactedCompanies,
+                'progress_percent' => $currentCompanyIds->isEmpty()
+                    ? 0
+                    : (int) round(($contactedCompanies / $currentCompanyIds->count()) * 100),
+                'daily_limit' => $dailyLimit,
+                'waves' => [
+                    'created' => $baseWaves->count(),
+                    'completed' => $baseWaves->where('status', 'sent')->count(),
+                    'pending' => $baseWaves->whereIn('status', ['prepared', 'scheduled', 'sending'])->count(),
+                    'failed' => $baseWaves->where('status', 'failed')->count(),
+                    'empty' => $baseWaves->where('driver_ref', 'zoho-wave-empty')->count(),
+                    'projected_remaining' => $projectedRemainingWaves,
+                    'projected_total' => $baseWaves->count() + $projectedRemainingWaves,
+                ],
+            ];
+        }
 
         return $this->getView('backend.contents.campaigns.crud.view')
             ->with('model', $campaign)
@@ -198,6 +255,7 @@ class CampaignController extends BackendController
             ->with('viewConfig', $viewConfig)
             ->with('enrolledCount', $enrolledCount)
             ->with('enrolledCompanyCount', $enrolledCompanyCount)
+            ->with('campaignProgress', $campaignProgress)
             ->with('pacedProgress', $pacedProgress)
             ->with('waves', $waveData['waves'])
             ->with('selectedWave', $waveData['selectedWave'])

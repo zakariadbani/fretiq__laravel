@@ -190,7 +190,50 @@ class ProspectCriteriaViewConfig
             ],
         ];
 
-        // ── Quick actions ─────────────────────────────────────────────────────
+        // Contact coverage
+        $contactCoverage = $stats['contact_coverage'] ?? null;
+        if ($hasId && is_array($contactCoverage)) {
+            $batchDeferred = (int) ($contactCoverage['batch_deferred_count'] ?? 0);
+            $ineligible = (int) ($contactCoverage['ineligible_count'] ?? 0);
+            $quotaDeferred = (int) ($contactCoverage['quota_deferred_count'] ?? 0);
+
+            $statCards = [
+                ...$statCards,
+                [
+                    'icon' => 'bi-person-check-fill',
+                    'color' => 'success',
+                    'label' => 'Entreprises avec contacts',
+                    'value' => (int) ($contactCoverage['with_contacts_count'] ?? 0),
+                    'hint' => 'Au moins un contact disponible',
+                ],
+                [
+                    'icon' => 'bi-person-x-fill',
+                    'color' => 'secondary',
+                    'label' => 'Entreprises sans contacts',
+                    'value' => (int) ($contactCoverage['without_contacts_count'] ?? 0),
+                    'hint' => $ineligible.' non éligible(s) (domaine, score ou statut)',
+                ],
+                [
+                    'icon' => 'bi-person-plus-fill',
+                    'color' => 'primary',
+                    'label' => 'Enrichissables maintenant',
+                    'value' => (int) ($contactCoverage['callable_count'] ?? 0),
+                    'hint' => 'Score ≥ '.(int) ($contactCoverage['effective_min_score'] ?? 0)
+                        .' · '.$batchDeferred.' en attente du prochain lot',
+                ],
+                [
+                    'icon' => 'bi-hourglass-split',
+                    'color' => $quotaDeferred > 0 ? 'warning' : 'success',
+                    'label' => 'En attente du quota',
+                    'value' => $quotaDeferred,
+                    'hint' => $quotaDeferred > 0
+                        ? 'Éligibles au-delà du solde journalier ou mensuel'
+                        : 'Le quota couvre toutes les entreprises éligibles',
+                ],
+            ];
+        }
+
+        // Quick actions
         $quickActions = [];
         if ($hasId) {
             $csrfToken = csrf_token();

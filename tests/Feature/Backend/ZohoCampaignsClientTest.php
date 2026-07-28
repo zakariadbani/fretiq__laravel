@@ -253,11 +253,35 @@ class ZohoCampaignsClientTest extends TestCase
         }
     }
 
+    public function test_topic_subscription_throws_typed_exception_for_zoho_invalid_email_code_2005(): void
+    {
+        config(['services.zoho.campaigns.topic_id' => 'topic-99']);
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*json/listsubscribe*' => Http::response(['status' => 'error', 'code' => '2005', 'message' => 'Adresse e-mail du contact non valide'], 200),
+        ]);
+
+        try {
+            $this->makeClient()->addListSubscribers('LK-001', [
+                ['Contact Email' => ' INVALID@EXAMPLE.TEST '],
+            ]);
+            $this->fail('Expected ZohoInvalidRecipientException.');
+        } catch (ZohoInvalidRecipientException $exception) {
+            $this->assertSame('invalid@example.test', $exception->email);
+            $this->assertSame('2005', $exception->zohoCode);
+        }
+    }
+
     /**
-     * An API-level error code from /json/listsubscribe (not in the accepted-codes
-     * allowlist) must raise a RuntimeException, not be silently swallowed.
+     * An API-level error code from /json/listsubscribe that is NOT in the
+     * accepted-codes allowlist is still per-contact, not fatal to the wave:
+     * /json/listsubscribe is called once per contact, so any code Zoho doesn't
+     * accept concerns that email only. It must raise the typed, skippable
+     * ZohoInvalidRecipientException — but since '1234' is not a live-proven
+     * address-level code, isVerifiedInvalidEmail() must be false so the sync
+     * service's corroboration guard still treats it with caution.
      */
-    public function test_topic_subscription_unknown_error_still_fails_wave(): void
+    public function test_topic_subscription_unrecognized_code_throws_unverified_typed_exception(): void
     {
         config(['services.zoho.campaigns.topic_id' => 'topic-99']);
         Http::preventStrayRequests();
@@ -267,11 +291,53 @@ class ZohoCampaignsClientTest extends TestCase
             '*json/listsubscribe*' => Http::response(['status' => 'error', 'code' => '1234', 'message' => 'Invalid list key'], 200),
         ]);
 
-        $this->expectException(\RuntimeException::class);
+        try {
+            $this->makeClient()->addListSubscribers('LK-001', [
+                ['Contact Email' => 'jean@acme.test'],
+            ]);
+            $this->fail('Expected ZohoInvalidRecipientException.');
+        } catch (ZohoInvalidRecipientException $exception) {
+            $this->assertSame('jean@acme.test', $exception->email);
+            $this->assertSame('1234', $exception->zohoCode);
+            $this->assertFalse($exception->isVerifiedInvalidEmail());
+        }
+    }
 
-        $this->makeClient()->addListSubscribers('LK-001', [
-            ['Contact Email' => 'jean@acme.test'],
+    /**
+     * A failed HTTP response (auth / 429 / 5xx) from /json/listsubscribe is a
+     * systemic transport failure, not a per-contact rejection — it must stay a
+     * plain RuntimeException, never the typed skippable exception.
+     */
+    public function test_topic_subscription_http_failure_stays_fatal_not_typed_exception(): void
+    {
+        config(['services.zoho.campaigns.topic_id' => 'topic-99']);
+        Http::preventStrayRequests();
+
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*json/listsubscribe*' => Http::response(['message' => 'Unauthorized'], 401),
         ]);
+
+        try {
+            $this->makeClient()->addListSubscribers('LK-001', [
+                ['Contact Email' => 'jean@acme.test'],
+            ]);
+            $this->fail('Expected RuntimeException.');
+        } catch (\RuntimeException $exception) {
+            $this->assertNotInstanceOf(ZohoInvalidRecipientException::class, $exception);
+        }
+    }
+
+    /**
+     * isVerifiedInvalidEmail() is the sync service's corroboration-guard
+     * carve-out: true only for the live-proven address-level codes (2005,
+     * 2007) — any other code (e.g. a future 2008) is unverified.
+     */
+    public function test_is_verified_invalid_email_true_for_live_proven_codes_and_false_otherwise(): void
+    {
+        $this->assertTrue((new ZohoInvalidRecipientException('a@b.test', '2005'))->isVerifiedInvalidEmail());
+        $this->assertTrue((new ZohoInvalidRecipientException('a@b.test', '2007'))->isVerifiedInvalidEmail());
+        $this->assertFalse((new ZohoInvalidRecipientException('a@b.test', '2008'))->isVerifiedInvalidEmail());
     }
 
     public function test_create_recipient_list_with_seed_contacts_verifies_the_returned_list_key_without_campaign_calls(): void

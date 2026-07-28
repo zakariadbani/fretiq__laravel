@@ -52,6 +52,88 @@
     {{-- ── Tab 1: Aperçu (default active on view) ────────────────────────── --}}
     <div class="tab-pane fade show active" id="campaign_apercu" role="tabpanel">
 
+        @if(is_array($campaignProgress ?? null))
+        <div class="card card-flush mb-6">
+            <div class="card-header pt-5">
+                <div class="card-title d-flex flex-column">
+                    <h3 class="fw-bold mb-1">Vue opérationnelle</h3>
+                    <span class="text-muted fs-7">Progression des sociétés et prévision des vagues</span>
+                </div>
+            </div>
+            <div class="card-body pt-2">
+                <div class="row g-4">
+                    <div class="col-6 col-xl-2">
+                        <div class="border rounded p-4 h-100" data-progress-audience-companies="{{ $campaignProgress['audience_companies'] }}">
+                            <div class="fs-2 fw-bold text-gray-900">{{ number_format($campaignProgress['audience_companies']) }}</div>
+                            <div class="text-muted fw-semibold">Sociétés totales</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-xl-2">
+                        <div class="border rounded p-4 h-100" data-progress-contacted-companies="{{ $campaignProgress['contacted_companies'] }}">
+                            <div class="fs-2 fw-bold text-success">{{ number_format($campaignProgress['contacted_companies']) }}</div>
+                            <div class="text-muted fw-semibold">Contactées</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-xl-2">
+                        <div class="border rounded p-4 h-100" data-progress-remaining-companies="{{ $campaignProgress['remaining_companies'] }}">
+                            <div class="fs-2 fw-bold text-primary">{{ number_format($campaignProgress['remaining_companies']) }}</div>
+                            <div class="text-muted fw-semibold">Restantes</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-xl-2">
+                        <div class="border rounded p-4 h-100" data-progress-audience-contacts="{{ $campaignProgress['audience_contacts'] }}">
+                            <div class="fs-2 fw-bold text-gray-900">{{ number_format($campaignProgress['audience_contacts']) }}</div>
+                            <div class="text-muted fw-semibold">Contacts éligibles</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-xl-2">
+                        <div class="border rounded p-4 h-100" data-progress-enrolled-companies="{{ $campaignProgress['enrolled_companies'] }}">
+                            <div class="fs-2 fw-bold text-info">{{ number_format($campaignProgress['enrolled_companies']) }}</div>
+                            <div class="text-muted fw-semibold">Sociétés inscrites</div>
+                        </div>
+                    </div>
+                    <div class="col-6 col-xl-2">
+                        <div class="border rounded p-4 h-100"
+                             data-progress-waves-created="{{ $campaignProgress['waves']['created'] }}"
+                             data-progress-waves-completed="{{ $campaignProgress['waves']['completed'] }}"
+                             data-progress-waves-remaining="{{ $campaignProgress['waves']['projected_remaining'] }}"
+                             data-progress-waves-total="{{ $campaignProgress['waves']['projected_total'] }}">
+                            <div class="fs-2 fw-bold text-warning">
+                                {{ number_format($campaignProgress['waves']['completed']) }}
+                                <span class="fs-6 text-muted">/ {{ number_format($campaignProgress['waves']['projected_total']) }}</span>
+                            </div>
+                            <div class="text-muted fw-semibold">Vagues terminées</div>
+                            <div class="text-muted fs-8">{{ number_format($campaignProgress['waves']['projected_remaining']) }} à prévoir</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-6" data-progress-percent="{{ $campaignProgress['progress_percent'] }}">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span class="fw-semibold text-gray-700">Sociétés contactées</span>
+                        <span class="fw-bold">{{ $campaignProgress['progress_percent'] }} %</span>
+                    </div>
+                    <div class="progress h-8px">
+                        <div class="progress-bar bg-success"
+                             role="progressbar"
+                             style="width: {{ $campaignProgress['progress_percent'] }}%"
+                             aria-valuenow="{{ $campaignProgress['progress_percent'] }}"
+                             aria-valuemin="0"
+                             aria-valuemax="100"></div>
+                    </div>
+                </div>
+
+                <div class="d-flex flex-wrap gap-4 mt-5 text-muted fs-7">
+                    <span><i class="bi bi-building me-1"></i>{{ number_format($campaignProgress['daily_limit']) }} sociétés maximum par jour ouvré</span>
+                    <span><i class="bi bi-clock me-1"></i>Prochaine vague : {{ $model->next_run_at ? $model->next_run_at->copy()->setTimezone($model->scheduleTimezone())->format('d/m/Y H:i') : 'non définie' }}</span>
+                    <span><i class="bi bi-layers me-1"></i>{{ number_format($campaignProgress['waves']['created']) }} créée(s), {{ number_format($campaignProgress['waves']['pending']) }} en attente, {{ number_format($campaignProgress['waves']['failed']) }} en échec</span>
+                </div>
+                <div class="text-muted fs-8 mt-2">
+                    Prévision calculée d’après l’audience actuelle, qui peut évoluer avec le segment.
+                </div>
+            </div>
+        </div>
+        @endif
         {{-- Generic apercu: details table (left) + stat cards + charts (right) --}}
         <div class="text-muted fs-7 fw-semibold mb-2">
             Vue cumulee - duree de vie de la campagne, executions envoyees uniquement.

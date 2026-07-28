@@ -69,10 +69,18 @@ class CampaignWaveZohoListSyncService
         $before = $this->emailsByNormalizedValue($this->gateway->listEmails($listKey));
         $missing = array_diff_key($target, $before);
         $toPush = trim((string) config('services.zoho.campaigns.topic_id')) !== '' ? $target : $missing;
+
+        // Peel loop: never write per-rejection here — just tally acceptances and
+        // collect rejections, so the corroboration guard below can see the whole
+        // picture (whole wave nuked vs. one-off) before anything hits the DB.
+        $accepted = 0;
+        /** @var array<string, ZohoInvalidRecipientException> $rejected */
+        $rejected = [];
         foreach (array_chunk(array_values($toPush), 10) as $chunk) {
             while ($chunk !== []) {
                 try {
                     $this->gateway->addContacts($listKey, $chunk);
+                    $accepted += count($chunk);
                     break;
                 } catch (ZohoInvalidRecipientException $exception) {
                     $email = $exception->email;
@@ -80,16 +88,52 @@ class CampaignWaveZohoListSyncService
                         fn (array $contact): bool => mb_strtolower(trim((string) ($contact['Contact Email'] ?? ''))) === $email,
                     );
 
-                    if (! $chunkContainsEmail || ! isset($target[$email]) || ! $this->suppressInvalidRecipient($run, $email)) {
+                    if (! $chunkContainsEmail || ! isset($target[$email])) {
                         throw $exception;
                     }
 
+                    $rejected[$email] = $exception;
                     unset($target[$email]);
                     $chunk = array_values(array_filter(
                         $chunk,
                         fn (array $contact): bool => mb_strtolower(trim((string) ($contact['Contact Email'] ?? ''))) !== $email,
                     ));
                 }
+            }
+        }
+
+        // Corroboration guard, before any write. An unverified code (not
+        // live-proven address-level) is only trusted per-contact if at least one
+        // other contact in this wave was accepted — otherwise this smells systemic
+        // (e.g. a bad topic_id) rather than a handful of bad addresses.
+        $unverified = array_filter(
+            $rejected,
+            fn (ZohoInvalidRecipientException $exception): bool => ! $exception->isVerifiedInvalidEmail(),
+        );
+        if ($unverified !== [] && $accepted === 0) {
+            $codes = collect($unverified)
+                ->map(fn (ZohoInvalidRecipientException $exception): string => $exception->zohoCode)
+                ->unique()
+                ->sort()
+                ->values()
+                ->implode(', ');
+
+            throw new \RuntimeException(sprintf(
+                'Zoho a rejete %d destinataire(s) avec un code non verifie (codes : %s) et aucun contact n\'a ete accepte pour cette vague.',
+                count($unverified),
+                $codes,
+            ));
+        }
+
+        // Apply phase: verified codes get the existing permanent suppression;
+        // unverified codes only skip the contact for this wave.
+        foreach ($rejected as $email => $exception) {
+            $handled = $exception->isVerifiedInvalidEmail()
+                ? $this->suppressInvalidRecipient($run, $email)
+                : $this->skipRecipientForWave($run, $email, $exception->zohoCode);
+
+            if (! $handled) {
+                throw $exception;
             }
         }
 
@@ -196,6 +240,55 @@ class CampaignWaveZohoListSyncService
                 ['enrollment_id' => $enrollment->id, 'step_no' => $run->sequenceStep->step_no],
                 ['campaign_run_id' => $run->id, 'status' => 'skipped'],
             );
+
+            return true;
+        }, 3);
+    }
+
+    /**
+     * Wave-only skip for an unverified rejection code: this contact is parked
+     * out of the current run so the rest of the wave can complete, but nothing
+     * permanent is written — no Suppression, enrollment stays active. Returns
+     * false when the recipient can't be attributed (caller rethrows).
+     */
+    private function skipRecipientForWave(CampaignRun $run, string $email, string $zohoCode): bool
+    {
+        return DB::transaction(function () use ($run, $email, $zohoCode): bool {
+            $recipient = CampaignRecipient::query()
+                ->where('campaign_run_id', $run->id)
+                ->where('status', 'queued')
+                ->whereHas('contact', fn ($query) => $query->where('email', $email))
+                ->with('contact')
+                ->lockForUpdate()
+                ->first();
+
+            if ($recipient?->contact === null) {
+                return false;
+            }
+
+            $recipient->update(['status' => 'skipped', 'skip_reason' => 'zoho_rejected']);
+
+            if ($run->sequenceStep !== null) {
+                $enrollment = SequenceEnrollment::query()
+                    ->where('campaign_id', $run->campaign_id)
+                    ->where('contact_id', $recipient->contact_id)
+                    ->where('status', 'active')
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($enrollment !== null) {
+                    SequenceStepSend::updateOrCreate(
+                        ['enrollment_id' => $enrollment->id, 'step_no' => $run->sequenceStep->step_no],
+                        ['campaign_run_id' => $run->id, 'status' => 'skipped'],
+                    );
+                }
+            }
+
+            Log::warning('[CampaignWaveZohoListSyncService] Contact Zoho rejete avec un code non verifie ; ignore pour cette vague uniquement.', [
+                'run_id' => $run->id,
+                'email' => $email,
+                'zoho_code' => $zohoCode,
+            ]);
 
             return true;
         }, 3);
