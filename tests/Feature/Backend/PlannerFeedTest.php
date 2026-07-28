@@ -5,6 +5,7 @@ namespace Tests\Feature\Backend;
 use App\Models\Campaign;
 use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
+use App\Models\ProspectCriteria;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
 use App\Models\Setting;
@@ -215,6 +216,113 @@ class PlannerFeedTest extends TestCase
         $ids = array_column($events, 'id');
         $this->assertNotContains((string) $this->run->id, $ids,
             'A run_at=now() event must NOT appear in a past-only date range');
+    }
+
+
+    public function test_planner_projects_active_auto_discovery_criteria(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-07-28 13:00:00', 'Europe/Paris'));
+
+        $active = ProspectCriteria::create([
+            'name' => "D\u{00E9}couverte planner",
+            'daily_limit' => 10,
+            'is_active' => true,
+            'auto_run' => true,
+            'run_at_hour' => 12,
+        ]);
+        ProspectCriteria::create([
+            'name' => "D\u{00E9}couverte inactive",
+            'daily_limit' => 10,
+            'is_active' => false,
+            'auto_run' => true,
+            'run_at_hour' => 12,
+        ]);
+        ProspectCriteria::create([
+            'name' => "D\u{00E9}couverte manuelle",
+            'daily_limit' => 10,
+            'is_active' => true,
+            'auto_run' => false,
+            'run_at_hour' => 12,
+        ]);
+
+        $events = collect(app(PlannerService::class)->runsFeed(
+            '2026-07-28T00:00:00+02:00',
+            '2026-07-30T00:00:00+02:00',
+            'Europe/Paris',
+        ))->where('extendedProps.eventKind', 'discovery-projection')->values();
+
+        $this->assertCount(2, $events);
+        $this->assertTrue($events->every(fn (array $event): bool => $event['title'] === "D\u{00E9}couverte \u{00B7} ".$active->name));
+        $this->assertTrue($events->every(fn (array $event): bool => $event['url'] === route('admin.prospect_criteria.view', $active->id)));
+        $this->assertSame(
+            ['2026-07-28 12:00', '2026-07-29 12:00'],
+            $events->map(fn (array $event): string => Carbon::parse($event['start'])
+                ->setTimezone('Europe/Paris')
+                ->format('Y-m-d H:i'))
+                ->all(),
+        );
+
+        Carbon::setTestNow();
+    }
+
+    public function test_auto_discovery_projection_restores_wall_clock_hour_after_dst_gap(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-03-28 00:00:00', 'Europe/Paris'));
+
+        ProspectCriteria::create([
+            'name' => 'DST discovery',
+            'daily_limit' => 10,
+            'is_active' => true,
+            'auto_run' => true,
+            'run_at_hour' => 2,
+        ]);
+
+        $events = collect(app(PlannerService::class)->runsFeed(
+            '2026-03-28T00:00:00+01:00',
+            '2026-03-31T00:00:00+02:00',
+            'Europe/Paris',
+        ))->where('extendedProps.eventKind', 'discovery-projection')->values();
+
+        $this->assertSame(
+            ['2026-03-28 02:00', '2026-03-29 03:00', '2026-03-30 02:00'],
+            $events->map(fn (array $event): string => Carbon::parse($event['start'])
+                ->setTimezone('Europe/Paris')
+                ->format('Y-m-d H:i'))
+                ->all(),
+        );
+
+        Carbon::setTestNow();
+    }
+
+    public function test_planner_feed_hides_discovery_without_criteria_permission(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-07-28 08:00:00', 'Europe/Paris'));
+
+        ProspectCriteria::create([
+            'name' => 'Hidden discovery',
+            'daily_limit' => 10,
+            'is_active' => true,
+            'auto_run' => true,
+            'run_at_hour' => 12,
+        ]);
+        $campaignOnlyUser = User::factory()->create([
+            'email_verified_at' => now(),
+            'is_active' => true,
+        ]);
+        $campaignOnlyUser->givePermissionTo(['backend.access', 'view campaigns']);
+
+        $events = $this->actingAs($campaignOnlyUser)
+            ->getJson('/admin/planner/feed?start=2026-07-28T00:00:00%2B02:00&end=2026-07-30T00:00:00%2B02:00')
+            ->assertOk()
+            ->json();
+
+        $this->assertNull(collect($events)->firstWhere('extendedProps.eventKind', 'discovery-projection'));
+
+        $this->get('/admin/planner')
+            ->assertOk()
+            ->assertDontSee('D&eacute;couverte automatique', false);
+
+        Carbon::setTestNow();
     }
 
     // ── Existing HTTP tests (must stay green) ──────────────────────────────────

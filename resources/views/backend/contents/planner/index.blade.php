@@ -1,11 +1,11 @@
 <x-default-layout>
 
 @section('title')
-    Planning des campagnes
+    Planning
 @endsection
 
 @section('breadcrumbs')
-    <x-crud.breadcrumb :items="[['label' => 'Campagnes'], ['label' => 'Planning']]" />
+    <x-crud.breadcrumb :items="[['label' => 'Planning']]" />
 @endsection
 
 {{-- Carte calendrier Metronic : header avec légende des statuts depuis config --}}
@@ -29,6 +29,12 @@
                     <span class="w-10px h-10px rounded-1 bg-info d-inline-block"></span>
                     <span class="text-muted fs-7 fw-semibold">Planifiée (récurrence)</span>
                 </div>
+                @can('view prospect_criteria')
+                <div class="d-flex align-items-center gap-1">
+                    <span class="w-10px h-10px rounded-1 bg-warning d-inline-block"></span>
+                    <span class="text-muted fs-7 fw-semibold">D&eacute;couverte automatique</span>
+                </div>
+                @endcan
             </div>
         </div>
     </div>
@@ -76,7 +82,7 @@
                     </div>
                 </div>
                 <div class="d-flex justify-content-end">
-                    <a href="#" class="btn btn-primary" data-kt-planner="event_link">Voir la campagne</a>
+                    <a href="#" class="btn btn-primary" data-kt-planner="event_link">Voir le d&eacute;tail</a>
                 </div>
             </div>
         </div>

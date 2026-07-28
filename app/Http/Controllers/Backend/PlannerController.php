@@ -49,6 +49,13 @@ class PlannerController extends Controller
         $plannerTimezone = Setting::get('decouverte.timezone', 'Europe/Paris');
         $events = app(PlannerService::class)->runsFeed($start, $end, $plannerTimezone);
 
+        if ($request->user()?->can('view prospect_criteria') !== true) {
+            $events = array_values(array_filter(
+                $events,
+                static fn (array $event): bool => ($event['extendedProps']['eventKind'] ?? null) !== 'discovery-projection',
+            ));
+        }
+
         foreach ($events as &$event) {
             if (! empty($event['start'])) {
                 $event['start'] = Carbon::parse($event['start'])

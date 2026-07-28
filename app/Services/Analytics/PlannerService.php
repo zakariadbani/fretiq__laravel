@@ -4,16 +4,18 @@ namespace App\Services\Analytics;
 
 use App\Models\Campaign;
 use App\Models\CampaignRun;
+use App\Models\ProspectCriteria;
 use App\Services\Campaign\CampaignSchedulerService;
 use Carbon\Carbon;
 
 /**
  * PlannerService — provides a FullCalendar-compatible event feed.
  *
- * The feed merges two sources:
+ * The feed merges three sources:
  *   1. Materialised CampaignRun rows (real runs — scheduled, sent, done, …).
  *   2. Virtual "projected" events synthesised from recurring campaign definitions
  *      for future occurrences not yet materialised in the DB.
+ *   3. Virtual daily discovery events for active, automatic prospect criteria.
  *
  * Status meta is driven by config('global.data.campaign_run_statuses'), which maps each status
  * key to a Bootstrap color name ('primary', 'info', 'success', etc.).
@@ -57,10 +59,11 @@ class PlannerService
     /**
      * Return a FullCalendar-shaped event array for the given date range.
      *
-     * Merges two sources:
+     * Merges three sources:
      *   - Materialised CampaignRun rows (real runs).
      *   - Virtual "projected" events for future recurring occurrences not yet
      *     in the DB (synthesised from campaign.next_run_at + recurrence rules).
+     *   - Virtual daily auto-discovery occurrences for eligible prospect criteria.
      *
      * Real-run query keeps its current null-means-unbounded semantics so existing
      * no-arg callers stay unchanged. Projection uses UTC-parsed window bounds
@@ -315,6 +318,48 @@ class PlannerService
                         'launchable' => $launchable,
                     ],
                 ];
+            }
+
+            $projectionDate = $windowStart->copy()->setTimezone($timezone)->startOfDay();
+            $today = today($timezone);
+            if ($projectionDate->lt($today)) {
+                $projectionDate = $today;
+            }
+
+            $autoCriteria = ProspectCriteria::query()
+                ->where('is_active', true)
+                ->where('auto_run', true)
+                ->whereNotNull('run_at_hour')
+                ->get();
+
+            foreach ($autoCriteria as $criteria) {
+                $date = $projectionDate->copy();
+                $emitted = 0;
+                while ($emitted < self::PROJECTION_EMIT_CAP) {
+                    $cursorUtc = $date->copy()->setTime((int) $criteria->run_at_hour, 0)->utc();
+                    if ($cursorUtc->gte($windowEnd)) {
+                        break;
+                    }
+
+                    if ($cursorUtc->gte($windowStart)) {
+                        $events[] = [
+                            'id' => 'projected-discovery-'.$criteria->id.'-'.$cursorUtc->format('YmdHis'),
+                            'title' => "D\u{00E9}couverte \u{00B7} {$criteria->name}",
+                            'start' => $cursorUtc->toIso8601String(),
+                            'color' => self::BOOTSTRAP_HEX_COLORS['warning'],
+                            'url' => route('admin.prospect_criteria.view', $criteria->id),
+                            'extendedProps' => [
+                                'status' => 'projected',
+                                'statusLabel' => "D\u{00E9}couverte automatique",
+                                'statusColor' => 'warning',
+                                'eventKind' => 'discovery-projection',
+                            ],
+                        ];
+                        $emitted++;
+                    }
+
+                    $date->addDay()->startOfDay();
+                }
             }
         }
 
