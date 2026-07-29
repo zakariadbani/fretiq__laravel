@@ -277,7 +277,8 @@ class SettingsModuleTest extends TestCase
             ->assertSee('setting_automatisation_campaigns_sync_sequence_enrollments', false)
             ->assertSee('setting_automatisation_campaign_sync_stats', false)
             ->assertSee('setting_automatisation_discovery_terminalize_stale', false)
-            ->assertSee('setting_automatisation_prospect_auto_discover', false);
+            ->assertSee('setting_automatisation_prospect_auto_discover', false)
+            ->assertSee('setting_automatisation_inbox_poll', false);
     }
 
     public function test_automation_only_save_persists_switches_without_touching_discovery(): void
@@ -297,6 +298,7 @@ class SettingsModuleTest extends TestCase
                         'campaign_sync_stats' => '1',
                         'discovery_terminalize_stale' => '0',
                         'prospect_auto_discover' => '1',
+                        'inbox_poll' => '0',
                     ],
                 ],
             ])
@@ -311,6 +313,7 @@ class SettingsModuleTest extends TestCase
         $this->assertFalse((bool) Setting::get('automatisation.campaigns_sync_sequence_enrollments'));
         $this->assertTrue((bool) Setting::get('automatisation.campaign_sync_stats'));
         $this->assertFalse((bool) Setting::get('automatisation.discovery_terminalize_stale'));
+        $this->assertFalse((bool) Setting::get('automatisation.inbox_poll'));
         $this->assertTrue((bool) Setting::get('automatisation.prospect_auto_discover'));
     }
 }

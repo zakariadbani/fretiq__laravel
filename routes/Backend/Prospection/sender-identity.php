@@ -11,5 +11,7 @@ Route::controller(SenderIdentityController::class)->prefix('admin')->name('admin
     Route::get('/sender_identities/{id}/edit', 'edit')->name('sender_identities.edit');
     Route::put('/sender_identities/{id}', 'update')->name('sender_identities.update');
     Route::delete('/sender_identities/{id}', 'delete')->name('sender_identities.delete');
+    Route::post('/sender_identities/{id}/test-imap', 'testImap')->name('sender_identities.testImap')
+        ->middleware('throttle:10,1');
     Route::put('/sender_identities/executeSwitch/{id}', 'executeSwitch')->name('sender_identities.executeSwitch');
 });

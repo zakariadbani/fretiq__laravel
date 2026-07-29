@@ -555,4 +555,13 @@ return [
         'Contacts' => 'Contacts',
     ],
 
+    //---------------------------------------------------------------------------
+    // Boîte de réception
+    //---------------------------------------------------------------------------
+    'inbox_statuses' => [
+        'nouveau' => ['label' => 'Nouveau', 'color' => 'primary'],
+        'traite' => ['label' => 'Traité', 'color' => 'success'],
+        'ignore' => ['label' => 'Ignoré', 'color' => 'secondary'],
+    ],
+
 ];

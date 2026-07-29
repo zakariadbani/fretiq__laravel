@@ -42,6 +42,7 @@ class SequenceStepMailable extends Mailable
         private readonly ?SenderIdentity $senderIdentity = null,
         private readonly string          $resolvedHtml = '',
         private readonly string          $language = 'fr',
+        private readonly ?string         $messageId = null,
     ) {}
 
     /**
@@ -85,6 +86,7 @@ class SequenceStepMailable extends Mailable
     public function headers(): Headers
     {
         return new Headers(
+            messageId: $this->messageId,
             text: [
                 'List-Unsubscribe'      => '<' . URL::signedRoute('unsubscribe.one-click', ['contact' => $this->contact->id]) . '>',
                 'List-Unsubscribe-Post' => 'List-Unsubscribe=One-Click',

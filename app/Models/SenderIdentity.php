@@ -28,7 +28,16 @@ class SenderIdentity extends Model
         'signature_html',
         'is_default',
         'is_active',
+        'imap_host',
+        'imap_port',
+        'imap_username',
+        'imap_password',
+        'imap_encryption',
+        'imap_validate_cert',
+        'imap_enabled',
     ];
+
+    protected $hidden = ['imap_password'];
 
     /**
      * The attributes that should be cast.
@@ -38,6 +47,11 @@ class SenderIdentity extends Model
     protected $casts = [
         'is_default' => 'boolean',
         'is_active'  => 'boolean',
+        'imap_password' => 'encrypted',
+        'imap_port' => 'integer',
+        'imap_validate_cert' => 'boolean',
+        'imap_enabled' => 'boolean',
+        'last_polled_at' => 'datetime',
     ];
 
     /**
@@ -54,6 +68,13 @@ class SenderIdentity extends Model
             'signature_html' => 'nullable|string',
             'is_default'     => 'boolean',
             'is_active'      => 'boolean',
+            'imap_host'      => 'nullable|required_if:imap_enabled,1|string|max:255',
+            'imap_port'      => 'nullable|integer|min:1|max:65535',
+            'imap_username'  => 'nullable|required_if:imap_enabled,1|string|max:255',
+            'imap_password'  => 'nullable|required_if:imap_enabled,1|string|max:1000',
+            'imap_encryption' => 'nullable|in:ssl,tls,none',
+            'imap_validate_cert' => 'boolean',
+            'imap_enabled'   => 'boolean',
         ];
     }
 }

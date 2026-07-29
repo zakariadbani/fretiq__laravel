@@ -23,6 +23,7 @@ class QueueObservabilityService
         'campaign_sync_stats' => ['command' => 'campaign:sync-stats', 'expression' => '*/15 * * * *'],
         'discovery_terminalize_stale' => ['command' => 'discovery:terminalize-stale', 'expression' => '* * * * *'],
         'prospect_auto_discover' => ['command' => 'prospect:auto-discover', 'expression' => '0 * * * *'],
+        'inbox_poll' => ['command' => 'inbox:poll', 'expression' => '*/5 * * * *'],
     ];
 
     public function __construct(private readonly Schedule $schedule) {}
@@ -245,6 +246,7 @@ class QueueObservabilityService
     {
         return match ($expression) {
             '* * * * *' => 'Toutes les minutes',
+            '*/5 * * * *' => 'Toutes les 5 minutes',
             '*/15 * * * *' => 'Toutes les 15 minutes',
             '0 * * * *' => 'Toutes les heures',
             default => $expression,

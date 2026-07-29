@@ -204,6 +204,103 @@
         </div>
         {{-- end Général --}}
 
+        @if(isset($model) && $model->id)
+        <div class="tab-pane fade" id="sender_imap" role="tabpanel">
+            <div class="card mb-5">
+                <div class="card-header border-0 pt-5">
+                    <h3 class="card-title fw-bolder m-0">
+                        <i class="bi bi-inbox-fill text-primary fs-3 me-2"></i>
+                        Relève IMAP
+                    </h3>
+                </div>
+                <div class="card-body border-top p-9">
+                    <div class="row g-7">
+                        <div class="col-lg-8">
+                            <div class="row g-5">
+                                <div class="col-md-8">
+                                    <label class="fw-semibold fs-6 mb-2">Hôte IMAP</label>
+                                    <input type="text" name="imap_host" class="form-control form-control-solid"
+                                           placeholder="imap.example.com"
+                                           value="{{ old('imap_host', $model->imap_host ?? '') }}" />
+                                </div>
+                                <div class="col-md-4 fv-row">
+                                    <label class="fw-semibold fs-6 mb-2">Port</label>
+                                    <input type="number" min="1" max="65535" name="imap_port"
+                                           class="form-control form-control-solid"
+                                           value="{{ old('imap_port', $model->imap_port ?? 993) }}" />
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="fw-semibold fs-6 mb-2">Utilisateur</label>
+                                    <input type="text" name="imap_username" autocomplete="username"
+                                           class="form-control form-control-solid"
+                                           value="{{ old('imap_username', $model->imap_username ?? '') }}" />
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="fw-semibold fs-6 mb-2">Mot de passe</label>
+                                    <div class="input-group">
+                                        <input type="password" id="imap_password" name="imap_password"
+                                               autocomplete="new-password" class="form-control form-control-solid"
+                                               value="" placeholder="Laisser vide pour conserver le mot de passe" />
+                                        <button class="btn btn-light" type="button" id="toggle_imap_password" aria-label="Afficher le mot de passe">
+                                            <i class="bi bi-eye"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="fw-semibold fs-6 mb-2">Chiffrement</label>
+                                    <select name="imap_encryption" class="form-select form-select-solid">
+                                        @foreach(['ssl' => 'SSL', 'tls' => 'TLS', 'none' => 'Aucun'] as $value => $label)
+                                            <option value="{{ $value }}" @selected(old('imap_encryption', $model->imap_encryption ?? 'ssl') === $value)>{{ $label }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div class="col-md-6 d-flex flex-column justify-content-end gap-4">
+                                    <div class="form-check form-switch form-check-custom form-check-solid">
+                                        <input type="hidden" name="imap_validate_cert" value="0" />
+                                        <input class="form-check-input" type="checkbox" name="imap_validate_cert" id="imap_validate_cert" value="1"
+                                               {{ old('imap_validate_cert', $model->imap_validate_cert ?? true) ? 'checked' : '' }} />
+                                        <label class="form-check-label fw-semibold ms-3" for="imap_validate_cert">Valider le certificat</label>
+                                    </div>
+                                    <div class="form-check form-switch form-check-custom form-check-solid">
+                                        <input type="hidden" name="imap_enabled" value="0" />
+                                        <input class="form-check-input" type="checkbox" name="imap_enabled" id="imap_enabled" value="1"
+                                               {{ old('imap_enabled', $model->imap_enabled ?? false) ? 'checked' : '' }} />
+                                        <label class="form-check-label fw-semibold ms-3" for="imap_enabled">Activer la relève IMAP</label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button type="button" id="test_imap_connection" class="btn btn-light-primary mt-7"
+                                    data-url="{{ route('admin.sender_identities.testImap', $model->id) }}"
+                                    data-kt-indicator="off">
+                                <span class="indicator-label"><i class="bi bi-plug me-2"></i>Tester la connexion</span>
+                                <span class="indicator-progress">Test en cours… <span class="spinner-border spinner-border-sm ms-2"></span></span>
+                            </button>
+                        </div>
+
+                        <div class="col-lg-4">
+                            <div class="border rounded p-6 bg-light h-100">
+                                <h4 class="fs-6 fw-bold mb-5">État de la relève</h4>
+                                <div class="mb-4">
+                                    <span class="text-muted d-block fs-7">Dernière relève réussie</span>
+                                    <span class="fw-semibold">{{ $model->last_polled_at?->format('d/m/Y H:i') ?? 'Jamais' }}</span>
+                                </div>
+                                <div class="mb-4">
+                                    <span class="text-muted d-block fs-7">Échecs consécutifs</span>
+                                    <span class="fw-semibold">{{ (int) ($model->consecutive_poll_failures ?? 0) }}</span>
+                                </div>
+                                @if($model->last_poll_error)
+                                    <div class="alert alert-danger py-3 px-4 mb-0 text-break">{{ $model->last_poll_error }}</div>
+                                @else
+                                    <div class="text-muted fs-7">Aucune erreur enregistrée.</div>
+                                @endif
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        @endif
     </div>
     {{-- end tab-content --}}
 
@@ -216,6 +313,57 @@
     <script src="{{ asset('assets/js/custom/backend/crud-form-handler.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
     <script src="{{ asset('assets/js/custom/backend/quill-html-field.js') }}"></script>
+    <script>
+        (function () {
+            var password = document.getElementById('imap_password');
+            var toggle = document.getElementById('toggle_imap_password');
+            if (password && toggle) {
+                toggle.addEventListener('click', function () {
+                    password.type = password.type === 'password' ? 'text' : 'password';
+                    toggle.querySelector('i').className = password.type === 'password' ? 'bi bi-eye' : 'bi bi-eye-slash';
+                });
+            }
+
+            var button = document.getElementById('test_imap_connection');
+            if (!button) return;
+            button.addEventListener('click', async function () {
+                button.setAttribute('data-kt-indicator', 'on');
+                button.disabled = true;
+                try {
+                    var payload = {
+                        imap_host: document.querySelector('[name="imap_host"]').value,
+                        imap_port: document.querySelector('[name="imap_port"]').value,
+                        imap_username: document.querySelector('[name="imap_username"]').value,
+                        imap_password: password.value,
+                        imap_encryption: document.querySelector('[name="imap_encryption"]').value,
+                        imap_validate_cert: document.getElementById('imap_validate_cert').checked ? 1 : 0
+                    };
+                    var response = await fetch(button.dataset.url, {
+                        method: 'POST',
+                        headers: {
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                    var data = await response.json();
+                    await Swal.fire({
+                        text: data.message || (response.ok ? 'Connexion réussie.' : 'Connexion impossible.'),
+                        icon: response.ok ? 'success' : 'error',
+                        buttonsStyling: false,
+                        confirmButtonText: 'Fermer',
+                        customClass: { confirmButton: 'btn btn-primary' }
+                    });
+                } catch (error) {
+                    await Swal.fire({ text: 'Connexion IMAP impossible.', icon: 'error', confirmButtonText: 'Fermer' });
+                } finally {
+                    button.setAttribute('data-kt-indicator', 'off');
+                    button.disabled = false;
+                }
+            });
+        }());
+    </script>
 @endpush
 
 </x-default-layout>

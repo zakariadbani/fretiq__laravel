@@ -77,6 +77,10 @@ class SenderIdentityViewConfig
             ['key' => 'sender_general', 'label' => 'Général', 'icon' => 'bi-person-badge', 'mode' => 'edit'],
         ];
 
+        if ($hasId) {
+            $tabs[] = ['key' => 'imap', 'label' => 'IMAP', 'icon' => 'bi-inbox-fill', 'mode' => 'edit'];
+        }
+
         // ── Detail rows ───────────────────────────────────────────────────────
         $detailRows = [];
         if ($hasId) {

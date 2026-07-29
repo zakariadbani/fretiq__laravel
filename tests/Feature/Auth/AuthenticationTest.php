@@ -15,7 +15,8 @@ class AuthenticationTest extends TestCase
     {
         $response = $this->get('/login');
 
-        $response->assertStatus(200);
+        $response->assertOk()
+            ->assertSee('kt_sign_in_form', false);
     }
 
     public function test_users_can_authenticate_using_the_login_screen()

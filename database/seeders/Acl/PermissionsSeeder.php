@@ -65,6 +65,8 @@ class PermissionsSeeder extends Seeder
             'enrich companies',  // commercial can trigger Hunter enrichment manually
             'view consumption',  // client-facing "Ma consommation" page — commercial + admin
             'view provider quota', // superadmin only — real vendor-account balances, NOT for admin/commercial
+            'view inbox',
+            'edit inbox',
         ];
 
         foreach ($keywordPermissions as $perm) {
@@ -127,6 +129,8 @@ class PermissionsSeeder extends Seeder
         $commercialPermissions[] = 'run discovery';
         $commercialPermissions[] = 'enrich companies';
         $commercialPermissions[] = 'view consumption';
+        $commercialPermissions[] = 'view inbox';
+        $commercialPermissions[] = 'edit inbox';
 
         $commercial = Role::where('name', 'commercial')->where('guard_name', 'web')->first();
         if ($commercial) {

@@ -19,6 +19,7 @@ class SchedulerControlsTest extends TestCase
         'sequences:process' => 'sequences_process',
         'campaigns:sync-sequence-enrollments' => 'campaigns_sync_sequence_enrollments',
         'campaign:sync-stats' => 'campaign_sync_stats',
+        'inbox:poll' => 'inbox_poll',
         'discovery:terminalize-stale' => 'discovery_terminalize_stale',
         'prospect:auto-discover' => 'prospect_auto_discover',
     ];

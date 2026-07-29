@@ -112,3 +112,8 @@ Schedule::command('prospect:auto-discover')
     ->hourly()
     ->withoutOverlapping()
     ->when($automationEnabled('prospect_auto_discover'));
+
+Schedule::command('inbox:poll')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->when($automationEnabled('inbox_poll'));

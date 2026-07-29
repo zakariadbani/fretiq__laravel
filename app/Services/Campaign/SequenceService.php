@@ -261,6 +261,7 @@ class SequenceService
                 senderIdentity: $senderIdentity,
                 resolvedHtml:   $resolved['html_content'],
                 language:       $resolved['language'],
+                messageId:      'sequence-send-' . $stepSend->id . '@fretiq.local',
             );
 
             Mail::to($contact->email)->send($mailable);

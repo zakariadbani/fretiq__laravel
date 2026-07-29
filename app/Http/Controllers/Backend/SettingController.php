@@ -198,6 +198,12 @@ class SettingController extends Controller
                     'default' => true,
                     'help'    => 'prospect:auto-discover - toutes les heures.',
                 ],
+                'inbox_poll' => [
+                    'type'    => 'boolean',
+                    'label'   => 'Relever les réponses IMAP',
+                    'default' => true,
+                    'help'    => 'inbox:poll - toutes les 5 minutes.',
+                ],
             ],
         ],
 

@@ -10,7 +10,12 @@ use Illuminate\Http\Request;
 
 class SenderIdentityController extends BackendController
 {
-    use Crudable, Datatableable;
+    private const IMAP_CONNECTION_FIELDS = ['imap_host', 'imap_port', 'imap_username', 'imap_encryption', 'imap_validate_cert'];
+
+    use Crudable {
+        beforeSave as crudBeforeSave;
+    }
+    use Datatableable;
 
     /**
      * Whitelist of boolean fields that may be toggled via executeSwitch.
@@ -26,6 +31,7 @@ class SenderIdentityController extends BackendController
         $this->middleware('permission:view sender_identities')->only(['index', 'view']);
         $this->middleware('permission:create sender_identities')->only(['create', 'store']);
         $this->middleware('permission:edit sender_identities')->only(['edit', 'update', 'executeSwitch']);
+        $this->middleware('permission:edit sender_identities')->only(['testImap']);
         $this->middleware('permission:delete sender_identities')->only(['delete']);
 
         $this->listTitle = "Identités d'expéditeur";
@@ -90,6 +96,124 @@ class SenderIdentityController extends BackendController
                 'dataTableConfig' => $this->currentDataTable->getIndexConfig(),
             ]
         );
+    }
+
+    protected function beforeSave($id = null): array
+    {
+        $attributes = $this->crudBeforeSave($id);
+        $identity = $id === null ? null : SenderIdentity::find((int) $id);
+        if (array_key_exists('imap_enabled', $attributes)) {
+            $attributes['imap_enabled'] = (bool) $attributes['imap_enabled'] ? 1 : 0;
+        }
+
+        if (blank($attributes['imap_password'] ?? null)) {
+            if ($identity !== null && $this->imapConnectionChanged($identity, $attributes)) {
+                $attributes['imap_password'] = null;
+            } elseif ($identity !== null && (bool) ($attributes['imap_enabled'] ?? $identity->imap_enabled)) {
+                $attributes['imap_password'] = $identity->imap_password;
+            } else {
+                unset($attributes['imap_password']);
+            }
+        }
+
+        return $attributes;
+    }
+
+    public function testImap(Request $request, $id): \Illuminate\Http\JsonResponse
+    {
+        $identity = SenderIdentity::find((int) $id);
+        if ($identity === null) {
+            return response()->json(['success' => false, 'message' => 'Identité introuvable.'], 404);
+        }
+
+        $attributes = $request->validate([
+            'imap_host' => 'sometimes|nullable|string|max:255',
+            'imap_port' => 'sometimes|nullable|integer|min:1|max:65535',
+            'imap_username' => 'sometimes|nullable|string|max:255',
+            'imap_password' => 'sometimes|nullable|string|max:1000',
+            'imap_encryption' => 'sometimes|nullable|in:ssl,tls,none',
+            'imap_validate_cert' => 'sometimes|boolean',
+        ]);
+        $testing = clone $identity;
+        $connectionChanged = $this->imapConnectionChanged($identity, $attributes);
+
+        foreach (self::IMAP_CONNECTION_FIELDS as $field) {
+            if (array_key_exists($field, $attributes)) {
+                $testing->setAttribute($field, $attributes[$field]);
+            }
+        }
+
+        if (blank($attributes['imap_password'] ?? null)) {
+            if ($connectionChanged) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Saisissez le mot de passe pour tester de nouveaux paramètres IMAP.',
+                ], 422);
+            }
+        } else {
+            $testing->imap_password = $attributes['imap_password'];
+        }
+
+        if (blank($testing->imap_host) || blank($testing->imap_username) || blank($testing->imap_password)) {
+            return response()->json([
+                'success' => false,
+                'message' => "Renseignez l'hôte, l'utilisateur et le mot de passe IMAP avant de tester.",
+            ], 422);
+        }
+
+        $imap = app(\App\Services\Inbox\InboxImapService::class);
+
+        try {
+            $imap->testConnection($testing);
+            SenderIdentity::whereKey($identity->id)->update([
+                'last_poll_error' => null,
+                'consecutive_poll_failures' => 0,
+            ]);
+
+            return response()->json(['success' => true, 'message' => 'Connexion IMAP réussie.']);
+        } catch (\Throwable $exception) {
+            $detail = $imap->redact($testing, $exception->getMessage());
+
+            \Illuminate\Support\Facades\Log::warning('IMAP connection test failed.', [
+                'sender_identity_id' => $identity->id,
+                'exception_class' => $exception::class,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => config('app.debug') && $detail !== ''
+                    ? 'Connexion IMAP impossible : ' . $detail
+                    : 'Connexion IMAP impossible. Vérifiez les paramètres.',
+            ], 422);
+        }
+    }
+
+    private function imapConnectionChanged(SenderIdentity $identity, array $attributes): bool
+    {
+        foreach (self::IMAP_CONNECTION_FIELDS as $field) {
+            if (! array_key_exists($field, $attributes)) {
+                continue;
+            }
+
+            $current = $identity->{$field};
+            $incoming = $attributes[$field];
+            if ($field === 'imap_port') {
+                $current = (int) $current;
+                $incoming = (int) $incoming;
+            } elseif ($field === 'imap_validate_cert') {
+                $current = (bool) $current;
+                $incoming = (bool) $incoming;
+            } else {
+                $current = (string) $current;
+                $incoming = (string) $incoming;
+            }
+
+            if ($current !== $incoming) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

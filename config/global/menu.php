@@ -131,7 +131,7 @@ return [
         //---------------------------------------------------------------------------
         [
             'content' => 'Suivi',
-            'permission' => ['view demandes', 'view suppressions', 'view consumption'],
+            'permission' => ['view demandes', 'view inbox', 'view suppressions', 'view consumption'],
             'classes' => ['content' => 'pt-8 pb-2'],
         ],
 
@@ -143,6 +143,16 @@ return [
                 'font' => '<i class="bi bi-file-earmark-text fs-2"></i>',
             ],
             'path' => 'admin/demandes',
+        ],
+
+        [
+            'title' => 'Boîte de réception',
+            'permission' => 'view inbox',
+            'icon' => [
+                'svg' => 'messages',
+                'font' => '<i class="bi bi-inbox fs-2"></i>',
+            ],
+            'path' => 'admin/inbox',
         ],
 
         [

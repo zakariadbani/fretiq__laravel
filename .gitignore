@@ -88,4 +88,5 @@ AGENTS.md
 
 # Codex agent hooks (local tooling)
 .codex/
+.codex-remote-attachments/
 .gstack/
