@@ -29,6 +29,11 @@
                     <span class="w-10px h-10px rounded-1 bg-info d-inline-block"></span>
                     <span class="text-muted fs-7 fw-semibold">Planifiée (récurrence)</span>
                 </div>
+                {{-- Static swatch matching the greyed-out non-working-day columns (weekends + blackout dates) --}}
+                <div class="d-flex align-items-center gap-1">
+                    <span class="w-10px h-10px rounded-1 bg-gray-300 d-inline-block"></span>
+                    <span class="text-muted fs-7 fw-semibold">Jour non ouvré</span>
+                </div>
                 @can('view prospect_criteria')
                 <div class="d-flex align-items-center gap-1">
                     <span class="w-10px h-10px rounded-1 bg-warning d-inline-block"></span>
@@ -89,12 +94,47 @@
     </div>
 </div>
 
+<style>
+    /* Scoped under .fc so it wins against FullCalendar's own cell-background
+       rules (which are themselves .fc-scoped) without reaching for !important.
+       Specificity is intentionally 0,2,0: it ties .fc-cell-shaded / .fc-day-disabled
+       and wins on source order (this block ships after the vendor stylesheet), but
+       deliberately loses to .fc-day-today (0,3,0). A weekend or blackout date that
+       is also today therefore keeps the today-highlight instead of greying out —
+       reviewed and accepted, not an oversight. Do not bump specificity or add
+       !important. */
+    .fc .fc-fretiq-blocked {
+        background-color: var(--bs-gray-100);
+    }
+</style>
+
 @push('scripts')
 <script>
 "use strict";
 
 (function () {
     var plannerTimezone = @json($plannerTimezone);
+    var plannerSkipWeekends = @json($plannerSkipWeekends);
+    var plannerBlackoutDates = @json($plannerBlackout);
+    var plannerBlackoutSet = {};
+    plannerBlackoutDates.forEach(function (date) {
+        plannerBlackoutSet[date] = true;
+    });
+
+    // Local Y-m-d key for arg.date, read in plannerTimezone — never
+    // arg.date.getDay()/toISOString(), which are browser-local and render
+    // wrong for any user outside plannerTimezone. 'en-CA' formats as
+    // YYYY-MM-DD, matching the Y-m-d keys plannerBlackoutSet is built from.
+    function localDateKey(date) {
+        return FullCalendar.formatDate(date, {
+            timeZone: plannerTimezone,
+            locale: 'en-CA',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        });
+    }
+
     var clockEl = document.getElementById('planner-current-time');
     var clockFormatter = new Intl.DateTimeFormat('fr-FR', {
         timeZone: plannerTimezone,
@@ -139,6 +179,22 @@
         navLinks: true,
         dayMaxEvents: true,
         height: 800,
+        dayCellClassNames: function (arg) {
+            // arg.dow is FullCalendar-computed against the calendar's own
+            // configured timeZone (plannerTimezone above) — safe to use
+            // directly for the weekend check, unlike arg.date.getDay().
+            var isWeekend = arg.dow === 0 || arg.dow === 6;
+
+            if (plannerSkipWeekends && isWeekend) {
+                return ['fc-fretiq-blocked'];
+            }
+
+            if (plannerBlackoutSet[localDateKey(arg.date)]) {
+                return ['fc-fretiq-blocked'];
+            }
+
+            return [];
+        },
         eventClick: function (info) {
             info.jsEvent.preventDefault();
             if (!modal) { return; }

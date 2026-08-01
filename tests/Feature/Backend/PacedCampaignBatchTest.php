@@ -11,6 +11,7 @@ use App\Models\Company;
 use App\Models\Contact;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
+use App\Models\Setting;
 use App\Services\Campaign\CampaignSchedulerService;
 use App\Services\Campaign\PacedCampaignBatchService;
 use Carbon\Carbon;
@@ -219,6 +220,74 @@ class PacedCampaignBatchTest extends TestCase
             '2026-03-31 10:00',
             $campaign->fresh()->next_run_at->setTimezone('Europe/Paris')->format('Y-m-d H:i'),
         );
+    }
+
+    /**
+     * A blackout date behaves exactly like a weekend in evaluateDue() — mirrors
+     * test_scheduler_does_not_send_paced_campaign_on_weekend() above, but with
+     * a mid-week blackout date instead, isolating the blackout rule from the
+     * weekend rule.
+     */
+    public function test_scheduler_does_not_send_paced_campaign_on_blackout_date(): void
+    {
+        Setting::set('planification.blackout_dates', '2026-07-22'); // Wednesday
+        Carbon::setTestNow(Carbon::parse('2026-07-22 08:05:00', 'UTC')); // Wednesday, 10:05 Paris
+        $campaign = $this->makeCampaign(
+            limit: 1,
+            nextRunAt: Carbon::parse('2026-07-22 10:00:00', 'Europe/Paris')->utc(),
+        );
+        $this->makeCompanyWithContacts(80, 1);
+
+        $this->assertSame(0, app(CampaignSchedulerService::class)->generateDueRuns());
+        $this->assertSame(0, $campaign->runs()->count());
+    }
+
+    /**
+     * A stale cursor can span BOTH a weekend AND a blocked weekday (a
+     * blackout/holiday) in the same normalisation pass — mirrors
+     * test_weekend_overdue_cursor_waits_for_monday_wall_time_across_dst()
+     * above, but with Monday also blacked out, so the cursor must normalise
+     * all the way to Tuesday (not stop at Monday) while preserving wall time.
+     */
+    public function test_stale_cursor_spanning_weekend_and_monday_holiday_normalises_to_tuesday_wall_time(): void
+    {
+        Setting::set('planification.blackout_dates', '2026-07-20'); // Monday holiday
+        Carbon::setTestNow(Carbon::parse('2026-07-21 07:55:00', 'UTC')); // Tuesday, 09:55 Paris (before wall time)
+        $campaign = $this->makeCampaign(
+            limit: 1,
+            nextRunAt: Carbon::parse('2026-07-17 10:00:00', 'Europe/Paris')->utc(), // stale Friday cursor
+        );
+        $this->makeCompanyWithContacts(80, 1);
+        $service = app(CampaignSchedulerService::class);
+
+        $this->assertSame(0, $service->generateDueRuns(), 'Tuesday must not send before the configured 10:00 wall time.');
+        $this->assertSame(0, $campaign->runs()->count());
+        $this->assertSame(
+            '2026-07-21 10:00',
+            $campaign->fresh()->next_run_at->setTimezone('Europe/Paris')->format('Y-m-d H:i'),
+            'Stale Friday cursor normalises past the weekend AND the Monday holiday, landing on Tuesday.',
+        );
+
+        Carbon::setTestNow(Carbon::parse('2026-07-21 08:05:00', 'UTC')); // Tuesday, 10:05 Paris
+
+        $this->assertSame(1, $service->generateDueRuns());
+        $this->assertSame(1, $campaign->runs()->count());
+    }
+
+    /** prepareManualBatch() on a blackout day throws the reworded French message. */
+    public function test_prepare_manual_batch_on_blackout_day_throws_with_new_message(): void
+    {
+        Setting::set('planification.blackout_dates', '2026-07-22'); // Wednesday
+        Carbon::setTestNow(Carbon::parse('2026-07-22 08:00:00', 'UTC')); // Wednesday, 10:00 Paris
+        $campaign = $this->makeCampaign(
+            limit: 20,
+            nextRunAt: Carbon::parse('2026-07-22 10:00:00', 'Europe/Paris')->utc(),
+        );
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Les lots progressifs ne peuvent pas être créés un jour non ouvré.');
+
+        app(PacedCampaignBatchService::class)->prepareManualBatch($campaign, now());
     }
 
     public function test_daily_company_limit_defaults_to_twenty_in_database_and_allows_explicit_null(): void

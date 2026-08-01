@@ -7,6 +7,7 @@ use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
+use App\Models\Setting;
 use App\Services\Campaign\CampaignSchedulerService;
 use Carbon\Carbon;
 use Database\Seeders\Acl\PermissionsSeeder;
@@ -27,6 +28,13 @@ class RecurringCampaignTest extends TestCase
         parent::setUp();
 
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
+    }
+
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+
+        parent::tearDown();
     }
 
     // ── Fixtures ───────────────────────────────────────────────────────────────
@@ -77,6 +85,18 @@ class RecurringCampaignTest extends TestCase
      */
     public function test_generate_due_runs_creates_run_and_advances_next_run_at(): void
     {
+        // Pinned to a Tuesday (in UTC — see note below) so the chunk-4
+        // daily-skip weekend logic doesn't make this `now()`-based anchor
+        // flake whenever the suite happens to run on a Saturday/Sunday (no
+        // run row would be created that tick).
+        //
+        // Pinned in UTC, NOT a local tz like 'Europe/Paris': Carbon::setTestNow()
+        // with a non-UTC mock silently changes the DEFAULT timezone that
+        // createFromFormat() (used by Eloquent's 'datetime' cast on every
+        // model retrieval) falls back to when no explicit tz is given —
+        // corrupting every retrieved timestamp by the mock's UTC offset.
+        Carbon::setTestNow(Carbon::parse('2026-07-21 09:00:00', 'UTC'));
+
         $campaign = $this->makeRecurringCampaign(now()->subMinute());
 
         $service = app(CampaignSchedulerService::class);
@@ -104,6 +124,9 @@ class RecurringCampaignTest extends TestCase
      */
     public function test_generate_is_idempotent(): void
     {
+        // Pinned to a Tuesday in UTC for the same reason as the previous test — see comment there.
+        Carbon::setTestNow(Carbon::parse('2026-07-21 09:00:00', 'UTC'));
+
         $campaign = $this->makeRecurringCampaign(now()->subMinute());
 
         $service = app(CampaignSchedulerService::class);
@@ -190,6 +213,13 @@ class RecurringCampaignTest extends TestCase
      */
     public function test_compute_next_run_dst_spring_forward(): void
     {
+        // European DST spring-forward always falls on a Sunday, so the day
+        // before (2026-03-28) is structurally a Saturday — this test crosses
+        // a weekend by construction. Disable the chunk-4 weekend-skip logic
+        // here so the DST assertion below stays 100% intact; the weekend
+        // behavior itself is covered separately (CampaignSchedulerServiceTest).
+        Setting::set('planification.skip_weekends', false);
+
         $service = app(CampaignSchedulerService::class);
 
         // 10:00 Paris on 2026-03-28 = 09:00 UTC (CET, UTC+1).
@@ -220,6 +250,11 @@ class RecurringCampaignTest extends TestCase
      */
     public function test_compute_next_run_dst_fall_back(): void
     {
+        // European DST fall-back also always falls on a Sunday, so the day
+        // before (2026-10-24) is structurally a Saturday — same reasoning as
+        // the spring-forward test above.
+        Setting::set('planification.skip_weekends', false);
+
         $service = app(CampaignSchedulerService::class);
 
         // 10:00 Paris on 2026-10-24 = 08:00 UTC (CEST, UTC+2).

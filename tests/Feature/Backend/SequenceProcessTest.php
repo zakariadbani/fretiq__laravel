@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Backend;
 
+use App\Jobs\SendSequenceStepJob;
 use App\Mail\SequenceStepMailable;
 use App\Models\Campaign;
 use App\Models\CampaignTemplate;
@@ -11,11 +12,14 @@ use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStep;
 use App\Models\SequenceStepSend;
+use App\Models\Setting;
 use App\Services\Campaign\SequenceService;
+use Carbon\Carbon;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 /**
@@ -34,6 +38,13 @@ class SequenceProcessTest extends TestCase
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
         Mail::fake();
+    }
+
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+
+        parent::tearDown();
     }
 
     // ── Fixtures ───────────────────────────────────────────────────────────────
@@ -111,6 +122,21 @@ class SequenceProcessTest extends TestCase
      */
     public function test_enroll_and_send_first_step(): void
     {
+        // Pinned to a Monday: without Carbon::setTestNow(), the "next_send_at
+        // ≈ now()->addDays(3)" assertion below runs against real wall-clock
+        // time, so it passes on some days and fails on others once a future
+        // chunk makes SequenceService shift follow-up steps off weekends
+        // (step 2's delay_days=3 could land on a Sat/Sun and shift forward).
+        // Monday + 3 days = Thursday, never a weekend, so the assertion stays
+        // exact regardless of that future change.
+        // Pinned in UTC (not 'Europe/Paris'): Carbon::setTestNow() with a
+        // non-UTC mock changes the DEFAULT timezone that createFromFormat()
+        // (used by Eloquent's datetime cast on every model retrieval) falls
+        // back to when no explicit tz is given — silently reinterpreting
+        // every 'datetime'-cast attribute read during the mock in that
+        // timezone and corrupting comparisons by the UTC offset.
+        Carbon::setTestNow(Carbon::parse('2026-08-03 09:00:00', 'UTC'));
+
         $seq     = $this->makeTwoStepSequence();
         $contact = $this->makeContact();
         $service = app(SequenceService::class);
@@ -304,5 +330,175 @@ class SequenceProcessTest extends TestCase
         $enrollment->refresh();
 
         $this->assertSame('active', $enrollment->status, 'Enrollment must remain active');
+    }
+
+    // ── Chunk 6: BusinessCalendarService wiring ─────────────────────────────────
+
+    /**
+     * advanceEnrollment() must SHIFT a follow-up step's next_send_at off a
+     * weekend, preserving the local wall-clock time — never skip it (that would
+     * silently drop the step). Step 2's delay_days=1 from a Friday enrollment
+     * lands on Saturday, which is the scenario that must shift.
+     */
+    public function test_advance_enrollment_shifts_a_saturday_landing_follow_up_to_monday(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-07-31 09:00:00', 'UTC')); // Friday, 09:00 UTC
+
+        $seq = Sequence::create([
+            'name'          => 'Seq weekend shift',
+            'is_active'     => true,
+            'stop_on_reply' => false,
+        ]);
+        $tpl1 = $this->makeTemplate('Weekend Step1');
+        SequenceStep::create([
+            'sequence_id' => $seq->id,
+            'step_no'     => 1,
+            'delay_days'  => 0,
+            'template_id' => $tpl1->id,
+            'subject'     => 'Étape 1',
+        ]);
+        $tpl2 = $this->makeTemplate('Weekend Step2');
+        SequenceStep::create([
+            'sequence_id' => $seq->id,
+            'step_no'     => 2,
+            'delay_days'  => 1, // Friday + 1 day = Saturday
+            'template_id' => $tpl2->id,
+            'subject'     => 'Étape 2',
+        ]);
+
+        $contact = $this->makeContact('saturday-landing@acme.test');
+        $service = app(SequenceService::class);
+
+        $enrollment = $service->enroll($seq, $contact);
+        $service->sendStep($enrollment);
+
+        $enrollment->refresh();
+
+        $this->assertNotNull($enrollment->next_send_at);
+        // Friday 09:00 UTC + 1 day = Saturday 09:00 UTC — must shift to Monday,
+        // preserving the 09:00 UTC wall time (Europe/Paris is the default
+        // decouverte.timezone; no DST boundary crossed between Fri and Mon here).
+        $this->assertSame(
+            '2026-08-03 09:00',
+            $enrollment->next_send_at->format('Y-m-d H:i'),
+            'next_send_at must shift from Saturday to Monday, preserving wall time'
+        );
+    }
+
+    /**
+     * When an enrollment has no campaign attribution, advanceEnrollment() must
+     * resolve the timezone via the decouverte.timezone fallback (resolveTimezone(null))
+     * — not throw, and not silently ignore the setting.
+     */
+    public function test_advance_enrollment_falls_back_to_decouverte_timezone_when_campaign_is_null(): void
+    {
+        Setting::set('decouverte.timezone', 'America/New_York');
+
+        // 2026-08-01 02:00 UTC = Friday 2026-07-31 22:00 America/New_York (EDT,
+        // UTC-4) but Saturday 2026-08-01 04:00 Europe/Paris (CEST, UTC+2).
+        // Only the correct fallback (America/New_York) sees this instant as a
+        // Friday — Europe/Paris (or a hardcoded UTC default) would see Saturday
+        // and shift; America/New_York must NOT shift.
+        Carbon::setTestNow(Carbon::parse('2026-08-01 02:00:00', 'UTC'));
+
+        $seq = Sequence::create([
+            'name'          => 'Seq null campaign fallback',
+            'is_active'     => true,
+            'stop_on_reply' => false,
+        ]);
+        $tpl1 = $this->makeTemplate('Fallback Step1');
+        SequenceStep::create([
+            'sequence_id' => $seq->id,
+            'step_no'     => 1,
+            'delay_days'  => 0,
+            'template_id' => $tpl1->id,
+            'subject'     => 'Étape 1',
+        ]);
+        $tpl2 = $this->makeTemplate('Fallback Step2');
+        SequenceStep::create([
+            'sequence_id' => $seq->id,
+            'step_no'     => 2,
+            'delay_days'  => 0,
+            'template_id' => $tpl2->id,
+            'subject'     => 'Étape 2',
+        ]);
+
+        $contact = $this->makeContact('null-campaign@acme.test');
+        $service = app(SequenceService::class);
+
+        // No campaign passed — enrollment.campaign_id stays null.
+        $enrollment = $service->enroll($seq, $contact);
+        $this->assertNull($enrollment->campaign_id);
+
+        $service->sendStep($enrollment);
+        $enrollment->refresh();
+
+        $this->assertNotNull($enrollment->next_send_at);
+        $this->assertTrue(
+            $enrollment->next_send_at->equalTo(Carbon::parse('2026-08-01 02:00:00', 'UTC')),
+            'next_send_at must stay unshifted — America/New_York (the decouverte.timezone fallback) sees Friday, not Saturday'
+        );
+    }
+
+    /**
+     * enroll() must set next_send_at = now() even on a Saturday — enrolling is a
+     * deliberate act, step 1 always goes out immediately. Only follow-up steps
+     * shift (advanceEnrollment()).
+     */
+    public function test_enroll_on_a_saturday_still_sets_next_send_at_to_now(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-01 09:00:00', 'UTC')); // Saturday
+
+        $seq     = $this->makeTwoStepSequence();
+        $contact = $this->makeContact('saturday-enroll@acme.test');
+        $service = app(SequenceService::class);
+
+        $enrollment = $service->enroll($seq, $contact);
+
+        $this->assertTrue(
+            $enrollment->next_send_at->equalTo(Carbon::parse('2026-08-01 09:00:00', 'UTC')),
+            'enroll() must NOT shift next_send_at off a Saturday'
+        );
+    }
+
+    /**
+     * processDue() must HOLD an enrollment whose next_send_at already sits on a
+     * blocked day — dispatch nothing, and leave the row byte-identical. On the
+     * next allowed day, the SAME unmutated row becomes due and dispatches. This
+     * is what makes the chunk-10 backfill command optional rather than mandatory.
+     */
+    public function test_process_due_holds_a_saturday_row_and_dispatches_it_unmutated_on_monday(): void
+    {
+        Queue::fake();
+
+        // Create the enrollment on a weekday so its next_send_at can legitimately
+        // be set to a Saturday instant (simulating a pre-existing, un-migrated row).
+        Carbon::setTestNow(Carbon::parse('2026-07-30 09:00:00', 'UTC')); // Thursday
+
+        $seq     = $this->makeTwoStepSequence();
+        $contact = $this->makeContact('held-row@acme.test');
+        $service = app(SequenceService::class);
+
+        $enrollment = $service->enroll($seq, $contact);
+        $enrollment->update(['next_send_at' => Carbon::parse('2026-08-01 09:00:00', 'UTC')]); // Saturday
+        $beforeHold = $enrollment->fresh()->getAttributes();
+
+        // Tick on the Saturday itself — next_send_at <= now() is true, but the
+        // day is blocked, so the enrollment must be held, not dispatched.
+        Carbon::setTestNow(Carbon::parse('2026-08-01 09:30:00', 'UTC'));
+        $dispatchedOnSaturday = $service->processDue();
+
+        $this->assertSame(0, $dispatchedOnSaturday, 'A Saturday-due enrollment must be held, not dispatched');
+        Queue::assertNotPushed(SendSequenceStepJob::class);
+
+        $afterHold = $enrollment->fresh()->getAttributes();
+        $this->assertSame($beforeHold, $afterHold, 'The held row must be byte-identical — processDue() must not mutate it');
+
+        // Tick on the following Monday — the SAME unmutated row is now due.
+        Carbon::setTestNow(Carbon::parse('2026-08-03 09:30:00', 'UTC'));
+        $dispatchedOnMonday = $service->processDue();
+
+        $this->assertSame(1, $dispatchedOnMonday, 'The same held row must dispatch once Monday arrives');
+        Queue::assertPushed(SendSequenceStepJob::class, fn ($job) => $job->enrollmentId === $enrollment->id);
     }
 }

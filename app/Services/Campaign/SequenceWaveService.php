@@ -11,12 +11,16 @@ use App\Models\CampaignRun;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStepSend;
 use App\Models\Suppression;
+use App\Services\Scheduling\BusinessCalendarService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class SequenceWaveService
 {
-    public function __construct(private readonly ZohoCampaignsDriver $driver) {}
+    public function __construct(
+        private readonly ZohoCampaignsDriver $driver,
+        private readonly BusinessCalendarService $calendar,
+    ) {}
 
     public function isDeferred(CampaignRun $run): bool
     {
@@ -125,6 +129,7 @@ class SequenceWaveService
 
         DB::transaction(function () use ($run, $contacts, $campaignKey): void {
             $locked = CampaignRun::query()->lockForUpdate()->findOrFail($run->id);
+            $locked->loadMissing('campaign');
             if ($locked->status === 'sent') {
                 return;
             }
@@ -172,7 +177,15 @@ class SequenceWaveService
                 $baseKey = preg_replace('/-step-\d{3}$/', '', $locked->occurrence_key);
                 $child = CampaignRun::firstOrCreate(
                     ['campaign_id' => $locked->campaign_id, 'occurrence_key' => $baseKey . '-step-' . str_pad((string) $nextStep->step_no, 3, '0', STR_PAD_LEFT)],
-                    ['sequence_step_id' => $nextStep->id, 'run_at' => now()->addDays((int) $nextStep->delay_days), 'status' => 'prepared', 'driver_ref' => 'zoho-wave-pending'],
+                    [
+                        'sequence_step_id' => $nextStep->id,
+                        'run_at' => $this->calendar->shiftToAllowed(
+                            now()->addDays((int) $nextStep->delay_days),
+                            $this->calendar->resolveTimezone($locked->campaign),
+                        ),
+                        'status' => 'prepared',
+                        'driver_ref' => 'zoho-wave-pending',
+                    ],
                 );
                 foreach ($enrollments as $enrollment) {
                     CampaignRecipient::firstOrCreate(
@@ -260,7 +273,10 @@ class SequenceWaveService
                 $occurrenceKey = 'sequence-wave-legacy-'
                     . $first->created_at->format('Ymd')
                     . '-step-' . str_pad((string) $step->step_no, 3, '0', STR_PAD_LEFT);
-                $runAt = $group->sortBy('next_send_at')->first()->next_send_at;
+                $runAt = $this->calendar->shiftToAllowed(
+                    $group->sortBy('next_send_at')->first()->next_send_at,
+                    $this->calendar->resolveTimezone($first->campaign),
+                );
                 $run = CampaignRun::firstOrCreate(
                     ['campaign_id' => $first->campaign_id, 'occurrence_key' => $occurrenceKey],
                     ['sequence_step_id' => $step->id, 'run_at' => $runAt, 'status' => 'prepared', 'driver_ref' => 'zoho-wave-pending'],

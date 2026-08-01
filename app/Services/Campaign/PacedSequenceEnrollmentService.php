@@ -10,6 +10,7 @@ use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
 use App\Models\Contact;
 use App\Models\SequenceEnrollment;
+use App\Services\Scheduling\BusinessCalendarService;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +22,7 @@ class PacedSequenceEnrollmentService
     public function __construct(
         private readonly SegmentService $segmentService,
         private readonly SequenceService $sequenceService,
+        private readonly BusinessCalendarService $calendar,
     ) {}
 
     /**
@@ -61,9 +63,10 @@ class PacedSequenceEnrollmentService
             $localNow = $now->copy()->setTimezone($timezone);
             $effectiveRunAt = $locked->next_run_at->copy();
 
-            // Stale and weekend cursors move to the next valid local business
-            // occurrence while retaining the configured local wall time.
-            while ($effectiveRunAt->copy()->setTimezone($timezone)->isWeekend()
+            // Stale and blocked-day (weekend/blackout) cursors move to the next
+            // valid local business occurrence while retaining the configured
+            // local wall time.
+            while ($this->calendar->isBlockedDate($effectiveRunAt->copy()->setTimezone($timezone))
                 || $effectiveRunAt->copy()->setTimezone($timezone)->toDateString() < $localNow->toDateString()) {
                 $effectiveRunAt = $this->computeNextBusinessRun($effectiveRunAt, $timezone);
             }
@@ -72,7 +75,7 @@ class PacedSequenceEnrollmentService
                 $locked->update(['next_run_at' => $effectiveRunAt]);
             }
 
-            if ($localNow->isWeekend() || $effectiveRunAt->gt($now)) {
+            if ($this->calendar->isBlockedDate($localNow) || $effectiveRunAt->gt($now)) {
                 return $this->result($locked, false);
             }
 
@@ -166,15 +169,21 @@ class PacedSequenceEnrollmentService
         }, 3);
     }
 
-    /** Advance one Monday-Friday occurrence while preserving local wall time and DST. */
+    /**
+     * Advance one occurrence forward (business day, skipping weekends/blackout
+     * dates) while preserving local wall time and DST.
+     *
+     * The addDay() MUST run BEFORE shiftToAllowed(), never after — see the
+     * identical warning on PacedCampaignBatchService::computeNextBusinessRun().
+     * shiftToAllowed() is idempotent on an already-allowed input, so skipping
+     * the addDay() would make the unbounded `while` loop in evaluateDue() spin
+     * forever whenever the cursor already sits on an allowed day.
+     */
     public function computeNextBusinessRun(Carbon $from, string $timezone): Carbon
     {
         $next = $from->copy()->setTimezone($timezone)->addDay();
-        while ($next->isWeekend()) {
-            $next->addDay();
-        }
 
-        return $next->utc();
+        return $this->calendar->shiftToAllowed($next, $timezone);
     }
 
     private function assertConfigured(Campaign $campaign): void

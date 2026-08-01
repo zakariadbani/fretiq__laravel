@@ -18,6 +18,7 @@ use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStep;
 use App\Models\SequenceStepSend;
+use App\Models\Setting;
 use App\Models\User;
 use App\Services\Campaign\CampaignWaveZohoListSyncService;
 use App\Services\Campaign\PacedSequenceEnrollmentService;
@@ -205,6 +206,24 @@ class CampaignSequenceProgressiveTest extends TestCase
 
         $this->assertSame('2026-10-26 10:00', $monday->copy()->setTimezone('Europe/Paris')->format('Y-m-d H:i'));
         $this->assertSame('09:00', $monday->format('H:i'));
+    }
+
+    /**
+     * Blackout-date twin of the weekend-cursor test above: computeNextBusinessRun()
+     * must also shift past a blackout date (unrelated to skip_weekends, which is
+     * turned off here to isolate the blackout list), preserving local wall time.
+     */
+    public function test_blackout_date_cursor_defers_to_next_allowed_day_preserving_local_wall_time(): void
+    {
+        Setting::set('planification.skip_weekends', false);
+        Setting::set('planification.blackout_dates', '2026-10-21'); // Wednesday
+
+        $service  = app(PacedSequenceEnrollmentService::class);
+        $tuesday  = Carbon::parse('2026-10-20 10:00:00', 'Europe/Paris')->utc();
+
+        $thursday = $service->computeNextBusinessRun($tuesday, 'Europe/Paris');
+
+        $this->assertSame('2026-10-22 10:00', $thursday->copy()->setTimezone('Europe/Paris')->format('Y-m-d H:i'));
     }
 
     public function test_user_without_send_permission_cannot_activate_progressive_sequence(): void
@@ -1309,6 +1328,64 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertSame(2, CampaignRun::where('campaign_id', $campaign->id)->count());
     }
 
+    /**
+     * Chunk 6: the child follow-up run created at SequenceWaveService:175 must
+     * land on a weekday (shiftToAllowed), and the SyncCampaignWaveZohoListJob
+     * dispatched with ->delay($runAt) must carry that SAME shifted instant —
+     * proving :183-185 reads back the persisted (shifted) run_at rather than
+     * recomputing an unshifted one.
+     */
+    public function test_wave_follow_up_run_lands_on_a_weekday_and_dispatch_delay_matches_shifted_run_at(): void
+    {
+        Mail::fake();
+        $segment = $this->segment();
+        $sequence = $this->sequence();
+        $template = CampaignTemplate::create([
+            'name' => 'Template step 2 weekend',
+            'subject' => 'Second',
+            'html_content' => '<p>Second step</p>',
+        ]);
+        SequenceStep::create([
+            'sequence_id' => $sequence->id,
+            'step_no' => 2,
+            'delay_days' => 1, // Friday + 1 day = Saturday — must shift to Monday.
+            'template_id' => $template->id,
+            'subject' => 'Etape 2',
+        ]);
+        $this->contact($this->company(50));
+        $campaign = $this->campaign($segment, $sequence, [
+            'next_run_at' => '2026-07-24 08:00:00',
+            'timezone' => 'UTC',
+        ]);
+
+        Carbon::setTestNow(Carbon::parse('2026-07-24 09:00:00', 'UTC')); // Friday
+        app(PacedSequenceEnrollmentService::class)->activate($campaign, Carbon::parse('2026-07-24 09:00:00', 'UTC'));
+        $first = CampaignRun::where('campaign_id', $campaign->id)->where('occurrence_key', 'sequence-wave-000001')->firstOrFail();
+        $first->update(['zoho_list_key' => 'list-step-1', 'status' => 'scheduled']);
+
+        $this->mock(ZohoCampaignsDriver::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('dispatchRun')->once()->andReturn(['campaign_key' => 'zoho-step-1']);
+        });
+
+        app(SequenceWaveService::class)->send($first);
+
+        $child = CampaignRun::where('campaign_id', $campaign->id)
+            ->where('occurrence_key', 'sequence-wave-000001-step-002')
+            ->firstOrFail();
+
+        // Friday 09:00 UTC + 1 day = Saturday 09:00 UTC — shifted to Monday
+        // 09:00 UTC (campaign timezone is UTC; no DST boundary here).
+        $this->assertSame('2026-07-27 09:00:00', $child->run_at->format('Y-m-d H:i:s'));
+
+        Queue::assertPushed(SyncCampaignWaveZohoListJob::class, function ($job) use ($child) {
+            return $job->runId === $child->id
+                && $job->delay !== null
+                && $job->delay->equalTo($child->fresh()->run_at);
+        });
+
+        Carbon::setTestNow();
+    }
+
     public function test_wave_with_multiple_recipients_marks_all_sent_without_provider_id_collision(): void
     {
         // Regression for the shared Zoho campaign_key being written into every
@@ -1367,8 +1444,54 @@ class CampaignSequenceProgressiveTest extends TestCase
         Mail::assertNothingSent();
     }
 
+    /**
+     * Chunk 6: legacy adoption (adoptLegacyEnrollments():~263) shifts $runAt
+     * BEFORE the firstOrCreate() call, so the created CampaignRun's run_at and
+     * the dispatched SyncCampaignWaveZohoListJob's ->delay() both agree with the
+     * shifted value — for the NEW-row case they all derive from the same local
+     * $runAt variable.
+     */
+    public function test_legacy_adoption_run_at_and_dispatch_delay_agree_on_the_shifted_instant(): void
+    {
+        Mail::fake();
+        Queue::fake();
+        $contact = $this->contact($this->company(50));
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
+        SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $contact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+            'next_send_at' => Carbon::parse('2026-08-01 09:00:00', 'UTC'), // Saturday
+        ]);
+
+        app(SequenceWaveService::class)->recover();
+
+        $run = CampaignRun::where('campaign_id', $campaign->id)
+            ->where('occurrence_key', 'like', 'sequence-wave-legacy-%')
+            ->firstOrFail();
+
+        // Saturday 09:00 UTC must shift to Monday 09:00 UTC (campaign timezone
+        // is UTC by default in the campaign() fixture; no blackout configured).
+        $this->assertSame('2026-08-03 09:00:00', $run->run_at->format('Y-m-d H:i:s'));
+
+        Queue::assertPushed(SyncCampaignWaveZohoListJob::class, function ($job) use ($run) {
+            return $job->runId === $run->id
+                && $job->delay !== null
+                && $job->delay->equalTo($run->run_at);
+        });
+    }
+
     public function test_paused_or_inactive_wave_is_deferred_without_send(): void
     {
+        // Pinned to a weekday: activate() defaults to real now() when no $now
+        // is passed, and PacedSequenceEnrollmentService::evaluateDue() (already
+        // wired) holds the whole occurrence on a blocked day (weekend/blackout)
+        // — without a freeze this test is flaky depending on which real
+        // calendar day it happens to run on.
+        Carbon::setTestNow(Carbon::parse('2026-07-27 10:00:00', 'UTC')); // Monday
+
         $contact = $this->contact($this->company(50));
         $campaign = $this->campaign($this->segment(), $sequence = $this->sequence(), [
             'next_run_at' => now()->subMinute(),
@@ -1391,6 +1514,8 @@ class CampaignSequenceProgressiveTest extends TestCase
         $sequence->update(['is_active' => false]);
         $service->send($run->fresh());
         $this->assertSame('scheduled', $run->fresh()->status);
+
+        Carbon::setTestNow();
     }
 
     public function test_existing_attempted_zoho_campaign_is_not_created_or_sent_again(): void
@@ -1467,6 +1592,10 @@ class CampaignSequenceProgressiveTest extends TestCase
     }
     public function test_suppressed_contact_is_removed_before_the_next_wave_step(): void
     {
+        // Pinned to a weekday for the same reason as
+        // test_paused_or_inactive_wave_is_deferred_without_send() above.
+        Carbon::setTestNow(Carbon::parse('2026-07-27 10:00:00', 'UTC')); // Monday
+
         $contact = $this->contact($this->company(50));
         $sequence = $this->sequence();
         $template = CampaignTemplate::create([
@@ -1503,6 +1632,8 @@ class CampaignSequenceProgressiveTest extends TestCase
             'step_no' => 2,
             'status' => 'skipped',
         ]);
+
+        Carbon::setTestNow();
     }
     private function segment(): Segment
     {

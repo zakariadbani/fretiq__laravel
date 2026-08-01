@@ -11,6 +11,7 @@ use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStepSend;
 use App\Models\Suppression;
+use App\Services\Scheduling\BusinessCalendarService;
 use App\Support\TrackingToken;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Log;
@@ -36,6 +37,10 @@ use Illuminate\Support\Str;
  */
 class SequenceService
 {
+    public function __construct(private readonly BusinessCalendarService $calendar)
+    {
+    }
+
     // ── Enrol ──────────────────────────────────────────────────────────────────
 
     /**
@@ -69,6 +74,10 @@ class SequenceService
                 'campaign_id'  => $campaign?->id,
                 'current_step' => 0,
                 'status'       => 'active',
+                // Deliberately UNSHIFTED, unlike advanceEnrollment()'s follow-up steps.
+                // Enrolling is itself a deliberate act — step 1 goes out immediately even
+                // on a Saturday/blackout day. Only follow-up steps shift to an allowed day.
+                // Do NOT "fix" this to run through BusinessCalendarService.
                 'next_send_at' => now(),
             ]);
         } catch (QueryException $e) {
@@ -125,7 +134,8 @@ class SequenceService
             ->with('campaign')
             ->get();
 
-        $eligible = $enrollments->filter($this->canSendViaSmtp(...));
+        $eligible = $enrollments->filter($this->canSendViaSmtp(...))
+            ->filter($this->isNotHeld(...));
 
         foreach ($eligible as $enrollment) {
             SendSequenceStepJob::dispatch($enrollment->id);
@@ -351,7 +361,7 @@ class SequenceService
      */
     private function advanceEnrollment(SequenceEnrollment $e, int $stepNo): void
     {
-        $e->refresh()->load('sequence');
+        $e->refresh()->load(['sequence', 'campaign']);
 
         $nextStep = $e->sequence->steps()->where('step_no', $stepNo + 1)->first();
 
@@ -359,7 +369,12 @@ class SequenceService
             $e->update([
                 'current_step' => $stepNo,
                 'last_sent_at' => now(),
-                'next_send_at' => now()->addDays((int) ($nextStep->delay_days ?? 1)),
+                // SHIFT, never skip — a follow-up step must always eventually fire;
+                // skipping would silently drop a sequence step.
+                'next_send_at' => $this->calendar->shiftToAllowed(
+                    now()->addDays((int) ($nextStep->delay_days ?? 1)),
+                    $this->calendar->resolveTimezone($e->campaign),
+                ),
             ]);
         } else {
             $e->update([
@@ -386,5 +401,38 @@ class SequenceService
             || ($enrollment->campaign->is_active
                 && $enrollment->campaign->sequence_enrollment_mode === 'immediate'
                 && ! $enrollment->campaign->usesZohoDriver());
+    }
+
+    /**
+     * Defensive hold gate for processDue(): when TODAY (the current moment,
+     * resolved in the enrollment's timezone) is a blocked day (weekend/
+     * blackout), the enrollment is simply NOT dispatched this tick — it stays
+     * untouched and fires on the next allowed day, since next_send_at <= now()
+     * remains true for as long as the row is never mutated. This deliberately
+     * checks the CURRENT moment, not the stored next_send_at value — mirroring
+     * SendWindowGuard::isWithinSendWindow(), which also gates on Carbon::now(),
+     * not on the run's own scheduled timestamp. Checking next_send_at itself
+     * would hold a stale Saturday-dated row FOREVER, since that column is never
+     * mutated by this gate.
+     *
+     * `campaign` is already eager-loaded by processDue(), so this costs zero
+     * extra queries. Logged at debug only — this fires for every held
+     * enrollment on every minute tick.
+     */
+    private function isNotHeld(SequenceEnrollment $enrollment): bool
+    {
+        $tz = $this->calendar->resolveTimezone($enrollment->campaign);
+
+        if ($this->calendar->isBlocked(now(), $tz)) {
+            Log::debug('[SequenceService] Enrollment held — today is a blocked day.', [
+                'enrollment_id' => $enrollment->id,
+                'next_send_at'  => $enrollment->next_send_at?->toIso8601String(),
+                'tz'            => $tz,
+            ]);
+
+            return false;
+        }
+
+        return true;
     }
 }

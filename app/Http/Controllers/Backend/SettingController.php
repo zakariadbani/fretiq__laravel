@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Backend;
 use App\Http\Controllers\Controller;
 use App\Services\Settings\SettingService;
 use App\Services\Discovery\DiscoveryEngineRegistry;
+use App\Services\Scheduling\BusinessCalendarService;
 use App\Support\DomainBlocklist;
+use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -26,6 +28,7 @@ class SettingController extends Controller
     public function __construct(
         protected SettingService $settingService,
         protected DiscoveryEngineRegistry $engineRegistry,
+        protected BusinessCalendarService $calendarService,
     ) {
         $this->middleware('permission:view settings');
         $this->middleware('permission:edit settings')->only('save');
@@ -141,7 +144,7 @@ class SettingController extends Controller
                     'label'   => 'Fuseau horaire (quota quotidien)',
                     'default' => 'Europe/Paris',
                     'options' => ['Europe/Paris' => 'Europe/Paris', 'UTC' => 'UTC/GMT'],
-                    'help'    => 'Détermine le jour « quotidien » pour les quotas de découverte et l\'heure de lancement automatique.',
+                    'help'    => 'Détermine le jour « quotidien » pour les quotas de découverte et l\'heure de lancement automatique. Sert aussi de fuseau horaire par défaut pour le calendrier de planification (jours ouvrés, jours fériés) lorsqu\'une campagne n\'a pas son propre fuseau.',
                 ],
             ],
         ],
@@ -206,6 +209,31 @@ class SettingController extends Controller
                 ],
             ],
         ],
+        'planification' => [
+            'label'       => 'Planification',
+            'enabled'     => true,
+            'description' => 'Jours ouvrés et dates d\'exclusion pour l\'envoi automatique des campagnes, séquences et découvertes.',
+            'fields'      => [
+                'skip_weekends' => [
+                    'type'    => 'boolean',
+                    'label'   => 'Ne rien envoyer le samedi et le dimanche',
+                    'default' => true,
+                    'help'    => 'Décale automatiquement au jour ouvré suivant tout envoi planifié tombant un week-end : campagnes récurrentes, lots progressifs, relances de séquences et découverte automatique. « Envoyer maintenant » et les campagnes ponctuelles restent autorisés tous les jours.',
+                ],
+                'blackout_dates' => [
+                    'type'        => 'textarea',
+                    'label'       => 'Jours fériés et dates exclues',
+                    'rows'        => 10,
+                    'default'     => '',
+                    'placeholder' => "2026-12-25\n2026-12-26\n01-01 # Jour de l'an, chaque année",
+                    'help'        => 'Une date par ligne. Format AAAA-MM-JJ pour une date ponctuelle, ou MM-JJ pour une date qui se répète chaque année (ex. « 12-25 » pour Noël). Les lignes commençant par « # » sont des commentaires. Laissez vide pour n\'exclure aucune date.',
+                ],
+                'blackout_preview' => [
+                    'type'  => 'static',
+                    'label' => 'Prochains jours exclus',
+                ],
+            ],
+        ],
 
         // ── Placeholder tabs (enabled=false) ─────────────────────────────────────
         'envoi_identites' => [
@@ -265,6 +293,23 @@ class SettingController extends Controller
         // this makes the textarea render the effective list when nothing is stored.
         $tabs['decouverte']['fields']['blocked_domains']['default']        = DomainBlocklist::defaultDomainsText();
         $tabs['decouverte']['fields']['blocked_url_extensions']['default'] = DomainBlocklist::defaultExtensionsText();
+
+        // Planification tab — read-only preview of the next few blackout-list
+        // entries (NOT plain weekends — blockedDatesFor() would be drowned out
+        // by the next Saturdays/Sundays and never show the admin's own entries),
+        // the feedback a plain textarea otherwise lacks.
+        $calendarTz    = $this->calendarService->resolveTimezone(null);
+        $previewDates  = array_slice(
+            $this->calendarService->blackoutDatesFor(Carbon::now($calendarTz), 120),
+            0,
+            5
+        );
+        $tabs['planification']['fields']['blackout_preview']['static_value'] = $previewDates === []
+            ? 'Aucune date exclue configurée dans les 120 prochains jours.'
+            : implode(', ', array_map(
+                fn (string $date): string => $this->formatFrenchDayLabel(Carbon::parse($date, $calendarTz)),
+                $previewDates
+            ));
 
         $settings = $this->settingService->all();
         if (array_key_exists('decouverte.discovery_engines', $settings)) {
@@ -326,6 +371,42 @@ class SettingController extends Controller
             );
         }
 
+        if ($request->has('settings.planification')) {
+            $request->validate(
+                [
+                    'settings.planification.blackout_dates' => [
+                        'nullable',
+                        'string',
+                        'max:5000',
+                        function (string $attribute, mixed $value, \Closure $fail): void {
+                            if (! is_string($value) || trim($value) === '') {
+                                return;
+                            }
+
+                            $invalid = BusinessCalendarService::invalidLines($value);
+
+                            if ($invalid === []) {
+                                return;
+                            }
+
+                            $shown = array_slice($invalid, 0, 5);
+                            $suffix = count($invalid) > 5 ? ', …' : '';
+
+                            $fail(
+                                'Lignes invalides dans les jours fériés et dates exclues (formats attendus : '
+                                .'AAAA-MM-JJ pour une date ponctuelle, MM-JJ pour une date annuelle) : '
+                                .implode(', ', $shown).$suffix
+                            );
+                        },
+                    ],
+                ],
+                [
+                    'settings.planification.blackout_dates.string' => 'La liste des jours exclus doit être du texte.',
+                    'settings.planification.blackout_dates.max'    => 'La liste des jours exclus ne peut pas dépasser 5000 caractères.',
+                ]
+            );
+        }
+
         // ── Persist within a transaction ────────────────────────────────────────
         DB::transaction(function () use ($request) {
             foreach ($this->tabs as $group => $tabConfig) {
@@ -365,5 +446,26 @@ class SettingController extends Controller
         return redirect()
             ->to(route('admin.settings.index') . '#kt_tab_' . $activeTab)
             ->with('success', 'Les paramètres ont été enregistrés avec succès.');
+    }
+
+    /**
+     * Format a date as "lun. 25 déc. 2026" — hardcoded French, no __()/trans()
+     * per this module's convention. Used only for the read-only blackout_preview.
+     */
+    private function formatFrenchDayLabel(Carbon $date): string
+    {
+        $weekdays = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+        $months   = [
+            1 => 'janv.', 2 => 'févr.', 3 => 'mars', 4 => 'avr.', 5 => 'mai', 6 => 'juin',
+            7 => 'juil.', 8 => 'août', 9 => 'sept.', 10 => 'oct.', 11 => 'nov.', 12 => 'déc.',
+        ];
+
+        return sprintf(
+            '%s %d %s %d',
+            $weekdays[$date->dayOfWeek],
+            $date->day,
+            $months[$date->month],
+            $date->year
+        );
     }
 }

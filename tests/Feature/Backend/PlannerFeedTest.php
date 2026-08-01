@@ -269,6 +269,15 @@ class PlannerFeedTest extends TestCase
     {
         Carbon::setTestNow(Carbon::parse('2026-03-28 00:00:00', 'Europe/Paris'));
 
+        // European DST spring-forward always falls on a Sunday, so this
+        // window (2026-03-28 Sat → 2026-03-30 Mon) structurally crosses a
+        // weekend — that's inherent to testing the DST gap itself, not
+        // something this test is meant to cover. Disable the weekend-skip
+        // logic here so the DST wall-clock-restoration assertion below stays
+        // 100% intact; weekend behavior is covered by dedicated tests
+        // elsewhere (CampaignSchedulerServiceTest).
+        Setting::set('planification.skip_weekends', false);
+
         ProspectCriteria::create([
             'name' => 'DST discovery',
             'daily_limit' => 10,
@@ -322,6 +331,38 @@ class PlannerFeedTest extends TestCase
             ->assertOk()
             ->assertDontSee('D&eacute;couverte automatique', false);
 
+        Carbon::setTestNow();
+    }
+
+    /**
+     * Auto-discovery projection must skip BOTH weekends and blackout dates:
+     * window 2026-07-03 (Fri) .. 2026-07-09 (Thu) with 2026-07-08 (Wed)
+     * blacked out → expected days are Fri 3, Mon 6, Tue 7, Thu 9 (Sat 4,
+     * Sun 5 skipped by the weekend rule; Wed 8 skipped by the blackout).
+     */
+    public function test_discovery_projection_skips_weekends_and_blackout_dates(): void
+    {
+        Carbon::setTestNow('2026-07-01 00:00:00');
+        Setting::set('planification.blackout_dates', '2026-07-08');
+
+        ProspectCriteria::create([
+            'name' => "D\u{00E9}couverte calendrier",
+            'daily_limit' => 10,
+            'is_active' => true,
+            'auto_run' => true,
+            'run_at_hour' => 9,
+        ]);
+
+        $events = collect(app(PlannerService::class)->runsFeed(
+            '2026-07-03T00:00:00+00:00',
+            '2026-07-10T00:00:00+00:00',
+        ))->where('extendedProps.eventKind', 'discovery-projection')->values();
+
+        $dates = $events->map(fn (array $e): string => Carbon::parse($e['start'])->utc()->toDateString())->all();
+
+        $this->assertSame(['2026-07-03', '2026-07-06', '2026-07-07', '2026-07-09'], $dates);
+
+        Setting::set('planification.blackout_dates', '');
         Carbon::setTestNow();
     }
 
@@ -382,6 +423,47 @@ class PlannerFeedTest extends TestCase
             '/new\s+Date\(\s*info\.event\.startStr\s*\)\.toLocaleString\(\s*\'fr-FR\'\s*,\s*\{(?=[^}]*\btimeZone\s*:\s*plannerTimezone)[^}]*\}\s*\)/',
             $content,
         );
+    }
+
+    /**
+     * index() must pass plannerSkipWeekends (bool) and plannerBlackout (a
+     * flat list of Y-m-d strings, weekends excluded when skip_weekends is
+     * on) to the view, and the rendered Blade must wire dayCellClassNames
+     * into the FullCalendar config so blocked days get greyed out.
+     */
+    public function test_planner_index_exposes_skip_weekends_and_blackout_to_view(): void
+    {
+        Carbon::setTestNow('2026-08-01 00:00:00'); // window covers 2026-12-25 (Friday)
+        Setting::set('decouverte.timezone', 'Europe/Paris');
+        Setting::set('planification.skip_weekends', true);
+        Setting::set('planification.blackout_dates', '12-25');
+
+        $response = $this->actingAs($this->superadmin)->get('/admin/planner');
+
+        $response->assertOk();
+        $response->assertViewHas('plannerSkipWeekends', true);
+        $response->assertViewHas('plannerBlackout', function ($blackout) {
+            if (! is_array($blackout) || ! in_array('2026-12-25', $blackout, true)) {
+                return false;
+            }
+
+            // skip_weekends=true → no plain Saturday/Sunday should ever be
+            // shipped in the payload; the JS derives those from arg.dow.
+            foreach ($blackout as $date) {
+                if (Carbon::createFromFormat('Y-m-d', $date)->isWeekend()) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+
+        $response->assertSee('dayCellClassNames', false);
+        $response->assertSee('plannerSkipWeekends', false);
+        $response->assertSee('plannerBlackout', false);
+
+        Setting::set('planification.blackout_dates', '');
+        Carbon::setTestNow();
     }
 
     /**
@@ -472,9 +554,12 @@ class PlannerFeedTest extends TestCase
 
     /**
      * Daily recurring campaign (next_run_at = tomorrow 12:00 UTC, until +10 days, scheduled)
-     * fed with window [today, +8 days) → must contain exactly 8 projected events
-     * and the FIRST projected event's start must equal next_run_at exactly
-     * (guards emit-then-advance ordering: cursor emitted before being advanced).
+     * fed with window [today, +8 days) → must contain exactly 5 projected events
+     * (July 4 Sat and July 5 Sun are skipped by the daily business-calendar
+     * skip-loop in CampaignSchedulerService::computeNextRun(), which this
+     * projection reuses directly — see PlannerService.php:239) and the FIRST
+     * projected event's start must equal next_run_at exactly (guards
+     * emit-then-advance ordering: cursor emitted before being advanced).
      */
     public function test_projection_daily_within_window(): void
     {
@@ -492,9 +577,10 @@ class PlannerFeedTest extends TestCase
             fn ($e) => str_starts_with((string) $e['id'], 'projected-' . $campaign->id . '-')
         )->values();
 
-        // Expected: July 2–8 inclusive = 7 days (windowEnd is 2026-07-09 exclusive).
-        $this->assertCount(7, $projected,
-            'Expected 7 projected events for July 2–8 within a July 1–9 window');
+        // Expected: July 2, 3, 6, 7, 8 = 5 days (July 4 Sat and July 5 Sun are
+        // skipped; windowEnd is 2026-07-09 exclusive).
+        $this->assertCount(5, $projected,
+            'Expected 5 projected events for July 2–8 within a July 1–9 window (weekend skipped)');
 
         // First projected event must equal next_run_at (emit-then-advance guard).
         $firstStart = Carbon::parse($projected->first()['start'])->utc();
@@ -677,6 +763,345 @@ class PlannerFeedTest extends TestCase
         Carbon::setTestNow();
     }
 
+    // ── Business-calendar projection (chunk 4+5: skip vs shift) ────────────────
+    //
+    // These exercise the daily-frequency skip loop that CampaignSchedulerService
+    // ::computeNextRun() gained in this chunk, via the planner projection loop
+    // that reuses it directly (PlannerService.php:239). Weekly/monthly shifting
+    // is NOT wired into the planner projection loop yet (that requires a
+    // dedicated PlannerService change tracked separately) — those scenarios are
+    // covered against CampaignSchedulerService directly in
+    // tests/Feature/Backend/CampaignSchedulerServiceTest.php instead.
+
+    /**
+     * Anti-pile-up guard: a daily campaign anchored on a Friday must SKIP
+     * Saturday and Sunday entirely (no projected event on either date), and
+     * Monday — the day both blocked anchors would otherwise collapse onto if
+     * shifted instead of skipped — must carry exactly ONE event.
+     */
+    public function test_projection_daily_recurring_skips_weekend_and_monday_has_exactly_one_event(): void
+    {
+        Carbon::setTestNow('2026-07-01 00:00:00');
+
+        // Friday anchor.
+        $nextRunAt = Carbon::parse('2026-07-03 12:00:00', 'UTC');
+        $campaign  = $this->makeRecurring($nextRunAt, '2026-07-15', 'daily');
+
+        $events = app(PlannerService::class)->runsFeed(
+            '2026-07-03T00:00:00+00:00',
+            '2026-07-10T00:00:00+00:00', // exclusive → Jul 3–9
+        );
+
+        $projected = collect($events)->filter(
+            fn ($e) => str_starts_with((string) $e['id'], 'projected-' . $campaign->id . '-')
+        )->values();
+
+        $dates = $projected->map(fn (array $e): string => Carbon::parse($e['start'])->utc()->toDateString())->all();
+
+        $this->assertNotContains('2026-07-04', $dates, 'Saturday must be skipped, not shifted');
+        $this->assertNotContains('2026-07-05', $dates, 'Sunday must be skipped, not shifted');
+        $this->assertSame(
+            1,
+            count(array_filter($dates, fn (string $d): bool => $d === '2026-07-06')),
+            'Monday must carry exactly ONE event — no pile-up from the skipped Sat+Sun anchors'
+        );
+        $this->assertSame(['2026-07-03', '2026-07-06', '2026-07-07', '2026-07-08', '2026-07-09'], $dates);
+
+        Carbon::setTestNow();
+    }
+
+    /**
+     * A blackout date inside the projection window must have zero events, even
+     * on weekdays where the weekend-skip rule doesn't apply.
+     */
+    public function test_projection_daily_recurring_skips_blackout_date(): void
+    {
+        Carbon::setTestNow('2026-07-01 00:00:00');
+        Setting::set('planification.blackout_dates', '2026-07-08');
+
+        // Monday anchor — 2026-07-06 through 2026-07-09 are all weekdays, so
+        // this isolates the blackout-date rule from the weekend rule.
+        $nextRunAt = Carbon::parse('2026-07-06 12:00:00', 'UTC');
+        $campaign  = $this->makeRecurring($nextRunAt, '2026-07-15', 'daily');
+
+        $events = app(PlannerService::class)->runsFeed(
+            '2026-07-06T00:00:00+00:00',
+            '2026-07-10T00:00:00+00:00', // exclusive → Jul 6–9
+        );
+
+        $projected = collect($events)->filter(
+            fn ($e) => str_starts_with((string) $e['id'], 'projected-' . $campaign->id . '-')
+        )->values();
+
+        $dates = $projected->map(fn (array $e): string => Carbon::parse($e['start'])->utc()->toDateString())->all();
+
+        $this->assertNotContains('2026-07-08', $dates, 'The blackout date must have no projected event');
+        $this->assertSame(['2026-07-06', '2026-07-07', '2026-07-09'], $dates);
+
+        Setting::set('planification.blackout_dates', '');
+        Carbon::setTestNow();
+    }
+
+    /**
+     * The off-switch: with planification.skip_weekends=false, projection
+     * reverts to the pre-chunk-4 behaviour of one event per calendar day,
+     * weekends included.
+     */
+    public function test_projection_daily_recurring_reverts_to_all_days_when_skip_weekends_disabled(): void
+    {
+        Carbon::setTestNow('2026-07-01 00:00:00');
+        Setting::set('planification.skip_weekends', false);
+
+        $nextRunAt = Carbon::parse('2026-07-02 12:00:00', 'UTC');
+        $campaign  = $this->makeRecurring($nextRunAt, '2026-07-11', 'daily');
+
+        $events = app(PlannerService::class)->runsFeed(
+            '2026-07-01T00:00:00+00:00',
+            '2026-07-09T00:00:00+00:00',
+        );
+
+        $projected = collect($events)->filter(
+            fn ($e) => str_starts_with((string) $e['id'], 'projected-' . $campaign->id . '-')
+        );
+
+        $this->assertCount(7, $projected,
+            'With skip_weekends=false, all 7 days (July 2–8) must project, weekend included');
+
+        Setting::set('planification.skip_weekends', true);
+        Carbon::setTestNow();
+    }
+
+    // ── Business-calendar projection (chunk 8: shift vs skip, dedup on shifted run_at) ──
+
+    /**
+     * The very first cursor of a daily recurring campaign is the RAW,
+     * not-yet-normalised `next_run_at` anchor straight from the DB — it may
+     * itself sit on a blocked day (e.g. an admin picked a Saturday before the
+     * scheduler ever ticked). Guards that the outer isBlocked() check in the
+     * projection loop is reachable (not dead code): without it, this would
+     * wrongly project an event ON the Saturday.
+     */
+    public function test_projection_daily_recurring_skips_blocked_first_anchor(): void
+    {
+        Carbon::setTestNow('2026-07-01 00:00:00');
+
+        // Saturday anchor, never advanced by computeNextRun() yet.
+        $nextRunAt = Carbon::parse('2026-07-04 12:00:00', 'UTC');
+        $campaign  = $this->makeRecurring($nextRunAt, '2026-07-15', 'daily');
+
+        $events = app(PlannerService::class)->runsFeed(
+            '2026-07-04T00:00:00+00:00',
+            '2026-07-08T00:00:00+00:00', // exclusive → Jul 4–7
+        );
+
+        $projected = collect($events)->filter(
+            fn ($e) => str_starts_with((string) $e['id'], 'projected-' . $campaign->id . '-')
+        )->values();
+
+        $dates = $projected->map(fn (array $e): string => Carbon::parse($e['start'])->utc()->toDateString())->all();
+
+        $this->assertNotContains('2026-07-04', $dates, 'Blocked Saturday anchor must not project an event');
+        $this->assertNotContains('2026-07-05', $dates, 'Sunday must not project an event');
+        $this->assertSame(['2026-07-06', '2026-07-07'], $dates);
+
+        Carbon::setTestNow();
+    }
+
+    /**
+     * A weekly recurring campaign anchored on a Saturday must SHIFT to the
+     * following Monday, not skip entirely — a daily-style skip would mean a
+     * Saturday-anchored weekly campaign silently never projects, ever.
+     */
+    public function test_projection_weekly_recurring_shifts_saturday_anchor_to_monday(): void
+    {
+        Carbon::setTestNow('2026-07-01 00:00:00');
+
+        // Saturday anchor.
+        $nextRunAt = Carbon::parse('2026-07-04 12:00:00', 'UTC');
+        $campaign  = $this->makeRecurring($nextRunAt, '2026-09-01', 'weekly');
+
+        $events = app(PlannerService::class)->runsFeed(
+            '2026-07-04T00:00:00+00:00',
+            '2026-07-08T00:00:00+00:00', // exclusive → Jul 4–7
+        );
+
+        $projected = collect($events)->filter(
+            fn ($e) => str_starts_with((string) $e['id'], 'projected-' . $campaign->id . '-')
+        )->values();
+
+        $this->assertCount(1, $projected, 'Exactly one projected occurrence in the window');
+        $start = Carbon::parse($projected->first()['start'])->utc();
+        $this->assertSame('2026-07-06 12:00:00', $start->toDateTimeString(), 'Shifted to Monday, wall time preserved');
+        $this->assertSame(
+            'projected-' . $campaign->id . '-20260706120000',
+            $projected->first()['id'],
+            'Event id must be keyed on the SHIFTED timestamp, not the raw Saturday anchor',
+        );
+
+        Carbon::setTestNow();
+    }
+
+    /**
+     * A monthly recurring campaign anchored on a weekend day-of-month shifts
+     * that occurrence forward, but the FOLLOWING month's occurrence must keep
+     * the ORIGINAL day-of-month (anti-drift) — computeNextRun() always
+     * advances from the unshifted anchor, never from the shifted value.
+     * 2026-08-01 is a Saturday (shifts to Monday 2026-08-03); 2026-09-01 is a
+     * Tuesday (no shift needed). A drifted implementation would instead
+     * advance from 2026-08-03 and land on 2026-09-03.
+     */
+    public function test_projection_monthly_recurring_shifts_without_date_drift(): void
+    {
+        Carbon::setTestNow('2026-07-15 00:00:00');
+
+        $nextRunAt = Carbon::parse('2026-08-01 12:00:00', 'UTC'); // Saturday
+        $campaign  = $this->makeRecurring($nextRunAt, '2026-10-01', 'monthly');
+
+        $events = app(PlannerService::class)->runsFeed(
+            '2026-08-01T00:00:00+00:00',
+            '2026-09-02T00:00:00+00:00',
+        );
+
+        $projected = collect($events)->filter(
+            fn ($e) => str_starts_with((string) $e['id'], 'projected-' . $campaign->id . '-')
+        )->values();
+
+        $dates = $projected->map(fn (array $e): string => Carbon::parse($e['start'])->utc()->toDateString())->all();
+
+        $this->assertSame(
+            ['2026-08-03', '2026-09-01'],
+            $dates,
+            'Aug occurrence shifts Sat→Mon; Sep occurrence keeps day-of-month=1 (no drift from the shifted Aug date)',
+        );
+
+        Carbon::setTestNow();
+    }
+
+    /**
+     * REGRESSION: the emit-window gate must test $emitAt (the shifted value),
+     * not the unshifted $cursor. A weekly campaign anchored on a Sunday that
+     * sits just BEFORE $windowStart shifts forward to the following Monday,
+     * which IS inside the window — CampaignSchedulerService::generateDueRuns()
+     * will materialise a real run on that Monday, so the projection must show
+     * it too. Gating on the unshifted $cursor (Sunday, before the window)
+     * would silently drop the occurrence — and the loop does not self-correct:
+     * the next iteration advances a full week further, so the occurrence is
+     * lost, not deferred.
+     */
+    public function test_projection_weekly_cursor_before_window_shifts_into_window_is_emitted(): void
+    {
+        Carbon::setTestNow('2026-07-01 00:00:00');
+
+        // Sunday anchor, one second before windowStart below.
+        $nextRunAt = Carbon::parse('2026-07-05 23:59:59', 'UTC');
+        $campaign  = $this->makeRecurring($nextRunAt, '2026-09-01', 'weekly');
+
+        // windowStart sits just after the Sunday anchor — the unshifted
+        // cursor (Sunday 23:59:59) is BEFORE windowStart, but the shifted
+        // occurrence (Monday 2026-07-06, wall time preserved) is inside it.
+        $windowStart = '2026-07-06T00:00:00+00:00';
+        $windowEnd   = '2026-07-13T00:00:00+00:00';
+
+        $events = app(PlannerService::class)->runsFeed($windowStart, $windowEnd);
+
+        $projected = collect($events)->filter(
+            fn ($e) => str_starts_with((string) $e['id'], 'projected-' . $campaign->id . '-')
+        )->values();
+
+        $this->assertCount(1, $projected,
+            'The Sunday-anchored occurrence must be emitted exactly once, on its shifted day');
+
+        $start = Carbon::parse($projected->first()['start'])->utc();
+        $this->assertSame('2026-07-06 23:59:59', $start->toDateTimeString(),
+            'Shifted to Monday, wall time preserved');
+        $this->assertSame(
+            'projected-' . $campaign->id . '-20260706235959',
+            $projected->first()['id'],
+            'Event id must be keyed on the SHIFTED timestamp',
+        );
+
+        Carbon::setTestNow();
+    }
+
+    /**
+     * MIRROR REGRESSION: an occurrence whose $cursor sits inside the window
+     * but whose shift pushes $emitAt to or past $windowEnd must NOT be
+     * rendered — it belongs to a later page than the one the user asked for.
+     */
+    public function test_projection_weekly_cursor_shifting_past_window_end_is_not_emitted(): void
+    {
+        Carbon::setTestNow('2026-07-01 00:00:00');
+
+        // Saturday anchor — shifts to the following Monday.
+        $nextRunAt = Carbon::parse('2026-07-11 12:00:00', 'UTC');
+        $campaign  = $this->makeRecurring($nextRunAt, '2026-09-01', 'weekly');
+
+        // windowEnd sits between the unshifted Saturday cursor and its
+        // shifted Monday target: cursor (Jul 11) < windowEnd (Jul 13), but
+        // emitAt (Jul 13, Monday) >= windowEnd.
+        $windowStart = '2026-07-06T00:00:00+00:00';
+        $windowEnd   = '2026-07-13T00:00:00+00:00';
+
+        $events = app(PlannerService::class)->runsFeed($windowStart, $windowEnd);
+
+        $projected = collect($events)->filter(
+            fn ($e) => str_starts_with((string) $e['id'], 'projected-' . $campaign->id . '-')
+        )->values();
+
+        $this->assertCount(0, $projected,
+            'An occurrence whose shifted target lands at/past windowEnd must not be emitted on this page');
+
+        Carbon::setTestNow();
+    }
+
+    /**
+     * MUST-HAVE regression guard: a materialised CampaignRun whose run_at was
+     * SHIFTED by the scheduler (weekly/monthly Sat/Sun anchor) must dedup
+     * against its own projection. $realRunKeys is keyed on the real run's
+     * (shifted) run_at; if the projection still deduped on the unshifted
+     * cursor, this would render the same occurrence TWICE — the real run
+     * plus a phantom "projected-" duplicate at the wrong (unshifted) time.
+     */
+    public function test_projection_dedups_against_materialized_run_with_shifted_run_at(): void
+    {
+        Carbon::setTestNow('2026-07-01 00:00:00');
+
+        // Saturday anchor; the scheduler would have shifted the materialised
+        // run to the following Monday while keying occurrence_key on the
+        // unshifted anchor (see CampaignSchedulerService::generateDueRuns()).
+        $anchor = Carbon::parse('2026-07-04 12:00:00', 'UTC');
+        $shiftedRunAt = Carbon::parse('2026-07-06 12:00:00', 'UTC');
+        $campaign = $this->makeRecurring($anchor, '2026-09-01', 'weekly');
+
+        CampaignRun::create([
+            'campaign_id'    => $campaign->id,
+            'occurrence_key' => 'rec-' . $anchor->format('YmdHis'),
+            'run_at'         => $shiftedRunAt,
+            'status'         => 'scheduled',
+        ]);
+
+        $events = collect(app(PlannerService::class)->runsFeed(
+            '2026-07-04T00:00:00+00:00',
+            '2026-07-08T00:00:00+00:00',
+        ));
+
+        $atShiftedTime = $events->filter(
+            fn (array $e): bool => Carbon::parse($e['start'])->utc()->eq($shiftedRunAt)
+        );
+
+        $this->assertCount(1, $atShiftedTime, 'Exactly one event at the shifted Monday timestamp — no phantom duplicate');
+        $this->assertFalse(
+            str_starts_with((string) $atShiftedTime->first()['id'], 'projected-'),
+            'The single event must be the real (materialised) run, not a projection',
+        );
+        $this->assertNull(
+            $events->firstWhere('id', 'projected-' . $campaign->id . '-' . $anchor->format('YmdHis')),
+            'No projection must ever be keyed on the unshifted Saturday anchor timestamp',
+        );
+
+        Carbon::setTestNow();
+    }
+
 
     public function test_active_paced_sequence_projects_only_its_next_wave(): void
     {
@@ -700,6 +1125,35 @@ class PlannerFeedTest extends TestCase
         $this->assertSame(1, $projected[0]['extendedProps']['stepNumber']);
         $this->assertSame(12, $projected[0]['extendedProps']['companyLimit']);
         $this->assertTrue($projected[0]['extendedProps']['launchable']);
+    }
+
+    /**
+     * A paced-sequence cursor sitting on a blocked day (Sat/Sun) must project
+     * on the shifted allowed day, exactly ONCE — not on the raw Saturday, not
+     * twice. Mirrors PacedSequenceEnrollmentService::evaluateDue(), which
+     * normalises the same blocked cursor to the next allowed local day before
+     * ever evaluating it as due.
+     */
+    public function test_paced_sequence_blocked_cursor_projects_on_shifted_day_exactly_once(): void
+    {
+        // Saturday.
+        $nextRunAt = Carbon::parse('2026-08-01 09:00:00', 'UTC');
+        $campaign = $this->makePacedSequence($nextRunAt);
+
+        $events = collect(app(PlannerService::class)->runsFeed(
+            '2026-08-01T00:00:00+00:00',
+            '2026-08-05T00:00:00+00:00',
+        ));
+        $projected = $events->where('extendedProps.eventKind', 'sequence-wave-projection')->values();
+
+        $this->assertCount(1, $projected, 'Exactly one projected wave — not on Saturday, not duplicated');
+
+        $start = Carbon::parse($projected[0]['start'])->utc();
+        $this->assertSame('2026-08-03 09:00:00', $start->toDateTimeString(), 'Shifted to Monday, wall time preserved');
+        $this->assertSame('projected-sequence-' . $campaign->id . '-20260803090000', $projected[0]['id']);
+
+        // Not present at the raw Saturday timestamp.
+        $this->assertNull($events->firstWhere('id', 'projected-sequence-' . $campaign->id . '-20260801090000'));
     }
 
     public function test_inactive_paced_sequence_is_gray_and_not_launchable_but_stays_in_range_only(): void

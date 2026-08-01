@@ -7,6 +7,7 @@ use App\Models\CampaignCompanyDispatch;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
 use App\Models\Contact;
+use App\Services\Scheduling\BusinessCalendarService;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -14,7 +15,10 @@ use Illuminate\Support\Facades\DB;
 /** Materialises one company-limited, contact-frozen batch for a paced campaign. */
 class PacedCampaignBatchService
 {
-    public function __construct(private readonly SegmentService $segmentService) {}
+    public function __construct(
+        private readonly SegmentService $segmentService,
+        private readonly BusinessCalendarService $calendar,
+    ) {}
 
     /**
      * Create or retrieve the deterministic batch for one local business date.
@@ -32,7 +36,7 @@ class PacedCampaignBatchService
 
             $localDate = $localBusinessDate->copy()->setTimezone($lockedCampaign->scheduleTimezone());
 
-            if ($localDate->isWeekend()) {
+            if ($this->calendar->isBlockedDate($localDate)) {
                 return null;
             }
 
@@ -56,8 +60,8 @@ class PacedCampaignBatchService
 
             $timezone = $lockedCampaign->scheduleTimezone();
             $localNow = $now->copy()->setTimezone($timezone);
-            if ($localNow->isWeekend()) {
-                throw new \InvalidArgumentException('Les lots progressifs sont envoyés uniquement du lundi au vendredi.');
+            if ($this->calendar->isBlockedDate($localNow)) {
+                throw new \InvalidArgumentException('Les lots progressifs ne peuvent pas être créés un jour non ouvré.');
             }
 
             $occurrenceKey = 'paced-' . $localNow->format('Ymd');
@@ -105,7 +109,7 @@ class PacedCampaignBatchService
             $timezone = $lockedCampaign->scheduleTimezone();
             $localNow = $now->copy()->setTimezone($timezone);
 
-            if ($localNow->isWeekend()) {
+            if ($this->calendar->isBlockedDate($localNow)) {
                 return null;
             }
 
@@ -139,16 +143,22 @@ class PacedCampaignBatchService
         }, 3);
     }
 
-    /** Advance one Monday-Friday occurrence while preserving local wall time. */
+    /**
+     * Advance one occurrence forward (business day, skipping weekends/blackout
+     * dates) while preserving local wall time.
+     *
+     * The contract is "advance at least one occurrence" — the addDay() MUST run
+     * BEFORE shiftToAllowed(), never after. shiftToAllowed() is idempotent on an
+     * already-allowed input (see BusinessCalendarService), so calling it on
+     * $from directly (without the addDay() first) would return $from unchanged
+     * whenever $from already falls on an allowed day, making the unbounded
+     * `while` loops in evaluateDue() (normalizing a stale cursor) spin forever.
+     */
     public function computeNextBusinessRun(Carbon $from, string $timezone): Carbon
     {
         $next = $from->copy()->setTimezone($timezone)->addDay();
 
-        while ($next->isWeekend()) {
-            $next->addDay();
-        }
-
-        return $next->utc();
+        return $this->calendar->shiftToAllowed($next, $timezone);
     }
 
     /** Campaign row must already be locked by the surrounding transaction. */

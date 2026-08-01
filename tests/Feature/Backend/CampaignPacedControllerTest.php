@@ -172,7 +172,11 @@ class CampaignPacedControllerTest extends TestCase
         $this->contacts(1, 1);
 
         $this->actingAs($this->admin)->postJson("/admin/campaigns/{$campaign->id}/send")
-            ->assertStatus(422)->assertJsonFragment(['message' => 'error']);
+            ->assertStatus(422)
+            ->assertJsonFragment([
+                'message' => 'error',
+                'text' => 'Les lots progressifs ne peuvent pas être créés un jour non ouvré.',
+            ]);
     }
 
     public function test_paced_toggle_reactivation_requires_cursor_and_valid_limit(): void

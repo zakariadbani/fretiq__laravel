@@ -67,6 +67,14 @@ class AppServiceProvider extends ServiceProvider
             \App\Services\Campaign\SequenceService::class,
         );
 
+        // BusinessCalendarService — global "is this day allowed to send" source
+        // of truth (skip_weekends + blackout_dates). No constructor deps; reads
+        // Setting::get() directly, so a plain singleton mapping is sufficient.
+        $this->app->singleton(
+            \App\Services\Scheduling\BusinessCalendarService::class,
+            \App\Services\Scheduling\BusinessCalendarService::class,
+        );
+
         // CampaignService depends on SendWindowGuard and SequenceService — bind
         // explicitly so the container injects the singleton instances correctly.
         $this->app->singleton(
@@ -75,6 +83,7 @@ class AppServiceProvider extends ServiceProvider
                 segmentService: $app->make(\App\Services\Campaign\SegmentService::class),
                 sendWindowGuard: $app->make(\App\Services\Campaign\SendWindowGuard::class),
                 sequenceService: $app->make(\App\Services\Campaign\SequenceService::class),
+                calendar: $app->make(\App\Services\Scheduling\BusinessCalendarService::class),
             ),
         );
 

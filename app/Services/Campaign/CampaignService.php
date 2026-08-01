@@ -10,6 +10,7 @@ use App\Models\EmailTrackingEvent;
 use App\Models\SequenceEnrollment;
 use App\Models\Suppression;
 use App\Services\Campaign\ZohoCampaignsDriver;
+use App\Services\Scheduling\BusinessCalendarService;
 use App\Support\TrackingToken;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -41,6 +42,7 @@ class CampaignService
         private readonly SegmentService   $segmentService,
         private readonly SendWindowGuard  $sendWindowGuard,
         private readonly SequenceService  $sequenceService,
+        private readonly BusinessCalendarService $calendar,
     ) {}
 
     // ── Scheduling ─────────────────────────────────────────────────────────────
@@ -293,6 +295,25 @@ class CampaignService
                 Log::info('[CampaignService] dispatchDue: skipping run — campaign is paused (is_active=false).', [
                     'run_id'      => $run->id,
                     'campaign_id' => $run->campaign_id,
+                ]);
+                continue;
+            }
+
+            // Hold gate mirroring the send-window defer below (sendRun():377-385),
+            // which gates on Carbon::now() rather than the run's own timestamp —
+            // same here: checking run_at's OWN date would hold a stale weekend
+            // run_at FOREVER, since this gate never mutates the row. Checking
+            // "is TODAY blocked" is what lets the same untouched row dispatch on
+            // the next allowed day. One-shot campaigns are deliberately exempt —
+            // the automation calendar (skip_weekends/blackout_dates) applies to
+            // automation only; "Envoyer maintenant" and a hand-picked one-shot
+            // date stay allowed on any day.
+            if ($run->campaign->schedule_type !== 'one_shot'
+                && $this->calendar->isBlocked(now(), $this->calendar->resolveTimezone($run->campaign))) {
+                Log::debug('[CampaignService] dispatchDue: holding run — today is a blocked day.', [
+                    'run_id'      => $run->id,
+                    'campaign_id' => $run->campaign_id,
+                    'run_at'      => $run->run_at?->toIso8601String(),
                 ]);
                 continue;
             }

@@ -19,6 +19,7 @@ use App\Models\Suppression;
 use App\Models\User;
 use App\Services\Campaign\CampaignService;
 use App\Services\Campaign\SequenceService;
+use Carbon\Carbon;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -791,6 +792,12 @@ class CampaignSequenceLaunchTest extends TestCase
 
     public function test_due_sequence_smtp_only_dispatches_for_active_local_or_unattributed_enrollments(): void
     {
+        // Pinned to a weekday: SequenceService::processDue() (chunk 6) holds
+        // any enrollment when TODAY is a blocked day (weekend/blackout, via
+        // BusinessCalendarService) — without a freeze this test is flaky
+        // depending on which real calendar day it happens to run on.
+        Carbon::setTestNow(Carbon::parse('2026-07-27 10:00:00', 'UTC')); // Monday
+
         config(['services.zoho.driver' => 'local']);
         $sequence = $this->makeSequenceWithSteps();
         $segment = $this->makeSegment();
@@ -835,6 +842,8 @@ class CampaignSequenceLaunchTest extends TestCase
         $service->sendStep($unattributed->fresh());
         Mail::assertNothingSent();
         $this->assertSame(0, SequenceStepSend::count());
+
+        Carbon::setTestNow();
     }
 
     /**

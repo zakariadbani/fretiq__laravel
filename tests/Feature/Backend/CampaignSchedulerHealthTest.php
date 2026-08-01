@@ -115,6 +115,14 @@ class CampaignSchedulerHealthTest extends TestCase
 
     public function test_generate_runs_command_records_success_and_is_idempotent(): void
     {
+        // The class-level testNow pin (2026-07-12 10:00 UTC, set in setUp())
+        // is a Sunday — incidental to this test's actual concern (the command
+        // is idempotent), not something it means to exercise. Disable the
+        // chunk-4 weekend-skip logic here so a daily campaign anchored on that
+        // Sunday still materialises normally; weekend skip/shift behaviour has
+        // its own dedicated coverage (CampaignSchedulerServiceTest).
+        Setting::set('planification.skip_weekends', false);
+
         $campaign = $this->makeCampaign([
             'schedule_type' => 'recurring',
             'recurrence' => ['frequency' => 'daily'],

@@ -23,6 +23,10 @@ class SettingsSeeder extends Seeder
      * SettingController::tabs() and the DEFAULT_* constants in
      * HomepageSnapshotService / DiscoveryPipelineService / DomainBlocklist.
      *
+     * `planification.*` defaults back App\Services\Scheduling\BusinessCalendarService —
+     * an absent/blank `blackout_dates` row means an EMPTY blackout set (not a
+     * built-in holiday list, unlike `decouverte.blocked_domains` above).
+     *
      * @return array<string, array<string, mixed>>
      */
     protected function defaults(): array
@@ -60,6 +64,10 @@ class SettingsSeeder extends Seeder
                 'campaign_sync_stats'                 => true,
                 'discovery_terminalize_stale'         => true,
                 'prospect_auto_discover'              => true,
+            ],
+            'planification' => [
+                'skip_weekends'  => true,
+                'blackout_dates' => '',
             ],
         ];
     }

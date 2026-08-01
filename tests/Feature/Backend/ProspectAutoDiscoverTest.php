@@ -61,7 +61,11 @@ class ProspectAutoDiscoverTest extends TestCase
 
     public function test_dispatches_job_and_creates_run_for_due_criteria_and_proves_paris_timezone_conversion(): void
     {
-        Carbon::setTestNow('2026-07-04 10:00:00');
+        // 2026-07-06 is a Monday (2026-07-04 — the date this test used before the
+        // chunk-7 day-level calendar gate landed — is a Saturday, which the new
+        // gate now blocks by default via planification.skip_weekends). Same
+        // summer/CEST offset, unrelated to the Paris-hour conversion under test.
+        Carbon::setTestNow('2026-07-06 10:00:00');
         Queue::fake();
 
         $criteria = $this->makeCriteria([
@@ -87,13 +91,19 @@ class ProspectAutoDiscoverTest extends TestCase
      * the SAME Paris calendar day (2026-01-11 Paris) must produce exactly ONE run
      * + ONE dispatched job — not two.
      *
-     * Winter date (CET, UTC+1): 2026-01-10 23:30 UTC = 2026-01-11 00:30 Paris.
-     * 2026-01-11 00:30 UTC = 2026-01-11 01:30 Paris. Both ticks land on Paris day
-     * 2026-01-11 — with the old UTC-quota_date bug they'd get quota_date
-     * 2026-01-10 and 2026-01-11 respectively (two reservations); with the fix
+     * Winter date (CET, UTC+1): 2026-01-12 23:30 UTC = 2026-01-13 00:30 Paris.
+     * 2026-01-13 00:30 UTC = 2026-01-13 01:30 Paris. Both ticks land on Paris day
+     * 2026-01-13 — with the old UTC-quota_date bug they'd get quota_date
+     * 2026-01-12 and 2026-01-13 respectively (two reservations); with the fix
      * (Paris quota_date via DiscoveryQuotaService::today()) both write
-     * quota_date=2026-01-11 → the second tick's whereDoesntHave() sees the first
+     * quota_date=2026-01-13 → the second tick's whereDoesntHave() sees the first
      * run and skips.
+     *
+     * Dates are 2026-01-12/13 (Mon/Tue), NOT the original 2026-01-10/11 (Sat/Sun)
+     * — the chunk-7 day-level calendar gate (planification.skip_weekends,
+     * default true) would otherwise block both ticks outright and this test
+     * would stop reproducing the boundary-straddle bug it exists to guard.
+     * Same UTC+1 winter offset, so the boundary relationship is unchanged.
      */
     public function test_boundary_straddle_does_not_double_fire_within_same_paris_day(): void
     {
@@ -108,8 +118,8 @@ class ProspectAutoDiscoverTest extends TestCase
             'run_at_hour' => 0,
         ]);
 
-        // Tick 1: 2026-01-10 23:30 UTC = 2026-01-11 00:30 Paris.
-        Carbon::setTestNow(Carbon::parse('2026-01-10 23:30:00', 'UTC'));
+        // Tick 1: 2026-01-12 23:30 UTC = 2026-01-13 00:30 Paris.
+        Carbon::setTestNow(Carbon::parse('2026-01-12 23:30:00', 'UTC'));
         $this->artisan('prospect:auto-discover')->assertExitCode(0);
 
         $this->assertSame(
@@ -119,8 +129,8 @@ class ProspectAutoDiscoverTest extends TestCase
         );
         Queue::assertPushed(RunDiscoveryPipelineJob::class, 1);
 
-        // Tick 2: 2026-01-11 00:30 UTC = 2026-01-11 01:30 Paris — SAME Paris day.
-        Carbon::setTestNow(Carbon::parse('2026-01-11 00:30:00', 'UTC'));
+        // Tick 2: 2026-01-13 00:30 UTC = 2026-01-13 01:30 Paris — SAME Paris day.
+        Carbon::setTestNow(Carbon::parse('2026-01-13 00:30:00', 'UTC'));
         $this->artisan('prospect:auto-discover')->assertExitCode(0);
 
         $this->assertSame(
@@ -133,7 +143,7 @@ class ProspectAutoDiscoverTest extends TestCase
         // Both reservations (well, the single one) must be pinned to the Paris day.
         $this->assertDatabaseHas('discovery_runs', [
             'prospect_criteria_id' => $criteria->id,
-            'quota_date' => '2026-01-11',
+            'quota_date' => '2026-01-13',
         ]);
     }
 
@@ -141,9 +151,14 @@ class ProspectAutoDiscoverTest extends TestCase
      * Toggling decouverte.timezone to UTC must change the gate's calendar day —
      * proving the setting actually drives behavior, not just quotaTz() in isolation.
      *
-     * With tz=UTC, 2026-01-10 23:30 UTC and 2026-01-11 00:30 UTC are DIFFERENT
-     * UTC calendar days (2026-01-10 vs 2026-01-11), so both ticks are allowed to
+     * With tz=UTC, 2026-01-12 23:30 UTC and 2026-01-13 00:30 UTC are DIFFERENT
+     * UTC calendar days (2026-01-12 vs 2026-01-13), so both ticks are allowed to
      * fire — two runs, two jobs.
+     *
+     * Dates are 2026-01-12/13 (Mon/Tue), NOT the original 2026-01-10/11 (Sat/Sun)
+     * — the chunk-7 day-level calendar gate reads planification.skip_weekends
+     * (default true) against the SAME quotaTz(), so a weekend UTC day would be
+     * blocked regardless of this test's decouverte.timezone override.
      */
     public function test_utc_setting_drives_gate_by_utc_calendar_day(): void
     {
@@ -158,13 +173,13 @@ class ProspectAutoDiscoverTest extends TestCase
             'run_at_hour' => 0,
         ]);
 
-        // Tick 1: 2026-01-10 23:30 UTC — UTC day 2026-01-10.
-        Carbon::setTestNow(Carbon::parse('2026-01-10 23:30:00', 'UTC'));
+        // Tick 1: 2026-01-12 23:30 UTC — UTC day 2026-01-12.
+        Carbon::setTestNow(Carbon::parse('2026-01-12 23:30:00', 'UTC'));
         $this->artisan('prospect:auto-discover')->assertExitCode(0);
 
         $this->assertDatabaseHas('discovery_runs', [
             'prospect_criteria_id' => $criteria->id,
-            'quota_date' => '2026-01-10',
+            'quota_date' => '2026-01-12',
         ]);
 
         // Queue::fake() leaves the first run pending forever. In production a
@@ -175,8 +190,8 @@ class ProspectAutoDiscoverTest extends TestCase
             'finished_at' => Carbon::now(),
         ]);
 
-        // Tick 2: 2026-01-11 00:30 UTC — a NEW UTC day (2026-01-11) → allowed to fire again.
-        Carbon::setTestNow(Carbon::parse('2026-01-11 00:30:00', 'UTC'));
+        // Tick 2: 2026-01-13 00:30 UTC — a NEW UTC day (2026-01-13) → allowed to fire again.
+        Carbon::setTestNow(Carbon::parse('2026-01-13 00:30:00', 'UTC'));
         $this->artisan('prospect:auto-discover')->assertExitCode(0);
 
         $this->assertSame(
@@ -187,7 +202,7 @@ class ProspectAutoDiscoverTest extends TestCase
         Queue::assertPushed(RunDiscoveryPipelineJob::class, 2);
         $this->assertDatabaseHas('discovery_runs', [
             'prospect_criteria_id' => $criteria->id,
-            'quota_date' => '2026-01-11',
+            'quota_date' => '2026-01-13',
         ]);
     }
 
@@ -322,7 +337,9 @@ class ProspectAutoDiscoverTest extends TestCase
             'assigned_by' => null,
         ]);
 
-        Carbon::setTestNow('2026-07-04 10:00:00');
+        // 2026-07-06 (Monday), not the original 2026-07-04 (Saturday) — the
+        // chunk-7 day-level calendar gate blocks weekends by default.
+        Carbon::setTestNow('2026-07-06 10:00:00');
         Queue::fake();
 
         $criteria = $this->makeCriteria([
@@ -346,7 +363,9 @@ class ProspectAutoDiscoverTest extends TestCase
 
     public function test_runs_again_next_day(): void
     {
-        Carbon::setTestNow('2026-07-04 10:00:00');
+        // 2026-07-06 → 07 (Mon → Tue), not the original 2026-07-04 → 05 (Sat →
+        // Sun) — the chunk-7 day-level calendar gate blocks weekends by default.
+        Carbon::setTestNow('2026-07-06 10:00:00');
         Queue::fake();
 
         $criteria = $this->makeCriteria(['is_active' => true, 'auto_run' => true, 'run_at_hour' => 8]);
@@ -354,7 +373,7 @@ class ProspectAutoDiscoverTest extends TestCase
         $this->artisan('prospect:auto-discover')->assertExitCode(0);
         Queue::assertPushed(RunDiscoveryPipelineJob::class, 1);
 
-        Carbon::setTestNow('2026-07-05 10:00:00');
+        Carbon::setTestNow('2026-07-07 10:00:00');
 
         $this->artisan('prospect:auto-discover')->assertExitCode(0);
 

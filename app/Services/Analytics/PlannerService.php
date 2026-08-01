@@ -6,6 +6,7 @@ use App\Models\Campaign;
 use App\Models\CampaignRun;
 use App\Models\ProspectCriteria;
 use App\Services\Campaign\CampaignSchedulerService;
+use App\Services\Scheduling\BusinessCalendarService;
 use Carbon\Carbon;
 
 /**
@@ -49,11 +50,18 @@ class PlannerService
      * Absolute traversal backstop per campaign (cursor advance iterations).
      * Guards runaway loops when next_run_at is far behind the window start
      * (e.g. navigating 400 days ahead of a daily campaign's cursor).
+     *
+     * Business-calendar note: a blocked day burns a traversal without
+     * burning an emit slot (see the recurring-projection loop below), so
+     * over a normal week that's ~7 traversals per 5 emits — roughly a 1.4×
+     * multiplier versus an all-days recurrence. Still far under this cap
+     * even for a long-lived daily campaign.
      */
     private const PROJECTION_TRAVERSAL_CAP = 5000;
 
     public function __construct(
         private readonly CampaignSchedulerService $scheduler,
+        private readonly BusinessCalendarService $calendar,
     ) {}
 
     /**
@@ -191,30 +199,86 @@ class PlannerService
                 $tz        = $campaign->timezone ?? 'UTC';
                 $recurrence = $campaign->recurrence ?? [];
 
+                // Business-calendar handling mirrors CampaignSchedulerService::
+                // generateDueRuns() exactly (see that class's docblock): daily-like
+                // frequencies are SKIPPED on a blocked day (no event at all — a
+                // shift would pile a Sat- and a Sun-anchored daily occurrence onto
+                // the same Monday); weekly/monthly are SHIFTED forward instead
+                // (skipping a Saturday-anchored weekly campaign would mean it
+                // silently never projects, ever).
+                $frequency   = $recurrence['frequency'] ?? 'daily';
+                $isDailyLike = $frequency !== 'weekly' && $frequency !== 'monthly';
+
                 $emitted    = 0;
                 $traversals = 0;
 
-                // Emit-then-advance: emit cursor if in window, then advance.
-                // Pre-window iterations (cursor < windowStart) skip without counting
-                // toward the emit cap (they do count toward traversal backstop).
+                // Emit-then-advance: emit $emitAt if in window, then advance $cursor.
+                // Pre-window iterations (emitAt < windowStart) skip without counting
+                // toward the emit cap (they do count toward traversal backstop). The
+                // loop CONDITION still tests the unshifted $cursor against $windowEnd
+                // (mirroring how generateDueRuns() advances from the unshifted
+                // anchor) — the emit decision below is what moved to $emitAt.
+                // shiftToAllowed() only ever shifts FORWARD (never earlier than its
+                // input — see BusinessCalendarService's hard contract), so once
+                // $cursor >= $windowEnd the loop already stops; no in-window
+                // occurrence can be skipped at the trailing edge by continuing to
+                // gate the while-condition on $cursor.
                 while ($cursor !== null && $cursor->lt($windowEnd)) {
                     if ($traversals++ >= self::PROJECTION_TRAVERSAL_CAP) {
                         break;
                     }
 
-                    if ($cursor->gte($windowStart)) {
+                    // Daily-like on a blocked day: advance without emitting.
+                    // computeNextRun() already skip-loops daily-like frequencies
+                    // internally, so in practice this only ever fires on the very
+                    // FIRST cursor (the raw, not-yet-normalised next_run_at anchor
+                    // straight from the DB) — every subsequent cursor value it
+                    // hands back has already been walked past any blocked days.
+                    if ($isDailyLike && $this->calendar->isBlocked($cursor, $tz)) {
+                        $cursor = $this->scheduler->computeNextRun($recurrence, $cursor, $tz);
+
+                        continue;
+                    }
+
+                    // Weekly/monthly: the occurrence still falls on $cursor, but
+                    // it DELIVERS on the next allowed day. Daily-like: $cursor is
+                    // already unblocked at this point (see above), so shifting is
+                    // a no-op — computed anyway to keep one code path.
+                    $emitAt = $isDailyLike ? $cursor : $this->calendar->shiftToAllowed($cursor, $tz);
+
+                    // Gate the emit decision on $emitAt, NOT the unshifted $cursor.
+                    // A weekly/monthly cursor that sits just before $windowStart on
+                    // a blocked day (e.g. a Sunday) can shift INTO the window (e.g.
+                    // the following Monday) — CampaignSchedulerService::
+                    // generateDueRuns() will materialise a real run there, so the
+                    // projection must show it too. Testing the unshifted $cursor
+                    // would silently drop that occurrence — and the loop does NOT
+                    // self-correct: skipping the emit here does not re-try this
+                    // occurrence, the cursor simply advances to a different
+                    // occurrence a whole cycle later. The mirror case also applies:
+                    // a cursor inside the window whose shift pushes $emitAt to or
+                    // past $windowEnd must NOT be rendered on the page the user
+                    // asked for.
+                    if ($emitAt->gte($windowStart) && $emitAt->lt($windowEnd)) {
                         // Check emit cap (in-window only).
                         if ($emitted >= self::PROJECTION_EMIT_CAP) {
                             break;
                         }
 
-                        $dedupKey = $campaign->id . '|' . $cursor->format('YmdHis');
+                        // CRITICAL: dedup on $emitAt (the shifted value), never on
+                        // $cursor (the unshifted one). $realRunKeys is keyed on the
+                        // materialised run's real run_at, which generateDueRuns()
+                        // now WRITES SHIFTED — keying this lookup on the unshifted
+                        // cursor would miss the match and render every already-
+                        // materialised shifted run TWICE (the real run + a phantom
+                        // projection at the wrong, unshifted timestamp).
+                        $dedupKey = $campaign->id . '|' . $emitAt->format('YmdHis');
 
                         if (!isset($realRunKeys[$dedupKey])) {
                             $events[] = [
-                                'id'    => 'projected-' . $campaign->id . '-' . $cursor->format('YmdHis'),
+                                'id'    => 'projected-' . $campaign->id . '-' . $emitAt->format('YmdHis'),
                                 'title' => $campaign->name,
-                                'start' => $cursor->toIso8601String(),
+                                'start' => $emitAt->toIso8601String(),
                                 'color' => $projectedHex,
                                 'url'   => route('admin.campaigns.view', $campaign->id),
                                 'extendedProps' => [
@@ -234,8 +298,10 @@ class PlannerService
                         $emitted++;
                     }
 
-                    // Advance cursor via CampaignSchedulerService::computeNextRun()
-                    // which is DST-correct after Fix 0.
+                    // Advance cursor via CampaignSchedulerService::computeNextRun(),
+                    // FROM THE UNSHIFTED $cursor — never from $emitAt — exactly as
+                    // generateDueRuns() advances from the anchor, not the shifted
+                    // run_at. Also DST-correct after Fix 0.
                     $cursor = $this->scheduler->computeNextRun($recurrence, $cursor, $tz);
                 }
             }
@@ -255,7 +321,16 @@ class PlannerService
 
 
             foreach ($sequenceCampaigns as $campaign) {
-                $cursor = $campaign->next_run_at->copy()->utc();
+                // Shift BEFORE the window check: PacedSequenceEnrollmentService::
+                // evaluateDue() already normalises a blocked-day cursor to the
+                // next allowed local day at evaluation time (its own
+                // shiftToAllowed-based while loop), so this projection is
+                // showing where the cursor WILL land, not where it raw-sits in
+                // the DB. Checking the window against the unshifted value would
+                // both wrongly DROP a cursor that shifts INTO the window and
+                // wrongly SHOW one that shifts OUT of it.
+                $tz     = $campaign->scheduleTimezone();
+                $cursor = $this->calendar->shiftToAllowed($campaign->next_run_at->copy()->utc(), $tz);
 
                 if ($cursor->lt($windowStart) || ! $cursor->lt($windowEnd)) {
                     continue;
@@ -335,7 +410,26 @@ class PlannerService
             foreach ($autoCriteria as $criteria) {
                 $date = $projectionDate->copy();
                 $emitted = 0;
+                $traversals = 0;
                 while ($emitted < self::PROJECTION_EMIT_CAP) {
+                    // Traversal backstop for symmetry with the recurring-projection
+                    // loop above. Not strictly load-bearing here — the loop below
+                    // always terminates via the unconditional $cursorUtc >= $windowEnd
+                    // break, and $windowEnd is always finite (defaults to now()+3mo)
+                    // — but cheap insurance against a future change that removes
+                    // that guarantee.
+                    if ($traversals++ >= self::PROJECTION_TRAVERSAL_CAP) {
+                        break;
+                    }
+
+                    // $date is already in $timezone (built above) — isBlockedDate()
+                    // reads it as-is, no re-conversion.
+                    if ($this->calendar->isBlockedDate($date)) {
+                        $date->addDay()->startOfDay();
+
+                        continue;
+                    }
+
                     $cursorUtc = $date->copy()->setTime((int) $criteria->run_at_hour, 0)->utc();
                     if ($cursorUtc->gte($windowEnd)) {
                         break;

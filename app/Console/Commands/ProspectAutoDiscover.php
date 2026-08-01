@@ -12,6 +12,7 @@ use App\Jobs\RunDiscoveryPipelineJob;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Services\Quota\DiscoveryQuotaService;
+use App\Services\Scheduling\BusinessCalendarService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -45,6 +46,19 @@ use Illuminate\Support\Facades\Log;
  *
  * Scheduled: hourly, withoutOverlapping (routes/console.php).
  * Signature: prospect:auto-discover
+ *
+ * Day-level gate (BusinessCalendarService): before the hour gate is even
+ * evaluated, the WHOLE tick is skipped when today (in the quota timezone) is
+ * a blocked day — a skipped weekend (planification.skip_weekends) or a
+ * blackout date (planification.blackout_dates). This reads the exact same
+ * quotaTz() as the hour gate and the quota_date comparison above, so the day
+ * check, the hour check, and the once-per-quota-day dedup all agree on the
+ * same calendar day — no UTC/local-midnight desync. On a blocked day the
+ * command exits self::SUCCESS (never FAILURE): a non-zero exit code is
+ * mapped to a 'failed' scheduled-task result by
+ * AppServiceProvider::boot()'s ScheduledTaskFinished listener, and a
+ * deliberately-skipped weekend/holiday must not show up as a broken cron in
+ * the observability dashboard.
  */
 class ProspectAutoDiscover extends Command
 {
@@ -65,10 +79,21 @@ class ProspectAutoDiscover extends Command
     /**
      * Execute the command.
      */
-    public function handle(DiscoveryQuotaService $quotaService): int
+    public function handle(DiscoveryQuotaService $quotaService, BusinessCalendarService $calendar): int
     {
         $currentHour = $quotaService->currentHour();
         $today = $quotaService->today()->toDateString();
+
+        // Day-level gate: skip the whole tick on a blocked day (weekend or
+        // blackout date). $quotaService->today() already returns a tz-neutral
+        // local midnight matching the quota-timezone calendar date — do NOT
+        // run it through setTimezone() again, that would shift it by the
+        // UTC/Paris offset and desync it from the hour gate / quota_date above.
+        if ($calendar->isBlockedDate($quotaService->today())) {
+            $this->info("Auto-discovery tick: skipped — {$today} is a non-working day (weekend or blackout date).");
+
+            return self::SUCCESS;
+        }
 
         $due = ProspectCriteria::query()
             ->where('is_active', true)
