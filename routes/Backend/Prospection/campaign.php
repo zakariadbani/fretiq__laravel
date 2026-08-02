@@ -10,6 +10,7 @@ Route::controller(CampaignController::class)->prefix('admin')->name('admin.')->g
 
     // Action routes — before {id} to avoid ambiguity
     Route::get('/campaigns/segment-count/{id}', 'segmentCount')->name('campaigns.segmentCount');
+    Route::get('/campaigns/{id}/next-wave-preview', 'nextWavePreview')->name('campaigns.nextWavePreview');
     Route::post('/campaigns/audience-language-split', 'audienceLanguageSplit')->name('campaigns.audienceLanguageSplit');
     Route::get('/campaigns/{id}/dispatch-preview', 'dispatchPreview')->name('campaigns.dispatchPreview');
     Route::post('/campaigns/{id}/schedule', 'schedule')->name('campaigns.schedule');

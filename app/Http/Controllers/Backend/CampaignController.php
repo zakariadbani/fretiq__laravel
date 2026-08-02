@@ -26,6 +26,7 @@ use App\Services\Campaign\CampaignZohoListSyncService;
 use App\Services\Campaign\PacedCampaignBatchService;
 use App\Services\Campaign\PacedSequenceEnrollmentService;
 use App\Services\Campaign\SegmentService;
+use App\Services\Campaign\WaveProjectionService;
 use App\Services\Demande\DemandeCaptureService;
 use App\Services\Translation\LanguageResolver;
 use Carbon\Carbon;
@@ -55,7 +56,7 @@ class CampaignController extends BackendController
         // with a non-null default would be a PHP fatal (conflicting default).
         $this->viewConfigClass = CampaignViewConfig::class;
 
-        $this->middleware('permission:view campaigns')->only(['index', 'view', 'segmentCount']);
+        $this->middleware('permission:view campaigns')->only(['index', 'view', 'segmentCount', 'nextWavePreview']);
         $this->middleware('permission:create campaigns')->only(['create', 'store']);
         $this->middleware('permission:edit campaigns')->only(['edit', 'update', 'executeSwitch']);
         $this->middleware('permission:delete campaigns')->only(['delete']);
@@ -203,22 +204,9 @@ class CampaignController extends BackendController
                 ->pluck('contacts.company_id')
                 ->map(fn ($companyId) => (int) $companyId);
             $contactedCompanies = $currentCompanyIds->intersect($contactedCompanyIds)->count();
-            $existingSequenceContactIds = SequenceEnrollment::query()
-                ->where('sequence_id', $campaign->sequence_id)
-                ->pluck('contact_id')
-                ->mapWithKeys(fn ($contactId) => [(int) $contactId => true])
-                ->all();
-            $eligibleRemainingCompanies = $currentAudience
-                ->reject(fn ($contact) => isset($existingSequenceContactIds[(int) $contact->id]))
-                ->pluck('company_id')
-                ->filter()
-                ->map(fn ($companyId) => (int) $companyId)
-                ->unique()
-                ->count();
+            $projection = app(WaveProjectionService::class)->projectNext($campaign);
             $baseWaves = $campaign->runs
                 ->filter(fn (CampaignRun $run) => preg_match('/^sequence-wave-\d{6}$/', $run->occurrence_key) === 1);
-            $dailyLimit = max(1, $campaign->pacedDailyCompanyLimit());
-            $projectedRemainingWaves = (int) ceil($eligibleRemainingCompanies / $dailyLimit);
 
             $campaignProgress = [
                 'audience_companies' => $currentCompanyIds->count(),
@@ -229,15 +217,15 @@ class CampaignController extends BackendController
                 'progress_percent' => $currentCompanyIds->isEmpty()
                     ? 0
                     : (int) round(($contactedCompanies / $currentCompanyIds->count()) * 100),
-                'daily_limit' => $dailyLimit,
+                'daily_limit' => $projection['daily_limit'],
                 'waves' => [
                     'created' => $baseWaves->count(),
                     'completed' => $baseWaves->where('status', 'sent')->count(),
                     'pending' => $baseWaves->whereIn('status', ['prepared', 'scheduled', 'sending'])->count(),
                     'failed' => $baseWaves->where('status', 'failed')->count(),
                     'empty' => $baseWaves->where('driver_ref', 'zoho-wave-empty')->count(),
-                    'projected_remaining' => $projectedRemainingWaves,
-                    'projected_total' => $baseWaves->count() + $projectedRemainingWaves,
+                    'projected_remaining' => $projection['projected_remaining_waves'],
+                    'projected_total' => $baseWaves->count() + $projection['projected_remaining_waves'],
                 ],
             ];
         }
@@ -779,6 +767,29 @@ class CampaignController extends BackendController
             'contact_count' => $count,
             'company_count' => $companyCount,
         ]);
+    }
+
+    /** Preview the next progressive-sequence batch using unsaved form values. */
+    public function nextWavePreview(Request $request, $id)
+    {
+        $campaign = Campaign::findOrFail((int) $id);
+
+        if ($campaign->schedule_type !== 'sequence' || $campaign->sequence_enrollment_mode !== 'paced') {
+            return response()->json(['is_sequence_paced' => false]);
+        }
+
+        $validated = $request->validate([
+            'segment_id' => ['sometimes', 'nullable', 'integer', 'exists:segments,id'],
+            'daily_company_limit' => ['sometimes', 'nullable', 'integer', 'min:1'],
+        ]);
+
+        $projection = app(WaveProjectionService::class)->projectNext(
+            $campaign,
+            isset($validated['segment_id']) ? (int) $validated['segment_id'] : null,
+            isset($validated['daily_company_limit']) ? (int) $validated['daily_company_limit'] : null,
+        );
+
+        return response()->json(['is_sequence_paced' => true] + $projection);
     }
 
     /**

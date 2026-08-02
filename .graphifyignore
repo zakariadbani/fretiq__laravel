@@ -6,9 +6,7 @@
 /bootstrap/cache/
 /storage/
 # Metronic starter-kit theme + front-end build (not architecture)
-/resources/_keenthemes/
-/resources/mix/
-/resources/landing/
+/resources/
 # tests & test artifacts
 /tests/
 /playwright-report/

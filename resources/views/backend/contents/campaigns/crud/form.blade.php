@@ -522,12 +522,22 @@
                                         <label class="required fw-semibold fs-6 mb-2">Sociétés par jour</label>
                                         <input type="number"
                                                name="sequence_daily_company_limit"
+                                               id="sequence_daily_company_limit"
                                                class="form-control form-control-solid"
                                                min="1"
                                                value="{{ old('sequence_daily_company_limit', isset($model) && $model->schedule_type === 'sequence' && $model->sequence_enrollment_mode === 'paced' ? ($model->daily_company_limit ?? 20) : 20) }}" />
                                         <div class="form-text text-muted mt-1 fs-7">
                                             Chaque jour ouvré, toutes les personnes éligibles des sociétés retenues commencent ensemble à l’étape 1.
                                         </div>
+                                        @if(isset($model) && $model->id)
+                                            <div id="next-wave-preview"
+                                                 class="form-text text-muted mt-3 fs-7"
+                                                 aria-live="polite"
+                                                 data-url="{{ route('admin.campaigns.nextWavePreview', $model->id) }}">
+                                                <span class="spinner-border spinner-border-sm me-1"></span>
+                                                Calcul de la prochaine vague...
+                                            </div>
+                                        @endif
                                     </div>
                                 </div>
                             </div>
@@ -648,6 +658,80 @@
                     fetchCount(segmentSelect.value);
                 }
             }
+
+            // ── Next progressive-sequence wave preview ───────────────────────
+            const nextWavePreview = document.getElementById('next-wave-preview');
+            const dailyLimitInput = document.getElementById('sequence_daily_company_limit');
+            let nextWaveRequest = 0;
+            let nextWaveDebounce = null;
+
+            function scheduleNextWavePreview() {
+                if (!nextWavePreview) return;
+                ++nextWaveRequest;
+                window.clearTimeout(nextWaveDebounce);
+                nextWaveDebounce = window.setTimeout(refreshNextWavePreview, 400);
+            }
+
+            function refreshNextWavePreview() {
+                if (!nextWavePreview) return;
+
+                const requestId = nextWaveRequest;
+                const isPacedSequence = document.getElementById('schedule_type_select')?.value === 'sequence'
+                    && document.getElementById('sequence_enrollment_mode')?.value === 'paced';
+
+                if (!isPacedSequence) {
+                    nextWavePreview.classList.add('d-none');
+                    return;
+                }
+
+                nextWavePreview.classList.remove('d-none');
+
+                const segmentId = segmentSelect?.value;
+                const dailyLimit = Number.parseInt(dailyLimitInput?.value ?? '', 10);
+                if (!segmentId || !Number.isInteger(dailyLimit) || dailyLimit < 1) {
+                    nextWavePreview.textContent = 'Sélectionnez un segment et une limite quotidienne valide.';
+                    return;
+                }
+
+                nextWavePreview.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Calcul de la prochaine vague...';
+
+                axios.get(nextWavePreview.dataset.url, {
+                    params: {
+                        segment_id: segmentId,
+                        daily_company_limit: dailyLimit,
+                    },
+                }).then(function (response) {
+                    if (requestId !== nextWaveRequest) return;
+
+                    const data = response.data;
+                    if (!data.is_sequence_paced) {
+                        nextWavePreview.classList.add('d-none');
+                        return;
+                    }
+                    if (data.eligible_remaining_companies === 0) {
+                        nextWavePreview.textContent = 'Aucune entreprise éligible.';
+                        return;
+                    }
+
+                    nextWavePreview.innerHTML =
+                        'Prochaine vague : <strong>' + data.next_wave_companies + ' entreprise(s)</strong> (' +
+                        data.next_wave_contacts + ' contact(s)) · Restant : ' +
+                        data.eligible_remaining_companies + ' entreprise(s) (~' +
+                        data.projected_remaining_waves + ' vague(s)) · Prochaine exécution : ' +
+                        (data.next_run_at || 'non définie');
+                }).catch(function () {
+                    if (requestId !== nextWaveRequest) return;
+                    nextWavePreview.textContent = 'Impossible de calculer la prochaine vague.';
+                });
+            }
+
+            if (segmentSelect && nextWavePreview) {
+                segmentSelect.addEventListener('change', scheduleNextWavePreview);
+            }
+            if (dailyLimitInput && nextWavePreview) {
+                dailyLimitInput.addEventListener('input', scheduleNextWavePreview);
+            }
+            scheduleNextWavePreview();
 
             // ── Auto-fill subject hint from template ────────────────
             const templateSelect  = document.getElementById('template_select');
@@ -910,6 +994,7 @@
                 if (fieldTimezoneWrapper && scheduleTypeSelect?.value === 'sequence') {
                     fieldTimezoneWrapper.style.display = isPacedSequence ? '' : 'none';
                 }
+                scheduleNextWavePreview();
             }
 
             function applyScheduleMode(value) {
