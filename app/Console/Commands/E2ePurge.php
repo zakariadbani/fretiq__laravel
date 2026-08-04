@@ -6,6 +6,8 @@ namespace App\Console\Commands;
 
 use App\Models\Campaign;
 use App\Models\CampaignTemplate;
+use App\Models\Company;
+use App\Models\Contact;
 use App\Models\Package;
 use App\Models\ProspectCriteria;
 use App\Models\Segment;
@@ -70,6 +72,18 @@ class E2ePurge extends Command
             $campaignCount = Campaign::where('name', 'like', 'E2E_FIXTURE%')->count();
             Campaign::where('name', 'like', 'E2E_FIXTURE%')->delete();
             $this->info("  campaigns            deleted={$campaignCount}");
+
+            $fixtureContactEmails = [
+                'e2e.stats.opened@example.test',
+                'e2e.stats.unsent@example.test',
+            ];
+            $contactCount = Contact::withTrashed()->whereIn('email', $fixtureContactEmails)->count();
+            Contact::withTrashed()->whereIn('email', $fixtureContactEmails)->forceDelete();
+            $this->info("  contacts             deleted={$contactCount}");
+
+            $companyCount = Company::where('domain', 'e2e-sequence-statistics.example.test')->count();
+            Company::where('domain', 'e2e-sequence-statistics.example.test')->delete();
+            $this->info("  companies            deleted={$companyCount}");
 
             // ── 2. Sequence steps (child of sequences, CASCADE) ───────────────────────────
             // sequence_steps.sequence_id → sequences CASCADE — deleting fixture sequences

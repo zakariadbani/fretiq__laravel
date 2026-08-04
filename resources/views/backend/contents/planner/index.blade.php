@@ -106,6 +106,24 @@
     .fc .fc-fretiq-blocked {
         background-color: var(--bs-gray-100);
     }
+
+    @media (max-width: 767.98px) {
+        .fc .fc-header-toolbar {
+            align-items: stretch;
+            flex-direction: column;
+            gap: .75rem;
+        }
+
+        .fc .fc-toolbar-chunk {
+            display: flex;
+            justify-content: center;
+        }
+
+        .fc .fc-toolbar-title {
+            font-size: 1.1rem;
+            text-align: center;
+        }
+    }
 </style>
 
 @push('scripts')
@@ -156,14 +174,26 @@
 
     var modalEl = document.getElementById('kt_modal_view_event');
     var modal = modalEl ? new bootstrap.Modal(modalEl) : null;
+    var mobileViewport = window.matchMedia('(max-width: 767.98px)');
+    var mobileToolbar = { left: 'prev,next', center: 'title', right: 'today' };
+    var desktopToolbar = { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay' };
+
+    function labelNavigationButtons() {
+        [
+            ['.fc-prev-button', 'Période précédente'],
+            ['.fc-next-button', 'Période suivante'],
+            ['.fc-today-button', "Aujourd'hui"]
+        ].forEach(function (entry) {
+            var button = calendarEl.querySelector(entry[0]);
+            if (button) {
+                button.setAttribute('aria-label', entry[1]);
+            }
+        });
+    }
 
     var calendar = new FullCalendar.Calendar(calendarEl, {
-        headerToolbar: {
-            left:   'prev,next today',
-            center: 'title',
-            right:  'dayGridMonth,timeGridWeek,timeGridDay'
-        },
-        initialView: 'timeGridWeek',
+        headerToolbar: mobileViewport.matches ? mobileToolbar : desktopToolbar,
+        initialView: mobileViewport.matches ? 'listDay' : 'timeGridWeek',
         eventShortHeight: 60,
         locale: 'fr',
         timeZone: plannerTimezone,
@@ -178,7 +208,7 @@
         selectable: false,
         navLinks: true,
         dayMaxEvents: true,
-        height: 800,
+        height: mobileViewport.matches ? 'auto' : 800,
         dayCellClassNames: function (arg) {
             // arg.dow is FullCalendar-computed against the calendar's own
             // configured timeZone (plannerTimezone above) — safe to use
@@ -239,6 +269,14 @@
     });
 
     calendar.render();
+    labelNavigationButtons();
+
+    mobileViewport.addEventListener('change', function (event) {
+        calendar.setOption('headerToolbar', event.matches ? mobileToolbar : desktopToolbar);
+        calendar.setOption('height', event.matches ? 'auto' : 800);
+        calendar.changeView(event.matches ? 'listDay' : 'timeGridWeek');
+        labelNavigationButtons();
+    });
 }());
 </script>
 @endpush

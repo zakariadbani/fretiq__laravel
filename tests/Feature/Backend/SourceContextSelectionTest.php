@@ -173,6 +173,7 @@ class SourceContextSelectionTest extends TestCase
     public function test_source_quick_actions_keep_route_context(): void
     {
         $company = Company::factory()->create();
+        Contact::factory()->for($company)->create();
         $contact = Contact::factory()->create();
         $segment = Segment::create(['name' => 'Segment Test', 'scope' => 'prospect']);
         $template = CampaignTemplate::create([

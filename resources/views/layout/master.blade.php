@@ -6,6 +6,12 @@
     @php
         $pageTitle = trim(html_entity_decode($__env->yieldContent('title'), ENT_QUOTES | ENT_HTML5 | ENT_SUBSTITUTE, 'UTF-8'));
         $appName = config('app.name', 'fretiq');
+        $versionedAsset = static function (string $path): string {
+            $url = asset($path);
+            $file = public_path($path);
+
+            return is_file($file) ? $url.'?v='.filemtime($file) : $url;
+        };
     @endphp
     <title>{{ $pageTitle !== '' ? $pageTitle . ' | ' . $appName : $appName }}</title>
     <meta name="csrf-token" content="{{ csrf_token() }}">
@@ -58,19 +64,19 @@
 <!--begin::Javascript-->
 <!--begin::Global Javascript Bundle(mandatory for all pages)-->
 @foreach(getGlobalAssets() as $path)
-    {!! sprintf('<script src="%s"></script>', asset($path)) !!}
+    {!! sprintf('<script src="%s"></script>', $versionedAsset($path)) !!}
 @endforeach
 <!--end::Global Javascript Bundle-->
 
 <!--begin::Vendors Javascript(used by this page)-->
 @foreach(getVendors('js') as $path)
-    {!! sprintf('<script src="%s"></script>', asset($path)) !!}
+    {!! sprintf('<script src="%s"></script>', $versionedAsset($path)) !!}
 @endforeach
 <!--end::Vendors Javascript-->
 
 <!--begin::Custom Javascript(optional)-->
 @foreach(getCustomJs() as $path)
-    {!! sprintf('<script src="%s"></script>', asset($path)) !!}
+    {!! sprintf('<script src="%s"></script>', $versionedAsset($path)) !!}
 @endforeach
 <!--end::Custom Javascript-->
 @stack('scripts')

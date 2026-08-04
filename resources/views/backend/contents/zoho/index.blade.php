@@ -9,11 +9,8 @@
 @endsection
 
 @php
-    $driverLabels = [
-        'local' => 'Mode local',
-        'zoho' => 'Zoho actif',
-    ];
-    $unknownDriverLabel = 'Source inconnue';
+    $readinessStatuses = config('global.data.zoho_readiness_statuses', []);
+    $tokenStatuses = config('global.data.zoho_token_statuses', []);
 @endphp
 
 {{-- Action buttons (top of content, permission-gated) --}}
@@ -52,48 +49,51 @@
     </div>
 </div>
 
-{{-- Drivers row --}}
+{{-- Evidence-based readiness; all facts come from local config, token, and sync logs. --}}
 <div class="row g-6 mb-6">
-    <div class="col-md-6">
-        <div class="card h-100">
-            <div class="card-body d-flex align-items-center gap-4 py-5">
-                <div class="symbol symbol-50px">
-                    <div class="symbol-label bg-light-primary">
-                        <i class="bi bi-cloud fs-2tx text-primary"></i>
+    @foreach($zohoIntegrations as $key => $integration)
+        @php
+            $readiness = $readinessStatuses[$integration['status']] ?? ['label' => $integration['status'], 'color' => 'secondary'];
+        @endphp
+        <div class="col-md-6"
+             data-zoho-integration="{{ $key }}"
+             data-zoho-status="{{ $integration['status'] }}">
+            <div class="card h-100">
+                <div class="card-body py-6">
+                    <div class="d-flex align-items-start gap-4 mb-5">
+                        <div class="symbol symbol-50px">
+                            <div class="symbol-label bg-light-{{ $readiness['color'] }}">
+                                <i class="bi {{ $integration['icon'] }} fs-2tx text-{{ $readiness['color'] }}"></i>
+                            </div>
+                        </div>
+                        <div class="flex-grow-1">
+                            <div class="fw-bold text-gray-800 fs-5">{{ $integration['title'] }}</div>
+                            <div class="text-muted fs-7 mt-1">{{ $integration['subtitle'] }}</div>
+                        </div>
+                        <span class="badge badge-light-{{ $readiness['color'] }} fs-7 fw-bold">
+                            {{ $readiness['label'] }}
+                        </span>
                     </div>
-                </div>
-                <div class="flex-grow-1">
-                    <div class="fw-bold text-gray-800 fs-5">Driver CRM</div>
-                    <div class="text-muted fs-7 mt-1">Connexion Zoho CRM</div>
-                </div>
-                @php
-                    $crmBadge = $crmDriver === 'zoho' ? 'success' : 'secondary';
-                @endphp
-                <span class="badge badge-light-{{ $crmBadge }} fs-7 fw-bold">{{ $driverLabels[$crmDriver] ?? $unknownDriverLabel }}</span>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-6">
-        <div class="card h-100">
-            <div class="card-body d-flex align-items-center gap-4 py-5">
-                <div class="symbol symbol-50px">
-                    <div class="symbol-label bg-light-warning">
-                        <i class="bi bi-envelope fs-2tx text-warning"></i>
-                    </div>
-                </div>
-                <div class="flex-grow-1">
-                    <div class="fw-bold text-gray-800 fs-5">Driver Campaigns</div>
-                    <div class="text-muted fs-7 mt-1">Connexion Zoho Campaigns</div>
-                </div>
-                @php
-                    $campBadge = $campaignsDriver === 'zoho' ? 'success' : 'secondary';
-                @endphp
-                <span class="badge badge-light-{{ $campBadge }} fs-7 fw-bold">{{ $driverLabels[$campaignsDriver] ?? $unknownDriverLabel }}</span>
-            </div>
-        </div>
-    </div>
-</div>
 
+                    <div class="d-flex flex-column gap-3">
+                        @foreach($integration['details'] as $detail)
+                            <div class="d-flex justify-content-between gap-4">
+                                <span class="text-muted fs-7">{{ $detail['label'] }}</span>
+                                <span class="fw-semibold text-{{ $detail['color'] }} fs-7 text-end">{{ $detail['value'] }}</span>
+                            </div>
+                        @endforeach
+                    </div>
+
+                    @if($integration['recovery'])
+                        <div class="notice bg-light-{{ $readiness['color'] }} rounded p-3 mt-5 fs-7 text-gray-700">
+                            {{ $integration['recovery'] }}
+                        </div>
+                    @endif
+                </div>
+            </div>
+        </div>
+    @endforeach
+</div>
 {{-- Sync stats row --}}
 @php
     $syncStatuses = config('global.data.zoho_sync_statuses', []);
@@ -193,13 +193,7 @@
                     <h5 class="fw-bold text-gray-800 mb-0">Token OAuth</h5>
                 </div>
                 @php
-                    $tokenBadgeMap = [
-                        'ok'      => ['label' => 'Valide',          'color' => 'success'],
-                        'soon'    => ['label' => 'Bientôt expiré',  'color' => 'warning'],
-                        'expired' => ['label' => 'Expiré',          'color' => 'danger'],
-                        'absent'  => ['label' => 'Absent',          'color' => 'secondary'],
-                    ];
-                    $tokenBadge = $tokenBadgeMap[$tokenStatus] ?? ['label' => $tokenStatus, 'color' => 'secondary'];
+                    $tokenBadge = $tokenStatuses[$tokenStatus] ?? ['label' => $tokenStatus, 'color' => 'secondary'];
                 @endphp
                 <div class="d-flex flex-column gap-2">
                     <div class="d-flex justify-content-between">

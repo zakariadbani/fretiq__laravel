@@ -92,6 +92,24 @@ BLADE, ['name' => 'Entreprise - Acme & Fils <Nord> "Express"']);
             'tokenExpiry' => null,
             'tokenMinutes' => null,
             'history' => collect(),
+            'zohoIntegrations' => [
+                'crm' => [
+                    'title' => 'Driver CRM',
+                    'subtitle' => 'Synchronisation CRM',
+                    'icon' => 'bi-cloud',
+                    'status' => 'non_configure',
+                    'details' => [['label' => 'Pilote sélectionné', 'value' => 'Mode local', 'color' => 'secondary']],
+                    'recovery' => null,
+                ],
+                'campaigns' => [
+                    'title' => 'Driver campagnes',
+                    'subtitle' => 'Envoi des campagnes',
+                    'icon' => 'bi-send',
+                    'status' => 'verification_requise',
+                    'details' => [['label' => 'Pilote sélectionné', 'value' => 'Zoho actif', 'color' => 'success']],
+                    'recovery' => null,
+                ],
+            ],
         ])->render();
 
         $this->assertStringContainsString('Mode local', $html);

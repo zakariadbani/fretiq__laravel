@@ -8,7 +8,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class InboxEmail extends Model
 {
     public const STATUS_NOUVEAU = 'nouveau';
+
     public const STATUS_TRAITE = 'traite';
+
     public const STATUS_IGNORE = 'ignore';
 
     protected $fillable = [
@@ -22,8 +24,12 @@ class InboxEmail extends Model
         'body_text',
         'body_html',
         'status',
+        'triage_action',
         'contact_id',
+        'sequence_step_send_id',
         'campaign_recipient_id',
+        'demande_id',
+        'triaged_by',
         'processed_at',
         'received_at',
     ];
@@ -51,5 +57,20 @@ class InboxEmail extends Model
     public function campaignRecipient(): BelongsTo
     {
         return $this->belongsTo(CampaignRecipient::class);
+    }
+
+    public function sequenceStepSend(): BelongsTo
+    {
+        return $this->belongsTo(SequenceStepSend::class);
+    }
+
+    public function demande(): BelongsTo
+    {
+        return $this->belongsTo(Demande::class);
+    }
+
+    public function triagedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'triaged_by');
     }
 }

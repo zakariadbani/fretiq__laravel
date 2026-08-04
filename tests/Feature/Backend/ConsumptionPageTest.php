@@ -124,7 +124,10 @@ class ConsumptionPageTest extends TestCase
         $response->assertDontSee('199.00');
         $response->assertDontSee('€');
         $response->assertDontSee('Capacité fournisseur');
+        $response->assertDontSee('Capacité du fournisseur');
         $response->assertDontSee('Vendu au client actif');
+        $response->assertSee('Quota Fretiq — aujourd’hui', false);
+        $response->assertSee('Quota Fretiq — ce mois', false);
     }
 
     // ── dailySeries() accounting parity (MAJOR #1) ──────────────────────────

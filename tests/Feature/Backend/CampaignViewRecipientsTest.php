@@ -11,6 +11,8 @@ use App\Models\Contact;
 use App\Models\Demande;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
+use App\Models\Sequence;
+use App\Models\SequenceStep;
 use App\Models\User;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
@@ -112,15 +114,15 @@ class CampaignViewRecipientsTest extends TestCase
         return $contact->fresh('company');
     }
 
-    private function makeRun(Campaign $campaign, string $keySuffix = ''): CampaignRun
+    private function makeRun(Campaign $campaign, string $keySuffix = '', array $overrides = []): CampaignRun
     {
-        return CampaignRun::create([
+        return CampaignRun::create(array_merge([
             'campaign_id'      => $campaign->id,
             'occurrence_key'   => 'test-' . $keySuffix . '-' . now()->format('YmdHisv'),
             'run_at'           => now(),
             'status'           => 'sent',
             'conversion_count' => 0,
-        ]);
+        ], $overrides));
     }
 
     /**
@@ -597,4 +599,93 @@ class CampaignViewRecipientsTest extends TestCase
             'markReplied must not create a Demande when contact already replied in another run.'
         );
     }
+    public function test_sequence_step_matrix_renders_truthful_cells_summaries_and_history_labels(): void
+    {
+        $campaign = $this->makeCampaign('step-matrix');
+        $sequence = Sequence::create([
+            'name' => 'Sequence step matrix',
+            'is_active' => true,
+            'stop_on_reply' => true,
+        ]);
+        $step1 = SequenceStep::create([
+            'sequence_id' => $sequence->id,
+            'step_no' => 1,
+            'delay_days' => 0,
+            'template_id' => $campaign->template_id,
+            'subject' => 'Introduction',
+        ]);
+        $step2 = SequenceStep::create([
+            'sequence_id' => $sequence->id,
+            'step_no' => 2,
+            'delay_days' => 3,
+            'template_id' => $campaign->template_id,
+            'subject' => 'Relance',
+        ]);
+        $campaign->update([
+            'schedule_type' => 'sequence',
+            'sequence_id' => $sequence->id,
+        ]);
+
+        $run1 = $this->makeRun($campaign, 'matrix-step-1', [
+            'sequence_step_id' => $step1->id,
+            'stats_sent' => 2,
+            'stats_delivered' => 1,
+            'stats_opened' => 1,
+            'stats_clicked' => 0,
+            'stats_bounced' => 0,
+        ]);
+        $run2 = $this->makeRun($campaign, 'matrix-step-2', [
+            'sequence_step_id' => $step2->id,
+            'stats_sent' => 1,
+            'stats_delivered' => 1,
+            'stats_opened' => 0,
+            'stats_clicked' => 0,
+            'stats_bounced' => 0,
+        ]);
+
+        $opened = $this->makeContact('matrix-opened@example.test', 'Matrix Opened Co');
+        $unsent = $this->makeContact('matrix-unsent@example.test', 'Matrix Unsent Co');
+
+        $this->makeRecipient($run1, $opened, [
+            'status' => 'opened',
+            'sent_at' => now()->subDays(3),
+            'opened_at' => now()->subDays(2),
+        ]);
+        $this->makeRecipient($run2, $opened, [
+            'status' => 'sent',
+            'sent_at' => now()->subDay(),
+        ]);
+        $this->makeRecipient($run1, $unsent, [
+            'status' => 'skipped',
+            'skip_reason' => 'zoho_unsent',
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get(route('admin.campaigns.view', $campaign->id));
+
+        $response->assertOk();
+        $response->assertSee('data-recipient-step-matrix', false);
+        $response->assertSee('data-recipient-email="matrix-opened@example.test"', false);
+        $response->assertSee('data-recipient-email="matrix-unsent@example.test"', false);
+        $response->assertSee('data-step-summary="1"', false);
+        $response->assertSee('data-step-summary="2"', false);
+        $response->assertSee('data-step-status="opened"', false);
+        $response->assertSee('data-step-status="sent_not_opened"', false);
+        $response->assertSee('data-step-status="skipped"', false);
+        $response->assertSee('data-step-status="not_planned"', false);
+        $response->assertSee('Envoy&eacute; &mdash; non ouvert', false);
+        $response->assertSee('Non envoy&eacute; par Zoho &mdash; adresse invalide ou refus&eacute;e', false);
+        $response->assertSee('Pas encore planifi&eacute;', false);
+        $response->assertSee('&Eacute;tape 1 &mdash; Introduction', false);
+        $response->assertSee('&Eacute;tape 2 &mdash; Relance', false);
+
+        $runResponse = $this->actingAs($this->superadmin)
+            ->get(route('admin.campaigns.view', $campaign->id) . '?run_id=' . $run1->id);
+
+        $runResponse->assertOk();
+        $runResponse->assertDontSee('data-recipient-step-matrix', false);
+        $runResponse->assertSee('matrix-opened@example.test');
+        $runResponse->assertSee('matrix-unsent@example.test');
+    }
+
 }

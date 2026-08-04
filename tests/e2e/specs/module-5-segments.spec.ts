@@ -82,9 +82,21 @@ test.describe('Segments module', () => {
     await expect(segments.table.locator(`tbody tr:has-text("${name}")`)).toHaveCount(0);
   });
 
-  test('manual create toggles guidance and redirects to the contacts pane', async ({ page }) => {
+  test('contacts preview: relocated pane loads once and retry recovers', async ({ page }) => {
     const segments = new SegmentPage(page);
     const name = uniqueName('E2E Manual Segment');
+    let contactsRequests = 0;
+    let failNextRefresh = false;
+
+    await page.route('**/admin/segments/*/contacts*', async (route) => {
+      contactsRequests += 1;
+      if (failNextRefresh) {
+        failNextRefresh = false;
+        await route.fulfill({ status: 500, contentType: 'text/plain', body: 'fake local failure' });
+        return;
+      }
+      await route.continue();
+    });
 
     await segments.gotoCreate();
     await segments.nameInput.fill(name);
@@ -108,7 +120,38 @@ test.describe('Segments module', () => {
     await expect(segments.contactsPane).toBeVisible();
     await expect(segments.contactsHeading).toBeVisible();
     await expect(segments.addContactsButton).toBeVisible();
-    await segments.expectContactsPaneIntersectingAndLoaded();
+    await expect(segments.contactsWrapper).toHaveAttribute('data-contacts-state', 'loaded');
+    await expect(segments.contactsSkeleton).toHaveCount(0);
+    await expect(segments.contactsFragment).toHaveCount(1);
+    const successfulCount = await segments.contactsFragment.getAttribute('data-contacts-count');
+    const successfulContent = await segments.contactsFragment.textContent();
+    expect(contactsRequests).toBe(1);
+
+    await page.evaluate(() => {
+      const trigger = document.createElement('a');
+      trigger.setAttribute('href', '#segment_contacts');
+      document.body.appendChild(trigger);
+      trigger.dispatchEvent(new Event('shown.bs.tab', { bubbles: true }));
+      trigger.dispatchEvent(new Event('shown.bs.tab', { bubbles: true }));
+      trigger.remove();
+    });
+    await page.waitForLoadState('networkidle');
+    expect(contactsRequests).toBe(1);
+
+    failNextRefresh = true;
+    await page.evaluate(() => window.KTSegmentContacts.reload(''));
+    await expect(segments.contactsWrapper).toHaveAttribute('data-contacts-state', 'failed');
+    await expect(segments.contactsFailure).toContainText('L’aperçu des contacts n’a pas pu être actualisé.');
+    await expect(segments.contactsRetryButton).toBeVisible();
+    await expect(segments.contactsFragment).toHaveAttribute('data-contacts-count', successfulCount || '');
+    await expect(segments.contactsFragment).toHaveText(successfulContent || '');
+    expect(contactsRequests).toBe(2);
+
+    await segments.contactsRetryButton.click();
+    await expect(segments.contactsWrapper).toHaveAttribute('data-contacts-state', 'loaded');
+    await expect(segments.contactsFailure).toHaveCount(0);
+    await expect(segments.contactsFragment).toHaveCount(1);
+    expect(contactsRequests).toBe(3);
 
     await segments.goto();
     await waitForDataTable(page, 'segment-table');

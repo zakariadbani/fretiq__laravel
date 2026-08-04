@@ -8,6 +8,30 @@
     <x-crud.breadcrumb :items="[['label' => 'Boîte de réception']]" />
 @endsection
 
+<div class="alert alert-secondary d-flex align-items-start gap-3" data-testid="inbox-poll-status">
+    <i class="bi bi-arrow-repeat fs-2 text-primary"></i>
+    <div>
+        @if ($activeInboxCount === 0)
+            <div class="fw-semibold">Aucune boîte active</div>
+            <div class="text-muted">Activez la relève IMAP d’une identité d’expéditeur pour recevoir les réponses ici.</div>
+        @elseif ($lastPolledAt === null)
+            <div class="fw-semibold">Relève jamais effectuée</div>
+            <div class="text-muted">{{ $activeInboxCount }} boîte(s) prête(s) à être relevée(s).</div>
+        @else
+            <div class="fw-semibold">
+                Dernière relève réussie :
+                {{ $lastPolledAt->copy()->setTimezone('Europe/Paris')->format('d/m/Y H:i') }} Europe/Paris
+            </div>
+            <div class="text-muted">{{ $activeInboxCount }} boîte(s) active(s).</div>
+        @endif
+
+        @can('view sender_identities')
+            <a href="{{ route('admin.sender_identities.index') }}" class="fw-semibold">
+                Configurer les identités d’expéditeur
+            </a>
+        @endcan
+    </div>
+</div>
 <div class="card">
     <div class="card-header border-0 pt-6">
         <div class="card-title">

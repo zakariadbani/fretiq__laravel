@@ -75,7 +75,7 @@ class SegmentViewConfig
             [
                 'icon'  => 'bi-people',
                 'color' => 'primary',
-                'label' => 'Destinataires',
+                'label' => 'Destinataires éligibles',
                 'value' => $contactsCount,
                 'hint'  => $contactsCount === null
                     ? 'Calcul en attente'
@@ -109,7 +109,7 @@ class SegmentViewConfig
             'subtitle'      => $subtitle,
             'tiles'         => $hasId ? [
                 ['icon' => 'bi-funnel', 'color' => $scopeColor, 'value' => $scopeLabel ?? '—', 'caption' => 'Portée'],
-                ['icon' => 'bi-people', 'color' => 'primary',   'value' => $contactsCount ?? '—', 'caption' => 'Destinataires'],
+                ['icon' => 'bi-people', 'color' => 'primary',   'value' => $contactsCount ?? '—', 'caption' => 'Destinataires éligibles'],
                 ['icon' => 'bi-calendar3', 'color' => 'secondary', 'value' => $model->created_at ? $model->created_at->format('d/m/Y') : '—', 'caption' => 'Créé le'],
             ] : [],
             'toggle'        => $toggle,

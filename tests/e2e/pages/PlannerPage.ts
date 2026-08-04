@@ -30,12 +30,24 @@ export class PlannerPage {
    * FullCalendar renders its grid inside this div after JS initialisation.
    */
   readonly calendarContainer: Locator;
+  readonly toolbar: Locator;
+  readonly title: Locator;
+  readonly previousButton: Locator;
+  readonly nextButton: Locator;
+  readonly todayButton: Locator;
+  readonly firstEvent: Locator;
 
   constructor(page: Page) {
     this.page = page;
 
     this.currentTime = page.locator('#planner-current-time');
     this.calendarContainer = page.locator('#kt_calendar_app');
+    this.toolbar = this.calendarContainer.locator('.fc-header-toolbar');
+    this.title = this.calendarContainer.locator('.fc-toolbar-title');
+    this.previousButton = this.calendarContainer.locator('.fc-prev-button');
+    this.nextButton = this.calendarContainer.locator('.fc-next-button');
+    this.todayButton = this.calendarContainer.locator('.fc-today-button');
+    this.firstEvent = this.calendarContainer.locator('.fc-event').first();
   }
 
   async goto() {

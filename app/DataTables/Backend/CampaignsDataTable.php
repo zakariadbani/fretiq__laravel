@@ -91,6 +91,7 @@ class CampaignsDataTable extends BackendDataTable
     public function query()
     {
         return $this->currentModel->newQuery()
+            ->where('name', 'not like', 'E2E\_FIXTURE %')
             ->with(['segment', 'template', 'senderIdentity'])
             ->withCount('runs')
             ->withSum('runs as stats_sent_total', 'stats_sent');

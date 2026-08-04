@@ -4,6 +4,7 @@ namespace App\Services\Analytics;
 
 use App\Models\Campaign;
 use App\Models\CampaignRun;
+use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Services\Campaign\CampaignSchedulerService;
 use App\Services\Scheduling\BusinessCalendarService;
@@ -16,7 +17,7 @@ use Carbon\Carbon;
  *   1. Materialised CampaignRun rows (real runs — scheduled, sent, done, …).
  *   2. Virtual "projected" events synthesised from recurring campaign definitions
  *      for future occurrences not yet materialised in the DB.
- *   3. Virtual daily discovery events for active, automatic prospect criteria.
+ *   3. Materialised discovery runs plus future automatic projections.
  *
  * Status meta is driven by config('global.data.campaign_run_statuses'), which maps each status
  * key to a Bootstrap color name ('primary', 'info', 'success', etc.).
@@ -71,7 +72,7 @@ class PlannerService
      *   - Materialised CampaignRun rows (real runs).
      *   - Virtual "projected" events for future recurring occurrences not yet
      *     in the DB (synthesised from campaign.next_run_at + recurrence rules).
-     *   - Virtual daily auto-discovery occurrences for eligible prospect criteria.
+     *   - Materialised discovery runs plus future automatic projections.
      *
      * Real-run query keeps its current null-means-unbounded semantics so existing
      * no-arg callers stay unchanged. Projection uses UTC-parsed window bounds
@@ -104,6 +105,7 @@ class PlannerService
 
         // ── 1. Real runs ───────────────────────────────────────────────────────
         $query = CampaignRun::with(['campaign.sequence.steps', 'sequenceStep'])
+            ->whereDoesntHave('campaign', fn ($campaign) => $campaign->where('name', 'like', 'E2E\_FIXTURE %'))
             ->orderBy('run_at');
 
         if ($startUtc !== null) {
@@ -165,6 +167,50 @@ class PlannerService
             })
             ->all();
 
+        $discoveryQuery = DiscoveryRun::with('prospectCriteria')
+            ->where('type', 'discovery')
+            ->orderBy('created_at');
+
+        if ($startUtc !== null) {
+            $discoveryQuery->where('created_at', '>=', $startUtc);
+        }
+
+        if ($endUtc !== null) {
+            $discoveryQuery->where('created_at', '<', $endUtc);
+        }
+
+        $discoveryStatusConfig = config('global.data.discovery_run_statuses', []);
+        $discoveryRuns = $discoveryQuery->get();
+        $materializedDiscoveryDays = [];
+
+        foreach ($discoveryRuns as $run) {
+            $criteria = $run->prospectCriteria;
+            if ($criteria === null) {
+                continue;
+            }
+
+            $meta = $discoveryStatusConfig[$run->status] ?? [];
+            $statusColor = $meta['color'] ?? 'secondary';
+            $eventAt = $run->created_at;
+            $materializedDate = $run->quota_date?->toDateString()
+                ?? $eventAt->copy()->setTimezone($timezone)->toDateString();
+            $materializedDiscoveryDays[$criteria->id.'|'.$materializedDate] = true;
+
+            $events[] = [
+                'id' => 'discovery-run-'.$run->id,
+                'title' => "D\u{00E9}couverte \u{00B7} ".$criteria->name,
+                'start' => $eventAt->toIso8601String(),
+                'color' => self::BOOTSTRAP_HEX_COLORS[$statusColor] ?? self::BOOTSTRAP_HEX_COLORS['secondary'],
+                'url' => route('admin.prospect_criteria.view', $run->prospect_criteria_id),
+                'extendedProps' => [
+                    'status' => $run->status,
+                    'statusLabel' => $meta['label'] ?? $run->status,
+                    'statusColor' => $statusColor,
+                    'eventKind' => 'discovery-run',
+                ],
+            ];
+        }
+
         // ── 2. Projected future occurrences ────────────────────────────────────
         // Only meaningful when there is at least one bound so we have a finite
         // projection window. Null window = unbounded; skip projection.
@@ -176,6 +222,19 @@ class PlannerService
             // Carbon::parse() handles these correctly; ->utc() normalises for comparison.
             $windowStart = $startUtc ?? now()->utc();
             $windowEnd = $endUtc ?? now()->utc()->addMonths(3);
+
+            $quotaRuns = DiscoveryRun::query()
+                ->where('type', 'discovery')
+                ->whereNotNull('prospect_criteria_id')
+                ->whereBetween('quota_date', [
+                    $windowStart->copy()->setTimezone($timezone)->toDateString(),
+                    $windowEnd->copy()->setTimezone($timezone)->toDateString(),
+                ])
+                ->get(['prospect_criteria_id', 'quota_date']);
+
+            foreach ($quotaRuns as $run) {
+                $materializedDiscoveryDays[$run->prospect_criteria_id.'|'.$run->quota_date->toDateString()] = true;
+            }
 
             // Build dedup hash from the real-run results (O(1) lookup below).
             // Key: "{campaign_id}|{YmdHis}" — exact-timestamp match.
@@ -190,6 +249,7 @@ class PlannerService
             // Only is_active=true: paused campaigns (is_active=false) are frozen
             // and must not appear in the projection.
             $recurringCampaigns = Campaign::where('schedule_type', 'recurring')
+                ->where('name', 'not like', 'E2E\_FIXTURE %')
                 ->where('is_active', true)
                 ->whereNotNull('next_run_at')
                 ->get();
@@ -308,6 +368,7 @@ class PlannerService
 
             // Later sequence waves depend on the audience remaining after this one.
             $sequenceCampaigns = Campaign::with(['sequence.steps', 'segment', 'senderIdentity'])
+                ->where('name', 'not like', 'E2E\_FIXTURE %')
                 ->where('schedule_type', 'sequence')
                 ->where('sequence_enrollment_mode', 'paced')
                 ->whereNotNull('next_run_at')
@@ -435,7 +496,7 @@ class PlannerService
                         break;
                     }
 
-                    if ($cursorUtc->gte($windowStart)) {
+                    if ($cursorUtc->gte($windowStart) && ! isset($materializedDiscoveryDays[$criteria->id.'|'.$date->toDateString()])) {
                         $events[] = [
                             'id' => 'projected-discovery-'.$criteria->id.'-'.$cursorUtc->format('YmdHis'),
                             'title' => "D\u{00E9}couverte \u{00B7} {$criteria->name}",

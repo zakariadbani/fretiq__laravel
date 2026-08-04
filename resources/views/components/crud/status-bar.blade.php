@@ -43,6 +43,7 @@
 @php
     $active      = (bool) data_get($model, $field, true);
     $toggleColor = $active ? 'success' : 'secondary';
+    $toggleLabel = $title ?: 'Statut actif';
 @endphp
 
 @if($permission)
@@ -66,6 +67,8 @@
                                    data-field="{{ $field }}"
                                    data-route="{{ $route }}"
                                    id="toggle_{{ $field }}_{{ $model->id }}"
+                                   role="switch"
+                                   aria-label="Modifier : {{ $toggleLabel }}"
                                    {{ data_get($model, $field) ? 'checked' : '' }} />
                         </div>
                     </div>
@@ -93,6 +96,8 @@
                                data-field="{{ $field }}"
                                data-route="{{ $route }}"
                                id="toggle_{{ $field }}_{{ $model->id }}"
+                                   role="switch"
+                                   aria-label="Modifier : {{ $toggleLabel }}"
                                {{ data_get($model, $field) ? 'checked' : '' }} />
                     </div>
                 </div>

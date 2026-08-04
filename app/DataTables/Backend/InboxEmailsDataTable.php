@@ -99,6 +99,20 @@ class InboxEmailsDataTable extends BackendDataTable
         );
     }
 
+    protected function dataTableLanguage(): array
+    {
+        $emptyTable = match (true) {
+            auth()->user()?->can('view sender_identities') => 'Aucun message relevé. <a href="' . e(route('admin.sender_identities.index')) . '">Configurer les boîtes de réception</a>',
+            auth()->user()?->can('edit inbox') => 'Aucun message relevé. Lancez une relève avec « Relever maintenant ».',
+            default => 'Aucun message relevé. Demandez à un administrateur de configurer la relève.',
+        };
+
+        return array_replace(parent::dataTableLanguage(), [
+            'emptyTable' => $emptyTable,
+            'zeroRecords' => 'Aucun message ne correspond à ces filtres. Modifiez ou réinitialisez les filtres.',
+        ]);
+    }
+
     protected function getEntityName(): string
     {
         return 'email';

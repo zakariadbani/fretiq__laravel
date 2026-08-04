@@ -45,16 +45,14 @@
 
                     <!--begin::Title-->
                     <h1 class="d-none d-lg-block text-white fs-2qx fw-bolder text-center mb-7">
-                        Prospectez plus vite,<br/>closez plus souvent.
+                        Une prospection fret<br/>claire et maîtrisée.
                     </h1>
                     <!--end::Title-->
 
                     <!--begin::Text-->
                     <div class="d-none d-lg-block text-white fs-base text-center opacity-75">
-                        fretiq automatise vos séquences de prospection email<br/>
-                        pour les acteurs du <strong class="text-warning">transport &amp; de la logistique</strong>.<br/>
-                        Découvrez des leads qualifiés, engagez vos prospects<br/>
-                        et convertissez-les en demandes de prix.
+                        Fretiq aide TCL France à trouver des prospects et à mener<br/>
+                        des campagnes e-mail de prospection fret conformes.
                     </div>
                     <!--end::Text-->
                 </div>

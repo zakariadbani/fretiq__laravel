@@ -29,6 +29,7 @@ class CampaignSendAccessTest extends TestCase
     use RefreshDatabase;
 
     private User $superadmin;
+
     private User $commercial;
 
     protected function setUp(): void
@@ -170,5 +171,217 @@ class CampaignSendAccessTest extends TestCase
             ->get('/admin/campaigns');
 
         $response->assertStatus(200);
+    }
+
+    public function test_commercial_cannot_manually_sync_campaign_stats(): void
+    {
+        $campaign = $this->makeCampaign();
+
+        $this->actingAs($this->commercial)
+            ->post("/admin/campaigns/{$campaign->id}/sync-stats")
+            ->assertForbidden();
+    }
+
+    public function test_admin_manual_stats_sync_queues_both_jobs_for_recent_zoho_runs(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $campaign = $this->makeCampaign();
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'manual-sync',
+            'run_at' => now()->subHour(),
+            'status' => 'sent',
+            'zoho_campaign_key' => 'CK-MANUAL',
+            'finished_at' => now()->subHour(),
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->post("/admin/campaigns/{$campaign->id}/sync-stats")
+            ->assertRedirect(route('admin.campaigns.view', $campaign->id));
+
+        \Illuminate\Support\Facades\Queue::assertPushed(
+            \App\Jobs\SyncCampaignStatsJob::class,
+            fn ($job) => $job->runId === $run->id,
+        );
+        \Illuminate\Support\Facades\Queue::assertPushed(
+            \App\Jobs\SyncCampaignRecipientEventsJob::class,
+            fn ($job) => $job->runId === $run->id,
+        );
+    }
+
+    public function test_admin_sees_one_stats_sync_button_for_an_eligible_zoho_run_when_latest_run_is_local(): void
+    {
+        $campaign = $this->makeCampaign();
+        CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'eligible-zoho',
+            'run_at' => now()->subHours(2),
+            'status' => 'sent',
+            'zoho_campaign_key' => 'CK-ELIGIBLE',
+            'finished_at' => now()->subHours(2),
+            'stats_synced_at' => now()->subMinutes(10),
+        ]);
+        CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'newer-local',
+            'run_at' => now()->subHour(),
+            'status' => 'sent',
+            'finished_at' => now()->subHour(),
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get(route('admin.campaigns.view', $campaign->id));
+
+        $response->assertOk();
+        $response->assertSee('data-campaign-stats-sync', false);
+        $this->assertSame(1, substr_count($response->getContent(), 'data-campaign-stats-sync'));
+        $response->assertSeeHtml('Derni&egrave;re synchronisation Zoho');
+    }
+
+    public function test_admin_sees_a_disabled_stats_sync_button_on_view_and_not_on_edit_without_an_eligible_zoho_run(): void
+    {
+        $campaign = $this->makeCampaign();
+        $response = $this->actingAs($this->superadmin)->get(route('admin.campaigns.view', $campaign->id));
+
+        $response->assertOk();
+        $this->assertSame(1, preg_match(
+            '/<button(?=[^>]*id="btn-sync-campaign-stats")[^>]*>/s',
+            $response->getContent(),
+            $matches,
+        ));
+        $this->assertStringContainsString('type="button"', $matches[0]);
+        $this->assertStringContainsString('disabled', $matches[0]);
+        $this->assertStringContainsString('aria-disabled="true"', $matches[0]);
+        $response->assertSee('data-bs-toggle="tooltip"', false);
+        $response->assertSee('30 derniers jours', false);
+
+        $this->actingAs($this->superadmin)
+            ->get(route('admin.campaigns.edit', $campaign->id))
+            ->assertOk()
+            ->assertDontSee('id="btn-sync-campaign-stats"', false);
+    }
+
+    public function test_admin_sees_an_enabled_stats_sync_button_on_view_and_not_on_edit_with_an_eligible_zoho_run(): void
+    {
+        $campaign = $this->makeCampaign();
+        CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'eligible-view-button',
+            'run_at' => now()->subHour(),
+            'status' => 'sent',
+            'zoho_campaign_key' => 'CK-VIEW-BUTTON',
+            'finished_at' => now()->subHour(),
+        ]);
+
+        $response = $this->actingAs($this->superadmin)->get(route('admin.campaigns.view', $campaign->id));
+
+        $response->assertOk();
+        $this->assertSame(1, preg_match(
+            '/<button(?=[^>]*id="btn-sync-campaign-stats")[^>]*>/s',
+            $response->getContent(),
+            $matches,
+        ));
+        $this->assertStringContainsString('type="button"', $matches[0]);
+        $this->assertDoesNotMatchRegularExpression('/\sdisabled(?:\s|>)/', $matches[0]);
+        $this->assertStringContainsString('aria-disabled="false"', $matches[0]);
+        $this->assertStringContainsString(
+            'data-url="'.route('admin.campaigns.syncStats', $campaign->id).'"',
+            $matches[0],
+        );
+
+        $this->actingAs($this->superadmin)
+            ->get(route('admin.campaigns.edit', $campaign->id))
+            ->assertOk()
+            ->assertDontSee('id="btn-sync-campaign-stats"', false);
+    }
+    public function test_manual_stats_sync_json_queues_only_recent_sent_zoho_runs(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $campaign = $this->makeCampaign();
+        $eligible = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'eligible-json',
+            'run_at' => now()->subDay(),
+            'status' => 'sent',
+            'zoho_campaign_key' => 'CK-JSON',
+            'finished_at' => now()->subDay(),
+        ]);
+        foreach ([
+            ['occurrence_key' => 'old-zoho', 'run_at' => now()->subDays(31), 'status' => 'sent', 'zoho_campaign_key' => 'CK-OLD', 'finished_at' => now()->subDays(31)],
+            ['occurrence_key' => 'recent-local', 'run_at' => now()->subDay(), 'status' => 'sent', 'finished_at' => now()->subDay()],
+            ['occurrence_key' => 'recent-prepared', 'run_at' => now()->subDay(), 'status' => 'prepared', 'zoho_campaign_key' => 'CK-PREPARED'],
+        ] as $attributes) {
+            CampaignRun::create(['campaign_id' => $campaign->id] + $attributes);
+        }
+
+        $response = $this->actingAs($this->superadmin)
+            ->postJson(route('admin.campaigns.syncStats', $campaign->id));
+
+        $response->assertOk()
+            ->assertJson([
+                'message' => html_entity_decode('Synchronisation Zoho mise en file pour 1 ex&eacute;cution(s).'),
+                'redirect' => route('admin.campaigns.view', $campaign->id),
+            ]);
+        \Illuminate\Support\Facades\Queue::assertPushed(
+            \App\Jobs\SyncCampaignStatsJob::class,
+            fn ($job) => $job->runId === $eligible->id,
+        );
+        \Illuminate\Support\Facades\Queue::assertPushed(
+            \App\Jobs\SyncCampaignRecipientEventsJob::class,
+            fn ($job) => $job->runId === $eligible->id,
+        );
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\SyncCampaignStatsJob::class, 1);
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\SyncCampaignRecipientEventsJob::class, 1);
+    }
+
+    public function test_view_only_user_sees_zoho_sync_state_but_not_the_manual_action(): void
+    {
+        $campaign = $this->makeCampaign();
+        CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'sync-state',
+            'run_at' => now()->subHour(),
+            'status' => 'sent',
+            'zoho_campaign_key' => 'CK-STATE',
+            'finished_at' => now()->subHour(),
+            'stats_synced_at' => now()->subMinutes(5),
+            'stats_sync_error' => 'Zoho temporairement indisponible',
+        ]);
+
+        $response = $this->actingAs($this->commercial)
+            ->get(route('admin.campaigns.view', $campaign->id));
+
+        $response->assertOk();
+        $response->assertSeeHtml('Derni&egrave;re synchronisation Zoho');
+        $response->assertSee('Zoho temporairement indisponible');
+        $response->assertDontSee('Synchroniser les statistiques');
+    }
+    public function test_admin_sync_button_uses_an_eligible_zoho_run_instead_of_the_latest_local_run(): void
+    {
+        $campaign = $this->makeCampaign();
+        CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'sync-button-zoho',
+            'run_at' => now()->subHours(2),
+            'finished_at' => now()->subHours(2),
+            'status' => 'sent',
+            'zoho_campaign_key' => 'CK-BUTTON',
+        ]);
+        CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'sync-button-local',
+            'run_at' => now()->subHour(),
+            'finished_at' => now()->subHour(),
+            'status' => 'sent',
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get(route('admin.campaigns.view', $campaign->id));
+
+        $response->assertOk();
+        $response->assertSee('data-campaign-stats-sync', false);
+        $response->assertSee('type="button"', false);
+        $response->assertSee('data-url="' . route('admin.campaigns.syncStats', $campaign->id) . '"', false);
+        $this->assertSame(1, substr_count($response->getContent(), 'data-campaign-stats-sync'));
     }
 }

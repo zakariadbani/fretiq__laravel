@@ -1,24 +1,49 @@
-@php($schedulerStatus = $schedulerHealth['status'] ?? 'healthy')
+@php($schedulerStatus = $schedulerHealth['status'] ?? 'missing')
+@php($globalScheduler = $schedulerHealth['global'] ?? ['status' => 'missing', 'last_tick_at' => null])
+@php($commandsStatus = $schedulerHealth['commands_status'] ?? 'missing')
 @php($schedulerCommands = $schedulerHealth['commands'] ?? [])
+@php($schedulerColor = $schedulerStatus === 'healthy' ? 'success' : ($schedulerStatus === 'missing' ? 'danger' : 'warning'))
 
-@if($schedulerStatus === 'missing' || $schedulerStatus === 'stale')
-    <div class="alert alert-{{ $schedulerStatus === 'missing' ? 'danger' : 'warning' }} d-flex align-items-center py-3 mb-6">
-        <i class="bi bi-{{ $schedulerStatus === 'missing' ? 'x-circle-fill' : 'exclamation-triangle-fill' }} fs-4 me-3"></i>
-        <div>
-            <div class="fw-semibold">Le planificateur des campagnes n'est pas complet. Verifiez le cron Laravel.</div>
-            <ul class="mb-0 ps-4">
-                @foreach($schedulerCommands as $command)
-                    @continue(($command['status'] ?? 'healthy') === 'healthy')
-                    <li>
-                        {{ $command['label'] ?? 'commande planifiee' }} :
-                        @if(($command['status'] ?? 'missing') === 'missing')
-                            aucune execution reussie signalee.
-                        @else
-                            derniere reussite le {{ $command['last_success_at']?->format('d/m/Y H:i') ?? 'inconnu' }}.
-                        @endif
-                    </li>
-                @endforeach
-            </ul>
+<div class="alert alert-{{ $schedulerColor }} d-flex align-items-start py-4 mb-6"
+     data-global-scheduler-status="{{ $globalScheduler['status'] }}"
+     data-campaign-commands-status="{{ $commandsStatus }}">
+    <i class="bi bi-{{ $schedulerStatus === 'healthy' ? 'check-circle-fill' : 'exclamation-triangle-fill' }} fs-4 me-3 mt-1"></i>
+    <div>
+        <div class="fw-semibold">
+            {{ $schedulerStatus === 'healthy' ? 'Automatisation opérationnelle' : 'Automatisation à vérifier' }}
         </div>
+
+        <div class="fs-7 mt-1">
+            @if(($globalScheduler['status'] ?? 'missing') === 'healthy')
+                Laravel exécute bien le planificateur — dernier passage le
+                {{ $globalScheduler['last_tick_at']?->copy()->setTimezone('Europe/Paris')->format('d/m/Y H:i') }} (Europe/Paris).
+            @elseif(($globalScheduler['status'] ?? 'missing') === 'stale')
+                Le planificateur Laravel n’a pas signalé de passage depuis plus de 2 minutes.
+            @else
+                Aucun passage du planificateur Laravel n’a encore été signalé.
+            @endif
+        </div>
+
+        <ul class="mb-0 mt-2 ps-4 fs-7">
+            @foreach($schedulerCommands as $command)
+                <li>
+                    <span class="fw-semibold">{{ $command['label'] }}</span> :
+                    @if(($command['status'] ?? 'missing') === 'healthy')
+                        dernière réussite le {{ $command['last_success_at']?->copy()->setTimezone('Europe/Paris')->format('d/m/Y H:i') }}.
+                    @elseif(($command['status'] ?? 'missing') === 'stale')
+                        dernière réussite le {{ $command['last_success_at']?->copy()->setTimezone('Europe/Paris')->format('d/m/Y H:i') ?? 'inconnue' }}, soit depuis plus de 2 minutes alors qu’elle est attendue chaque minute.
+                    @else
+                        aucune exécution réussie signalée.
+                    @endif
+                </li>
+            @endforeach
+        </ul>
+
+        @if(isset($model) && $model->effectiveScheduledAt())
+            <div class="fs-7 mt-2">
+                <span class="fw-semibold">Prochain envoi prévu :</span>
+                {{ $model->effectiveScheduledAt()->copy()->setTimezone('Europe/Paris')->format('d/m/Y H:i') }} Europe/Paris.
+            </div>
+        @endif
     </div>
-@endif
+</div>

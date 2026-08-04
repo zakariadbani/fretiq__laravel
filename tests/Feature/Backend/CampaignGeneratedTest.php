@@ -11,6 +11,7 @@ use App\Models\Segment;
 use App\Models\SenderIdentity;
 use App\Models\Sequence;
 use App\Models\User;
+use App\Services\Campaign\SegmentService;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -405,6 +406,16 @@ class CampaignGeneratedTest extends TestCase
 
         $response->assertStatus(403);
     }
+    public function test_create_explains_eligible_audience_and_activation_semantics(): void
+    {
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/campaigns/create');
+
+        $response->assertStatus(200);
+        $response->assertSee('destinataires éligibles', false);
+        $response->assertSee('Participation à l’automatisation', false);
+        $response->assertSee('ne garantit pas que l’envoi est prêt', false);
+    }
     // segmentCount
 
     /**
@@ -430,29 +441,131 @@ class CampaignGeneratedTest extends TestCase
             ->getJson('/admin/campaigns/segment-count/' . $segment->id);
 
         $response->assertStatus(200);
-        $response->assertJsonStructure(['count']);
-        // count must be an integer (SegmentService::previewCount returns int)
+        $response->assertJsonStructure([
+            'count',
+            'contact_count',
+            'company_count',
+            'contacts_count',
+            'matched_count',
+            'funnel',
+            'cold_gate_closed',
+            'available',
+        ]);
+        $response->assertJson([
+            'available' => true,
+            'cold_gate_closed' => true,
+            'count' => 2,
+            'contact_count' => 2,
+            'company_count' => 2,
+            'contacts_count' => 2,
+            'matched_count' => 2,
+            'funnel' => [
+                'matched' => 2,
+                'final' => 2,
+            ],
+        ]);
+        // Compatibility counts and the funnel must remain one audience truth.
         $this->assertIsInt($response->json('count'));
-        // The count must match the number of eligible seeded contacts (>= 2).
-        // We use >= rather than === to be resilient to extra rows that may exist,
-        // but assert > 0 to ensure the assertion is non-vacuous.
-        $this->assertGreaterThanOrEqual(2, $response->json('count'),
-            'segmentCount must resolve at least the 2 seeded client contacts'
-        );
+        $this->assertSame($response->json('count'), $response->json('contact_count'));
+        $this->assertSame($response->json('count'), $response->json('contacts_count'));
+        $this->assertSame($response->json('count'), $response->json('funnel.final'));
     }
 
     /**
-     * GET /admin/campaigns/segment-count/{id} returns {count: 0} for an unknown segment id.
+     * GET /admin/campaigns/segment-count/{id} reports an unknown segment as unavailable.
      *
      * Controller: `if (!$segment) { return response()->json(['count' => 0]); }`
      */
-    public function test_segment_count_returns_zero_for_unknown_segment(): void
+    public function test_segment_count_reports_unknown_segment_as_unavailable(): void
     {
         $response = $this->actingAs($this->superadmin)
             ->getJson('/admin/campaigns/segment-count/99999');
 
-        $response->assertStatus(200);
-        $response->assertJson(['count' => 0]);
+        $response->assertStatus(404);
+        $response->assertJson([
+            'count' => 0,
+            'contact_count' => 0,
+            'company_count' => 0,
+            'contacts_count' => 0,
+            'available' => false,
+            'message' => 'Segment introuvable.',
+        ]);
+    }
+
+    public function test_segment_count_reuses_resolved_stats_without_resolving_the_segment_twice(): void
+    {
+        $segment = Segment::create(['name' => 'Single resolution', 'scope' => 'client']);
+
+        $this->app->instance(SegmentService::class, new class extends SegmentService
+        {
+            public function resolveWithStats(
+                string $scope,
+                array $filter,
+                bool $withSample = false,
+                array $includeIds = [],
+                array $excludeIds = [],
+                bool $manualOnly = false,
+            ): array {
+                return [
+                    'matched' => 3,
+                    'suppressed' => 0,
+                    'cold_excluded' => 0,
+                    'personal_excluded' => 0,
+                    'duplicates_excluded' => 0,
+                    'manually_excluded' => 0,
+                    'manually_included' => 0,
+                    'final' => 3,
+                    'company_count' => 2,
+                    'sample' => [],
+                ];
+            }
+
+            public function resolve(Segment $segment): \Illuminate\Support\Collection
+            {
+                throw new \RuntimeException('resolve() must not be called by segmentCount().');
+            }
+        });
+
+        $this->actingAs($this->superadmin)
+            ->getJson('/admin/campaigns/segment-count/'.$segment->id)
+            ->assertOk()
+            ->assertJson([
+                'count' => 3,
+                'company_count' => 2,
+                'available' => true,
+            ]);
+    }
+    public function test_segment_count_reports_resolver_failure_without_leaking_exception(): void
+    {
+        $segment = Segment::create(['name' => 'Broken audience', 'scope' => 'client']);
+
+        $this->app->instance(SegmentService::class, new class extends SegmentService
+        {
+            public function resolveWithStats(
+                string $scope,
+                array $filter,
+                bool $withSample = false,
+                array $includeIds = [],
+                array $excludeIds = [],
+                bool $manualOnly = false,
+            ): array {
+                throw new \RuntimeException('internal audience secret');
+            }
+        });
+
+        $response = $this->actingAs($this->superadmin)
+            ->getJson('/admin/campaigns/segment-count/'.$segment->id);
+
+        $response->assertStatus(422);
+        $response->assertJson([
+            'count' => 0,
+            'contact_count' => 0,
+            'company_count' => 0,
+            'contacts_count' => 0,
+            'available' => false,
+            'message' => 'Le calcul de l’audience est momentanément indisponible. Réessayez.',
+        ]);
+        $response->assertDontSee('internal audience secret');
     }
     // audienceLanguageSplit
 

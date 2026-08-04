@@ -102,6 +102,7 @@ module.exports = [
     'node_modules/axios/dist/axios.js',
 
     'node_modules/flatpickr/dist/flatpickr.js',
+    'node_modules/flatpickr/dist/l10n/fr.js',
 
     // Tempus Dominus is the successor to the very popular Eonasdan/bootstrap-datetimepicker. The plugin provide a robust date and time picker designed to integrate into your Bootstrap project.
     'node_modules/@eonasdan/tempus-dominus/dist/js/tempus-dominus.min.js',

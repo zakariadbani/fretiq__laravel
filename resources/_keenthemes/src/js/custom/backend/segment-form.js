@@ -43,7 +43,7 @@ var KTSegmentForm = function () {
         { key: 'personal_excluded',   label: '− emails personnels',       alwaysShow: false, bold: false, variant: 'danger'   },
         { key: 'duplicates_excluded', label: '− doublons',                alwaysShow: false, bold: false, variant: 'secondary'},
         { key: 'manually_excluded',   label: '− exclus manuellement',     alwaysShow: false, bold: false, variant: 'danger'   },
-        { key: 'final',               label: 'destinataires',             alwaysShow: true,  bold: true,  variant: 'primary'  },
+        { key: 'final',               label: 'destinataires éligibles',             alwaysShow: true,  bold: true,  variant: 'primary'  },
     ];
 
     /* ── État interne ───────────────────────────────────────────────────── */
@@ -93,6 +93,7 @@ var KTSegmentForm = function () {
         if (!$.fn.select2) return;
         $('[data-control="select2"]').each(function () {
             var $el = $(this);
+            if ($el.hasClass('select2-hidden-accessible')) return;
             var placeholder = $el.data('placeholder') || '';
             var allowClear  = !!$el.data('allow-clear');
             $el.select2({
@@ -203,7 +204,7 @@ var KTSegmentForm = function () {
 
         var $warnText = $(IDS.warning).find('.warning-text');
         if (data.cold_gate_closed && scope === 'prospect') {
-            $warnText.text("L'envoi à froid est désactivé — ce segment ne recevra aucun email tant qu'il n'est pas activé.");
+            $warnText.text("L'envoi à froid est désactivé — les prospects sont exclus. La programmation et l’envoi restent bloqués tant qu’aucun destinataire n’est éligible.");
             $(IDS.warning).removeClass('d-none');
         } else if (data.cold_gate_closed && scope === 'mixed' && coldExcluded > 0) {
             $warnText.text(coldExcluded + " prospect(s) en attente — l'envoi à froid est désactivé. Les clients du segment reçoivent l'email ; les prospects seront contactés dès son activation.");

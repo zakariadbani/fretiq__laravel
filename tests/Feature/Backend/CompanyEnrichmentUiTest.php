@@ -162,6 +162,44 @@ class CompanyEnrichmentUiTest extends TestCase
         $response->assertDontSee('Aucun email trouvé — ', false);
     }
 
+    public function test_zero_contact_company_prioritizes_recovery_and_hides_campaign_action(): void
+    {
+        $user = $this->makeAdmin();
+        $company = Company::create([
+            'name' => 'Sans Contact SA',
+            'domain' => 'sans-contact.test',
+            'relationship' => 'prospect',
+            'source' => 'manual',
+            'qualification_status' => 'pending',
+            'is_active' => true,
+        ]);
+
+        $response = $this->actingAs($user)->get("/admin/companies/{$company->id}");
+
+        $response->assertOk();
+        $response->assertSee('btn-success', false);
+        $response->assertSee('Récupérer les contacts', false);
+        $response->assertSee('avant de lancer une campagne', false);
+        $response->assertDontSee('Lancer une campagne', false);
+    }
+
+    public function test_zero_contact_company_explains_missing_domain_prerequisite(): void
+    {
+        $user = $this->makeAdmin();
+        $company = Company::create([
+            'name' => 'Sans Domaine SA',
+            'relationship' => 'prospect',
+            'source' => 'manual',
+            'qualification_status' => 'pending',
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->get("/admin/companies/{$company->id}")
+            ->assertOk()
+            ->assertSee("Renseignez le domaine de l'entreprise", false)
+            ->assertDontSee('Lancer une campagne', false);
+    }
     private function makeAdmin(): User
     {
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);

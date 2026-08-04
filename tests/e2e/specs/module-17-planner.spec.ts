@@ -54,6 +54,48 @@ test.describe('Planner module', () => {
     await planner.calendarContainer.waitFor({ state: 'attached', timeout: 10000 });
   });
 
+  test('desktop planner keeps the weekly grid and labelled navigation usable', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const planner = new PlannerPage(page);
+    await planner.goto();
+
+    await expect(planner.calendarContainer.locator('.fc-timeGridWeek-view')).toBeVisible();
+    await expect(planner.previousButton).toHaveAttribute('aria-label', 'Période précédente');
+    await expect(planner.nextButton).toHaveAttribute('aria-label', 'Période suivante');
+    await expect(planner.todayButton).toHaveAttribute('aria-label', "Aujourd'hui");
+
+    const originalTitle = await planner.title.textContent();
+    await planner.previousButton.click();
+    await expect(planner.title).not.toHaveText(originalTitle ?? '');
+    await expect(planner.firstEvent).toBeVisible();
+    await planner.todayButton.click();
+    await expect(planner.title).toHaveText(originalTitle ?? '');
+  });
+
+  test('mobile planner uses a non-overflowing day list with reachable controls', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const planner = new PlannerPage(page);
+    await planner.goto();
+
+    await expect(planner.calendarContainer.locator('.fc-listDay-view')).toBeVisible();
+    await expect(planner.previousButton).toBeVisible();
+    await expect(planner.nextButton).toBeVisible();
+    await expect(planner.todayButton).toBeVisible();
+
+    const widths = await page.evaluate(() => ({
+      client: document.documentElement.clientWidth,
+      scroll: document.documentElement.scrollWidth,
+    }));
+    expect(widths.scroll).toBe(widths.client);
+
+    await planner.previousButton.click();
+    await planner.previousButton.click();
+    await expect(planner.firstEvent).toBeVisible();
+    await expect(planner.firstEvent.locator('.fc-list-event-time')).not.toBeEmpty();
+    await expect(planner.firstEvent.locator('.fc-list-event-title')).not.toBeEmpty();
+    await planner.todayButton.click();
+  });
+
   // ── 4. Feed endpoint returns a JSON array ────────────────────────────────
 
   test('feed endpoint GET /admin/planner/feed returns HTTP 200 and a JSON array', async ({ page }) => {

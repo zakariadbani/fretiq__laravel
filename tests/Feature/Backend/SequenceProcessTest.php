@@ -37,6 +37,10 @@ class SequenceProcessTest extends TestCase
 
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
+        config([
+            'prospecting.cold_send_enabled' => true,
+            'services.zoho.driver' => 'local',
+        ]);
         Mail::fake();
     }
 

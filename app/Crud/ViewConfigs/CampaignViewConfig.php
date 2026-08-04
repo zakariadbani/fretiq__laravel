@@ -119,7 +119,7 @@ class CampaignViewConfig
                         ? 'send campaigns'
                         : 'edit campaigns',
                     'title'       => 'Campagne active',
-                    'description' => 'Décochez pour mettre en pause (le planificateur ignore la campagne).',
+                    'description' => 'Active signifie que l’automatisation peut examiner la campagne. L’envoi reste bloqué tant que les vérifications ne sont pas toutes validées.',
                     'success'     => 'Campagne mise à jour',
                     'error'       => 'Échec de la mise à jour',
                     'icon'        => 'bi-check-circle-fill',

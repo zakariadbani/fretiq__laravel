@@ -8,6 +8,8 @@ use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
 use App\Jobs\SendCampaignJob;
 use App\Jobs\SendSequenceWaveStepJob;
+use App\Jobs\SyncCampaignRecipientEventsJob;
+use App\Jobs\SyncCampaignStatsJob;
 use App\Jobs\SyncCampaignWaveZohoListJob;
 use App\Models\Campaign;
 use App\Models\CampaignCompanyDispatch;
@@ -21,6 +23,7 @@ use App\Models\SequenceEnrollment;
 use App\Models\SenderIdentity;
 use App\Models\Setting;
 use App\Services\Campaign\CampaignService;
+use App\Services\Campaign\CampaignTestMailService;
 use App\Services\Campaign\CampaignWaveZohoListSyncService;
 use App\Services\Campaign\CampaignZohoListSyncService;
 use App\Services\Campaign\PacedCampaignBatchService;
@@ -32,6 +35,8 @@ use App\Services\Translation\LanguageResolver;
 use Carbon\Carbon;
 use DateTimeZone;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -60,7 +65,7 @@ class CampaignController extends BackendController
         $this->middleware('permission:create campaigns')->only(['create', 'store']);
         $this->middleware('permission:edit campaigns')->only(['edit', 'update', 'executeSwitch']);
         $this->middleware('permission:delete campaigns')->only(['delete']);
-        $this->middleware('permission:send campaigns')->only(['dispatchPreview', 'schedule', 'sendNow', 'sequenceAutoEnroll', 'syncZohoList', 'retryZohoWave']);
+        $this->middleware('permission:send campaigns')->only(['dispatchPreview', 'schedule', 'sendNow', 'testSend', 'sequenceAutoEnroll', 'syncZohoList', 'syncStats', 'retryZohoWave']);
         $this->middleware('permission:create demandes')->only(['markReplied']);
 
         $this->listTitle = 'Campagnes';
@@ -106,9 +111,9 @@ class CampaignController extends BackendController
             'segment',
             'template',
             'senderIdentity',
-            'sequence',
+            'sequence.steps.template',
             'runs' => function ($q) {
-                $q->withCount('companyDispatches')->orderByDesc('run_at');
+                $q->with('sequenceStep.template')->withCount('companyDispatches')->orderByDesc('run_at');
             },
         ])->find((int) $id);
 
@@ -123,10 +128,10 @@ class CampaignController extends BackendController
         $executedRunIds = $executedRuns->pluck('id');
 
         $latestRun = $executedRuns->first();
-        $stats     = $this->campaignStats($executedRuns);
-        $currentAudience = $campaign->segment
-            ? app(SegmentService::class)->resolve($campaign->segment)
-            : collect();
+        $stats = $this->campaignStats($executedRuns);
+        $schedulerHealth = $this->schedulerHealth();
+        $campaignReadiness = app(CampaignService::class)->dispatchPreflight($campaign);
+        $currentAudience = $campaignReadiness['contacts'];
 
         $pacedProgress = null;
         if ($campaign->schedule_type === 'paced') {
@@ -172,6 +177,9 @@ class CampaignController extends BackendController
                 'q'      => $recipientFilters['q'] !== '' ? $recipientFilters['q'] : null,
                 'statut' => $recipientFilters['statut'],
             ]));
+        $recipientStepReport = $isRunScope
+            ? null
+            : $this->recipientStepReport($campaign, $executedRuns, $recipients);
 
         // Tab badge = distinct contacts across all runs (structural, filter-independent).
         $recipientsTotal = CampaignRecipient::whereIn('campaign_run_id', $executedRunIds)
@@ -237,6 +245,7 @@ class CampaignController extends BackendController
             ->with('stats', $stats)
             ->with('currentAudience', $currentAudience)
             ->with('recipients', $recipients)
+            ->with('recipientStepReport', $recipientStepReport)
             ->with('recipientsTotal', $recipientsTotal)
             ->with('recipientFilters', $recipientFilters)
             ->with('chipCounts', $chipCounts)
@@ -250,7 +259,8 @@ class CampaignController extends BackendController
             ->with('selectedWaveRecipients', $waveData['recipients'])
             ->with('waveEnrollments', $waveData['enrollments'])
             ->with('legacyWaves', $waveData['legacy'])
-            ->with('schedulerHealth', $this->schedulerHealth());
+            ->with('campaignReadiness', $campaignReadiness)
+            ->with('schedulerHealth', $schedulerHealth);
     }
 
     /** Campaign-specific paced-sequence wave summaries and selected membership. */
@@ -321,29 +331,34 @@ class CampaignController extends BackendController
     {
         $requiredCommands = [
             'generate_runs' => [
-                'label' => 'campaigns:generate-runs',
+                'label' => 'Préparation des exécutions',
                 'key' => 'campaign_scheduler.commands.generate_runs.last_success_at',
             ],
             'dispatch_due' => [
-                'label' => 'campaigns:dispatch-due',
+                'label' => 'Départ des envois planifiés',
                 'key' => 'campaign_scheduler.commands.dispatch_due.last_success_at',
             ],
         ];
+        $parseTimestamp = static function ($value): ?Carbon {
+            if (! is_string($value) || trim($value) === '') {
+                return null;
+            }
 
+            try {
+                return Carbon::parse($value, 'UTC')->utc();
+            } catch (\Throwable) {
+                return null;
+            }
+        };
+
+        $globalLastTickAt = $parseTimestamp(Setting::get('observability.scheduler.last_tick_at'));
+        $globalStatus = $globalLastTickAt === null
+            ? 'missing'
+            : ($globalLastTickAt->lt(Carbon::now('UTC')->subMinutes(2)) ? 'stale' : 'healthy');
         $commands = [];
 
         foreach ($requiredCommands as $name => $command) {
-            $value = Setting::get($command['key']);
-            $lastSuccessAt = null;
-
-            if (is_string($value) && trim($value) !== '') {
-                try {
-                    $lastSuccessAt = Carbon::parse($value, 'UTC')->utc();
-                } catch (\Throwable) {
-                    $lastSuccessAt = null;
-                }
-            }
-
+            $lastSuccessAt = $parseTimestamp(Setting::get($command['key']));
             $commands[$name] = [
                 'label' => $command['label'],
                 'status' => $lastSuccessAt === null
@@ -353,16 +368,24 @@ class CampaignController extends BackendController
             ];
         }
 
-        $statuses = collect($commands)->pluck('status');
+        $commandStatuses = collect($commands)->pluck('status');
+        $commandsStatus = $commandStatuses->contains('missing')
+            ? 'missing'
+            : ($commandStatuses->contains('stale') ? 'stale' : 'healthy');
+        $statuses = collect([$globalStatus, $commandsStatus]);
 
         return [
             'status' => $statuses->contains('missing')
                 ? 'missing'
                 : ($statuses->contains('stale') ? 'stale' : 'healthy'),
+            'global' => [
+                'status' => $globalStatus,
+                'last_tick_at' => $globalLastTickAt,
+            ],
+            'commands_status' => $commandsStatus,
             'commands' => $commands,
         ];
     }
-
     /**
      * Compute aggregate KPI stats from executed runs.
      * Uses only run-level stats columns — no recipient rows needed.
@@ -385,6 +408,65 @@ class CampaignController extends BackendController
                 'labels' => $otLabels,
             ],
         ]);
+    }
+
+    /**
+     * Build the sequence-step matrix for only the contacts on the current page.
+     *
+     * @param Collection<int, CampaignRun> $executedRuns
+     * @return array{steps: Collection, summaries: array<int, array<string, int|float|null>>, cells: array<int, array<int, CampaignRecipient>>}|null
+     */
+    private function recipientStepReport(
+        Campaign $campaign,
+        Collection $executedRuns,
+        LengthAwarePaginator $recipients,
+    ): ?array {
+        if ($campaign->schedule_type !== 'sequence' || $campaign->sequence === null) {
+            return null;
+        }
+
+        $steps = $campaign->sequence->steps->values();
+        $stepRuns = $executedRuns
+            ->filter(fn (CampaignRun $run) => $run->sequence_step_id !== null)
+            ->values();
+
+        $summaries = [];
+        foreach ($steps as $step) {
+            $summaries[(int) $step->id] = CampaignRun::aggregateKpis(
+                $stepRuns->where('sequence_step_id', $step->id),
+            );
+        }
+
+        $cells = [];
+        $contactIds = $recipients->getCollection()
+            ->pluck('contact_id')
+            ->filter()
+            ->map(fn ($contactId) => (int) $contactId)
+            ->unique()
+            ->values();
+        $stepIdByRun = $stepRuns
+            ->pluck('sequence_step_id', 'id')
+            ->map(fn ($stepId) => (int) $stepId)
+            ->all();
+
+        if ($contactIds->isNotEmpty() && $stepIdByRun !== []) {
+            $rows = CampaignRecipient::query()
+                ->whereIn('campaign_run_id', array_keys($stepIdByRun))
+                ->whereIn('contact_id', $contactIds)
+                ->orderByDesc('id')
+                ->get();
+
+            foreach ($rows as $recipient) {
+                $contactId = (int) $recipient->contact_id;
+                $stepId = $stepIdByRun[(int) $recipient->campaign_run_id] ?? null;
+
+                if ($stepId !== null && ! isset($cells[$contactId][$stepId])) {
+                    $cells[$contactId][$stepId] = $recipient;
+                }
+            }
+        }
+
+        return compact('steps', 'summaries', 'cells');
     }
 
     // ── Recipients helpers ─────────────────────────────────────────────────────
@@ -579,33 +661,58 @@ class CampaignController extends BackendController
     {
         $selectedSegment = $this->resolveSourceModel('segment_id', Segment::class, 'view segments');
         $selectedTemplate = $this->resolveSourceModel('template_id', CampaignTemplate::class, 'view campaign_templates');
+        $selectedSender = $this->resolveSourceModel('sender_identity_id', SenderIdentity::class, 'view sender_identities');
+        $campaignId = request()->route('id');
+        $syncableZohoRuns = is_numeric($campaignId)
+            ? CampaignRun::query()
+                ->where('campaign_id', (int) $campaignId)
+                ->eligibleForStatsSync()
+                ->whereNotNull('zoho_campaign_key')
+                ->orderByDesc('run_at')
+                ->get()
+            : collect();
         $selectedCompany = $this->resolveSourceModel('company_id', Company::class, 'view companies');
 
+        $segments = Segment::where('name', 'not like', 'E2E\_FIXTURE %')->orderBy('name')->get();
+        $templates = CampaignTemplate::where('name', 'not like', 'E2E\_FIXTURE %')->orderBy('name')->get();
+        $senderIdentities = SenderIdentity::where('is_active', true)->where('name', 'not like', 'E2E\_FIXTURE %')->orderBy('name')->get();
+        foreach ([[$segments, $selectedSegment], [$templates, $selectedTemplate], [$senderIdentities, $selectedSender]] as [$options, $selected]) {
+            if ($selected && ! $options->contains('id', $selected->id)) {
+                $options->push($selected);
+            }
+        }
+
         $sequences = Sequence::where('is_active', true)
+            ->where('name', 'not like', 'E2E\_FIXTURE %')
             ->with(['steps' => fn ($q) => $q->with('template')->orderBy('step_no')])
             ->orderBy('name')
             ->get();
 
         return [
-            'segments'             => Segment::orderBy('name')->get(),
-            'templates'            => CampaignTemplate::orderBy('name')->get(),
-            'senderIdentities'     => SenderIdentity::where('is_active', true)->orderBy('name')->get(),
+            'segments'             => $segments->sortBy('name')->values(),
+            'templates'            => $templates->sortBy('name')->values(),
+            'senderIdentities'     => $senderIdentities->sortBy('name')->values(),
             'scheduleTypes'        => config('global.data.schedule_types', []),
             'recurrenceFrequencies'=> config('global.data.recurrence_frequencies', []),
             'sequences'            => $sequences,
             'selectedSegment'       => $selectedSegment,
             'selectedTemplate'      => $selectedTemplate,
+            'selectedSender'        => $selectedSender,
             'selectedCompany'       => $selectedCompany,
+            'latestSyncableZohoRun' => $syncableZohoRuns->first(),
+            'syncableZohoRunCount'  => $syncableZohoRuns->count(),
         ];
     }
 
     private function resolveSourceModel(string $queryKey, string $modelClass, string $permission): ?object
     {
-        if (! $this->currentRequest->user()?->can($permission)) {
+        $request = request();
+
+        if (! $request->user()?->can($permission)) {
             return null;
         }
 
-        $id = $this->currentRequest->query($queryKey);
+        $id = $request->query($queryKey);
         if (! is_numeric($id) || (int) $id < 1) {
             return null;
         }
@@ -748,24 +855,56 @@ class CampaignController extends BackendController
      */
     public function segmentCount($id)
     {
+        $coldGateClosed = ! config('prospecting.cold_send_enabled', false);
+        $unavailable = [
+            'count' => 0,
+            'contact_count' => 0,
+            'company_count' => 0,
+            'contacts_count' => 0,
+            'matched_count' => 0,
+            'funnel' => null,
+            'cold_gate_closed' => $coldGateClosed,
+            'available' => false,
+        ];
+
         $segment = Segment::find((int) $id);
-        if (!$segment) {
-            return response()->json(['count' => 0, 'contact_count' => 0, 'company_count' => 0]);
+        if (! $segment) {
+            return response()->json($unavailable + ['message' => 'Segment introuvable.'], 404);
         }
 
         try {
-            $contacts = app(SegmentService::class)->resolve($segment);
-            $count = $contacts->count();
-            $companyCount = $contacts->pluck('company_id')->filter()->unique()->count();
-        } catch (\Throwable $e) {
-            $count = 0;
-            $companyCount = 0;
+            $segmentService = app(SegmentService::class);
+            $stats = $segmentService->resolveWithStats(
+                $segment->scope,
+                $segment->filter ?? [],
+                false,
+                $segment->includedContactIds(),
+                $segment->excludedContactIds(),
+                $segment->is_manual,
+            );
+            $count = (int) $stats['final'];
+            $companyCount = (int) $stats['company_count'];
+            unset($stats['company_count']);
+        } catch (\Throwable $exception) {
+            Log::warning('Segment audience preview failed.', [
+                'segment_id' => $segment->id,
+                'exception' => $exception::class,
+            ]);
+
+            return response()->json($unavailable + [
+                'message' => 'Le calcul de l’audience est momentanément indisponible. Réessayez.',
+            ], 422);
         }
 
         return response()->json([
             'count' => $count,
             'contact_count' => $count,
             'company_count' => $companyCount,
+            'contacts_count' => $count,
+            'matched_count' => (int) $stats['matched'],
+            'funnel' => $stats,
+            'cold_gate_closed' => $coldGateClosed,
+            'available' => true,
         ]);
     }
 
@@ -1092,6 +1231,32 @@ class CampaignController extends BackendController
             'redirect' => route('admin.campaigns.view', $id),
         ]);
     }
+    public function syncStats(Request $request, $id)
+    {
+        $campaign = Campaign::findOrFail((int) $id);
+        $runs = $campaign->runs()
+            ->eligibleForStatsSync()
+            ->whereNotNull('zoho_campaign_key')
+            ->get(['id']);
+
+        foreach ($runs as $run) {
+            SyncCampaignStatsJob::dispatch($run->id);
+            SyncCampaignRecipientEventsJob::dispatch($run->id);
+        }
+
+        $message = $runs->isEmpty()
+            ? html_entity_decode('Aucune ex&eacute;cution Zoho r&eacute;cente &agrave; synchroniser.')
+            : html_entity_decode("Synchronisation Zoho mise en file pour {$runs->count()} ex&eacute;cution(s).");
+        $redirect = route('admin.campaigns.view', $campaign->id);
+
+        if ($request->expectsJson()) {
+            return response()->json(compact('message', 'redirect'));
+        }
+
+        return redirect()->to($redirect)
+            ->with($runs->isEmpty() ? 'warning' : 'success', $message);
+    }
+
 
     /**
      * Add a compliance-filtered run snapshot to its dedicated campaign-owned Zoho
@@ -1139,6 +1304,23 @@ class CampaignController extends BackendController
         return redirect()->to(route('admin.campaigns.view', $campaign->id) . "?wave_id={$run->id}#campaign_vagues")
             ->with('success', 'Relance Zoho mise en file d’attente. La date est dépassée : après synchronisation, la campagne sera créée et envoyée immédiatement.');
     }
+    /** Send a safe preview to the authenticated user through local mail only. */
+    public function testSend($id)
+    {
+        $campaign = Campaign::findOrFail((int) $id);
+        $user = auth()->user();
+
+        try {
+            app(CampaignTestMailService::class)->send($campaign, $user);
+        } catch (\InvalidArgumentException $exception) {
+            return redirect()->route('admin.campaigns.view', $campaign->id)
+                ->with('error', $exception->getMessage());
+        }
+
+        return redirect()->route('admin.campaigns.view', $campaign->id)
+            ->with('success', html_entity_decode("Email test envoy&eacute; &agrave; {$user->email}."));
+    }
+
 
     /**
      * Schedule + immediately dispatch a send job for the given campaign.

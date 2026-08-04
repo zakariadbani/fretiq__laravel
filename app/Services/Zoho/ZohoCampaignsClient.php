@@ -9,13 +9,12 @@ use Illuminate\Support\Facades\Log;
 /**
  * ZohoCampaignsClient — thin HTTP wrapper over the Zoho Campaigns API v1.1.
  *
- * UNVERIFIED — This entire class has not been live-tinker-confirmed.
- * Zoho Campaigns OAuth is not yet provisioned (config('services.zoho.campaigns.refresh_token')
- * is blank). All endpoints, parameters, and response shapes are implemented against the
- * documented Zoho Campaigns API v1.1, but NO live STATUS 200 has been recorded.
+ * Endpoints without a method-level live-verification note remain unverified.
+ * Campaign aggregate and recipient-report response contracts were live-verified
+ * on 2026-08-02; their methods fail closed when Zoho returns another shape.
  *
- * Per the fretiq empirical-verification rule (CLAUDE.md §1), before relying on ANY method
- * in production you MUST:
+ * Per the fretiq empirical-verification rule (CLAUDE.md §1), before relying on an
+ * endpoint without a live-verification note in production you MUST:
  *   1. Obtain Zoho Campaigns OAuth credentials and wire them into config/services.php.
  *   2. Run `php artisan tinker --execute "..."` against the real API.
  *   3. Record STATUS 200 + response shape in task/PR notes.
@@ -43,6 +42,17 @@ class ZohoCampaignsClient
      * state was observed. Code "0" is the only accepted value.
      */
     private const LISTSUBSCRIBE_ACCEPTED_CODES = ['0'];
+
+    /** Recipient report actions empirically verified on 2026-08-02. */
+    private const RECIPIENT_REPORT_ACTIONS = [
+        'sentcontacts',
+        'openedcontacts',
+        'clickedcontacts',
+        'unopenedcontacts',
+        'unsentcontacts',
+        'optoutcontacts',
+        'spamcontacts',
+    ];
 
     public function __construct(
         private readonly ZohoAuthService $authService,
@@ -531,18 +541,15 @@ class ZohoCampaignsClient
     /**
      * Retrieve the send report / statistics for a Zoho campaign.
      *
-     * UNVERIFIED — endpoint/params not live-tinker-confirmed (Zoho Campaigns OAuth
-     * not provisioned). Per the empirical-verification rule, run a live tinker
-     * GET + record STATUS 200 before relying on this in production.
-     *
-     * Documented endpoint: GET /campaignreports
-     * Returns stats including sent, opened, clicked, bounced counts.
+     * Live-verified (prod, 2026-08-02): GET /campaignreports returns code "0",
+     * status "success", and campaign-reports[0]. Verified aggregate fields are
+     * emails_sent_count, delivered_count, opens_count, unique_clicks_count,
+     * bounces_count, and unsub_count.
      *
      * @param  string  $campaignKey  The campaign key to fetch stats for.
-     * @return array                 Decoded JSON response; typically contains 'sent_count',
-     *                               'opened_count', 'clicked_count', 'bounced_count'.
+     * @return array                 Validated response containing campaign-reports[0].
      *
-     * @throws \RuntimeException  If the HTTP request fails or Zoho returns a non-2xx status.
+     * @throws \RuntimeException  If transport or application-level validation fails.
      */
     public function getCampaignReport(string $campaignKey): array
     {
@@ -564,6 +571,16 @@ class ZohoCampaignsClient
         }
 
         $payload = $response->json() ?? [];
+        if (
+            ! is_array($payload)
+            || (string) ($payload['code'] ?? '') !== '0'
+            || ($payload['status'] ?? null) !== 'success'
+            || ! isset($payload['campaign-reports'][0])
+            || ! is_array($payload['campaign-reports'][0])
+        ) {
+            throw new \RuntimeException('[ZohoCampaignsClient] getCampaignReport malformed or application error: ' . $response->body());
+        }
+
 
         Log::debug('[ZohoCampaignsClient] getCampaignReport', [
             'campaign_key' => $campaignKey,
@@ -571,5 +588,61 @@ class ZohoCampaignsClient
         ]);
 
         return $payload;
+    }
+
+    /**
+     * Return one live-verified recipient report page as normalized rows.
+     * Code 6303 means the requested action is valid but has no recipients.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getCampaignRecipientsData(
+        string $campaignKey,
+        string $action,
+        int $fromIndex = 1,
+        int $range = 100,
+    ): array {
+        if (! in_array($action, self::RECIPIENT_REPORT_ACTIONS, true)) {
+            throw new \InvalidArgumentException("Action Zoho non verifiee: {$action}");
+        }
+
+        $accessToken = $this->authService->getAccessToken('campaigns');
+
+        $response = Http::withHeaders([
+            'Authorization' => 'Zoho-oauthtoken ' . $accessToken,
+        ])->timeout(20)->get($this->apiUrl . '/getcampaignrecipientsdata', [
+            'resfmt' => 'JSON',
+            'campaignkey' => $campaignKey,
+            'action' => $action,
+            'fromindex' => $fromIndex,
+            'range' => $range,
+        ]);
+
+        if ($response->failed()) {
+            throw new \RuntimeException(
+                '[ZohoCampaignsClient] getCampaignRecipientsData failed (HTTP ' . $response->status() . '): ' . $response->body()
+            );
+        }
+
+        $payload = $response->json();
+        if (! is_array($payload)) {
+            throw new \RuntimeException('[ZohoCampaignsClient] getCampaignRecipientsData malformed response: ' . $response->body());
+        }
+
+        $code = (string) ($payload['code'] ?? '');
+
+        if ($code === '6303') {
+            return [];
+        }
+        if (
+            $code !== '0'
+            || ($payload['status'] ?? null) !== 'success'
+            || ! array_key_exists('list_of_details', $payload)
+            || ! is_array($payload['list_of_details'])
+        ) {
+            throw new \RuntimeException('[ZohoCampaignsClient] getCampaignRecipientsData Zoho API error: ' . $response->body());
+        }
+
+        return $payload['list_of_details'];
     }
 }

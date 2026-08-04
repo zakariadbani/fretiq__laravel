@@ -47,6 +47,26 @@ const FIXTURE_HTML = '<html><body><p>E2E test email body.</p></body></html>';
 
 test.describe('Campaign Templates module', () => {
 
+  const scopedTemplateNames: string[] = [];
+
+  test.afterEach(async ({ page }) => {
+    if (scopedTemplateNames.length === 0) return;
+    const templates = new CampaignTemplatePage(page);
+    for (const name of scopedTemplateNames.splice(0)) {
+      try {
+        await templates.goto();
+        await waitForDataTable(page, 'campaign_template-table');
+        await templates.deleteAllByName(name, {
+          search: (query) => templates.search(query),
+          waitForDataTable,
+          confirmDelete,
+        });
+      } catch {
+        // Best-effort teardown keeps the original test failure visible.
+      }
+    }
+  });
+
   // ── 1. List page — DataTable renders ──────────────────────────────────────
 
   test('list page loads and DataTable renders', async ({ page }) => {
@@ -368,6 +388,7 @@ test.describe('Campaign Templates module', () => {
   test('edit: scoped saves, local tabs, route dirty guard, success and validation failure', async ({ page }) => {
     const templates = new CampaignTemplatePage(page);
     const name = uniqueName('E2E Scoped Template');
+    scopedTemplateNames.push(name);
     const subject = `E2E scoped subject ${Date.now()}`;
     const enSubject = `E2E EN scoped subject ${Date.now()}`;
 

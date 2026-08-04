@@ -1,4 +1,5 @@
-import { expect, Page, test } from '@playwright/test';
+import { expect, test } from '../fixtures/console-guard';
+import type { Page } from '@playwright/test';
 import { waitForDataTable } from '../helpers/test-utils';
 
 async function expectNamedFormControls(page: Page) {
@@ -57,6 +58,12 @@ test.describe('accessibility smoke', () => {
     await expectPath(page, '/admin/dashboard');
     await expectDemoDrawersAndModalsAbsent(page);
 
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('link', { name: 'Aller au contenu principal' })).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#main-content')).toBeFocused();
+    await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
+
     await expect(page.getByRole('button', { name: 'Ouvrir le menu du compte' })).toBeVisible();
     await expectMenuTriggerKeyOpens(page, 'Ouvrir le menu du compte', 'Enter');
     await expectMenuTriggerKeyOpens(page, 'Ouvrir le menu du compte', 'Space');
@@ -94,5 +101,54 @@ test.describe('accessibility smoke', () => {
         .map((action) => action.outerHTML.slice(0, 80));
     });
     expect(unnamedIconActions).toEqual([]);
+
+    const filters = page.locator('#filters-container select');
+    expect(await filters.count()).toBeGreaterThan(0);
+    for (let index = 0; index < await filters.count(); index += 1) {
+      await expect(filters.nth(index).locator('xpath=following-sibling::*[contains(@class, "select2-container")]')).toHaveCount(1);
+    }
+  });
+
+  test('company detail tabs and status switch expose synchronized semantics', async ({ page }) => {
+    await page.goto('/admin/companies');
+    await waitForDataTable(page, 'company-table');
+    await page.locator('#company-table a[title="Voir"]').first().click();
+
+    const tabs = page.getByRole('tab');
+    expect(await tabs.count()).toBeGreaterThan(1);
+    await tabs.first().focus();
+    await page.keyboard.press('ArrowRight');
+
+    await expect(tabs.nth(1)).toBeFocused();
+    await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true');
+    await expect(tabs.nth(1)).toHaveAttribute('tabindex', '0');
+    await expect(tabs.first()).toHaveAttribute('aria-selected', 'false');
+    await expect(page.locator(`#${await tabs.first().getAttribute('aria-controls')}`)).toHaveAttribute('hidden', '');
+    await expect(page.locator(`#${await tabs.nth(1).getAttribute('aria-controls')}`)).not.toHaveAttribute('hidden', '');
+
+    const statusSwitch = page.getByRole('switch').first();
+    await expect(statusSwitch).toHaveAccessibleName(/Modifier : (?!is_active).+/);
+  });
+
+  test('mobile form actions stay below the final control and stack safely', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/admin/companies/create');
+
+    const finalControl = page.locator('input:not([type="hidden"]):visible, textarea:visible, select:visible').last();
+    const actions = page.locator('[data-crud-form-actions="sticky"]');
+    await finalControl.scrollIntoViewIfNeeded();
+    await expect(actions).toBeVisible();
+
+    const finalBox = await finalControl.boundingBox();
+    const actionBox = await actions.boundingBox();
+    expect(finalBox).not.toBeNull();
+    expect(actionBox).not.toBeNull();
+    expect(finalBox!.y + finalBox!.height).toBeLessThanOrEqual(actionBox!.y + 1);
+
+    const buttons = actions.locator('.btn');
+    expect(await buttons.count()).toBeGreaterThan(1);
+    for (let index = 0; index < await buttons.count(); index += 1) {
+      expect((await buttons.nth(index).boundingBox())!.width).toBeGreaterThan(300);
+    }
   });
 });

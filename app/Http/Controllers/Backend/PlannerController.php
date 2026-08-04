@@ -85,7 +85,7 @@ class PlannerController extends Controller
         if ($request->user()?->can('view prospect_criteria') !== true) {
             $events = array_values(array_filter(
                 $events,
-                static fn (array $event): bool => ($event['extendedProps']['eventKind'] ?? null) !== 'discovery-projection',
+                static fn (array $event): bool => ! str_starts_with((string) ($event['extendedProps']['eventKind'] ?? ''), 'discovery-'),
             ));
         }
 

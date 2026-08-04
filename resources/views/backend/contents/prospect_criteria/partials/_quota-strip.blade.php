@@ -23,6 +23,10 @@
     $quotaPackage         = $quotaPackage         ?? null;
     $activeDailyLimitSum  = $activeDailyLimitSum  ?? null;
     $providerSearchesLeft = $providerSearchesLeft ?? null;
+    $companyMeter = $quotaMeters['company'] ?? null;
+    $fretiqDiscoveryAvailable = $companyMeter !== null
+        && (($companyMeter['daily']['remaining'] ?? null) === null || $companyMeter['daily']['remaining'] > 0)
+        && (($companyMeter['monthly']['remaining'] ?? null) === null || $companyMeter['monthly']['remaining'] > 0);
 @endphp
 
 @if($providerSearchesLeft !== null)
@@ -30,8 +34,18 @@
         <div class="col-md-6 col-xl-4">
             <x-crud.stat-card icon="bi-battery-charging"
                               color="info"
-                              label="Crédits de découverte restants"
+                              label="Capacité du fournisseur"
                               :value="$providerSearchesLeft" />
+        </div>
+    </div>
+@endif
+
+@if($providerSearchesLeft === 0 && $fretiqDiscoveryAvailable)
+    <div class="alert alert-danger d-flex align-items-center mb-6" role="alert">
+        <i class="bi bi-exclamation-octagon fs-2 me-3"></i>
+        <div>
+            <strong>Découverte bloquée par la capacité du fournisseur.</strong>
+            Votre quota Fretiq reste disponible, mais aucune nouvelle recherche ne peut démarrer pour le moment.
         </div>
     </div>
 @endif
@@ -61,17 +75,17 @@
                     : 'Recherches d’entreprises';
 
                 if (($meter['unlimited'] ?? false) && $meterKey === 'contacts') {
-                    $meterValue = 'Quota package illimité · max. 20 par exécution';
+                    $meterValue = 'Quota Fretiq — aujourd’hui : Quota package illimité · max. 20 par exécution';
                 } else {
                     $meterValue = ($meter['unlimited'] ?? false)
-                        ? 'Illimité'
-                        : $meterDaily['used_reserved'] . ' / ' . $meterDaily['total'] . ' par jour';
+                        ? 'Quota Fretiq — aujourd’hui : Illimité'
+                        : 'Quota Fretiq — aujourd’hui : ' . $meterDaily['used_reserved'] . ' / ' . $meterDaily['total'];
                 }
 
                 // total === null is the unlimited signal (see displayMeterSummary()).
                 $meterHint = $meterMonthly['total'] === null
-                    ? null
-                    : $meterMonthly['used_reserved'] . ' / ' . $meterMonthly['total'] . ' ce mois';
+                    ? 'Quota Fretiq — ce mois : Illimité'
+                    : 'Quota Fretiq — ce mois : ' . $meterMonthly['used_reserved'] . ' / ' . $meterMonthly['total'];
             @endphp
 
             <div class="col-md-6 col-xl-4">

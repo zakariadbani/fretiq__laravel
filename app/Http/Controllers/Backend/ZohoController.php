@@ -56,6 +56,88 @@ class ZohoController extends Controller
             }
         }
 
+        $hasValues = static fn (array $values): bool => collect($values)
+            ->every(static fn ($value): bool => trim((string) $value) !== '');
+
+        $lastCrmSync = collect($lastByModule)
+            ->filter()
+            ->sortByDesc(static fn (ZohoSyncLog $log): int => $log->synced_at?->timestamp ?? 0)
+            ->first();
+        $crmCredentialsReady = $hasValues([
+            config('services.zoho.crm.client_id'),
+            config('services.zoho.crm.client_secret'),
+            config('services.zoho.crm.refresh_token'),
+        ]);
+        $crmTokenReady = $token
+            && trim((string) $token->access_token) !== ''
+            && in_array($tokenStatus, ['ok', 'soon'], true);
+        $crmSyncVerified = collect(['Accounts', 'Contacts'])
+            ->every(static fn (string $module): bool => ($lastByModule[$module] ?? null)?->status === 'success');
+        $crmStatus = $this->readinessStatus(
+            $crmDriver === 'zoho',
+            $crmCredentialsReady && $crmTokenReady,
+            $crmSyncVerified,
+        );
+
+        $campaignsCredentialsReady = $hasValues([
+            config('services.zoho.campaigns.client_id'),
+            config('services.zoho.campaigns.client_secret'),
+            config('services.zoho.campaigns.refresh_token'),
+        ]);
+        $topicReady = trim((string) config('services.zoho.campaigns.topic_id')) !== '';
+        $listReady = trim((string) config('services.zoho.campaigns.list_key')) !== '';
+        $recipientListLiveVerified = (bool) config('services.zoho.campaigns.recipient_list_live_verified', false);
+        $campaignsStatus = $this->readinessStatus(
+            $campaignsDriver === 'zoho',
+            $campaignsCredentialsReady && $topicReady && $listReady,
+            false,
+        );
+
+        $driverLabels = config('global.data.zoho_driver_labels', []);
+        $tokenStatuses = config('global.data.zoho_token_statuses', []);
+        $syncStatuses = config('global.data.zoho_sync_statuses', []);
+        $crmTokenBadge = $tokenStatuses[$tokenStatus] ?? ['label' => $tokenStatus, 'color' => 'secondary'];
+        $lastCrmBadge = $syncStatuses[$lastCrmSync?->status ?? 'idle'] ?? ['label' => 'Inconnu', 'color' => 'secondary'];
+
+        $zohoIntegrations = [
+            'crm' => [
+                'title' => 'Driver CRM',
+                'subtitle' => 'Synchronisation des comptes et contacts',
+                'icon' => 'bi-cloud',
+                'status' => $crmStatus,
+                'details' => [
+                    ['label' => 'Pilote sélectionné', 'value' => $driverLabels[$crmDriver] ?? 'Source inconnue', 'color' => $crmDriver === 'zoho' ? 'success' : 'secondary'],
+                    ['label' => 'Identifiants d’accès', 'value' => $crmCredentialsReady ? 'Configurés' : 'Incomplets', 'color' => $crmCredentialsReady ? 'success' : 'warning'],
+                    ['label' => 'Token CRM', 'value' => $crmTokenBadge['label'], 'color' => $crmTokenBadge['color']],
+                    [
+                        'label' => 'Dernière synchronisation CRM',
+                        'value' => $lastCrmSync?->synced_at
+                            ? $lastCrmSync->synced_at->format('d/m/Y H:i') . ' · ' . $lastCrmBadge['label']
+                            : 'Jamais synchronisé',
+                        'color' => $lastCrmSync ? $lastCrmBadge['color'] : 'secondary',
+                    ],
+                ],
+                'recovery' => $crmStatus === 'incomplete'
+                    ? 'Complétez la connexion et renouvelez le token avant de relancer une synchronisation.'
+                    : ($crmStatus === 'test_ready' ? 'Lancez une synchronisation de test pour confirmer la connexion.' : null),
+            ],
+            'campaigns' => [
+                'title' => 'Driver Campaigns',
+                'subtitle' => 'Préparation et envoi des campagnes',
+                'icon' => 'bi-envelope',
+                'status' => $campaignsStatus,
+                'details' => [
+                    ['label' => 'Pilote sélectionné', 'value' => $driverLabels[$campaignsDriver] ?? 'Source inconnue', 'color' => $campaignsDriver === 'zoho' ? 'success' : 'secondary'],
+                    ['label' => 'Identifiants d’accès', 'value' => $campaignsCredentialsReady ? 'Configurés' : 'Incomplets', 'color' => $campaignsCredentialsReady ? 'success' : 'warning'],
+                    ['label' => 'Sujet d’envoi', 'value' => $topicReady ? 'Configuré' : 'Manquant', 'color' => $topicReady ? 'success' : 'warning'],
+                    ['label' => 'Liste d’envoi', 'value' => $listReady ? 'Configurée' : 'Manquante', 'color' => $listReady ? 'success' : 'warning'],
+                    ['label' => 'Vérification de la liste', 'value' => $recipientListLiveVerified ? 'Liste de destinataires vérifiée' : 'À effectuer', 'color' => $recipientListLiveVerified ? 'success' : 'info'],
+                ],
+                'recovery' => $campaignsStatus === 'incomplete'
+                    ? 'Complétez les éléments manquants avant tout test d’envoi.'
+                    : ($campaignsStatus === 'test_ready' ? 'Effectuez le test en conditions réelles prévu avant de considérer l’envoi comme opérationnel.' : null),
+            ],
+        ];
         // ── History (last 15 rows) ────────────────────────────────────────────
         $history = ZohoSyncLog::orderByDesc('synced_at')->limit(15)->get();
 
@@ -68,9 +150,22 @@ class ZohoController extends Controller
             'tokenMinutes'        => $tokenMinutes,
             'tokenExpiry'         => $tokenExpiry,
             'history'             => $history,
+            'zohoIntegrations'    => $zohoIntegrations,
         ]);
     }
 
+    private function readinessStatus(bool $selected, bool $configured, bool $verified): string
+    {
+        if (! $selected) {
+            return 'non_configure';
+        }
+
+        if (! $configured) {
+            return 'incomplete';
+        }
+
+        return $verified ? 'verified' : 'test_ready';
+    }
     /**
      * Dispatch an async Zoho CRM sync and redirect back with a flash message.
      *

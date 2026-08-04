@@ -50,7 +50,7 @@ class DriverOwnedUnsubscribeContentTest extends TestCase
 
         $this->assertIsString($source);
         $this->assertStringContainsString(
-            'ZohoCampaignsDriver::prepareHtmlContent($run->campaign->template->html_content)',
+            'ZohoCampaignsDriver::prepareHtmlContent($template->html_content)',
             $source,
         );
     }

@@ -214,7 +214,7 @@
                                     <span class="fw-semibold">{{ $step->template?->name ?? '—' }}</span>
                                 </td>
                                 <td>
-                                    <span class="text-muted">{{ $step->subject ? e($step->subject) : '(sujet du modèle)' }}</span>
+                                    <span class="text-muted">{{ $step->subject ?? $step->template?->subject ?? 'Sans sujet' }}</span>
                                 </td>
                                 @can('edit sequences')
                                 <td class="text-end pe-7">

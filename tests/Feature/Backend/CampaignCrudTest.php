@@ -2,11 +2,15 @@
 
 namespace Tests\Feature\Backend;
 
+use App\DataTables\Backend\CampaignsDataTable;
+use App\DataTables\Backend\CampaignTemplatesDataTable;
+use App\DataTables\Backend\SequencesDataTable;
 use App\Models\Campaign;
 use App\Models\CampaignTemplate;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\Segment;
+use App\Models\Sequence;
 use App\Models\SenderIdentity;
 use App\Models\Suppression;
 use App\Models\User;
@@ -69,6 +73,68 @@ class CampaignCrudTest extends TestCase
 
     // ── Campaigns ─────────────────────────────────────────────────────────────
 
+    public function test_campaign_selectors_and_listings_hide_e2e_fixtures(): void
+    {
+        $visibleTemplate = CampaignTemplate::create([
+            'name' => 'Modèle visible',
+            'subject' => 'Sujet',
+            'html_content' => '<p>Corps</p>',
+        ]);
+        $hiddenTemplate = CampaignTemplate::create([
+            'name' => 'E2E_FIXTURE Modèle caché',
+            'subject' => 'Sujet',
+            'html_content' => '<p>Corps</p>',
+        ]);
+        $hiddenSegment = Segment::create(['name' => 'E2E_FIXTURE Segment caché', 'scope' => 'client']);
+        $hiddenSender = SenderIdentity::create([
+            'name' => 'E2E_FIXTURE Expéditeur caché',
+            'email' => 'hidden-fixture@example.test',
+            'is_active' => true,
+        ]);
+        $similarTemplate = CampaignTemplate::create([
+            'name' => 'E2EXFIXTURE Modèle normal',
+            'subject' => 'Sujet',
+            'html_content' => '<p>Corps</p>',
+        ]);
+        $visibleSequence = Sequence::create(['name' => 'Séquence visible', 'is_active' => true]);
+        $hiddenSequence = Sequence::create(['name' => 'E2E_FIXTURE Séquence cachée', 'is_active' => true]);
+        $fixtures = $this->makeCampaignFixtures();
+        $hiddenCampaign = Campaign::create([
+            'name' => 'E2E_FIXTURE Campagne cachée',
+            'segment_id' => $fixtures['segment']->id,
+            'template_id' => $fixtures['template']->id,
+            'sender_identity_id' => $fixtures['sender']->id,
+            'schedule_type' => 'one_shot',
+            'is_active' => false,
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/campaigns/create')
+            ->assertOk()
+            ->assertSee($visibleTemplate->name, false)
+            ->assertSee($visibleSequence->name, false)
+            ->assertDontSee($hiddenTemplate->name, false)
+            ->assertDontSee($hiddenSegment->name, false)
+            ->assertDontSee($hiddenSender->name, false)
+            ->assertDontSee($hiddenSequence->name, false);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/campaigns/create?segment_id='.$hiddenSegment->id.'&template_id='.$hiddenTemplate->id.'&sender_identity_id='.$hiddenSender->id)
+            ->assertOk()
+            ->assertSee($hiddenTemplate->name, false)
+            ->assertSee($hiddenSegment->name, false)
+            ->assertSee($hiddenSender->name, false);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/sequences/create')
+            ->assertOk()
+            ->assertDontSee($hiddenTemplate->name, false);
+
+        $this->assertNotContains($hiddenTemplate->id, app(CampaignTemplatesDataTable::class)->query()->pluck('id')->all());
+        $this->assertContains($similarTemplate->id, app(CampaignTemplatesDataTable::class)->query()->pluck('id')->all());
+        $this->assertNotContains($hiddenSequence->id, app(SequencesDataTable::class)->query()->pluck('id')->all());
+        $this->assertNotContains($hiddenCampaign->id, app(CampaignsDataTable::class)->query()->pluck('id')->all());
+    }
     public function test_campaigns_index_renders(): void
     {
         $response = $this->actingAs($this->superadmin)
@@ -135,15 +201,16 @@ class CampaignCrudTest extends TestCase
         $body = $response->getContent();
 
         $this->assertSame(1, substr_count($body, 'Retour à la liste'));
-        $this->assertStringContainsString('d-flex gap-2 mb-2', $body);
+        $this->assertStringContainsString('d-flex flex-wrap gap-2 mb-2', $body);
         $this->assertStringContainsString('id="btn-sync-zoho-list"', $body);
         $this->assertStringContainsString('id="btn-schedule"', $body);
         $this->assertStringContainsString('id="btn-send-now"', $body);
-        $this->assertStringContainsString('href="' . route('admin.campaigns.edit', $campaign->id) . '" class="btn btn-sm btn-primary"', $body);
+        $this->assertStringContainsString('id="btn-test-send"', $body);
+        $this->assertStringContainsString('href="' . route('admin.campaigns.edit', $campaign->id) . '" class="btn btn-sm btn-light-primary"', $body);
         $this->assertSame(1, substr_count($body, 'data-campaign-action-handlers'));
     }
 
-    public function test_campaign_edit_renders_toolbar_and_shared_operational_actions(): void
+    public function test_campaign_edit_keeps_operational_actions_on_the_view_page(): void
     {
         $campaign = $this->makeRecurringCampaign();
 
@@ -154,14 +221,11 @@ class CampaignCrudTest extends TestCase
         $body = $response->getContent();
 
         $this->assertSame(1, substr_count($body, 'Retour à la liste'));
-        $this->assertStringContainsString('d-flex gap-2 mb-2', $body);
-        $this->assertStringContainsString('id="btn-sync-zoho-list"', $body);
-        $this->assertStringContainsString('id="btn-schedule"', $body);
-        $this->assertStringContainsString('id="btn-send-now"', $body);
-        $this->assertStringNotContainsString('href="' . route('admin.campaigns.edit', $campaign->id) . '" class="btn btn-sm btn-primary"', $body);
-        $this->assertSame(1, substr_count($body, 'data-campaign-action-handlers'));
-        $this->assertSame(3, substr_count($body, 'if (hasUnsavedCampaignChanges())'));
-        $this->assertStringContainsString('Modifications non enregistrées', $body);
+        $this->assertStringContainsString('d-flex flex-wrap gap-2 mb-2', $body);
+        $this->assertStringNotContainsString('id="btn-sync-zoho-list"', $body);
+        $this->assertStringNotContainsString('id="btn-schedule"', $body);
+        $this->assertStringNotContainsString('id="btn-send-now"', $body);
+        $this->assertStringNotContainsString('data-campaign-action-handlers', $body);
     }
 
 

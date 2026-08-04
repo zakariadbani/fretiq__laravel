@@ -27,7 +27,7 @@
 @endif
 
 @can('create campaigns')
-    @if(!$isRejected && Route::has('admin.campaigns.create'))
+    @if(!$isRejected && $model->contacts->isNotEmpty() && Route::has('admin.campaigns.create'))
         <a href="{{ route('admin.campaigns.create', ['company_id' => $model->id]) }}" class="btn btn-sm btn-light btn-active-light-primary">
             <i class="bi bi-rocket me-1"></i>
             Lancer une campagne

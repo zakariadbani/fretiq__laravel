@@ -25,7 +25,10 @@ class CampaignZohoListSyncTest extends TestCase
         parent::setUp();
 
         Http::preventStrayRequests();
-        config(['prospecting.cold_send_enabled' => false]);
+        config([
+            'prospecting.cold_send_enabled' => false,
+            'services.zoho.campaigns.topic_id' => '',
+        ]);
     }
 
     public function test_sync_ensures_and_persists_one_campaign_list_then_reuses_it(): void
@@ -74,7 +77,7 @@ class CampaignZohoListSyncTest extends TestCase
         $this->assertSame('zoho-list-stable-' . $campaign->id, $campaign->zoho_list_key);
         $this->assertCount(1, $gateway->ensured);
         $this->assertSame($campaign->id, $gateway->ensured[0]['campaignId']);
-        $this->assertStringContainsString('Campagne #' . $campaign->id, $gateway->ensured[0]['listName']);
+        $this->assertStringContainsString('Fretiq Campaign ' . $campaign->id, $gateway->ensured[0]['listName']);
         $this->assertSame(['marie@acme.test'], array_column($gateway->added, 'Contact Email'));
         $this->assertContains('contact-historique@acme.test', $gateway->remoteEmails);
         $this->assertSame(0, $gateway->createCampaignCalls);

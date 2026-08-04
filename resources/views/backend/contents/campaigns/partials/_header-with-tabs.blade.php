@@ -13,12 +13,8 @@
     $isView = ($currentPage ?? 'view') === 'view';
     $config = $viewConfig ?? \App\Crud\ViewConfigs\CampaignViewConfig::make($model);
 
-    // On edit pages the status belongs to the form, alongside schedule fields
-    // such as next_run_at. The hero AJAX toggle cannot submit those fields and
-    // is confusing when a recurring campaign needs a new occurrence before it
-    // can be reactivated.
     $heroProps = $heroProps ?? [];
-    if (! $isView) {
+    if (!$isView && !array_key_exists('statusBar', $heroProps)) {
         $heroProps['statusBar'] = null;
     }
 @endphp

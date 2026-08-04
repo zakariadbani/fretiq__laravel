@@ -30,7 +30,10 @@ class ReplyMatchingService
                 $send = SequenceStepSend::with('enrollment.contact')->find((int) $match[2]);
                 $contact = $send?->enrollment?->contact;
                 if ($contact !== null && $this->matchesSender($contact, $email->from_email)) {
-                    $email->update(['contact_id' => $send->enrollment->contact_id]);
+                    $email->update([
+                        'contact_id' => $send->enrollment->contact_id,
+                        'sequence_step_send_id' => $send->id,
+                    ]);
                     return;
                 }
             }

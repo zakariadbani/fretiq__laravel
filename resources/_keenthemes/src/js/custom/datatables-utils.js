@@ -503,6 +503,8 @@ const DataTableUtils = (function() {
         // Initialize Select2 for select elements
         if (typeof $ !== 'undefined') {
             container.querySelectorAll('select[data-kt-table-filter]').forEach(select => {
+                if ($(select).data('select2')) return;
+
                 $(select).select2({
                     minimumResultsForSearch: select.dataset.hideSearch === 'true' ? -1 : 0
                 });
@@ -1032,8 +1034,8 @@ const DataTableUtils = (function() {
                 };
 
                 refreshAccessibility();
-                dt.on('init draw', function() {
-                    refreshAccessibility();
+                dt.on('init draw responsive-resize responsive-display column-visibility', function() {
+                    setTimeout(refreshAccessibility, 0);
                 });
 
                 if (filterConfigs && filterConfigs.length > 0) {
@@ -1241,6 +1243,29 @@ const DataTableUtils = (function() {
 
         root.querySelectorAll('table[id$="-table"] i:not([aria-hidden])').forEach(function(icon) {
             icon.setAttribute('aria-hidden', 'true');
+        });
+
+        root.querySelectorAll('table[id$="-table"] .dtr-control').forEach(function(control) {
+            var updateState = function() {
+                var row = control.closest('tr');
+                var recordCell = row && (row.querySelector('td[data-dt-column="1"]') || row.cells[1]);
+                var record = recordCell && recordCell.textContent.trim();
+                var expanded = !!(row && row.classList.contains('dtr-expanded'));
+
+                control.setAttribute('role', 'button');
+                control.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+                control.setAttribute('aria-label', (expanded ? 'Masquer' : 'Afficher') + ' les détails' + (record ? ' de ' + record : ''));
+            };
+
+            updateState();
+            if (control.dataset.a11yResponsiveBound) return;
+            control.dataset.a11yResponsiveBound = 'true';
+            control.addEventListener('click', function() { setTimeout(updateState, 0); });
+            control.addEventListener('keydown', function(event) {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                control.click();
+            });
         });
     }
 

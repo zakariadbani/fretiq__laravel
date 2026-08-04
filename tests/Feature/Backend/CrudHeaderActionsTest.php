@@ -54,8 +54,8 @@ class CrudHeaderActionsTest extends TestCase
             $this->assertSame(1, substr_count($editBody, 'Retour à la liste'), "{$module} edit toolbar");
             $this->assertStringContainsString('d-flex align-items-center gap-2 gap-lg-3', $viewBody, "{$module} view top toolbar");
             $this->assertStringContainsString('d-flex align-items-center gap-2 gap-lg-3', $editBody, "{$module} edit top toolbar");
-            $this->assertStringContainsString('d-flex gap-2 mb-2', $viewBody, "{$module} view hero actions");
-            $this->assertStringContainsString('d-flex gap-2 mb-2', $editBody, "{$module} edit hero actions");
+            $this->assertStringContainsString('d-flex flex-wrap gap-2 mb-2', $viewBody, "{$module} view hero actions");
+            $this->assertStringContainsString('d-flex flex-wrap gap-2 mb-2', $editBody, "{$module} edit hero actions");
             $this->assertStringContainsString('href="' . $editHref . '" class="btn btn-sm btn-primary"', $viewBody, "{$module} view edit action");
             $this->assertStringNotContainsString('href="' . $editHref . '" class="btn btn-sm btn-primary"', $editBody, "{$module} edit must not repeat edit action");
 

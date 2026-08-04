@@ -50,7 +50,7 @@ class CampaignTemplatesDataTable extends BackendDataTable
      */
     public function query()
     {
-        return $this->currentModel->newQuery()->with('translations');
+        return $this->currentModel->newQuery()->where('name', 'not like', 'E2E\_FIXTURE %')->with('translations');
     }
 
     protected function createEditColumns(): void

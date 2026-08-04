@@ -14,7 +14,7 @@
 
             <!--begin::Subtitle-->
             <div class="text-gray-500 fw-semibold fs-6">
-                Plateforme de prospection fret
+                Fretiq aide TCL France à trouver des prospects et à mener des campagnes e-mail de prospection fret conformes.
             </div>
             <!--end::Subtitle-->
         </div>

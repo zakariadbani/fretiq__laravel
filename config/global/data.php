@@ -162,6 +162,7 @@ return [
         'enrollment_ineligible' => 'Étape de séquence non éligible',
         'invalid_email' => 'Adresse e-mail invalide',
         'zoho_rejected' => 'Refus Zoho (code non vérifié)',
+        'zoho_unsent' => "Non envoy\u{00E9} par Zoho \u{2014} adresse invalide",
     ],
 
     //---------------------------------------------------------------------------
@@ -184,6 +185,7 @@ return [
         'sequence' => ['label' => 'Séquence', 'color' => 'info'],
         'import' => ['label' => 'Import',   'color' => 'secondary'],
         'manual' => ['label' => 'Manuel',   'color' => 'secondary'],
+        'zoho' => ['label' => 'Zoho Campaigns', 'color' => 'info'],
     ],
 
     //---------------------------------------------------------------------------
@@ -553,6 +555,26 @@ return [
     'zoho_module_labels' => [
         'Accounts' => 'Comptes',
         'Contacts' => 'Contacts',
+        'CampaignsSentTemplates' => 'Modèles d’email envoyés',
+    ],
+
+    'zoho_readiness_statuses' => [
+        'non_configure' => ['label' => 'Non configuré', 'color' => 'secondary'],
+        'incomplete' => ['label' => 'Configuration incomplète', 'color' => 'warning'],
+        'test_ready' => ['label' => 'Prêt pour test', 'color' => 'info'],
+        'verified' => ['label' => 'Opérationnel vérifié', 'color' => 'success'],
+    ],
+
+    'zoho_driver_labels' => [
+        'local' => 'Mode local',
+        'zoho' => 'Zoho sélectionné',
+    ],
+
+    'zoho_token_statuses' => [
+        'ok' => ['label' => 'Valide', 'color' => 'success'],
+        'soon' => ['label' => 'Bientôt expiré', 'color' => 'warning'],
+        'expired' => ['label' => 'Expiré', 'color' => 'danger'],
+        'absent' => ['label' => 'Absent', 'color' => 'secondary'],
     ],
 
     //---------------------------------------------------------------------------

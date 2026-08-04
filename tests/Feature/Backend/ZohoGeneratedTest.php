@@ -5,6 +5,8 @@ namespace Tests\Feature\Backend;
 // >>> custom-test-author:zoho-code
 
 use App\Models\User;
+use App\Models\ZohoSyncLog;
+use App\Models\ZohoToken;
 use App\Services\Zoho\ZohoCrmSyncService;
 use App\Services\Zoho\ZohoCrmTemplatesService;
 use Database\Seeders\Acl\PermissionsSeeder;
@@ -160,6 +162,128 @@ class ZohoGeneratedTest extends TestCase
             ->assertSee('Token OAuth', false);
     }
 
+    public function test_index_localizes_known_sync_module_labels(): void
+    {
+        ZohoSyncLog::create([
+            'module' => 'CampaignsSentTemplates',
+            'synced_at' => now(),
+            'records_synced' => 1,
+            'status' => 'success',
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/zoho')
+            ->assertOk()
+            ->assertSee('Modèles d’email envoyés', false)
+            ->assertDontSee('CampaignsSentTemplates', false);
+    }
+    public function test_index_reports_campaigns_readiness_from_local_evidence_only(): void
+    {
+        config([
+            'services.zoho.driver' => 'zoho',
+            'services.zoho.campaigns.client_id' => 'configured-client',
+            'services.zoho.campaigns.client_secret' => 'configured-secret',
+            'services.zoho.campaigns.refresh_token' => 'configured-refresh',
+            'services.zoho.campaigns.topic_id' => 'configured-topic',
+            'services.zoho.campaigns.list_key' => null,
+            'services.zoho.campaigns.recipient_list_live_verified' => false,
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/zoho')
+            ->assertOk()
+            ->assertSee('data-zoho-integration="campaigns"', false)
+            ->assertSee('data-zoho-status="incomplete"', false)
+            ->assertSee('Configuration incomplète', false)
+            ->assertSee('Sujet d’envoi', false)
+            ->assertSee('Liste d’envoi', false)
+            ->assertSee('Vérification de la liste', false)
+            ->assertDontSee('Zoho actif', false);
+
+        config(['services.zoho.campaigns.list_key' => 'configured-list']);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/zoho')
+            ->assertOk()
+            ->assertSee('data-zoho-integration="campaigns"', false)
+            ->assertSee('data-zoho-status="test_ready"', false)
+            ->assertSee('Prêt pour test', false);
+
+        config(['services.zoho.campaigns.recipient_list_live_verified' => true]);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/zoho')
+            ->assertOk()
+            ->assertSee('data-zoho-integration="campaigns"', false)
+            ->assertSee('data-zoho-status="test_ready"', false)
+            ->assertSee('Liste de destinataires vérifiée', false)
+            ->assertDontSee('Opérationnel vérifié', false);
+    }
+
+    public function test_index_never_marks_crm_operational_without_a_valid_token_and_successful_sync(): void
+    {
+        config([
+            'services.zoho.crm_driver' => 'zoho',
+            'services.zoho.crm.client_id' => 'configured-client',
+            'services.zoho.crm.client_secret' => 'configured-secret',
+            'services.zoho.crm.refresh_token' => 'configured-refresh',
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/zoho')
+            ->assertOk()
+            ->assertSee('data-zoho-integration="crm"', false)
+            ->assertSee('data-zoho-status="incomplete"', false)
+            ->assertSee('Token CRM', false)
+            ->assertSee('Dernière synchronisation CRM', false);
+
+        ZohoToken::create([
+            'service' => 'crm',
+            'access_token' => 'local-test-token',
+            'refresh_token' => 'local-test-refresh',
+            'expires_at' => now()->addHour(),
+        ]);
+        ZohoSyncLog::create([
+            'module' => 'Accounts',
+            'synced_at' => now(),
+            'records_synced' => 1,
+            'status' => 'success',
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/zoho')
+            ->assertOk()
+            ->assertSee('data-zoho-integration="crm"', false)
+            ->assertSee('data-zoho-status="test_ready"', false)
+            ->assertDontSee('Opérationnel vérifié', false);
+
+        ZohoSyncLog::create([
+            'module' => 'Contacts',
+            'synced_at' => now()->addMinute(),
+            'records_synced' => 0,
+            'status' => 'failed',
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/zoho')
+            ->assertOk()
+            ->assertSee('data-zoho-status="test_ready"', false)
+            ->assertDontSee('Opérationnel vérifié', false);
+
+        ZohoSyncLog::create([
+            'module' => 'Contacts',
+            'synced_at' => now()->addMinutes(2),
+            'records_synced' => 1,
+            'status' => 'success',
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/zoho')
+            ->assertOk()
+            ->assertSee('data-zoho-integration="crm"', false)
+            ->assertSee('data-zoho-status="verified"', false)
+            ->assertSee('Opérationnel vérifié', false);
+    }
     /**
      * User without 'view zoho' permission gets 403.
      */

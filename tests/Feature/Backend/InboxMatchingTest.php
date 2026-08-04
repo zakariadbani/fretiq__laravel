@@ -52,6 +52,7 @@ class InboxMatchingTest extends TestCase
 
         app(ReplyMatchingService::class)->match($email, '<sequence-send-' . $send->id . '@fretiq.local>');
 
+        $this->assertSame($send->id, $email->fresh()->sequence_step_send_id);
         $this->assertSame($contact->id, $email->fresh()->contact_id);
         $this->assertNull($email->fresh()->campaign_recipient_id);
         $this->assertSame('sent', $send->fresh()->status);

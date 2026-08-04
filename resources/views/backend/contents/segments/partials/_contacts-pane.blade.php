@@ -39,7 +39,10 @@
             data-list-url drives the GET contacts endpoint.
         --}}
         <div id="segment_contacts_wrapper"
-             data-list-url="{{ route('admin.segments.contacts', $model->id) }}">
+             data-list-url="{{ route('admin.segments.contacts', $model->id) }}"
+             data-contacts-state="loading"
+             aria-busy="true"
+             aria-live="polite">
 
             {{-- Skeleton placeholder — shown before first lazy-load --}}
             <div id="segment_contacts_skeleton" class="p-7">

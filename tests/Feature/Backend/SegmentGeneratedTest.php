@@ -127,6 +127,8 @@ class SegmentGeneratedTest extends TestCase
             ->get('/admin/segments/' . $segment->id);
 
         $response->assertStatus(200);
+        $response->assertSee('Destinataires éligibles', false);
+        $response->assertSee('destinataires éligibles', false);
     }
 
     // ── Edit page ─────────────────────────────────────────────────────────────

@@ -3,17 +3,20 @@
 namespace Tests\Feature\Backend;
 
 use App\Models\Campaign;
+use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\Demande;
+use App\Models\ProspectCriteria;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
 use App\Services\Analytics\AnalyticsService;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use ReflectionMethod;
 use Tests\TestCase;
 
 /**
@@ -100,6 +103,57 @@ class AnalyticsServiceTest extends TestCase
     }
 
     // ── Tests ──────────────────────────────────────────────────────────────────
+
+    public function test_dashboard_data_returns_full_unconditional_payload(): void
+    {
+        $company = $this->makeCompany('discovered');
+        $contact = $this->makeContact($company);
+        $campaign = $this->makeCampaignWithRun([
+            'stats_sent' => 10,
+            'stats_opened' => 1,
+            'stats_clicked' => 1,
+            'conversion_count' => 1,
+        ]);
+        $campaign->update(['is_active' => true, 'scheduled_at' => now()->addDay()]);
+        CampaignRecipient::create([
+            'campaign_run_id' => $campaign->runs()->firstOrFail()->id,
+            'contact_id' => $contact->id,
+            'status' => 'sent',
+            'opened_at' => now(),
+            'clicked_at' => now(),
+            'replied_at' => now(),
+        ]);
+        Demande::create(['captured_at' => now(), 'kind' => 'inbound', 'status' => 'new']);
+        ProspectCriteria::create([
+            'name' => 'Critere tableau de bord',
+            'is_active' => true,
+            'auto_run' => true,
+        ]);
+
+        $method = new ReflectionMethod(AnalyticsService::class, 'dashboardData');
+        $this->assertSame(0, $method->getNumberOfParameters(), 'dashboardData must not expose a prototype argument');
+
+        $data = $this->service->dashboardData();
+
+        $this->assertSame([
+            'kpis',
+            'funnel',
+            'engagementOverTime',
+            'topCampaigns',
+            'campaigns',
+            'planning',
+            'criteria',
+            'enterprises',
+        ], array_keys($data));
+        $this->assertNotEmpty($data['funnel']);
+        $this->assertNotEmpty($data['engagementOverTime']['labels']);
+        $this->assertSame(1, array_sum($data['engagementOverTime']['series']['opens']));
+        $this->assertNotEmpty($data['topCampaigns']);
+        $this->assertNotEmpty($data['campaigns']['rows']);
+        $this->assertNotEmpty($data['planning']['upcoming']);
+        $this->assertNotEmpty($data['criteria']['rows']);
+        $this->assertNotEmpty($data['enterprises']['recent']);
+    }
 
     /**
      * With no data in the database, dashboardKpis() returns all expected keys
@@ -257,5 +311,23 @@ class AnalyticsServiceTest extends TestCase
         // The first row should be Campaign A (rate=20.0) which is highest
         $this->assertEqualsWithDelta(20.0, (float) $rows[0]['conversion_rate'], 0.01,
             'First row must be the campaign with conversion_rate=20.0');
+    }
+
+    public function test_dashboard_campaign_sections_exclude_exact_e2e_fixtures(): void
+    {
+        $fixture = $this->makeCampaignWithRun(['stats_sent' => 10, 'conversion_count' => 2]);
+        $fixture->update([
+            'name' => 'E2E_FIXTURE Hidden dashboard campaign',
+            'is_active' => true,
+            'scheduled_at' => now()->addDay(),
+        ]);
+
+        $data = $this->service->dashboardData();
+
+        $this->assertSame(0, $data['kpis']['active_campaigns']);
+        $this->assertSame(0, $data['campaigns']['total']);
+        $this->assertFalse(collect($data['campaigns']['rows'])->contains('id', $fixture->id));
+        $this->assertFalse(collect($data['topCampaigns'])->contains('id', $fixture->id));
+        $this->assertFalse(collect($data['planning']['upcoming'])->contains('id', $fixture->id));
     }
 }

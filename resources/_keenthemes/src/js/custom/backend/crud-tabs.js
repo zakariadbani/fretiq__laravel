@@ -51,14 +51,16 @@
             var isTarget = href === normalized;
             l.classList.toggle('active', isTarget);
             l.setAttribute('aria-selected', isTarget ? 'true' : 'false');
+            l.setAttribute('tabindex', isTarget ? '0' : '-1');
             try {
                 var p = document.querySelector(href);
                 if (p) {
-                    if (isTarget) {
-                        p.classList.add('active', 'show');
-                    } else {
-                        p.classList.remove('active', 'show');
-                    }
+                    p.classList.toggle('active', isTarget);
+                    p.classList.toggle('show', isTarget);
+                    p.hidden = !isTarget;
+                    p.setAttribute('aria-hidden', isTarget ? 'false' : 'true');
+                    p.setAttribute('role', 'tabpanel');
+                    if (l.id) p.setAttribute('aria-labelledby', l.id);
                 }
             } catch (e) { /* ignore */ }
         });
@@ -196,6 +198,11 @@
         moveOutOfFormPanesIntoTabContent();
         installDirtyNavigationGuard();
 
+        // Synchronize the default tab and panes before applying an optional deep link.
+        var defaultLink = document.querySelector('a[data-bs-toggle="tab"].active')
+            || document.querySelector('a[data-bs-toggle="tab"]');
+        if (defaultLink) activateTabById(defaultLink.getAttribute('href'));
+
         // Step 1: hash → active tab on load
         var hash = window.location.hash;
         if (hash) {
@@ -219,6 +226,25 @@
                 activateTabById(href);
                 replaceHash(href);
             }, true);
+
+            link.addEventListener('keydown', function (event) {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+
+                var tablist = link.closest('[role="tablist"]');
+                if (!tablist) return;
+                var tabs = Array.prototype.slice.call(tablist.querySelectorAll('[role="tab"]'));
+                var current = tabs.indexOf(link);
+                var next = event.key === 'Home' ? 0
+                    : event.key === 'End' ? tabs.length - 1
+                    : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+                var target = tabs[next];
+                var href = target.getAttribute('href');
+
+                event.preventDefault();
+                target.focus();
+                activateTabById(href);
+                replaceHash(href);
+            });
         });
 
     });

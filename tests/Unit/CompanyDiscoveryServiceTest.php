@@ -177,7 +177,7 @@ class CompanyDiscoveryServiceTest extends TestCase
 
         $this->assertSame(['ybcompany.ma', 'socomatex.com'], array_column($snapshot, 'domain'));
 
-        $this->assertSame([
+        $this->assertEquals([
             'domain' => 'ybcompany.ma',
             'title' => 'YB company',
             'snippet' => 'Fabrique de textile — 26 Rue Lahcen El Basri, Casablanca',

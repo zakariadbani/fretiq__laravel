@@ -50,7 +50,11 @@ export class SegmentPage extends DataTablePage {
   readonly contactsPane: Locator;
   readonly contactsHeading: Locator;
   readonly addContactsButton: Locator;
+  readonly contactsWrapper: Locator;
+  readonly contactsFragment: Locator;
   readonly contactsSkeleton: Locator;
+  readonly contactsFailure: Locator;
+  readonly contactsRetryButton: Locator;
 
   // Preview panel locators
   readonly previewCard: Locator;
@@ -82,7 +86,11 @@ export class SegmentPage extends DataTablePage {
     this.contactsPane = page.locator('#segment_contacts[data-crud-pane]');
     this.contactsHeading = this.contactsPane.getByRole('heading', { name: 'Contacts' });
     this.addContactsButton = this.contactsPane.getByRole('button', { name: 'Ajouter des contacts à ce segment' });
+    this.contactsWrapper = this.contactsPane.locator('#segment_contacts_wrapper');
+    this.contactsFragment = this.contactsWrapper.locator('[data-contacts-count]');
     this.contactsSkeleton = this.contactsPane.locator('#segment_contacts_skeleton');
+    this.contactsFailure = this.contactsPane.locator('[data-segment-contacts-failure]');
+    this.contactsRetryButton = this.contactsPane.getByRole('button', { name: 'Réessayer le chargement des contacts' });
 
     // Preview panel
     this.previewCard    = page.locator('#segment_preview_card');

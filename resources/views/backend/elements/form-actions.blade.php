@@ -11,7 +11,7 @@
 @unless($isToolbar)
 <div class="sticky-bottom bg-body border-top shadow-sm py-4 mt-4" data-crud-form-actions="sticky">
     <div class="container-fluid">
-        <div class="d-flex justify-content-end flex-wrap gap-2 gap-md-3">
+        <div class="crud-form-actions-inner d-flex justify-content-end flex-wrap gap-2 gap-md-3">
 @endunless
 
     <a href="{{ route($backRoute, $backParams) }}" class="btn {{ $sizeCls }}btn-light btn-active-light-primary">
@@ -50,3 +50,23 @@
     </div>
 </div>
 @endunless
+
+@once
+@push('styles')
+<style>
+    [data-crud-form-actions="sticky"] {
+        padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+    }
+
+    @media (max-width: 575.98px) {
+        [data-crud-form-actions="sticky"] .crud-form-actions-inner {
+            flex-direction: column;
+        }
+
+        [data-crud-form-actions="sticky"] .btn {
+            width: 100%;
+        }
+    }
+</style>
+@endpush
+@endonce

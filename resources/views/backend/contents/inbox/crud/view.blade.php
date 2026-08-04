@@ -66,6 +66,7 @@
                     <span class="badge badge-light-{{ $statusConfig['color'] ?? 'secondary' }}">{{ $statusConfig['label'] ?? $model->status }}</span>
                 </div>
 
+                @if($model->processed_at === null)
                 <div class="d-flex flex-wrap gap-2 mb-5">
                     @can('edit inbox')
                         @foreach(config('global.data.inbox_statuses', []) as $value => $config)
@@ -76,6 +77,54 @@
                         @endforeach
                     @endcan
                 </div>
+                @endif
+
+                @can('edit inbox')
+                    <div class="border rounded p-4 mb-5" data-inbox-triage-panel>
+                        <div class="fw-bold text-gray-800 mb-1">Qualifier la r&eacute;ponse</div>
+                        @if($model->processed_at === null)
+                            @if($model->contact)
+                                <div class="text-muted fs-7 mb-3">Cette action classe le message et met &agrave; jour son contact.</div>
+                            @else
+                                <div class="text-muted fs-7 mb-3">Classez ce message, ou associez d&#039;abord un contact pour créer une demande.</div>
+                            @endif
+                        @else
+                            <div class="text-muted fs-7 mb-3">Ce message est d&eacute;j&agrave; trait&eacute;. Les actions sont verrouill&eacute;es.</div>
+                        @endif
+                        @if($model->triage_action)
+                            <div class="badge badge-light-info mb-3">Tri actuel : {{ str_replace('_', ' ', $model->triage_action) }}</div>
+                        @endif
+                        @if($model->processed_at === null)
+                        <div class="d-grid gap-2">
+                            @can('create demandes')
+                                @if($model->contact)
+                                    <form method="POST" action="{{ route('admin.inbox.triage', $model->id) }}">
+                                        @csrf
+                                        <input type="hidden" name="action" value="interested">
+                                        <button type="submit" class="btn btn-success w-100" data-inbox-triage="interested">
+                                            <i class="bi bi-hand-thumbs-up me-2"></i>Int&eacute;ress&eacute;
+                                        </button>
+                                    </form>
+                                @endif
+                            @endcan
+                            <form method="POST" action="{{ route('admin.inbox.triage', $model->id) }}">
+                                @csrf
+                                <input type="hidden" name="action" value="not_interested">
+                                <button type="submit" class="btn btn-light-danger w-100" data-inbox-triage="not_interested">
+                                    <i class="bi bi-hand-thumbs-down me-2"></i>Pas int&eacute;ress&eacute;
+                                </button>
+                            </form>
+                            <form method="POST" action="{{ route('admin.inbox.triage', $model->id) }}">
+                                @csrf
+                                <input type="hidden" name="action" value="automatic">
+                                <button type="submit" class="btn btn-light-secondary w-100" data-inbox-triage="automatic">
+                                    <i class="bi bi-robot me-2"></i>Message automatique
+                                </button>
+                            </form>
+                        </div>
+                        @endif
+                    </div>
+                @endcan
 
                 <div class="d-grid gap-2">
                     @if($model->contact)

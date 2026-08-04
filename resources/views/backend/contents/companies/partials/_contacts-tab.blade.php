@@ -23,7 +23,7 @@
                         : ($model->hasSocialDomain() ? 'Domaine réseau social — renseignez le site de l\'entreprise' : null);
                 @endphp
                 <button type="button"
-                        class="btn btn-sm btn-light-success me-2"
+                        class="btn btn-sm {{ $model->contacts->isEmpty() ? 'btn-success' : 'btn-light-success' }} me-2"
                         onclick="enrichCompany({{ (int) $model->id }}, '{{ csrf_token() }}')"
                         @if($enrichDisabled) disabled @if($enrichTooltip) data-bs-toggle="tooltip" title="{{ $enrichTooltip }}" @endif @endif>
                     <i class="bi bi-person-plus fs-4 me-1"></i>
@@ -46,7 +46,14 @@
         @if($model->contacts->isEmpty())
             <div class="text-center py-10 text-muted" id="contacts_empty_state">
                 <i class="bi bi-people fs-2x mb-3 d-block"></i>
-                Aucun contact pour cette entreprise.
+                <p class="mb-2">Aucun contact pour cette entreprise.</p>
+                @if(empty($model->domain))
+                    <p class="mb-0">Renseignez le domaine de l'entreprise pour pouvoir récupérer ses contacts.</p>
+                @elseif($model->hasSocialDomain())
+                    <p class="mb-0">Remplacez le domaine du réseau social par le site de l'entreprise pour récupérer ses contacts.</p>
+                @else
+                    <p class="mb-0">Utilisez « Récupérer les contacts » avant de lancer une campagne.</p>
+                @endif
             </div>
         @else
             <div class="table-responsive">

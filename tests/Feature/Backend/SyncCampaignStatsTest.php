@@ -15,6 +15,7 @@ use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 /**
@@ -216,10 +217,16 @@ class SyncCampaignStatsTest extends TestCase
             ], 200),
 
             '*campaignreports*' => Http::response([
-                'sent_count'    => 50,
-                'opened_count'  => 20,
-                'clicked_count' => 8,
-                'bounced_count' => 2,
+                'status' => 'success',
+                'code' => '0',
+                'campaign-reports' => [[
+                    'emails_sent_count' => '50',
+                    'delivered_count' => '48',
+                    'opens_count' => '20',
+                    'unique_clicks_count' => '8',
+                    'bounces_count' => '2',
+                    'unsub_count' => '0',
+                ]],
             ], 200),
         ]);
 
@@ -241,5 +248,434 @@ class SyncCampaignStatsTest extends TestCase
 
         // Verify the request was sent to the Zoho endpoint
         Http::assertSent(fn ($req) => str_contains($req->url(), 'campaignreports'));
+    }
+
+    public function test_zoho_run_uses_live_verified_aggregate_aliases(): void
+    {
+        config([
+            'services.zoho.campaigns.refresh_token' => 'fake-rt',
+            'services.zoho.campaigns.client_id' => 'x',
+            'services.zoho.campaigns.client_secret' => 'y',
+        ]);
+
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*campaignreports*' => Http::response([
+                'status' => 'success',
+                'code' => '0',
+                'campaign-reports' => [[
+                    'emails_sent_count' => '80',
+                    'delivered_count' => '74',
+                    'opens_count' => '32',
+                    'unique_clicks_count' => '9',
+                    'bounces_count' => '6',
+                    'unsub_count' => '2',
+                ]],
+            ], 200),
+        ]);
+
+        $run = $this->makeSentRun([
+            'zoho_campaign_key' => 'CK-VERIFIED',
+            'driver_ref' => 'zoho',
+        ]);
+
+        SyncCampaignStatsJob::dispatch($run->id);
+
+        $run->refresh();
+        $this->assertSame(80, (int) $run->stats_sent);
+        $this->assertSame(74, (int) $run->stats_delivered);
+        $this->assertSame(32, (int) $run->stats_opened);
+        $this->assertSame(9, (int) $run->stats_clicked);
+        $this->assertSame(6, (int) $run->stats_bounced);
+        $this->assertSame(2, (int) $run->stats_unsubscribed);
+    }
+
+    public function test_zoho_sync_fails_closed_when_a_verified_aggregate_field_is_missing(): void
+    {
+        Log::spy();
+        config([
+            'services.zoho.campaigns.refresh_token' => 'fake-rt',
+            'services.zoho.campaigns.client_id' => 'x',
+            'services.zoho.campaigns.client_secret' => 'y',
+        ]);
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*campaignreports*' => Http::response([
+                'code' => '0',
+                'status' => 'success',
+                'campaign-reports' => [['emails_sent_count' => '1']],
+            ], 200),
+        ]);
+        $previousSync = now()->subDay()->startOfSecond();
+        $run = $this->makeSentRun([
+            'zoho_campaign_key' => 'CK-MISSING-FIELD',
+            'stats_opened' => 9,
+            'stats_synced_at' => $previousSync,
+        ]);
+
+        SyncCampaignStatsJob::dispatch($run->id);
+
+        Log::shouldHaveReceived('warning')->withArgs(
+            fn (string $message, array $context) => str_contains($message, 'champs verifies manquants')
+                && in_array('opens_count', $context['missing_fields'] ?? [], true),
+        );
+        $run->refresh();
+        $this->assertSame(9, $run->stats_opened);
+        $this->assertTrue($run->stats_synced_at->equalTo($previousSync));
+        $this->assertStringContainsString('missing or invalid', $run->stats_sync_error);
+    }
+
+    public function test_successful_zoho_sync_records_its_freshness(): void
+    {
+        config([
+            'services.zoho.campaigns.refresh_token' => 'fake-rt',
+            'services.zoho.campaigns.client_id' => 'x',
+            'services.zoho.campaigns.client_secret' => 'y',
+        ]);
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*campaignreports*' => Http::response([
+                'code' => '0',
+                'status' => 'success',
+                'campaign-reports' => [[
+                    'emails_sent_count' => '1',
+                    'delivered_count' => '1',
+                    'opens_count' => '0',
+                    'unique_clicks_count' => '0',
+                    'bounces_count' => '0',
+                    'unsub_count' => '0',
+                ]],
+            ], 200),
+        ]);
+        $this->travelTo(now()->startOfSecond());
+
+        $run = $this->makeSentRun(['zoho_campaign_key' => 'CK-FRESH']);
+        SyncCampaignStatsJob::dispatch($run->id);
+
+        $this->assertNotNull($run->refresh()->stats_synced_at);
+        $this->assertTrue($run->stats_synced_at->equalTo(now()));
+    }
+
+    public function test_failed_zoho_sync_records_error_without_clobbering_send_failure(): void
+    {
+        config([
+            'services.zoho.campaigns.refresh_token' => 'fake-rt',
+            'services.zoho.campaigns.client_id' => 'x',
+            'services.zoho.campaigns.client_secret' => 'y',
+        ]);
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*campaignreports*' => Http::response(['message' => 'temporary failure'], 500),
+        ]);
+        $run = $this->makeSentRun([
+            'zoho_campaign_key' => 'CK-ERROR',
+            'failure_reason' => 'Original send failure',
+        ]);
+
+        SyncCampaignStatsJob::dispatch($run->id);
+
+        $run->refresh();
+        $this->assertSame('Original send failure', $run->failure_reason);
+        $this->assertStringContainsString('getCampaignReport', $run->stats_sync_error);
+        $this->assertNull($run->stats_synced_at);
+    }
+
+    public function test_successful_zoho_sync_clears_the_previous_sync_error(): void
+    {
+        config([
+            'services.zoho.campaigns.refresh_token' => 'fake-rt',
+            'services.zoho.campaigns.client_id' => 'x',
+            'services.zoho.campaigns.client_secret' => 'y',
+        ]);
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*campaignreports*' => Http::response([
+                'code' => '0',
+                'status' => 'success',
+                'campaign-reports' => [[
+                    'emails_sent_count' => '1',
+                    'delivered_count' => '1',
+                    'opens_count' => '0',
+                    'unique_clicks_count' => '0',
+                    'bounces_count' => '0',
+                    'unsub_count' => '0',
+                ]],
+            ], 200),
+        ]);
+        $run = $this->makeSentRun([
+            'zoho_campaign_key' => 'CK-RECOVERED',
+            'stats_sync_error' => 'old error',
+        ]);
+
+        SyncCampaignStatsJob::dispatch($run->id);
+
+        $this->assertNull($run->refresh()->stats_sync_error);
+    }
+
+    public function test_recipient_event_sync_applies_the_verified_zoho_outcomes_by_run_email(): void
+    {
+        config([
+            'services.zoho.campaigns.refresh_token' => 'fake-rt',
+            'services.zoho.campaigns.client_id' => 'x',
+            'services.zoho.campaigns.client_secret' => 'y',
+        ]);
+        $run = $this->makeSentRun(['zoho_campaign_key' => 'CK-EVENTS']);
+        $recipients = collect([
+            'sentcontacts' => 'sent@acme.test',
+            'openedcontacts' => 'opened@acme.test',
+            'clickedcontacts' => 'clicked@acme.test',
+            'optoutcontacts' => 'optout@acme.test',
+            'unsentcontacts' => 'unsent@acme.test',
+            'spamcontacts' => 'spam@acme.test',
+        ])->mapWithKeys(function (string $email, string $action) use ($run) {
+            $recipient = CampaignRecipient::create([
+                'campaign_run_id' => $run->id,
+                'contact_id' => $this->makeContact($email)->id,
+                'status' => in_array($action, ['sentcontacts', 'unsentcontacts'], true) ? 'queued' : 'sent',
+                'sent_at' => in_array($action, ['sentcontacts', 'unsentcontacts'], true) ? null : now()->subHour(),
+            ]);
+
+            return [$action => $recipient];
+        });
+
+        Http::fake(function ($request) use ($recipients) {
+            if (str_contains($request->url(), 'oauth/v2/token')) {
+                return Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200);
+            }
+
+            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+            $action = $query['action'] ?? '';
+            $recipient = $recipients->get($action);
+            if ($recipient === null) {
+                return Http::response(['status' => 'error', 'code' => '6303'], 200);
+            }
+
+            $row = [
+                'contactemailaddress' => strtoupper($recipient->contact->email),
+                'sent_time' => (string) (now()->subMinutes(30)->getTimestampMs()),
+            ];
+            if ($action === 'openedcontacts') {
+                $row['openreports'] = ['message-1' => now()->subMinutes(20)->toIso8601String()];
+            }
+
+            $rows = [$row];
+            if ($action === 'sentcontacts') {
+                $rows[] = [
+                    'contactemailaddress' => strtoupper($recipients['unsentcontacts']->contact->email),
+                    'sent_time' => $row['sent_time'],
+                ];
+            }
+
+            return Http::response(['status' => 'success', 'code' => '0', 'list_of_details' => $rows], 200);
+        });
+
+        \App\Jobs\SyncCampaignRecipientEventsJob::dispatchSync($run->id);
+
+        $this->assertSame('sent', $recipients['sentcontacts']->refresh()->status);
+        $this->assertNotNull($recipients['sentcontacts']->sent_at);
+        $this->assertSame('opened', $recipients['openedcontacts']->refresh()->status);
+        $this->assertNotNull($recipients['openedcontacts']->opened_at);
+        $this->assertSame('clicked', $recipients['clickedcontacts']->refresh()->status);
+        $this->assertNull($recipients['clickedcontacts']->clicked_at, 'Zoho sent_time is not click-time evidence.');
+        $this->assertSame('unsubscribed', $recipients['optoutcontacts']->refresh()->status);
+        $this->assertSame('skipped', $recipients['unsentcontacts']->refresh()->status);
+        $this->assertSame('zoho_unsent', $recipients['unsentcontacts']->skip_reason);
+        $this->assertDatabaseHas('suppressions', ['email' => 'optout@acme.test', 'reason' => 'unsubscribe']);
+        $this->assertDatabaseHas('suppressions', ['email' => 'spam@acme.test', 'reason' => 'complaint']);
+    }
+
+    public function test_recipient_event_sync_rejects_rows_without_a_verified_email_key_and_records_the_error(): void
+    {
+        $run = $this->makeSentRun(['zoho_campaign_key' => 'CK-MALFORMED-RECIPIENT']);
+        $client = $this->mock(\App\Services\Zoho\ZohoCampaignsClient::class);
+        $client->shouldReceive('getCampaignRecipientsData')
+            ->once()
+            ->with('CK-MALFORMED-RECIPIENT', 'sentcontacts', 1, 100)
+            ->andReturn([['contactstatus' => 'sent']]);
+        $job = new \App\Jobs\SyncCampaignRecipientEventsJob($run->id);
+
+        try {
+            $job->handle($client, app(\App\Services\Campaign\CampaignFeedbackService::class));
+            $this->fail('Expected malformed Zoho recipient row rejection.');
+        } catch (\UnexpectedValueException $exception) {
+            $job->failed($exception);
+        }
+
+        $this->assertSame(
+            'Recipient event sync failed. Inspect protected logs.',
+            $run->refresh()->stats_sync_error,
+        );
+    }
+
+    public function test_recipient_event_sync_error_does_not_persist_provider_response_pii(): void
+    {
+        $run = $this->makeSentRun(['zoho_campaign_key' => 'CK-PRIVATE-ERROR']);
+        $job = new \App\Jobs\SyncCampaignRecipientEventsJob($run->id);
+        $sentinel = 'private-recipient@example.test';
+
+        $job->failed(new \RuntimeException("Zoho response body: {$sentinel}"));
+
+        $error = (string) $run->refresh()->stats_sync_error;
+        $this->assertSame('Recipient event sync failed. Inspect protected logs.', $error);
+        $this->assertStringNotContainsString($sentinel, $error);
+    }
+
+    public function test_recipient_event_sync_parses_the_first_open_from_zoho_map_text(): void
+    {
+        config([
+            'services.zoho.campaigns.refresh_token' => 'fake-rt',
+            'services.zoho.campaigns.client_id' => 'x',
+            'services.zoho.campaigns.client_secret' => 'y',
+        ]);
+        $run = $this->makeSentRun(['zoho_campaign_key' => 'CK-OPEN-MAP']);
+        $contact = $this->makeContact('open-map@acme.test');
+        $recipient = CampaignRecipient::create([
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'sent',
+            'sent_at' => '2026-08-04 08:00:00',
+        ]);
+
+        Http::fake(function ($request) {
+            if (str_contains($request->url(), 'oauth/v2/token')) {
+                return Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200);
+            }
+            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+            if (($query['action'] ?? '') !== 'openedcontacts') {
+                return Http::response(['status' => 'error', 'code' => '6303'], 200);
+            }
+
+            return Http::response([
+                'status' => 'success',
+                'code' => '0',
+                'list_of_details' => [[
+                    'contactemailaddress' => 'open-map@acme.test',
+                    'sent_time' => '1775293200000',
+                    'openreports' => '{m1=2026-08-04T10:30:00+00:00, m2=2026-08-04T11:00:00+00:00}',
+                ]],
+            ], 200);
+        });
+
+        \App\Jobs\SyncCampaignRecipientEventsJob::dispatchSync($run->id);
+
+        $this->assertSame(
+            '2026-08-04 10:30:00',
+            $recipient->refresh()->opened_at->utc()->format('Y-m-d H:i:s'),
+        );
+    }
+
+    public function test_sync_command_dispatches_both_zoho_jobs_only_for_the_last_thirty_days(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $recent = $this->makeSentRun([
+            'zoho_campaign_key' => 'CK-RECENT',
+            'run_at' => now()->subDay(),
+            'finished_at' => now()->subDay(),
+        ]);
+        $old = $this->makeSentRun([
+            'zoho_campaign_key' => 'CK-OLD',
+            'run_at' => now()->subDays(31),
+            'finished_at' => now()->subDays(31),
+        ]);
+
+        $this->artisan('campaign:sync-stats --zoho-only')->assertExitCode(0);
+
+        \Illuminate\Support\Facades\Queue::assertPushed(SyncCampaignStatsJob::class, 1);
+        \Illuminate\Support\Facades\Queue::assertPushed(
+            \App\Jobs\SyncCampaignRecipientEventsJob::class,
+            fn ($job) => $job->runId === $recent->id,
+        );
+        \Illuminate\Support\Facades\Queue::assertNotPushed(
+            \App\Jobs\SyncCampaignRecipientEventsJob::class,
+            fn ($job) => $job->runId === $old->id,
+        );
+    }
+
+    public function test_stats_sync_scope_uses_finished_time_and_falls_back_to_run_time_when_unfinished(): void
+    {
+        $cutoff = now()->subDays(30);
+        $unfinishedRecent = $this->makeSentRun([
+            'run_at' => now()->subDays(29),
+            'finished_at' => null,
+        ]);
+        $finishedRecent = $this->makeSentRun([
+            'run_at' => now()->subDays(45),
+            'finished_at' => now()->subDay(),
+        ]);
+        $finishedOld = $this->makeSentRun([
+            'run_at' => now()->subDay(),
+            'finished_at' => now()->subDays(31),
+        ]);
+
+        $ids = CampaignRun::query()
+            ->eligibleForStatsSync($cutoff)
+            ->pluck('id');
+
+        $this->assertTrue($ids->contains($unfinishedRecent->id));
+        $this->assertTrue($ids->contains($finishedRecent->id));
+        $this->assertFalse($ids->contains($finishedOld->id));
+    }
+
+    public function test_zoho_sync_preserves_stored_count_when_provider_count_is_negative(): void
+    {
+        $client = $this->mock(\App\Services\Zoho\ZohoCampaignsClient::class);
+        $client->shouldReceive('getCampaignReport')
+            ->once()
+            ->andReturn([
+                'status' => 'success',
+                'code' => '0',
+                'campaign-reports' => [[
+                    'emails_sent_count' => -1,
+                    'delivered_count' => 6,
+                    'opens_count' => 5,
+                    'unique_clicks_count' => 4,
+                    'bounces_count' => 1,
+                    'unsub_count' => 0,
+                ]],
+            ]);
+        $run = $this->makeSentRun([
+            'zoho_campaign_key' => 'CK-NEGATIVE',
+            'stats_sent' => 7,
+        ]);
+
+        SyncCampaignStatsJob::dispatchSync($run->id);
+
+        $this->assertSame(7, $run->refresh()->stats_sent);
+    }
+
+    public function test_stats_sync_job_is_unique_and_overlap_protected_per_run(): void
+    {
+        $job = new SyncCampaignStatsJob(42);
+
+        $this->assertInstanceOf(\Illuminate\Contracts\Queue\ShouldBeUnique::class, $job);
+        $this->assertSame('42', $job->uniqueId());
+        $this->assertContainsOnlyInstancesOf(
+            \Illuminate\Queue\Middleware\WithoutOverlapping::class,
+            $job->middleware(),
+        );
+    }
+
+    public function test_stats_job_rejects_a_malformed_report_even_when_the_client_returns_it(): void
+    {
+        $client = $this->mock(\App\Services\Zoho\ZohoCampaignsClient::class);
+        $client->shouldReceive('getCampaignReport')
+            ->once()
+            ->andReturn([
+                'status' => 'success',
+                'code' => '0',
+                'campaign-reports' => [],
+            ]);
+
+        $run = $this->makeSentRun([
+            'zoho_campaign_key' => 'CK-MALFORMED-JOB',
+            'stats_sync_error' => 'previous error',
+        ]);
+
+        SyncCampaignStatsJob::dispatchSync($run->id);
+
+        $run->refresh();
+        $this->assertNull($run->stats_synced_at);
+        $this->assertNotNull($run->stats_sync_error);
+        $this->assertStringContainsString('campaign-reports', $run->stats_sync_error);
     }
 }

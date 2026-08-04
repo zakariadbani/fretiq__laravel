@@ -61,7 +61,7 @@ class CampaignZohoListSyncActionTest extends TestCase
 
         $this->actingAs($admin)->get("/admin/campaigns/{$campaign->id}")
             ->assertOk()
-            ->assertSee('Ajouter et vérifier la liste Zoho');
+            ->assertSee('Préparer la liste d’envoi');
 
         $this->actingAs($admin)->post("/admin/campaigns/{$campaign->id}/sync-zoho-list")
             ->assertOk()

@@ -8,17 +8,7 @@
     <x-crud.breadcrumb :items="[['label' => 'Tableau de bord']]" />
 @endsection
 
-@php
-    $concepts = [
-        1 => ['title' => 'Cockpit exécutif', 'subtitle' => 'La performance et les décisions importantes en un regard.', 'icon' => 'bi-speedometer2'],
-        2 => ['title' => 'Centre de commandement', 'subtitle' => 'Les priorités opérationnelles, échéances et points d’attention.', 'icon' => 'bi-command'],
-        3 => ['title' => 'Pipeline de prospection', 'subtitle' => 'De la découverte des entreprises jusqu’aux résultats des campagnes.', 'icon' => 'bi-funnel'],
-        4 => ['title' => 'Vue portefeuille', 'subtitle' => 'Une lecture équilibrée de chaque pilier de la prospection.', 'icon' => 'bi-grid-1x2'],
-    ];
-    $concept = $concepts[$prototype];
-@endphp
-
-<div data-testid="dashboard-shell" data-prototype="{{ $prototype }}">
+<div data-testid="dashboard-shell">
     <section class="dashboard-hero card border-0 mb-6 overflow-hidden">
         <div class="card-body p-6 p-lg-8 position-relative">
             <div class="dashboard-orb dashboard-orb-one"></div>
@@ -26,8 +16,8 @@
             <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-5 position-relative">
                 <div>
                     <div class="text-white-50 fw-semibold fs-7 text-uppercase ls-1 mb-2">Bonjour, {{ auth()->user()->name }}</div>
-                    <h1 class="text-white fw-bolder fs-2x mb-2">{{ $concept['title'] }}</h1>
-                    <p class="text-white-75 fs-6 mb-0">{{ $concept['subtitle'] }}</p>
+                    <h2 class="text-white fw-bolder fs-2x mb-2">Centre de commandement</h2>
+                    <p class="text-white-75 fs-6 mb-0">Les priorités opérationnelles, échéances et résultats de la prospection.</p>
                 </div>
                 <div class="d-flex flex-wrap gap-3">
                     @can('create campaigns')
@@ -45,22 +35,7 @@
         </div>
     </section>
 
-    <nav class="card mb-6" aria-label="Choisir un prototype" data-testid="dashboard-prototype-switcher">
-        <div class="card-body py-3 px-4">
-            <div class="d-flex flex-nowrap overflow-auto gap-2 dashboard-switcher">
-                @foreach ($concepts as $id => $item)
-                    <a href="{{ route('admin.dashboard', ['prototype' => $id]) }}"
-                       class="btn btn-sm flex-shrink-0 {{ $prototype === $id ? 'btn-primary' : 'btn-light' }}"
-                       @if ($prototype === $id) aria-current="page" @endif>
-                        <i class="bi {{ $item['icon'] }}"></i>
-                        {{ $id }}. {{ $item['title'] }}
-                    </a>
-                @endforeach
-            </div>
-        </div>
-    </nav>
-
-    @include("backend.contents.dashboard.prototype-{$prototype}")
+    @include('backend.contents.dashboard.operational')
 </div>
 
 @push('styles')
@@ -70,7 +45,6 @@
     .dashboard-orb { position: absolute; border-radius: 50%; background: rgba(255,255,255,.07); pointer-events: none; }
     .dashboard-orb-one { width: 260px; height: 260px; right: 7%; top: -160px; }
     .dashboard-orb-two { width: 150px; height: 150px; right: 28%; bottom: -110px; }
-    .dashboard-switcher { scrollbar-width: thin; }
     .dashboard-kpi { border: 1px solid var(--bs-gray-200); transition: transform .16s ease, box-shadow .16s ease; }
     .dashboard-kpi:hover { transform: translateY(-2px); box-shadow: var(--bs-box-shadow-sm); }
     .dashboard-icon { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border-radius: 12px; }
@@ -79,56 +53,76 @@
     .dashboard-accent { border-left: 4px solid var(--bs-primary); }
     .dashboard-accent-danger { border-left-color: var(--bs-danger); }
     .dashboard-accent-success { border-left-color: var(--bs-success); }
-    .dashboard-quadrant { min-height: 420px; }
+    .dashboard-chart { min-height: 320px; }
+    .dashboard-empty { background: var(--bs-gray-100); border-radius: .75rem; }
     @media (max-width: 767.98px) {
         .dashboard-hero .card-body { min-height: 250px; }
-        .dashboard-quadrant { min-height: auto; }
     }
 </style>
 @endpush
 
 @push('scripts')
 <script>
-"use strict";
-(function () {
-    if (typeof ApexCharts === 'undefined') return;
+    document.addEventListener('DOMContentLoaded', function () {
+        if (typeof ApexCharts === 'undefined') {
+            return;
+        }
 
-    var engagementEl = document.getElementById('dashboard-engagement-chart');
-    if (engagementEl) {
-        var engagement = @json($engagementOverTime);
-        new ApexCharts(engagementEl, {
-            series: [
-                { name: 'Ouvertures', data: engagement.series.opens },
-                { name: 'Clics', data: engagement.series.clicks },
-                { name: 'Réponses', data: engagement.series.replies }
-            ],
-            chart: { type: 'area', height: 300, toolbar: { show: false }, zoom: { enabled: false } },
-            colors: ['#3e97ff', '#50cd89', '#f6c000'],
-            stroke: { curve: 'smooth', width: 2 },
-            fill: { type: 'gradient', gradient: { opacityFrom: .22, opacityTo: .03 } },
-            dataLabels: { enabled: false },
-            xaxis: { categories: engagement.labels, labels: { rotate: -25 } },
-            yaxis: { min: 0, labels: { formatter: function (value) { return Math.round(value); } } },
-            grid: { borderColor: '#eff2f5' },
-            legend: { position: 'top', horizontalAlign: 'right' }
-        }).render();
-    }
+        const engagementElement = document.getElementById('dashboard-engagement-chart-canvas');
+        if (engagementElement) {
+            const engagementFallback = document.getElementById('dashboard-engagement-chart-fallback');
+            const engagementChart = new ApexCharts(engagementElement, {
+                chart: { type: 'line', height: 320, toolbar: { show: false } },
+                series: [
+                    { name: 'Ouvertures', data: @json($engagementOverTime['series']['opens'] ?? []) },
+                    { name: 'Clics', data: @json($engagementOverTime['series']['clicks'] ?? []) },
+                    { name: 'Réponses', data: @json($engagementOverTime['series']['replies'] ?? []) },
+                ],
+                xaxis: { categories: @json($engagementOverTime['labels'] ?? []) },
+                colors: ['#009ef7', '#50cd89', '#7239ea'],
+                stroke: { curve: 'smooth', width: 3 },
+                dataLabels: { enabled: false },
+                legend: { position: 'top', horizontalAlign: 'left' },
+                grid: { borderColor: '#eff2f5', strokeDashArray: 4 },
+                noData: { text: 'Aucun engagement mesuré' },
+            });
+            engagementChart.render().then(function () {
+                if (engagementFallback) {
+                    engagementFallback.classList.add('d-none');
+                }
+            });
+        }
 
-    var funnelEl = document.getElementById('dashboard-funnel-chart');
-    if (funnelEl) {
-        var funnel = @json($funnel);
-        new ApexCharts(funnelEl, {
-            series: [{ name: 'Volume', data: Object.values(funnel) }],
-            chart: { type: 'bar', height: 310, toolbar: { show: false } },
-            colors: ['#3e97ff'],
-            plotOptions: { bar: { horizontal: true, borderRadius: 5, distributed: true } },
-            dataLabels: { enabled: true },
-            xaxis: { categories: Object.keys(funnel), min: 0 },
-            grid: { borderColor: '#eff2f5' },
-            legend: { show: false }
-        }).render();
-    }
-}());
+        const funnelElement = document.getElementById('dashboard-funnel-chart-canvas');
+        if (funnelElement) {
+            const funnelFallback = document.getElementById('dashboard-funnel-chart-fallback');
+            const funnelChart = new ApexCharts(funnelElement, {
+                chart: { type: 'bar', height: 320, toolbar: { show: false } },
+                series: [{ name: 'Prospects', data: @json(array_values($funnel)) }],
+                xaxis: {
+                    categories: @json(array_keys($funnel)),
+                    labels: { formatter: function (value) { return Math.round(value); } },
+                },
+                plotOptions: {
+                    bar: {
+                        horizontal: true,
+                        borderRadius: 4,
+                        distributed: true,
+                    },
+                },
+                colors: ['#009ef7', '#3e97ff', '#50cd89', '#ffc700', '#7239ea', '#f1416c'],
+                dataLabels: { enabled: true },
+                legend: { show: false },
+                grid: { borderColor: '#eff2f5', strokeDashArray: 4 },
+                noData: { text: 'Aucune donnée de parcours' },
+            });
+            funnelChart.render().then(function () {
+                if (funnelFallback) {
+                    funnelFallback.classList.add('d-none');
+                }
+            });
+        }
+    });
 </script>
 @endpush
 

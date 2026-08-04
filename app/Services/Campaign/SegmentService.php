@@ -170,6 +170,7 @@ class SegmentService
 
         $manually_excluded = $postDedup->count() - $preExclude->count();
         $final             = $preExclude->count();
+        $company_count     = $preExclude->pluck('company_id')->filter()->unique()->count();
 
         // ── manually_included: pinned-in contacts that survived compliance ──────
         // These are already counted inside $matched (they're in the union), so this
@@ -201,6 +202,7 @@ class SegmentService
             'manually_excluded',
             'manually_included',
             'final',
+            'company_count',
             'sample',
         );
     }

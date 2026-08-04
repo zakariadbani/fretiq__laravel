@@ -76,7 +76,7 @@
         <div class="card card-xl-stretch mb-5 mb-xl-8">
             <div class="card-header border-0 pt-6">
                 <div class="card-title">
-                    <h3 class="card-label fw-bold fs-4 mb-0">Aujourd'hui</h3>
+                    <h3 class="card-label fw-bold fs-4 mb-0">Quota Fretiq — aujourd’hui</h3>
                 </div>
             </div>
             <div class="card-body pt-3 pb-6">
@@ -128,7 +128,7 @@
         <div class="card card-xl-stretch mb-5 mb-xl-8">
             <div class="card-header border-0 pt-6">
                 <div class="card-title">
-                    <h3 class="card-label fw-bold fs-4 mb-0">Ce mois</h3>
+                    <h3 class="card-label fw-bold fs-4 mb-0">Quota Fretiq — ce mois</h3>
                 </div>
             </div>
             <div class="card-body pt-3 pb-6">

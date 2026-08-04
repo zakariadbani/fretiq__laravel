@@ -84,7 +84,7 @@ class SequenceController extends BackendController
 
         $view = $this->getView('backend.contents.sequences.crud.view')
             ->with('model', $model)
-            ->with('templates', CampaignTemplate::orderBy('name')->get());
+            ->with('templates', CampaignTemplate::where('name', 'not like', 'E2E\_FIXTURE %')->orderBy('name')->get());
 
         // Inject viewConfig for the hero + tabbar partials.
         $viewConfig = $this->buildViewConfig($model);
@@ -101,7 +101,7 @@ class SequenceController extends BackendController
     protected function getViewVars(): array
     {
         return [
-            'templates' => CampaignTemplate::orderBy('name')->get(),
+            'templates' => CampaignTemplate::where('name', 'not like', 'E2E\_FIXTURE %')->orderBy('name')->get(),
         ];
     }
 

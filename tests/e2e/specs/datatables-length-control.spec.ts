@@ -49,4 +49,26 @@ test.describe('DataTables length control', () => {
     expect(labelHeight).toBeLessThan(50);
   });
 
+  test('mobile company and campaign rows keep identity, action, and expandable details', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    for (const table of [
+      { path: '/admin/companies', id: 'company-table' },
+      { path: '/admin/campaigns', id: 'campaign-table' },
+    ]) {
+      await page.goto(table.path);
+      await waitForDataTable(page, table.id);
+
+      const root = page.locator(`#${table.id}`);
+      await expect(root.getByRole('columnheader', { name: 'Nom' })).toBeVisible();
+      await expect(root.locator('tbody tr').first().locator('a[title="Voir"]')).toBeVisible();
+
+      const control = root.locator('tbody tr').first().locator('.dtr-control');
+      await expect(control).toBeVisible();
+      await expect(control).toHaveAccessibleName(/Afficher les détails/);
+      await control.press('Enter');
+      await expect(control).toHaveAttribute('aria-expanded', 'true');
+      await expect(root.locator('tbody tr.child')).toBeVisible();
+    }
+  });
 });

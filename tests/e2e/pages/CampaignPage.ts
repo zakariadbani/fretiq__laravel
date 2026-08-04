@@ -47,6 +47,14 @@ export class CampaignPage extends DataTablePage {
   // View-page action buttons
   readonly sendNowButton: Locator;
   readonly scheduleButton: Locator;
+  readonly statsSyncButton: Locator;
+  readonly recipientsTab: Locator;
+  readonly historyTab: Locator;
+  readonly recipientStepMatrix: Locator;
+  readonly historyRunRecipientLinks: Locator;
+  readonly historyTable: Locator;
+  readonly runScopedBanner: Locator;
+  readonly runRecipientTable: Locator;
 
   constructor(page: Page) {
     super(page, {
@@ -72,6 +80,14 @@ export class CampaignPage extends DataTablePage {
     // View-page action buttons (do NOT click sendNowButton in tests)
     this.sendNowButton  = page.locator('#btn-send-now');
     this.scheduleButton = page.locator('#btn-schedule');
+    this.statsSyncButton = page.locator('#btn-sync-campaign-stats');
+    this.recipientsTab = page.locator('a[href="#campaign_destinataires"]');
+    this.historyTab = page.locator('a[href="#campaign_historique"]');
+    this.recipientStepMatrix = page.locator('[data-recipient-step-matrix]');
+    this.historyRunRecipientLinks = page.locator('#campaign_historique a[href*="run_id="]');
+    this.runScopedBanner = page.locator('[data-run-scope-banner]');
+    this.historyTable = page.locator('#campaign_historique table');
+    this.runRecipientTable = page.locator('[data-run-recipient-table]');
   }
 
   /** Navigate to the campaigns index page. */
@@ -79,9 +95,13 @@ export class CampaignPage extends DataTablePage {
     await this.page.goto('/admin/campaigns');
   }
 
-  /** Navigate to the create form. */
-  async gotoCreate() {
-    await this.page.goto('/admin/campaigns/create');
+  /** Navigate to the create form, optionally exposing hidden fixtures by explicit ID. */
+  async gotoCreate(sourceIds: { segmentId?: number; templateId?: number; senderIdentityId?: number } = {}) {
+    const params = new URLSearchParams();
+    if (sourceIds.segmentId) params.set('segment_id', String(sourceIds.segmentId));
+    if (sourceIds.templateId) params.set('template_id', String(sourceIds.templateId));
+    if (sourceIds.senderIdentityId) params.set('sender_identity_id', String(sourceIds.senderIdentityId));
+    await this.page.goto(`/admin/campaigns/create${params.size ? `?${params}` : ''}`);
   }
 
   /** Navigate to the edit form for a known id. */
@@ -98,41 +118,28 @@ export class CampaignPage extends DataTablePage {
    * Fill and submit the create/edit form for a one_shot campaign.
    *
    * All three Select2 fields use the native-select pattern:
-   *   selectOption({ label }) + dispatchEvent('change')
+   *   selectOption({ value }) + dispatchEvent('change')
    *
    * @param data.name               Campaign name (required)
-   * @param data.segmentLabel       Visible label of the segment option in the Select2
-   * @param data.templateLabel      Visible label of the template option in the Select2
-   * @param data.senderLabel        Visible label of the sender identity option (name <email>)
    * @param data.scheduleType       One of the schedule_type option values (default 'one_shot')
    */
   async fillAndSubmit(data: {
     name: string;
-    segmentLabel: string;
-    templateLabel: string;
-    senderLabel: string;
+    segmentId: number;
+    templateId: number;
+    senderIdentityId: number;
     scheduleType?: string;
   }) {
     await this.nameInput.fill(data.name);
-
-    // sender_identity_id Select2 — set native select + dispatch change
-    await this.senderIdentityIdSelect.selectOption({ label: data.senderLabel });
+    await this.senderIdentityIdSelect.selectOption({ value: String(data.senderIdentityId) });
     await this.senderIdentityIdSelect.dispatchEvent('change');
-
-    // segment_id Select2
-    await this.segmentIdSelect.selectOption({ label: data.segmentLabel });
+    await this.segmentIdSelect.selectOption({ value: String(data.segmentId) });
     await this.segmentIdSelect.dispatchEvent('change');
-
-    // template_id Select2
-    await this.templateIdSelect.selectOption({ label: data.templateLabel });
+    await this.templateIdSelect.selectOption({ value: String(data.templateId) });
     await this.templateIdSelect.dispatchEvent('change');
 
-    // schedule_type Select2 (default 'one_shot' is pre-selected; still set explicitly)
-    const scheduleType = data.scheduleType ?? 'one_shot';
-    await this.scheduleTypeSelect.selectOption({ value: scheduleType });
+    await this.scheduleTypeSelect.selectOption({ value: data.scheduleType ?? 'one_shot' });
     await this.scheduleTypeSelect.dispatchEvent('change');
-
-    // ponytail: create relies on the index search + retrying toBeVisible assertion to confirm persistence — campaign create form has a known double-submit bug that makes a strict response-wait unreliable.
     await this.page.locator('#form_crud button[name="save"]').click();
   }
 
@@ -174,5 +181,39 @@ export class CampaignPage extends DataTablePage {
       await this.page.waitForLoadState('networkidle');
       await helpers.waitForDataTable(this.page, this.tableId);
     }
+  }
+
+  recipientRow(email: string): Locator {
+    return this.recipientStepMatrix.locator(`[data-recipient-email="${email}"]`);
+  }
+
+  stepCell(email: string, step: number): Locator {
+    return this.recipientRow(email).locator(`[data-step="${step}"]`);
+  }
+
+  stepSummary(step: number): Locator {
+    return this.recipientStepMatrix.locator(`[data-step-summary="${step}"]`);
+  }
+
+  async openRecipientsTab(): Promise<void> {
+    await this.recipientsTab.click();
+    await expect(this.recipientStepMatrix).toBeVisible();
+  }
+
+  async openHistoryTab(): Promise<void> {
+    await this.historyTab.click();
+    await expect(this.historyRunRecipientLinks.first()).toBeVisible();
+  }
+
+  async openFirstRunRecipients(): Promise<string> {
+    const link = this.historyRunRecipientLinks.first();
+    const href = await link.getAttribute('href');
+    if (!href) {
+      throw new Error('Run recipient link has no href.');
+    }
+
+    await link.click();
+
+    return href;
   }
 }

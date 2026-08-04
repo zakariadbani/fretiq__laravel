@@ -244,7 +244,9 @@ class ProspectCriteriaController extends BackendController
             $dailyQuotaSummary = $quotaService->dailyDisplaySummary();
             $monthlyQuotaSummary = $quotaService->monthlyDisplaySummary();
             $quotaMeters = $quotaService->displayMeters();
-            $providerSearchesLeft = app(CompanyDiscoveryService::class)->accountUsage()['total_searches_left'] ?? null;
+            $providerSearchesLeft = auth()->user()?->can('view provider quota')
+                ? (app(CompanyDiscoveryService::class)->accountUsage()['total_searches_left'] ?? null)
+                : null;
 
             return [
                 $quotaService->remainingTodayForDisplay(),

@@ -5,42 +5,79 @@
     Variables: $model (Campaign), $isView (bool)
 
     "Retour à la liste" lives in the top toolbar on both pages.
-    "Modifier" is view-only; operational actions are shared by both pages.
+    "Modifier" and operational actions are view-only.
     All @can gates are kept exactly as in the original view.blade.php.
     The shared JS handlers are pushed once from this partial.
 --}}
 
-@if($isView)
+@php($campaignIsReady = (bool) ($campaignReadiness['ok'] ?? false))
+@php($automationIsReady = ($schedulerHealth['status'] ?? 'missing') === 'healthy')
+@php($campaignActionsEnabled = $campaignIsReady && $automationIsReady)
+@php($readinessMessage = implode(' ', $campaignReadiness['messages'] ?? []))
 
+@if($isView)
+    <span id="campaign-readiness-state"
+          class="badge badge-light-{{ $campaignIsReady ? 'success' : 'warning' }}"
+          data-campaign-readiness="{{ $campaignIsReady ? 'ready' : 'blocked' }}"
+          data-campaign-actions-enabled="{{ $campaignActionsEnabled ? 'true' : 'false' }}"
+          @if($readinessMessage !== '') title="{{ $readinessMessage }}" @endif>
+        <i class="bi bi-{{ $campaignIsReady ? 'check-circle' : 'exclamation-circle' }} me-1"></i>
+        {{ $campaignIsReady ? 'Prête à envoyer' : ($model->is_active ? 'Active ne signifie pas prête à envoyer' : 'Vérification d’envoi requise') }}
+    </span>
+@endif
+
+@if($isView)
     @can('edit campaigns')
-        <a href="{{ route('admin.campaigns.edit', $model->id) }}" class="btn btn-sm btn-primary">
+        <a href="{{ route('admin.campaigns.edit', $model->id) }}" class="btn btn-sm btn-light-primary">
             <i class="bi bi-pencil me-1"></i>
             Modifier
         </a>
     @endcan
 @endif
 
-    @can('send campaigns')
-        <button type="button"
-                class="btn btn-sm fw-bold btn-light-primary"
-                id="btn-sync-zoho-list"
-                data-url="{{ route('admin.campaigns.syncZohoList', $model->id) }}">
-            <i class="bi bi-people me-1"></i>
-            Ajouter et vérifier la liste Zoho
-        </button>
-    @endcan
+@if($isView)
+@can('send campaigns')
+    @php($canSyncCampaignStats = ($syncableZohoRunCount ?? 0) > 0)
 
+    <div class="dropdown">
+        <button class="btn btn-sm btn-light-primary dropdown-toggle" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-three-dots me-1"></i>Actions
+        </button>
+        <div class="dropdown-menu dropdown-menu-end p-2 min-w-250px">
+            <form method="POST" action="{{ route('admin.campaigns.testSend', $model->id) }}">
+                @csrf
+                <button type="submit" class="dropdown-item rounded py-2" id="btn-test-send">
+                    <i class="bi bi-envelope-check me-2"></i>M’envoyer un test
+                </button>
+            </form>
+
+            @include('backend.contents.campaigns.partials._stats-sync-button', ['model' => $model, 'dropdown' => true])
+
+            <button type="button"
+                    class="dropdown-item rounded py-2"
+                    id="btn-sync-zoho-list"
+                    data-url="{{ route('admin.campaigns.syncZohoList', $model->id) }}">
+                <i class="bi bi-people me-2"></i>Préparer la liste d’envoi
+                <span class="text-muted d-block fs-8 ms-6">Synchronisation Zoho</span>
+            </button>
+        </div>
+    </div>
+@endcan
     @can('send campaigns')
         {{-- Planifier: hidden for sequence campaigns (drip cadence ignores scheduling) --}}
         @if($model->schedule_type !== 'sequence')
         <button type="button"
-                class="btn btn-sm fw-bold btn-info"
+                class="btn btn-sm fw-bold btn-light-primary"
                 id="btn-schedule"
                 data-campaign-id="{{ $model->id }}"
                 data-schedule-type="{{ $model->schedule_type }}"
                 data-daily-company-limit="{{ $model->pacedDailyCompanyLimit() }}"
                 data-url="{{ route('admin.campaigns.schedule', $model->id) }}"
-                data-preview-url="{{ route('admin.campaigns.dispatchPreview', ['id' => $model->id, 'action' => 'schedule']) }}">
+                data-preview-url="{{ route('admin.campaigns.dispatchPreview', ['id' => $model->id, 'action' => 'schedule']) }}"
+                data-action-enabled="{{ $campaignActionsEnabled ? 'true' : 'false' }}"
+                aria-describedby="campaign-readiness-state"
+                @disabled(! $campaignActionsEnabled)>
             <i class="bi bi-calendar-check me-1"></i>
             Planifier
         </button>
@@ -55,7 +92,10 @@
                 data-daily-company-limit="{{ $model->pacedDailyCompanyLimit() }}"
                 data-next-batch-at="{{ $model->next_run_at ? $model->next_run_at->copy()->setTimezone($model->scheduleTimezone())->format('d/m/Y H:i') : '' }}"
                 data-url="{{ route('admin.campaigns.sendNow', $model->id) }}"
-                data-preview-url="{{ route('admin.campaigns.dispatchPreview', $model->id) }}">
+                data-preview-url="{{ route('admin.campaigns.dispatchPreview', $model->id) }}"
+                data-action-enabled="{{ $campaignActionsEnabled ? 'true' : 'false' }}"
+                aria-describedby="campaign-readiness-state"
+                @disabled(! $campaignActionsEnabled)>
             @if($model->schedule_type === 'paced')
                 <i class="bi bi-send me-1"></i>
                 Envoyer le lot du jour
@@ -79,7 +119,9 @@
             @endif
         </button>
     @endcan
+@endif
 
+@if($isView)
 @once
 @push('scripts')
 <script data-campaign-action-handlers>
@@ -190,11 +232,11 @@
                     self.disabled = true;
 
                     Swal.fire({
-                        title: 'Ajouter et vérifier la liste Zoho ?',
-                        html: 'Les contacts conformes de la campagne seront ajoutés à sa liste Zoho dédiée, puis leur présence sera vérifiée.<br>Les contacts déjà présents seront conservés.<br><strong>Aucune campagne Zoho ne sera créée ni envoyée.</strong>',
+                        title: 'Préparer la liste d’envoi ?',
+                        html: 'Les contacts conformes de la campagne seront ajoutés à la liste d’envoi configurée, puis leur présence sera vérifiée.<br>Les contacts déjà présents seront conservés.<br><strong>Aucune campagne Zoho ne sera créée ni envoyée.</strong>',
                         icon: 'question',
                         showCancelButton: true,
-                        confirmButtonText: 'Ajouter et vérifier',
+                        confirmButtonText: 'Préparer et vérifier',
                         cancelButtonText: 'Annuler',
                         buttonsStyling: false,
                         customClass: {
@@ -211,7 +253,7 @@
                             .then(function (response) {
                                 Swal.fire({
                                     icon: 'success',
-                                    title: 'Ajouts Zoho vérifiés',
+                                    title: 'Liste d’envoi vérifiée',
                                     text: response.data.message,
                                     buttonsStyling: false,
                                     confirmButtonText: 'OK',
@@ -222,7 +264,7 @@
                                 Swal.fire({
                                     icon: 'warning',
                                     title: 'Préparation bloquée',
-                                    text: error.response?.data?.message || 'Impossible de vérifier les ajouts à la liste Zoho. Aucun envoi n’a été créé.',
+                                    text: error.response?.data?.message || 'Impossible de vérifier la liste d’envoi. Aucun envoi n’a été créé.',
                                     buttonsStyling: false,
                                     confirmButtonText: 'OK',
                                     customClass: { confirmButton: 'btn btn-primary' },
@@ -230,6 +272,32 @@
                             })
                             .finally(function () { self.disabled = false; });
                     });
+                });
+            }
+
+            const btnSyncCampaignStats = document.getElementById('btn-sync-campaign-stats');
+            if (btnSyncCampaignStats) {
+                btnSyncCampaignStats.addEventListener('click', function () {
+                    if (hasUnsavedCampaignChanges()) {
+                        warnUnsavedCampaignChanges();
+                        return;
+                    }
+
+                    const self = this;
+                    self.disabled = true;
+
+                    postCampaignAction(self)
+                        .catch(function (error) {
+                            Swal.fire({
+                                icon: 'warning',
+                                title: 'Synchronisation impossible',
+                                text: campaignActionErrorMessage(error),
+                                buttonsStyling: false,
+                                confirmButtonText: 'OK',
+                                customClass: { confirmButton: 'btn btn-primary' },
+                            });
+                        })
+                        .finally(function () { self.disabled = false; });
                 });
             }
 
@@ -284,3 +352,4 @@
     </script>
 @endpush
 @endonce
+@endif

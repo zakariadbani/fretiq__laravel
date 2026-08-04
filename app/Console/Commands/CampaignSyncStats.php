@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Jobs\SyncCampaignRecipientEventsJob;
 use App\Jobs\SyncCampaignStatsJob;
 use App\Models\CampaignRun;
 use Illuminate\Console\Command;
@@ -48,10 +49,11 @@ class CampaignSyncStats extends Command
 
         if ($zohoOnly && $localOnly) {
             $this->error('--zoho-only and --local-only are mutually exclusive. Use at most one.');
+
             return self::FAILURE;
         }
 
-        $query = CampaignRun::where('status', 'sent');
+        $query = CampaignRun::query()->eligibleForStatsSync();
 
         if ($zohoOnly) {
             $query->whereNotNull('zoho_campaign_key');
@@ -62,8 +64,11 @@ class CampaignSyncStats extends Command
         // Use cursor() for memory-safe iteration over potentially large result sets.
         // Only id is needed in the loop body; select it explicitly to avoid hydrating all columns.
         $count = 0;
-        foreach ($query->select('id')->cursor() as $run) {
+        foreach ($query->select('id', 'zoho_campaign_key')->cursor() as $run) {
             SyncCampaignStatsJob::dispatch($run->id);
+            if (filled($run->zoho_campaign_key)) {
+                SyncCampaignRecipientEventsJob::dispatch($run->id);
+            }
             $count++;
         }
 

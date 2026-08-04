@@ -61,7 +61,7 @@
                 if (!empty($funnel['cold_excluded']))       { $funnelParts[] = ['label' => $funnel['cold_excluded'] . ' en attente (envoi à froid)', 'class' => 'text-warning']; }
                 if (!empty($funnel['personal_excluded']))   { $funnelParts[] = ['label' => '− ' . $funnel['personal_excluded'] . ' personnels', 'class' => '']; }
                 if (!empty($funnel['duplicates_excluded'])) { $funnelParts[] = ['label' => '− ' . $funnel['duplicates_excluded'] . ' doublons', 'class' => '']; }
-                if (isset($funnel['final']))                { $funnelParts[] = ['label' => '= ' . $funnel['final'] . ' destinataires',          'class' => 'fw-semibold']; }
+                if (isset($funnel['final']))                { $funnelParts[] = ['label' => '= ' . $funnel['final'] . ' destinataires éligibles',          'class' => 'fw-semibold']; }
             }
         @endphp
         <div class="row g-5 mt-2">

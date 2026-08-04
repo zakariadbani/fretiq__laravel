@@ -5,6 +5,9 @@ namespace Tests\Feature\Backend;
 use App\Models\Campaign;
 use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
+use App\Models\Company;
+use App\Models\Contact;
+use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
@@ -74,6 +77,25 @@ class PlannerFeedTest extends TestCase
             'occurrence_key' => 'one_shot_' . now()->format('Y-m-d'),
             'run_at'         => now(),
             'status'         => 'scheduled',
+        ]);
+    }
+
+    private function makeEligibleClientContact(): void
+    {
+        $company = Company::create([
+            'name' => 'Planner client '.uniqid(),
+            'relationship' => 'client',
+            'source' => 'manual',
+            'qualification_status' => 'pending',
+        ]);
+        Contact::create([
+            'company_id' => $company->id,
+            'name' => 'Planner contact',
+            'email' => uniqid('planner_').'@test.test',
+            'status' => 'new',
+            'source' => 'manual',
+            'legal_basis' => 'relationship',
+            'email_kind' => 'role',
         ]);
     }
 
@@ -265,6 +287,162 @@ class PlannerFeedTest extends TestCase
         Carbon::setTestNow();
     }
 
+    public function test_planner_includes_materialized_discovery_runs_from_past_window(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-07-28 08:00:00', 'Europe/Paris'));
+
+        $criteria = ProspectCriteria::create([
+            'name' => "D\u{00E9}couverte historique",
+            'daily_limit' => 10,
+            'is_active' => true,
+        ]);
+        $run = DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'discovery',
+            'status' => 'completed',
+            'started_at' => '2026-07-28 06:00:00',
+            'finished_at' => '2026-07-28 06:01:00',
+        ]);
+
+        Carbon::setTestNow(Carbon::parse('2026-07-30 08:00:00', 'Europe/Paris'));
+
+        $event = collect(app(PlannerService::class)->runsFeed(
+            '2026-07-28T00:00:00+02:00',
+            '2026-07-29T00:00:00+02:00',
+            'Europe/Paris',
+        ))->firstWhere('id', 'discovery-run-'.$run->id);
+
+        $this->assertNotNull($event);
+        $this->assertSame("D\u{00E9}couverte \u{00B7} {$criteria->name}", $event['title']);
+        $this->assertSame('discovery-run', $event['extendedProps']['eventKind']);
+        $this->assertSame("Termin\u{00E9}e", $event['extendedProps']['statusLabel']);
+        $this->assertSame('2026-07-28', Carbon::parse($event['start'])->setTimezone('Europe/Paris')->toDateString());
+
+        Carbon::setTestNow();
+    }
+
+    public function test_materialized_discovery_run_replaces_same_day_projection(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-07-28 13:00:00', 'Europe/Paris'));
+
+        $criteria = ProspectCriteria::create([
+            'name' => "D\u{00E9}couverte sans doublon",
+            'daily_limit' => 10,
+            'is_active' => true,
+            'auto_run' => true,
+            'run_at_hour' => 12,
+        ]);
+        $run = DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'discovery',
+            'status' => 'completed',
+            'started_at' => '2026-07-28 10:00:00',
+            'finished_at' => '2026-07-28 10:01:00',
+        ]);
+
+        $events = collect(app(PlannerService::class)->runsFeed(
+            '2026-07-28T00:00:00+02:00',
+            '2026-07-29T00:00:00+02:00',
+            'Europe/Paris',
+        ))->filter(
+            fn (array $event): bool => str_starts_with($event['extendedProps']['eventKind'] ?? '', 'discovery-'),
+        )->values();
+
+        $this->assertSame(
+            ['discovery-run-'.$run->id],
+            $events->pluck('id')->all(),
+        );
+
+        Carbon::setTestNow();
+    }
+
+    public function test_discovery_projection_dedup_uses_pinned_quota_date(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-07-28 13:00:00', 'Europe/Paris'));
+
+        $criteria = ProspectCriteria::create([
+            'name' => "D\u{00E9}couverte quota",
+            'daily_limit' => 10,
+            'is_active' => true,
+            'auto_run' => true,
+            'run_at_hour' => 12,
+        ]);
+        $run = DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'discovery',
+            'status' => 'completed',
+            'quota_date' => '2026-07-27',
+        ]);
+
+        $events = collect(app(PlannerService::class)->runsFeed(
+            '2026-07-28T00:00:00+02:00',
+            '2026-07-29T00:00:00+02:00',
+            'Europe/Paris',
+        ))->filter(
+            fn (array $event): bool => str_contains($event['id'], 'discovery'),
+        );
+
+        $this->assertCount(2, $events);
+        $this->assertTrue($events->pluck('id')->contains('discovery-run-'.$run->id));
+        $this->assertTrue($events->pluck('id')->contains('projected-discovery-'.$criteria->id.'-20260728100000'));
+
+        Carbon::setTestNow();
+    }
+
+    public function test_discovery_projection_dedup_finds_quota_date_outside_display_range(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-07-27 13:00:00', 'Europe/Paris'));
+
+        $criteria = ProspectCriteria::create([
+            'name' => "D\u{00E9}couverte quota hors plage",
+            'daily_limit' => 10,
+            'is_active' => true,
+            'auto_run' => true,
+            'run_at_hour' => 12,
+        ]);
+        DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'discovery',
+            'status' => 'completed',
+            'quota_date' => '2026-07-28',
+        ]);
+
+        Carbon::setTestNow(Carbon::parse('2026-07-28 13:00:00', 'Europe/Paris'));
+
+        $events = collect(app(PlannerService::class)->runsFeed(
+            '2026-07-28T00:00:00+02:00',
+            '2026-07-29T00:00:00+02:00',
+            'Europe/Paris',
+        ))->filter(
+            fn (array $event): bool => str_starts_with($event['extendedProps']['eventKind'] ?? '', 'discovery-'),
+        );
+
+        $this->assertCount(0, $events);
+
+        Carbon::setTestNow();
+    }
+
+    public function test_planner_skips_discovery_run_without_criteria(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-07-28 08:00:00', 'Europe/Paris'));
+
+        $run = DiscoveryRun::create([
+            'prospect_criteria_id' => null,
+            'type' => 'discovery',
+            'status' => 'pending',
+        ]);
+
+        $events = collect(app(PlannerService::class)->runsFeed(
+            '2026-07-28T00:00:00+02:00',
+            '2026-07-29T00:00:00+02:00',
+            'Europe/Paris',
+        ));
+
+        $this->assertNull($events->firstWhere('id', 'discovery-run-'.$run->id));
+
+        Carbon::setTestNow();
+    }
+
     public function test_auto_discovery_projection_restores_wall_clock_hour_after_dst_gap(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-03-28 00:00:00', 'Europe/Paris'));
@@ -307,13 +485,21 @@ class PlannerFeedTest extends TestCase
     {
         Carbon::setTestNow(Carbon::parse('2026-07-28 08:00:00', 'Europe/Paris'));
 
-        ProspectCriteria::create([
+        $criteria = ProspectCriteria::create([
             'name' => 'Hidden discovery',
             'daily_limit' => 10,
             'is_active' => true,
             'auto_run' => true,
             'run_at_hour' => 12,
         ]);
+        $run = DiscoveryRun::create([
+            'prospect_criteria_id' => $criteria->id,
+            'type' => 'discovery',
+            'status' => 'completed',
+            'started_at' => '2026-07-28 06:00:00',
+            'finished_at' => '2026-07-28 06:01:00',
+        ]);
+
         $campaignOnlyUser = User::factory()->create([
             'email_verified_at' => now(),
             'is_active' => true,
@@ -326,6 +512,7 @@ class PlannerFeedTest extends TestCase
             ->json();
 
         $this->assertNull(collect($events)->firstWhere('extendedProps.eventKind', 'discovery-projection'));
+        $this->assertNull(collect($events)->firstWhere('id', 'discovery-run-'.$run->id));
 
         $this->get('/admin/planner')
             ->assertOk()
@@ -384,7 +571,7 @@ class PlannerFeedTest extends TestCase
         $this->actingAs($this->superadmin)
             ->get('/admin/planner')
             ->assertOk()
-            ->assertSee("initialView: 'timeGridWeek'", false)
+            ->assertSee("initialView: mobileViewport.matches ? 'listDay' : 'timeGridWeek'", false)
             ->assertSee('eventShortHeight: 60', false);
     }
 
@@ -1292,6 +1479,7 @@ class PlannerFeedTest extends TestCase
     {
         $nextRunAt = now()->addDay()->utc();
         $campaign  = $this->makeRecurring($nextRunAt, '2027-01-01', 'daily', false);
+        $this->makeEligibleClientContact();
 
         $this->actingAs($this->superadmin)
             ->postJson("/admin/campaigns/{$campaign->id}/schedule", [
@@ -1318,6 +1506,7 @@ class PlannerFeedTest extends TestCase
     public function test_schedule_recurring_without_next_run_at_returns_422(): void
     {
         $campaign = $this->makeRecurring(now()->addDay()->utc(), null, 'daily');
+        $this->makeEligibleClientContact();
         // Nullify next_run_at to simulate unconfigured recurrence.
         $campaign->update(['next_run_at' => null]);
 
@@ -1333,5 +1522,21 @@ class PlannerFeedTest extends TestCase
             'The 422 message key must carry the French sentence, not the literal word "error"');
         $this->assertStringContainsString('Définissez', $message,
             "422 message must contain 'Définissez'");
+    }
+
+    public function test_feed_excludes_exact_e2e_fixture_campaigns_and_projections(): void
+    {
+        $this->campaign->update(['name' => 'E2E_FIXTURE Materialized campaign']);
+        $recurring = $this->makeRecurring(Carbon::parse('2026-08-06 09:00:00', 'UTC'));
+        $recurring->update(['name' => 'E2E_FIXTURE Recurring campaign']);
+        $sequence = $this->makePacedSequence(Carbon::parse('2026-08-06 10:00:00', 'UTC'));
+        $sequence->update(['name' => 'E2E_FIXTURE Sequence campaign']);
+
+        $events = collect(app(PlannerService::class)->runsFeed(
+            '2026-08-05T00:00:00+00:00',
+            '2026-08-07T00:00:00+00:00',
+        ));
+
+        $this->assertFalse($events->contains(fn (array $event): bool => str_starts_with($event['title'], 'E2E_FIXTURE ')));
     }
 }

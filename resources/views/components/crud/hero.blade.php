@@ -54,12 +54,12 @@
             @endif
 
             {{-- Content area --}}
-            <div class="flex-grow-1">
+            <div class="flex-grow-1 min-w-0">
                 <div class="d-flex justify-content-between align-items-start flex-wrap mb-2">
                     <div class="d-flex flex-column">
 
                         {{-- Title + badges --}}
-                        <div class="d-flex align-items-center mb-2">
+                        <div class="d-flex align-items-center flex-wrap mb-2">
                             <span class="text-gray-900 fs-2 fw-bold me-2">{{ $title }}</span>
                             @foreach($badges as $badge)
                                 <span class="badge badge-light-{{ $badge['color'] ?? 'secondary' }} me-2">{{ $badge['label'] ?? '' }}</span>
@@ -89,7 +89,7 @@
                     </div>
 
                     {{-- Actions slot --}}
-                    <div class="d-flex gap-2 mb-2">
+                    <div class="d-flex flex-wrap gap-2 mb-2">
                         {{ $actions ?? '' }}
                     </div>
                 </div>

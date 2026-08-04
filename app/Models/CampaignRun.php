@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Traits\Validator;
 use App\Support\ConfigEnum;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -43,6 +44,8 @@ class CampaignRun extends Model
         'zoho_campaign_key',
         'driver_ref',
         'failure_reason',
+        'stats_synced_at',
+        'stats_sync_error',
         'started_at',
         'finished_at',
     ];
@@ -56,6 +59,7 @@ class CampaignRun extends Model
         'run_at'      => 'datetime',
         'started_at'  => 'datetime',
         'finished_at' => 'datetime',
+        'stats_synced_at' => 'datetime',
     ];
 
     // ── Relationships ──────────────────────────────────────────────────────────
@@ -138,6 +142,22 @@ class CampaignRun extends Model
     public function scopeExecuted(Builder $query): Builder
     {
         return $query->where('status', 'sent');
+    }
+
+    /** @param Builder<CampaignRun> $query */
+    public function scopeEligibleForStatsSync(Builder $query, ?CarbonInterface $cutoff = null): Builder
+    {
+        $cutoff ??= now()->subDays(30);
+
+        return $query
+            ->executed()
+            ->where(function (Builder $recent) use ($cutoff): void {
+                $recent->where('finished_at', '>=', $cutoff)
+                    ->orWhere(function (Builder $unfinished) use ($cutoff): void {
+                        $unfinished->whereNull('finished_at')
+                            ->where('run_at', '>=', $cutoff);
+                    });
+            });
     }
 
     /** Normalize a stored/provider count without letting malformed legacy data leak into KPIs. */

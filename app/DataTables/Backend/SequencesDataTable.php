@@ -55,7 +55,7 @@ class SequencesDataTable extends BackendDataTable
      */
     public function query()
     {
-        return $this->currentModel->newQuery()->withCount('steps');
+        return $this->currentModel->newQuery()->where('name', 'not like', 'E2E\_FIXTURE %')->withCount('steps');
     }
 
     protected function createEditColumns(): void

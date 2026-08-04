@@ -36,6 +36,8 @@ class ZohoAccessTest extends TestCase
         // RefreshDatabase does NOT run seeders; seed ACL manually.
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
+        config(['services.zoho.crm_driver' => 'local']);
+
         // Bind the CrmClient interface to LocalCrmClient so that
         // app(ZohoCrmSyncService::class) resolves without HTTP calls.
         $this->app->bind(CrmClient::class, LocalCrmClient::class);

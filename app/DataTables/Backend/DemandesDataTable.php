@@ -132,6 +132,20 @@ class DemandesDataTable extends BackendDataTable
         });
     }
 
+    protected function dataTableLanguage(): array
+    {
+        $emptyTable = 'Aucune demande enregistrée.';
+
+        if (auth()->user()?->can('create demandes')) {
+            $emptyTable .= ' <a href="' . e(route('admin.demandes.create')) . '">Ajouter une demande</a>';
+        }
+
+        return array_replace(parent::dataTableLanguage(), [
+            'emptyTable' => $emptyTable,
+            'zeroRecords' => 'Aucune demande ne correspond à ces filtres. Modifiez ou réinitialisez les filtres.',
+        ]);
+    }
+
     protected function getEntityName(): string
     {
         return 'demande';

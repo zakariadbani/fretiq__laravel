@@ -150,7 +150,7 @@ class CompanyViewConfig
 
         // ── Quick actions ─────────────────────────────────────────────────────
         $quickActions = [];
-        if ($hasId && ! $isRejected && \Illuminate\Support\Facades\Route::has('admin.campaigns.create')) {
+        if ($hasId && ! $isRejected && $contactsCount > 0 && \Illuminate\Support\Facades\Route::has('admin.campaigns.create')) {
             $quickActions[] = [
                 'label'      => 'Lancer une campagne',
                 'icon'       => 'bi-rocket',

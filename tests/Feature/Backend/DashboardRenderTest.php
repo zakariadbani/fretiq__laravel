@@ -105,4 +105,17 @@ class DashboardRenderTest extends TestCase
             ->assertDontSee('Campagnes actives')
             ->assertDontSee('Taux d\'ouverture');
     }
+
+    public function test_empty_dashboard_renders_both_chart_empty_states(): void
+    {
+        $this->actingAs($this->superadmin)
+            ->get('/admin/dashboard')
+            ->assertOk()
+            ->assertSee('data-testid="dashboard-engagement-chart"', false)
+            ->assertSee('data-testid="dashboard-engagement-empty"', false)
+            ->assertSee('data-testid="dashboard-funnel-chart"', false)
+            ->assertSee('data-testid="dashboard-funnel-empty"', false)
+            ->assertDontSee('id="dashboard-engagement-chart-canvas"', false)
+            ->assertDontSee('id="dashboard-funnel-chart-canvas"', false);
+    }
 }

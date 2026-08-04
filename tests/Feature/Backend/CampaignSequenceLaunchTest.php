@@ -212,7 +212,7 @@ class CampaignSequenceLaunchTest extends TestCase
         ]);
     }
 
-    public function test_sequence_campaign_view_exposes_auto_enrollment_control_and_sync_action(): void
+    public function test_sequence_campaign_auto_enrollment_control_is_view_only(): void
     {
         $company = $this->makeCompany('client');
         $this->makeContact($company);
@@ -230,6 +230,11 @@ class CampaignSequenceLaunchTest extends TestCase
             ->assertSee('Inscription automatique')
             ->assertSee('Synchroniser maintenant')
             ->assertSee(route('admin.campaigns.sequenceAutoEnroll', $campaign->id));
+
+        $this->get("/admin/campaigns/{$campaign->id}/edit")
+            ->assertOk()
+            ->assertDontSee('Inscription automatique')
+            ->assertDontSee(route('admin.campaigns.sequenceAutoEnroll', $campaign->id));
     }
 
     public function test_auto_enrollment_control_requires_send_campaigns_permission(): void

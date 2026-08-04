@@ -114,7 +114,7 @@
     @else
         {{-- ── Create mode: guided composer shell --}}
         <header class="campaign-template-create-head mb-5" data-campaign-template-create-shell>
-            <h1 class="fs-2hx fw-bold text-gray-900 mb-2">Créer un modèle d'email</h1>
+            <h2 class="fs-2hx fw-bold text-gray-900 mb-2">Créer un modèle d'email</h2>
             <p class="fs-6 text-muted mb-0">Composez un email réutilisable pour vos campagnes de prospection.</p>
         </header>
 

@@ -772,11 +772,27 @@ class SequenceGeneratedTest extends TestCase
         ]);
     }
 
-    /**
-     * Enrollment control actions require `edit sequences` permission.
-     *
-     * A user without that permission must receive 403 on pauseEnrollment.
-     */
+    /** The rendered sequence uses its template subject when the step has no override. */
+    public function test_view_resolves_template_subject_when_step_subject_is_null(): void
+    {
+        $sequence = $this->makeSequence();
+        $template = $this->makeTemplate('Modèle sujet résolu');
+        $template->update(['subject' => 'Sujet réel du modèle']);
+        SequenceStep::create([
+            'sequence_id' => $sequence->id,
+            'step_no' => 1,
+            'delay_days' => 0,
+            'template_id' => $template->id,
+            'subject' => null,
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->get("/admin/sequences/{$sequence->id}")
+            ->assertOk()
+            ->assertSee('Sujet réel du modèle', false)
+            ->assertDontSee('(sujet du modèle)', false);
+    }
+    /** Enrollment pause requires the edit permission. */
     public function test_pause_enrollment_403_without_edit_permission(): void
     {
         $sequence   = $this->makeSequence();

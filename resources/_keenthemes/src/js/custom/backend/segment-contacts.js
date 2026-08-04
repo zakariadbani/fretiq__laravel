@@ -18,6 +18,8 @@
     var _reloadSeq    = 0;      // monotonically increasing sequence counter
     var _activeReload = null;   // AbortController for the in-flight reload fetch
     var _observer     = null;   // IntersectionObserver (nullable after disarm)
+    var _initialLoadStarted = false;
+    var _hasLoaded = false;
 
     /* ── CSRF ───────────────────────────────────────────────────────────── */
     function csrf() {
@@ -52,6 +54,43 @@
         }
     }
 
+    function removeStateNotices(wrapper) {
+        wrapper.querySelectorAll('[data-segment-contacts-loading], [data-segment-contacts-failure]')
+            .forEach(function (notice) { notice.remove(); });
+    }
+
+    function renderLoading(wrapper) {
+        removeStateNotices(wrapper);
+        wrapper.dataset.contactsState = 'loading';
+        wrapper.setAttribute('aria-busy', 'true');
+
+        if (_hasLoaded) {
+            wrapper.insertAdjacentHTML('afterbegin',
+                '<div class="d-flex align-items-center gap-2 px-7 py-3 text-muted fs-8" data-segment-contacts-loading role="status">'
+                + '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span>Actualisation des contacts…'
+                + '</div>');
+        }
+    }
+
+    function renderFailure(wrapper) {
+        removeStateNotices(wrapper);
+        wrapper.dataset.contactsState = 'failed';
+        wrapper.setAttribute('aria-busy', 'false');
+
+        var detail = _hasLoaded ? ' Le dernier nombre connu reste affiché.' : '';
+        var failure = '<div class="alert alert-warning d-flex align-items-start m-7" data-segment-contacts-failure role="status">'
+            + '<i class="bi bi-exclamation-triangle-fill fs-3 me-3" aria-hidden="true"></i>'
+            + '<div><p class="mb-3">L’aperçu des contacts n’a pas pu être actualisé.' + detail + '</p>'
+            + '<button type="button" class="btn btn-sm btn-light-warning" data-segment-contacts-retry '
+            + 'aria-label="Réessayer le chargement des contacts">Réessayer</button></div></div>';
+
+        if (_hasLoaded) {
+            wrapper.insertAdjacentHTML('afterbegin', failure);
+        } else {
+            wrapper.innerHTML = failure;
+        }
+    }
+
     /* ── Update count badge from the fragment root data attribute ───────── */
     function updateCountFromFragment(wrapper) {
         var el    = wrapper ? wrapper.querySelector('[data-contacts-count]') : null;
@@ -79,6 +118,7 @@
         /* Create AbortController for this fetch */
         var controller = new AbortController();
         _activeReload  = controller;
+        renderLoading(wrapper);
 
         return fetch(url, {
             signal: controller.signal,
@@ -105,19 +145,24 @@
             /* Re-bind excluded toggle after swap */
             bindExcludedToggle();
 
+            _hasLoaded = true;
+            wrapper.dataset.contactsState = 'loaded';
+            wrapper.setAttribute('aria-busy', 'false');
+
             /* Clear the AbortController reference for this completed fetch */
             if (_activeReload === controller) {
                 _activeReload = null;
             }
         })
         .catch(function (err) {
-            /* Silently ignore aborted fetches */
-            if (err && err.name === 'AbortError') return;
+            /* Silently ignore aborted or stale fetches. */
+            if ((err && err.name === 'AbortError') || mySeq !== _reloadSeq) return;
 
             if (btn) {
                 showToast('Échec, réessayez', 'error');
             }
 
+            renderFailure(wrapper);
             if (_activeReload === controller) {
                 _activeReload = null;
             }
@@ -141,31 +186,46 @@
         }
     }
 
-    /* ── Lazy-load on first scroll-into-view (D5) ───────────────────────── */
+    /* ── Deterministic first load; observer is only an optimization ────── */
+    function startInitialLoad() {
+        var wrapper = getWrapper();
+        var listUrl = wrapper ? wrapper.dataset.listUrl : null;
+        if (!listUrl || _initialLoadStarted || _hasLoaded || _activeReload) return;
+
+        _initialLoadStarted = true;
+        disarmObserver();
+        loadContacts(listUrl, null);
+    }
+
     function initLazyLoad() {
         var wrapper = getWrapper();
-        if (!wrapper) return;
+        if (!wrapper || !wrapper.dataset.listUrl) return;
 
-        var listUrl = wrapper.dataset.listUrl;
-        if (!listUrl) return;
+        document.addEventListener('shown.bs.tab', function (event) {
+            var target = event.target;
+            var paneId = target && (target.getAttribute('href') || target.getAttribute('data-bs-target'));
+            if (paneId === '#segment_contacts') startInitialLoad();
+        });
 
-        if (!('IntersectionObserver' in window)) {
-            /* Eager fallback for older browsers */
-            loadContacts(listUrl, null);
+        if (window.location.hash === '#segment_contacts') {
+            startInitialLoad();
             return;
         }
 
-        _observer = new IntersectionObserver(function (entries, obs) {
-            entries.forEach(function (entry) {
-                if (entry.isIntersecting) {
-                    obs.disconnect();
-                    _observer = null;
-                    loadContacts(listUrl, null);
+        if ('IntersectionObserver' in window) {
+            _observer = new IntersectionObserver(function (entries) {
+                if (entries.some(function (entry) { return entry.isIntersecting; })) {
+                    startInitialLoad();
                 }
-            });
-        }, { threshold: 0.1 });
+            }, { threshold: 0.1 });
+            _observer.observe(wrapper);
+        }
 
-        _observer.observe(wrapper);
+        /* crud-tabs.js relocates the pane earlier in the same DOM-ready cycle. */
+        window.requestAnimationFrame(function () {
+            var rect = wrapper.getBoundingClientRect();
+            if (rect.bottom > 0 && rect.top < window.innerHeight) startInitialLoad();
+        });
     }
 
     /* ── Pin mutation (POST or DELETE) ──────────────────────────────────── */
@@ -221,6 +281,13 @@
 
     /* ── Event delegation on document ──────────────────────────────────── */
     document.addEventListener('click', function (e) {
+
+        var retryBtn = e.target.closest('[data-segment-contacts-retry]');
+        if (retryBtn) {
+            e.preventDefault();
+            window.KTSegmentContacts.reload(_liveQuery);
+            return;
+        }
 
         /* Exclude (filter → manually excluded) */
         var excludeBtn = e.target.closest('.btn-segment-exclude');
@@ -467,6 +534,7 @@
          */
         reload: function (queryString) {
             _liveQuery = queryString || '';
+            _initialLoadStarted = true;
             disarmObserver();
             var wrapper = getWrapper();
             var base    = wrapper ? wrapper.dataset.listUrl : null;
@@ -479,6 +547,7 @@
          */
         clearLive: function () {
             _liveQuery = '';
+            _initialLoadStarted = true;
             disarmObserver();
             var wrapper = getWrapper();
             var base = wrapper ? wrapper.dataset.listUrl : null;

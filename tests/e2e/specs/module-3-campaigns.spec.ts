@@ -1,6 +1,7 @@
 // IMPORTANT: import test/expect from the console-guard fixture (auto-fails on console.error/pageerror). Do NOT revert to '@playwright/test' — that silently disables the guard.
 import { test, expect } from '../fixtures/console-guard';
 import { CampaignPage } from '../pages/CampaignPage';
+import { readFileSync } from 'node:fs';
 import {
   waitForDataTable,
   confirmDelete,
@@ -38,12 +39,22 @@ import {
  */
 
 // ── Fixture labels (must match E2eSeed output exactly) ─────────────────────────
-const FIXTURE_SEGMENT  = 'E2E_FIXTURE Segment';
-const FIXTURE_TEMPLATE = 'E2E_FIXTURE Template';
 // Sender label in the <select> includes name + <email>; is_default = false → no "(défaut)" suffix.
-const FIXTURE_SENDER   = 'E2E_FIXTURE Sender <e2e_fixture_sender@example.test>';
+const FIXTURE_CAMPAIGN = 'E2E_FIXTURE Campaign';
+type FixtureIds = {
+  senderIdentityId: number;
+  segmentId: number;
+  templateId: number;
+  campaignId: number;
+  statsCampaignId: number;
+};
+let fixtureIds: FixtureIds;
 
 test.describe('Campaigns module', () => {
+
+  test.beforeAll(() => {
+    fixtureIds = JSON.parse(readFileSync('tests/e2e/.auth/fixtures.json', 'utf8')) as FixtureIds;
+  });
 
   // Tracks names created in individual tests so afterAll can clean up any leaks.
   const createdNames: string[] = [];
@@ -83,6 +94,18 @@ test.describe('Campaigns module', () => {
     await campaigns.expectMinRows(1);
   });
 
+  test('French date picker loads the installed locale without console errors', async ({ page }) => {
+    const campaigns = new CampaignPage(page);
+    await campaigns.gotoCreate(fixtureIds);
+
+    await page.locator('#scheduled_at').click();
+    const picker = page.locator('.flatpickr-calendar.open');
+
+    await expect(picker).toBeVisible();
+    await expect(picker.locator('.flatpickr-weekday').first()).toHaveText(/lun/i);
+    await expect(picker.locator('.cur-month')).toHaveText(/août/i);
+  });
+
   // ── 2. Create flow ───────────────────────────────────────────────────────────
 
   test('create: fill form, submit, row appears in table, cleanup', async ({ page }) => {
@@ -90,16 +113,16 @@ test.describe('Campaigns module', () => {
     const name = uniqueName('E2E Campaign');
     createdNames.push(name);
 
-    await campaigns.gotoCreate();
+    await campaigns.gotoCreate(fixtureIds);
 
     // Submit the form — crud-form-handler.js calls window.location.replace() on 2xx.
     // waitForURL is unreliable with replace-navigation under serial headed load, so we
     // let the submit+replace settle via networkidle, then navigate to the index directly.
     await campaigns.fillAndSubmit({
       name,
-      segmentLabel:  FIXTURE_SEGMENT,
-      templateLabel: FIXTURE_TEMPLATE,
-      senderLabel:   FIXTURE_SENDER,
+      segmentId: fixtureIds.segmentId,
+      templateId: fixtureIds.templateId,
+      senderIdentityId: fixtureIds.senderIdentityId,
       scheduleType:  'one_shot',
     });
     // fillAndSubmit now awaits the store POST response — no extra networkidle needed.
@@ -139,12 +162,12 @@ test.describe('Campaigns module', () => {
     createdNames.push(newName);
 
     // Create a campaign to edit.
-    await campaigns.gotoCreate();
+    await campaigns.gotoCreate(fixtureIds);
     await campaigns.fillAndSubmit({
       name,
-      segmentLabel:  FIXTURE_SEGMENT,
-      templateLabel: FIXTURE_TEMPLATE,
-      senderLabel:   FIXTURE_SENDER,
+      segmentId: fixtureIds.segmentId,
+      templateId: fixtureIds.templateId,
+      senderIdentityId: fixtureIds.senderIdentityId,
       scheduleType:  'one_shot',
     });
     // fillAndSubmit now awaits the store POST response — no extra networkidle needed.
@@ -181,139 +204,88 @@ test.describe('Campaigns module', () => {
     }
   });
 
-  test('operational actions preview pristine state and block unsaved edits', async ({ page }) => {
+  test('operational actions remain on the detail page and stay off the edit form', async ({ page }) => {
     const campaigns = new CampaignPage(page);
-    await page.addInitScript(() => {
-      document.addEventListener('DOMContentLoaded', () => {
-        const select = document.getElementById('sequence_select') as HTMLSelectElement | null;
-        if (!select) return;
 
-        const options = Array.from(select.options).filter(option => option.value !== '');
-        options.slice(1).forEach(option => option.remove());
-        if (options.length === 0) {
-          const option = document.createElement('option');
-          option.value = 'e2e-sequence';
-          option.textContent = 'E2E Sequence';
-          option.dataset.steps = '[]';
-          select.appendChild(option);
-        }
-        select.value = '';
-      }, { once: true });
-    });
-    await campaigns.goto();
-    await waitForDataTable(page, 'campaign-table');
-    await campaigns.clickRowAction(0, 'edit');
+    await campaigns.gotoEdit(fixtureIds.campaignId);
     await expect(campaigns.nameInput).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('#btn-schedule, #btn-send-now, #btn-sync-zoho-list')).toHaveCount(0);
 
-    const initialization = await page.evaluate(() => {
-      const form = document.getElementById('form_crud') as HTMLFormElement | null;
-      const select = document.getElementById('sequence_select') as HTMLSelectElement | null;
-      const options = select ? Array.from(select.options).filter(option => option.value !== '') : [];
-      return {
-        optionCount: options.length,
-        autoSelected: options.length === 1 && select?.value === options[0].value,
-        snapshotMatches: !!form && form.dataset.cleanSnapshot === new URLSearchParams(new FormData(form)).toString(),
-      };
-    });
-    expect(initialization).toEqual({ optionCount: 1, autoSelected: true, snapshotMatches: true });
-    const actionButtons = page.locator('#btn-schedule, #btn-send-now, #btn-sync-zoho-list');
-    expect(await actionButtons.count()).toBeGreaterThanOrEqual(2);
-
-    const actionPaths = new Set<string>();
-    const previewPaths = new Set<string>();
-    for (let i = 0; i < await actionButtons.count(); i++) {
-      const actionUrl = await actionButtons.nth(i).getAttribute('data-url');
-      const previewUrl = await actionButtons.nth(i).getAttribute('data-preview-url');
-      if (actionUrl) actionPaths.add(new URL(actionUrl, page.url()).pathname);
-      if (previewUrl) previewPaths.add(new URL(previewUrl, page.url()).pathname);
-    }
-
-    let previewRequests = 0;
-    let actionRequests = 0;
-    await page.route('**/*', async route => {
-      const request = route.request();
-      const path = new URL(request.url()).pathname;
-
-      if (request.method() === 'POST') {
-        if (actionPaths.has(path)) actionRequests++;
-        await route.abort();
-      } else if (previewPaths.has(path)) {
-        previewRequests++;
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ count: 0, company_count: 0, contact_count: 0 }),
-        });
-      } else {
-        await route.continue();
-      }
-    });
-
-    const previewButton = page.locator('#btn-schedule:visible, #btn-send-now:visible').first();
-    await expect(previewButton).toBeVisible();
-    await previewButton.click();
-    await expect(page.locator('.swal2-popup')).not.toContainText('Modifications non enregistrées');
-    await expect(page.locator('.swal2-cancel')).toBeVisible();
-    await page.locator('.swal2-cancel').click();
-    await expect(previewButton).toBeEnabled();
-    expect(previewRequests).toBe(1);
-    expect(actionRequests).toBe(0);
-
-    previewRequests = 0;
-    actionRequests = 0;
-    await campaigns.nameInput.fill('E2E_FIXTURE Campaign modifiée');
-
-    for (let i = 0; i < await actionButtons.count(); i++) {
-      await actionButtons.nth(i).click();
-      await expect(page.locator('.swal2-popup')).toContainText('Modifications non enregistrées');
-      await page.locator('.swal2-confirm').click();
-    }
-
-    expect(previewRequests).toBe(0);
-    expect(actionRequests).toBe(0);
+    await campaigns.gotoView(fixtureIds.campaignId);
+    expect(await page.locator('#btn-schedule, #btn-send-now, #btn-sync-zoho-list').count()).toBeGreaterThanOrEqual(1);
   });
   // ── 4. View (detail) page ────────────────────────────────────────────────────
 
-  test('view: detail page shows campaign name; sendNow button present (not clicked)', async ({ page }) => {
+  test('recipient step matrix shows per-email outcomes and one enabled stats sync control', async ({ page }) => {
     const campaigns = new CampaignPage(page);
-    const name = uniqueName('E2E View Campaign');
-    createdNames.push(name);
 
-    // Create a campaign.
-    await campaigns.gotoCreate();
-    await campaigns.fillAndSubmit({
-      name,
-      segmentLabel:  FIXTURE_SEGMENT,
-      templateLabel: FIXTURE_TEMPLATE,
-      senderLabel:   FIXTURE_SENDER,
-      scheduleType:  'one_shot',
+    await campaigns.gotoView(fixtureIds.statsCampaignId);
+
+    const campaignUrl = page.url();
+    // Presence only: never click because it queues Zoho API work.
+    await expect(campaigns.statsSyncButton).toHaveCount(1);
+    await expect(campaigns.statsSyncButton).toBeEnabled();
+
+    await campaigns.openRecipientsTab();
+    await expect(campaigns.recipientRow('e2e.stats.opened@example.test')).toBeVisible();
+    await expect(campaigns.stepCell('e2e.stats.opened@example.test', 1)).toContainText('Ouvert');
+    await expect(campaigns.stepCell('e2e.stats.opened@example.test', 2)).toContainText('Envoy\u00e9 \u2014 non ouvert');
+    await expect(campaigns.stepCell('e2e.stats.unsent@example.test', 1)).toContainText('Non envoy\u00e9 par Zoho \u2014 adresse invalide ou refus\u00e9e');
+    await expect(campaigns.stepCell('e2e.stats.unsent@example.test', 2)).toContainText('Pas encore planifi\u00e9');
+    await expect(campaigns.stepSummary(1)).toContainText('2 envoy\u00e9s');
+    await expect(campaigns.stepSummary(1)).toContainText('1 ouverts');
+    await expect(campaigns.stepSummary(2)).toContainText('1 envoy\u00e9s');
+    await expect(campaigns.stepSummary(2)).toContainText('0 ouverts');
+
+    await campaigns.openHistoryTab();
+    await expect(campaigns.historyTable).toContainText('\u00c9tape 1 \u2014 Introduction');
+    await expect(campaigns.historyTable).toContainText('\u00c9tape 2 \u2014 Relance');
+    await expect(campaigns.historyRunRecipientLinks).toHaveCount(2);
+
+    const runLink = await campaigns.openFirstRunRecipients();
+    expect(runLink).toContain('run_id=');
+    expect(new URL(page.url()).searchParams.has('run_id')).toBe(true);
+    await expect(campaigns.recipientStepMatrix).toHaveCount(0);
+    await expect(campaigns.runScopedBanner).toBeVisible();
+    await expect(campaigns.runRecipientTable).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${campaignUrl}#campaign_destinataires`);
+    await campaigns.openRecipientsTab();
+    const mobileLayout = await page.evaluate(() => {
+      const table = document.querySelector<HTMLElement>('[data-recipient-step-matrix]');
+      const scroller = table?.closest<HTMLElement>('.table-responsive');
+
+      return {
+        documentClientWidth: document.documentElement.clientWidth,
+        documentScrollWidth: document.documentElement.scrollWidth,
+        scrollerClientWidth: scroller?.clientWidth ?? 0,
+        scrollerScrollWidth: scroller?.scrollWidth ?? 0,
+      };
     });
-    // fillAndSubmit now awaits the store POST response — no extra networkidle needed.
 
-    // Navigate to index, search, open view.
-    await campaigns.goto();
-    await waitForDataTable(page, 'campaign-table');
-    await campaigns.search(name);
-    await waitForDataTable(page, 'campaign-table');
-    // Auto-retrying: ensure the row is visible before clicking the action.
-    await expect(campaigns.table.locator(`tbody tr:has-text("${name}")`).first()).toBeVisible({ timeout: 10000 });
-    await campaigns.clickRowAction(0, 'view');
+    expect(mobileLayout.documentScrollWidth).toBe(mobileLayout.documentClientWidth);
+    expect(mobileLayout.scrollerScrollWidth).toBeGreaterThan(mobileLayout.scrollerClientWidth);
+    await expect(campaigns.stepCell('e2e.stats.opened@example.test', 2))
+      .toContainText('Envoy\u00e9 \u2014 non ouvert');
 
-    // Detail page must show the campaign name.
-    await expect(page.locator(`text=${name}`).first()).toBeVisible({ timeout: 10000 });
+  });
 
-    // Assert #btn-send-now is present in the DOM — DO NOT click (dispatches real SendCampaignJob).
+  test('view-only stats sync stays disabled without a Zoho run', async ({ page }) => {
+    const campaigns = new CampaignPage(page);
+
+    await campaigns.gotoView(fixtureIds.campaignId);
+    await expect(page.getByText(FIXTURE_CAMPAIGN, { exact: true }).first()).toBeVisible({ timeout: 10000 });
     await expect(campaigns.sendNowButton).toBeAttached({ timeout: 5000 });
+    await expect(campaigns.statsSyncButton).toBeVisible();
+    await expect(campaigns.statsSyncButton).toBeDisabled();
+    await expect(campaigns.statsSyncButton).toHaveAttribute('type', 'button');
+    const disabledReason = campaigns.statsSyncButton.locator('..');
+    await expect(disabledReason).toHaveAttribute('data-bs-toggle', 'tooltip');
+    await expect(disabledReason).toHaveAttribute('data-bs-title', /30 derniers jours/);
 
-    // Cleanup.
-    await campaigns.goto();
-    await waitForDataTable(page, 'campaign-table');
-    await campaigns.deleteAllByName(name, {
-      search: (q) => campaigns.search(q),
-      waitForDataTable,
-      confirmDelete,
-    });
-    createdNames.splice(createdNames.indexOf(name), 1);
+    await campaigns.gotoEdit(fixtureIds.campaignId);
+    await expect(campaigns.statsSyncButton).toHaveCount(0);
   });
 
   // ── 5. Delete — two SweetAlerts ─────────────────────────────────────────────
@@ -324,12 +296,12 @@ test.describe('Campaigns module', () => {
     createdNames.push(name);
 
     // Create a campaign to delete.
-    await campaigns.gotoCreate();
+    await campaigns.gotoCreate(fixtureIds);
     await campaigns.fillAndSubmit({
       name,
-      segmentLabel:  FIXTURE_SEGMENT,
-      templateLabel: FIXTURE_TEMPLATE,
-      senderLabel:   FIXTURE_SENDER,
+      segmentId: fixtureIds.segmentId,
+      templateId: fixtureIds.templateId,
+      senderIdentityId: fixtureIds.senderIdentityId,
       scheduleType:  'one_shot',
     });
     // fillAndSubmit now awaits the store POST response — no extra networkidle needed.
@@ -365,13 +337,13 @@ test.describe('Campaigns module', () => {
 
   test('segmentCount AJAX: selecting a segment updates #segment-count-label', async ({ page }) => {
     const campaigns = new CampaignPage(page);
-    await campaigns.gotoCreate();
+    await campaigns.gotoCreate(fixtureIds);
 
     // The label starts with the placeholder text.
     await expect(campaigns.segmentCountLabel).toContainText('Sélectionnez un segment');
 
     // Select the fixture segment via native select + dispatchEvent (triggers AJAX).
-    await campaigns.segmentIdSelect.selectOption({ label: FIXTURE_SEGMENT });
+    await campaigns.segmentIdSelect.selectOption({ value: String(fixtureIds.segmentId) });
     await campaigns.segmentIdSelect.dispatchEvent('change');
 
     // Wait for the count label to update to something other than the placeholder.
@@ -386,17 +358,17 @@ test.describe('Campaigns module', () => {
 
   test('audienceLanguageSplit AJAX: selecting segment+template shows lang split panel', async ({ page }) => {
     const campaigns = new CampaignPage(page);
-    await campaigns.gotoCreate();
+    await campaigns.gotoCreate(fixtureIds);
 
     // The language split panel starts hidden.
     await expect(campaigns.audienceLangSplit).toHaveClass(/d-none/, { timeout: 5000 });
 
     // Select segment (triggers segmentCount + audienceLanguageSplit).
-    await campaigns.segmentIdSelect.selectOption({ label: FIXTURE_SEGMENT });
+    await campaigns.segmentIdSelect.selectOption({ value: String(fixtureIds.segmentId) });
     await campaigns.segmentIdSelect.dispatchEvent('change');
 
     // Select template (triggers audienceLanguageSplit with template context).
-    await campaigns.templateIdSelect.selectOption({ label: FIXTURE_TEMPLATE });
+    await campaigns.templateIdSelect.selectOption({ value: String(fixtureIds.templateId) });
     await campaigns.templateIdSelect.dispatchEvent('change');
 
     // Wait for the split panel to become visible (AJAX responded + JS removed d-none).
@@ -417,12 +389,12 @@ test.describe('Campaigns module', () => {
     createdNames.push(name);
 
     // Create a campaign.
-    await campaigns.gotoCreate();
+    await campaigns.gotoCreate(fixtureIds);
     await campaigns.fillAndSubmit({
       name,
-      segmentLabel:  FIXTURE_SEGMENT,
-      templateLabel: FIXTURE_TEMPLATE,
-      senderLabel:   FIXTURE_SENDER,
+      segmentId: fixtureIds.segmentId,
+      templateId: fixtureIds.templateId,
+      senderIdentityId: fixtureIds.senderIdentityId,
       scheduleType:  'one_shot',
     });
     // fillAndSubmit now awaits the store POST response — no extra networkidle needed.

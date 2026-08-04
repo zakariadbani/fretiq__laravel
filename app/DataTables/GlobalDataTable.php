@@ -79,11 +79,13 @@ class GlobalDataTable extends DataTable
         foreach ($this->columns as $key => $column) {
             if (isset($column['switch'])) {
                 $typetoggle = $column['typetoggle'] ?? null;
-                $this->datatables = $this->datatables->editColumn($key, function ($model) use ($key, $typetoggle) {
+                $toggleLabel = $column['title'] ?? $key;
+                $this->datatables = $this->datatables->editColumn($key, function ($model) use ($key, $typetoggle, $toggleLabel) {
                     return view('backend.components.datatable.status', [
                         'model' => $model,
                         'name' => $key,
-                        'typetoggle' => $typetoggle
+                        'typetoggle' => $typetoggle,
+                        'toggleLabel' => $toggleLabel,
                     ]);
                 });
             }
@@ -137,7 +139,7 @@ class GlobalDataTable extends DataTable
             ->responsive()
             ->autoWidth(false)
             ->parameters([
-                'scrollX' => true,
+                'scrollX' => false,
                 'searchDelay' => 350,
                 'drawCallback' => 'function() { try { if (window.KTMenu) { KTMenu.createInstances(); } if (window.DataTableUtils && window.DataTableUtils.fixAccessibility instanceof Function) { window.DataTableUtils.fixAccessibility(this.api().table().container()); } } catch (e) { console.error(e); } }',
                 'initComplete' => 'function() { try { if (window.DataTableUtils && window.DataTableUtils.fixAccessibility instanceof Function) { window.DataTableUtils.fixAccessibility(this.api().table().container()); } } catch (e) { console.error(e); } }',
@@ -162,12 +164,14 @@ class GlobalDataTable extends DataTable
     protected function getColumns()
     {
         $columns = [];
-        $columns[] = Column::make('id')->title('ID')->addClass('ps-0')->responsivePriority(1);
+        $columns[] = Column::make('id')->title('ID')->addClass('ps-0')->responsivePriority(10000);
+        $firstBusinessColumn = true;
 
         foreach ($this->columns as $key => $column) {
             $orderable = isset($column['orderable']) ? $column['orderable'] : true;
             $searchable = isset($column['searchable']) ? $column['searchable'] : true;
-            $priority = isset($column['priority']) ? $column['priority'] : 4;
+            $priority = $column['priority'] ?? ($firstBusinessColumn ? 1 : (in_array($key, ['status', 'is_active'], true) ? 2 : 4));
+            $firstBusinessColumn = false;
 
             $col = Column::make($key)
                 ->title(isset($column['title']) ? $column['title'] : __('attribute.' . $key))
@@ -192,7 +196,7 @@ class GlobalDataTable extends DataTable
             ->exportable(false)
             ->printable(false)
             ->addClass('')
-            ->responsivePriority(-1);
+            ->responsivePriority(3);
 
         return $columns;
     }

@@ -3,8 +3,8 @@
 namespace Tests\Feature\Backend;
 
 use App\Exceptions\ZohoInvalidRecipientException;
-use App\Services\Zoho\ZohoCampaignsClient;
 use App\Services\Zoho\ZohoAuthService;
+use App\Services\Zoho\ZohoCampaignsClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -621,10 +621,18 @@ class ZohoCampaignsClientTest extends TestCase
     public function test_get_campaign_report_parses_stats(): void
     {
         $reportPayload = [
-            'sent_count'    => 120,
-            'opened_count'  => 45,
-            'clicked_count' => 12,
-            'bounced_count' => 3,
+            'status' => 'success',
+            'code' => '0',
+            'campaign-reports' => [
+                [
+                    'emails_sent_count' => '120',
+                    'delivered_count' => '117',
+                    'opens_count' => '45',
+                    'unique_clicks_count' => '12',
+                    'bounces_count' => '3',
+                    'unsub_count' => '1',
+                ],
+            ],
         ];
 
         Http::fake([
@@ -638,11 +646,12 @@ class ZohoCampaignsClientTest extends TestCase
 
         $result = $this->makeClient()->getCampaignReport('CK-001');
 
-        // The client returns the raw decoded payload
-        $this->assertSame(120, $result['sent_count']);
-        $this->assertSame(45,  $result['opened_count']);
-        $this->assertSame(12,  $result['clicked_count']);
-        $this->assertSame(3,   $result['bounced_count']);
+        $report = $result['campaign-reports'][0];
+
+        $this->assertSame('120', $report['emails_sent_count']);
+        $this->assertSame('45', $report['opens_count']);
+        $this->assertSame('12', $report['unique_clicks_count']);
+        $this->assertSame('3', $report['bounces_count']);
 
         // Verify GET request was sent to the right endpoint
         Http::assertSent(function (\Illuminate\Http\Client\Request $request) {
@@ -650,5 +659,86 @@ class ZohoCampaignsClientTest extends TestCase
                 && $request->method() === 'GET'
                 && str_contains($request->header('Authorization')[0] ?? '', 'Zoho-oauthtoken');
         });
+    }
+
+    public function test_get_campaign_recipients_data_treats_code_6303_as_an_empty_page(): void
+    {
+        $this->fakeOAuthAndEndpoint('*getcampaignrecipientsdata*', [
+            'status' => 'error',
+            'code' => '6303',
+            'message' => 'There are no contacts in the selected mailing list.',
+        ]);
+
+        $result = $this->makeClient()->getCampaignRecipientsData(
+            'CK-EMPTY',
+            'openedcontacts',
+            1,
+            100,
+        );
+
+        $this->assertSame([], $result);
+    }
+
+    public function test_get_campaign_recipients_data_rejects_unverified_actions_before_http(): void
+    {
+        Http::fake();
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->makeClient()->getCampaignRecipientsData('CK-001', 'bouncedcontacts');
+    }
+
+    public function test_get_campaign_report_rejects_http_200_application_error(): void
+    {
+        $this->fakeOAuthAndEndpoint('*campaignreports*', [
+            'status' => 'error',
+            'code' => '1001',
+            'message' => 'Invalid campaign key',
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+
+        $this->makeClient()->getCampaignReport('CK-ERROR');
+    }
+
+    public function test_get_campaign_report_rejects_success_without_a_report_row(): void
+    {
+        $this->fakeOAuthAndEndpoint('*campaignreports*', [
+            'status' => 'success',
+            'code' => '0',
+            'campaign-reports' => [],
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+
+        $this->makeClient()->getCampaignReport('CK-MALFORMED');
+    }
+
+    public function test_get_campaign_recipients_data_requires_explicit_success_code_and_status(): void
+    {
+        $this->fakeOAuthAndEndpoint('*getcampaignrecipientsdata*', [
+            'list_of_details' => [['contactemailaddress' => 'prospect@example.test']],
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+
+        $this->makeClient()->getCampaignRecipientsData(
+            'CK-MALFORMED',
+            'openedcontacts',
+            1,
+            100,
+        );
+    }
+
+    public function test_get_campaign_recipients_data_rejects_success_without_a_list(): void
+    {
+        $this->fakeOAuthAndEndpoint('*getcampaignrecipientsdata*', [
+            'status' => 'success',
+            'code' => '0',
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+
+        $this->makeClient()->getCampaignRecipientsData('CK-MALFORMED', 'openedcontacts');
     }
 }

@@ -152,7 +152,7 @@ class CampaignsDataTableRenderTest extends TestCase
     /**
      * The sequence campaign renders the static "Via séquence" badge instead of a toggle.
      */
-    public function test_datatable_contains_via_sequence_badge_for_sequence_campaign(): void
+    public function test_datatable_contains_sequence_enrollment_status_badge(): void
     {
         $response = $this->actingAs($this->superadmin)
             ->get(
@@ -165,11 +165,13 @@ class CampaignsDataTableRenderTest extends TestCase
 
         $response->assertStatus(200);
 
-        $body = $response->getContent();
-        $this->assertStringContainsString('Via', $body,
-            'DataTable payload must contain "Via" from the "Via séquence" sequence badge');
-        $this->assertStringContainsString('badge-light-info', $body,
-            'The sequence is_active cell must use badge-light-info class');
+        $row = collect($response->json('data'))->firstWhere('id', $this->sequenceCampaign->id);
+        $this->assertNotNull($row, 'Sequence campaign must appear in DataTable data');
+        $cell = $row['is_active'] ?? '';
+        $this->assertStringContainsString('Inscriptions auto arrêtées', $cell,
+            'DataTable payload must contain the sequence enrollment status');
+        $this->assertStringContainsString('badge-light-secondary', $cell,
+            'The stopped sequence enrollment badge must use badge-light-secondary');
     }
 
     /**

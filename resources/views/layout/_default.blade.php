@@ -2,6 +2,10 @@
 
 @section('content')
 
+    <a class="visually-hidden-focusable position-fixed top-0 start-0 m-3 btn btn-primary z-index-3" href="#main-content">
+        Aller au contenu principal
+    </a>
+
     <!--begin::App-->
     <div class="d-flex flex-column flex-root app-root" id="kt_app_root">
         <!--begin::Page-->
@@ -16,14 +20,14 @@
                     <div class="d-flex flex-column flex-column-fluid">
                         @include(config('settings.KT_THEME_LAYOUT_DIR').'/partials/sidebar-layout/_toolbar')
                         <!--begin::Content-->
-                        <div id="kt_app_content" class="app-content flex-column-fluid">
+                        <main id="main-content" class="app-content flex-column-fluid" tabindex="-1">
                             <!--begin::Content container-->
                             <div id="kt_app_content_container" class="app-container container-fluid">
                                 @include('components.feedback.alerts')
                                 {{ $slot }}
                             </div>
                             <!--end::Content container-->
-                        </div>
+                        </main>
                         <!--end::Content-->
                     </div>
                     <!--end::Content wrapper-->

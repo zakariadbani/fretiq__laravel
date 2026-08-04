@@ -88,7 +88,7 @@
     @endisset
 
     {{-- Tab nav --}}
-    <ul class="nav nav-line-tabs nav-line-tabs-2x border-transparent fs-6 fw-bold flex-wrap gap-2 gap-md-0">
+    <ul class="nav nav-line-tabs nav-line-tabs-2x border-transparent fs-6 fw-bold flex-wrap gap-2 gap-md-0" role="tablist">
 
         @foreach($tabs as $tab)
             @php
@@ -124,10 +124,12 @@
                 <li class="nav-item mt-1">
                     @if($native)
                         <a class="nav-link text-active-primary ms-0 me-4 me-md-8 py-3 py-md-4 px-1{{ $isActive ? ' active' : '' }}"
+                           id="tab_{{ $paneId }}"
                            data-bs-toggle="tab"
                            role="tab"
                            aria-controls="{{ $paneId }}"
                            aria-selected="{{ $isActive ? 'true' : 'false' }}"
+                           tabindex="{{ $isActive ? '0' : '-1' }}"
                            href="#{{ $paneId }}">
                             <i class="bi {{ $icon }} me-1"></i>
                             {{ $label }}

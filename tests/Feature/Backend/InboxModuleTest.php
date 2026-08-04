@@ -2,6 +2,9 @@
 
 namespace Tests\Feature\Backend;
 
+use App\DataTables\Backend\DemandesDataTable;
+use App\DataTables\Backend\InboxEmailsDataTable;
+use App\DataTables\Backend\SuppressionsDataTable;
 use App\Jobs\FetchInboxJob;
 use App\Models\Campaign;
 use App\Models\CampaignRecipient;
@@ -9,9 +12,11 @@ use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
 use App\Models\Company;
 use App\Models\Contact;
+use App\Models\Demande;
 use App\Models\Segment;
 use App\Models\InboxEmail;
 use App\Models\SenderIdentity;
+use App\Models\Suppression;
 use App\Models\User;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
@@ -84,15 +89,43 @@ class InboxModuleTest extends TestCase
             ->assertUnprocessable();
 
         $this->actingAs($this->admin)
+            ->postJson(route('admin.inbox.status', $this->email), ['status' => InboxEmail::STATUS_NOUVEAU])
+            ->assertOk()
+            ->assertJsonPath('changed', false)
+            ->assertJsonPath('message', 'Le statut est déjà à jour.');
+        $this->assertNull($this->email->fresh()->processed_at);
+
+        $this->actingAs($this->admin)
             ->postJson(route('admin.inbox.status', $this->email), ['status' => InboxEmail::STATUS_TRAITE])
-            ->assertOk();
+            ->assertOk()
+            ->assertJsonPath('changed', true);
         $this->assertSame(InboxEmail::STATUS_TRAITE, $this->email->fresh()->status);
         $this->assertNotNull($this->email->fresh()->processed_at);
+        $processedAt = $this->email->fresh()->processed_at;
 
         $this->actingAs($this->admin)
             ->postJson(route('admin.inbox.status', $this->email), ['status' => InboxEmail::STATUS_NOUVEAU])
-            ->assertOk();
-        $this->assertNull($this->email->fresh()->processed_at);
+            ->assertOk()
+            ->assertJsonPath('changed', false)
+            ->assertJsonPath('status', InboxEmail::STATUS_TRAITE);
+        $this->assertSame(InboxEmail::STATUS_TRAITE, $this->email->fresh()->status);
+        $this->assertTrue($processedAt->equalTo($this->email->fresh()->processed_at));
+    }
+
+    public function test_processed_message_hides_status_and_triage_controls(): void
+    {
+        $this->email->update([
+            'status' => InboxEmail::STATUS_IGNORE,
+            'processed_at' => now(),
+            'triage_action' => 'automatic',
+        ]);
+
+        $this->actingAs($this->admin)
+            ->get(route('admin.inbox.view', $this->email))
+            ->assertOk()
+            ->assertSee('Tri actuel')
+            ->assertDontSee('data-url="'.route('admin.inbox.status', $this->email).'"', false)
+            ->assertDontSee('data-inbox-triage=', false);
     }
 
     public function test_manual_replied_button_requires_create_demandes(): void
@@ -130,6 +163,83 @@ class InboxModuleTest extends TestCase
             ->assertJsonPath('data.0.id', $latest->id);
     }
 
+    public function test_index_shows_last_successful_poll_status(): void
+    {
+        $identity = SenderIdentity::findOrFail($this->email->sender_identity_id);
+        $identity->update(['is_active' => true, 'imap_enabled' => true]);
+        SenderIdentity::whereKey($identity->id)->update(['last_polled_at' => '2026-08-04 08:30:00']);
+
+        $inactive = SenderIdentity::create([
+            'name' => 'Inactive inbox',
+            'email' => 'inactive@example.test',
+            'is_active' => false,
+            'imap_enabled' => true,
+        ]);
+        SenderIdentity::whereKey($inactive->id)->update(['last_polled_at' => '2026-08-05 08:30:00']);
+        $this->email->update(['received_at' => '2026-08-06 08:30:00']);
+
+        $this->actingAs($this->admin)
+            ->get(route('admin.inbox.index'))
+            ->assertOk()
+            ->assertSee('Dernière relève réussie')
+            ->assertSee('04/08/2026 10:30')
+            ->assertDontSee('05/08/2026 10:30')
+            ->assertDontSee('06/08/2026 10:30');
+    }
+
+    public function test_index_distinguishes_never_polled_from_no_active_inbox(): void
+    {
+        $identity = SenderIdentity::findOrFail($this->email->sender_identity_id);
+
+        $this->actingAs($this->admin)
+            ->get(route('admin.inbox.index'))
+            ->assertOk()
+            ->assertSee('Aucune boîte active')
+            ->assertSee(route('admin.sender_identities.index'), false);
+
+        $identity->update(['is_active' => true, 'imap_enabled' => true]);
+
+        $this->actingAs($this->admin)
+            ->get(route('admin.inbox.index'))
+            ->assertOk()
+            ->assertSee('Relève jamais effectuée');
+
+        $this->actingAs($this->viewer)
+            ->get(route('admin.inbox.index'))
+            ->assertOk()
+            ->assertDontSee(route('admin.sender_identities.index'), false);
+    }
+
+    public function test_datatables_have_module_specific_permission_safe_empty_states(): void
+    {
+        $this->actingAs($this->admin);
+
+        $demandeLanguage = (new DemandesDataTable(new Demande(), request()))->html()->getOptions()['language'];
+        $inboxLanguage = (new InboxEmailsDataTable(new InboxEmail(), request()))->html()->getOptions()['language'];
+        $suppressionLanguage = (new SuppressionsDataTable(new Suppression(), request()))->html()->getOptions()['language'];
+
+        $this->assertStringContainsString(route('admin.demandes.create'), $demandeLanguage['emptyTable']);
+        $this->assertStringContainsString(route('admin.sender_identities.index'), $inboxLanguage['emptyTable']);
+        $this->assertStringContainsString(route('admin.suppressions.create'), $suppressionLanguage['emptyTable']);
+        $this->assertStringContainsString('filtre', $demandeLanguage['zeroRecords']);
+        $this->assertStringContainsString('filtre', $inboxLanguage['zeroRecords']);
+        $this->assertStringContainsString('filtre', $suppressionLanguage['zeroRecords']);
+
+        $this->actingAs($this->viewer);
+
+        $this->assertStringNotContainsString(
+            route('admin.demandes.create'),
+            (new DemandesDataTable(new Demande(), request()))->html()->getOptions()['language']['emptyTable']
+        );
+        $this->assertStringNotContainsString(
+            route('admin.sender_identities.index'),
+            (new InboxEmailsDataTable(new InboxEmail(), request()))->html()->getOptions()['language']['emptyTable']
+        );
+        $this->assertStringNotContainsString(
+            route('admin.suppressions.create'),
+            (new SuppressionsDataTable(new Suppression(), request()))->html()->getOptions()['language']['emptyTable']
+        );
+    }
     public function test_datatable_applies_status_and_sender_filters(): void
     {
         $secondIdentity = SenderIdentity::create(['name' => 'Second inbox', 'email' => 'second@example.test']);

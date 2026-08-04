@@ -94,6 +94,20 @@ class SuppressionsDataTable extends BackendDataTable
         });
     }
 
+    protected function dataTableLanguage(): array
+    {
+        $emptyTable = 'Aucune suppression enregistrée.';
+
+        if (auth()->user()?->can('create suppressions')) {
+            $emptyTable .= ' <a href="' . e(route('admin.suppressions.create')) . '">Ajouter une suppression</a>';
+        }
+
+        return array_replace(parent::dataTableLanguage(), [
+            'emptyTable' => $emptyTable,
+            'zeroRecords' => 'Aucune suppression ne correspond à ces filtres. Modifiez ou réinitialisez les filtres.',
+        ]);
+    }
+
     protected function getEntityName(): string
     {
         return 'suppression';

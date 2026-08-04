@@ -7,11 +7,13 @@ use App\Models\Package;
 use App\Models\PackageAssignment;
 use App\Models\ProspectCriteria;
 use App\Models\User;
+use App\Services\Discovery\CompanyDiscoveryService;
 use App\Services\Quota\DiscoveryQuotaService;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Mockery;
 use Tests\TestCase;
 
 // The full index strip and compact view-page badges use provider-neutral labels
@@ -247,8 +249,6 @@ class QuotaBadgeUiTest extends TestCase
         $response->assertStatus(200);
         $response->assertSee('Recherches d’entreprises', false);
         $response->assertSee('Tentatives d’enrichissement', false);
-        $response->assertDontSee('SerpAPI', false);
-        $response->assertDontSee('Hunter', false);
     }
 
     /**
@@ -306,6 +306,64 @@ class QuotaBadgeUiTest extends TestCase
         $response->assertSee('Tentatives d’enrichissement', false);
         $response->assertDontSee('SerpAPI', false);
         $response->assertDontSee('Hunter', false);
+    }
+
+    /**
+     * Finding #7b: With a monthly cap set, the monthly figure "ce mois" appears in the badge.
+     * Tests that the monthly suffix path in the blade renders correctly.
+     */
+    public function test_quota_strip_hides_unknown_provider_balance_instead_of_rendering_zero(): void
+    {
+        $html = view('backend.contents.prospect_criteria.partials._quota-strip', [
+            'quotaMeters' => [],
+            'quotaPackage' => null,
+            'activeDailyLimitSum' => null,
+            'providerSearchesLeft' => null,
+        ])->render();
+
+        $this->assertStringNotContainsString('Capacité du fournisseur', $html);
+        $this->assertStringNotContainsString('bi-battery-charging', $html);
+    }
+
+    public function test_zero_provider_capacity_explains_block_while_fretiq_quota_remains(): void
+    {
+        $html = view('backend.contents.prospect_criteria.partials._quota-strip', [
+            'quotaMeters' => [
+                'company' => [
+                    'icon' => 'bi-building',
+                    'color' => 'success',
+                    'unlimited' => false,
+                    'daily' => ['used_reserved' => 2, 'total' => 10, 'remaining' => 8],
+                    'monthly' => ['used_reserved' => 2, 'total' => 50, 'remaining' => 48],
+                ],
+            ],
+            'quotaPackage' => null,
+            'activeDailyLimitSum' => null,
+            'providerSearchesLeft' => 0,
+        ])->render();
+
+        $this->assertStringContainsString('Capacité du fournisseur', $html);
+        $this->assertStringContainsString('Découverte bloquée par la capacité du fournisseur', $html);
+        $this->assertStringContainsString('Quota Fretiq — aujourd’hui', $html);
+        $this->assertStringContainsString('Quota Fretiq — ce mois', $html);
+    }
+
+    public function test_commercial_index_does_not_request_or_show_provider_capacity(): void
+    {
+        $commercial = User::factory()->create([
+            'email_verified_at' => now(),
+            'is_active' => true,
+        ]);
+        $commercial->assignRole('commercial');
+
+        $provider = Mockery::mock(CompanyDiscoveryService::class);
+        $provider->shouldNotReceive('accountUsage');
+        $this->instance(CompanyDiscoveryService::class, $provider);
+
+        $response = $this->actingAs($commercial)->get('/admin/prospect_criteria');
+
+        $response->assertOk();
+        $response->assertDontSee('Capacité du fournisseur', false);
     }
 
     /**

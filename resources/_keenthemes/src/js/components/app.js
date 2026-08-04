@@ -278,6 +278,7 @@ var KTApp = (function () {
 
 			$(element).select2(options);
 
+
 			// Handle Select2's KTMenu parent case
 			if (
 				element.hasAttribute("data-dropdown-parent") &&
@@ -311,6 +312,17 @@ var KTApp = (function () {
 
 			element.setAttribute("data-kt-initialized", "1");
 		});
+
+		setTimeout(function () {
+			elements.forEach(function (element) {
+				var selection = element.nextElementSibling && element.nextElementSibling.querySelector('[role="combobox"]');
+				var label = element.labels && element.labels.length ? element.labels[0].textContent.replace('*', '').trim() : element.getAttribute('aria-label');
+				if (selection && label) {
+					selection.removeAttribute('aria-labelledby');
+					selection.setAttribute('aria-label', label);
+				}
+			});
+		}, 0);
 	};
 
 	var createAutosize = function () {

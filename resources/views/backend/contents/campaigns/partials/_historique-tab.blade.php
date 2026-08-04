@@ -21,6 +21,7 @@
                 <thead>
                     <tr class="fw-bold text-muted bg-light">
                         <th class="ps-7">Date</th>
+                        <th>&Eacute;tape</th>
                         <th>Statut</th>
                         <th>Envoyés</th>
                         <th>Ouverts</th>
@@ -35,9 +36,17 @@
                     @php
                         $runStatusCfg = config('global.data.campaign_run_statuses.' . $run->status);
                         $kpis = $run->kpis();
+                        $stepSubject = $run->sequenceStep?->subject ?: $run->sequenceStep?->template?->subject;
                     @endphp
                     <tr>
                         <td class="ps-7 fw-semibold">{{ $run->run_at?->format('d/m/Y H:i') ?? '—' }}</td>
+                        <td>
+                            @if($run->sequenceStep)
+                                &Eacute;tape {{ $run->sequenceStep->step_no }} &mdash; {{ $stepSubject ?: 'Sans objet' }}
+                            @else
+                                Campagne
+                            @endif
+                        </td>
                         <td>
                             @if($runStatusCfg)
                                 <span class="badge badge-light-{{ $runStatusCfg['color'] }}">{{ $runStatusCfg['label'] }}</span>

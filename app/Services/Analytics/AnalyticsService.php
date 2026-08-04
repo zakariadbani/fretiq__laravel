@@ -20,18 +20,14 @@ use Illuminate\Support\Facades\DB;
 class AnalyticsService
 {
     /** @return array<string, mixed> */
-    public function dashboardData(int $prototype = 1): array
+    public function dashboardData(): array
     {
         return [
             'kpis' => $this->dashboardKpis(),
-            'funnel' => in_array($prototype, [1, 3], true) ? $this->funnel() : [],
-            'engagementOverTime' => $prototype === 1
-                ? $this->engagementOverTime()
-                : ['labels' => [], 'series' => ['opens' => [], 'clicks' => [], 'replies' => []]],
-            'topCampaigns' => $prototype === 1 ? $this->topCampaigns() : [],
-            'campaigns' => $prototype === 3
-                ? ['total' => 0, 'active' => 0, 'rows' => []]
-                : $this->campaignOverview(in_array($prototype, [2, 4], true)),
+            'funnel' => $this->funnel(),
+            'engagementOverTime' => $this->engagementOverTime(),
+            'topCampaigns' => $this->topCampaigns(),
+            'campaigns' => $this->campaignOverview(),
             'planning' => $this->planningOverview(),
             'criteria' => $this->criteriaOverview(),
             'enterprises' => $this->enterpriseOverview(),
@@ -86,7 +82,7 @@ class AnalyticsService
         return [
             'companies'        => Company::count(),
             'contacts'         => Contact::count(),
-            'active_campaigns' => Campaign::where('is_active', true)->count(),
+            'active_campaigns' => Campaign::where('name', 'not like', 'E2E\_FIXTURE %')->where('is_active', true)->count(),
             'emails_sent_30d'  => $emailsSent30d,
             'open_rate'        => $openRate,
             'click_rate'       => $clickRate,
@@ -228,6 +224,7 @@ class AnalyticsService
     {
         $rows = DB::table('campaign_runs')
             ->join('campaigns', 'campaigns.id', '=', 'campaign_runs.campaign_id')
+            ->where('campaigns.name', 'not like', 'E2E\_FIXTURE %')
             ->where('campaign_runs.status', 'sent')
             ->selectRaw('
                 campaigns.id,
@@ -261,6 +258,7 @@ class AnalyticsService
     private function campaignOverview(bool $includeRows = true): array
     {
         $rows = $includeRows ? Campaign::query()
+            ->where('name', 'not like', 'E2E\_FIXTURE %')
             ->withCount(['runs as executed_runs' => fn ($query) => $query->executed()])
             ->withSum(['runs as sent' => fn ($query) => $query->executed()], 'stats_sent')
             ->withSum(['runs as opened' => fn ($query) => $query->executed()], 'stats_opened')
@@ -288,8 +286,8 @@ class AnalyticsService
             ->all() : [];
 
         return [
-            'total' => Campaign::count(),
-            'active' => Campaign::where('is_active', true)->count(),
+            'total' => Campaign::where('name', 'not like', 'E2E\_FIXTURE %')->count(),
+            'active' => Campaign::where('name', 'not like', 'E2E\_FIXTURE %')->where('is_active', true)->count(),
             'rows' => $rows,
         ];
     }
@@ -298,6 +296,7 @@ class AnalyticsService
     private function planningOverview(): array
     {
         $base = Campaign::query()
+            ->where('name', 'not like', 'E2E\_FIXTURE %')
             ->where('is_active', true)
             ->where('schedule_type', '!=', 'sequence')
             ->whereRaw('COALESCE(next_run_at, scheduled_at) IS NOT NULL');

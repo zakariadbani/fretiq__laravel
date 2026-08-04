@@ -81,6 +81,7 @@
             'model'       => $model,
             'currentPage' => 'edit',
         ])
+
     @else
         {{-- ── Create mode: simple header card ──────────────────────────── --}}
         <div class="card mb-6">
@@ -156,7 +157,7 @@
                                     <option value="">Sélectionner une identité...</option>
                                     @foreach($senderIdentities as $identity)
                                         <option value="{{ $identity->id }}"
-                                            {{ old('sender_identity_id', $model->sender_identity_id ?? '') == $identity->id ? 'selected' : '' }}>
+                                            {{ old('sender_identity_id', $model->sender_identity_id ?? $selectedSender?->id ?? '') == $identity->id ? 'selected' : '' }}>
                                             {{ $identity->name }} &lt;{{ $identity->email }}&gt;
                                             @if($identity->is_default) (défaut) @endif
                                         </option>
@@ -205,9 +206,15 @@
                                         @if(isset($model) && $model->segment_id)
                                             {{-- Server-rendered count for edit page --}}
                                         @else
-                                            Sélectionnez un segment pour voir le nombre de contacts.
+                                            Sélectionnez un segment pour comparer les correspondants aux destinataires éligibles.
                                         @endif
                                     </span>
+                                </div>
+                                <div id="segment-readiness-warning"
+                                     class="alert alert-warning align-items-start py-3 mt-3 mb-0 d-none"
+                                     role="status">
+                                    <i class="bi bi-exclamation-triangle-fill fs-4 me-3 mt-1"></i>
+                                    <span></span>
                                 </div>
                                 {{-- Audience language split (populated by JS when segment + template selected) --}}
                                 <div id="audience-lang-split" class="mt-3 d-none">
@@ -465,7 +472,7 @@
                                     @endphp
                                     @if($enrolledHint > 0)
                                         <div class="mt-2">
-                                            <span class="badge badge-light-info">
+                                            <span class="badge badge-light-info text-wrap text-start lh-base">
                                                 <i class="bi bi-people me-1"></i>
                                                 {{ $enrolledHint }} contact(s) déjà inscrits. Changer de séquence arrête le suivi automatique et exige un nouveau démarrage ; les parcours en cours restent inchangés.
                                             </span>
@@ -563,9 +570,9 @@
             <div class="card-body py-5 px-9">
                 <div class="d-flex align-items-center gap-4">
                     <div class="flex-grow-1">
-                        <label class="fw-semibold fs-6 mb-1">Active</label>
+                        <label class="fw-semibold fs-6 mb-1">Participation à l’automatisation</label>
                         <div class="text-muted fs-7">
-                            Décochez pour mettre en pause. Pour réactiver une campagne récurrente, renseignez aussi le premier envoi.
+                            Une campagne active peut être examinée par l’automatisation. Ce statut ne garantit pas que l’envoi est prêt : la vérification de l’audience, du planning et de l’expéditeur reste obligatoire.
                         </div>
                     </div>
                     <div>
@@ -579,7 +586,7 @@
                                    id="is_active_toggle"
                                    {{ old('is_active', $model->is_active ?? true) ? 'checked' : '' }} />
                             <label class="form-check-label fw-semibold ms-3" for="is_active_toggle">
-                                Active
+                                Campagne active
                             </label>
                         </div>
                     </div>
@@ -631,21 +638,59 @@
             // ── Segment live count via AJAX ─────────────────────────
             const segmentSelect = document.getElementById('segment_select');
             const countLabel    = document.getElementById('segment-count-label');
+            const readinessWarning = document.getElementById('segment-readiness-warning');
+
+            const hideReadinessWarning = function () {
+                if (!readinessWarning) return;
+                readinessWarning.classList.add('d-none');
+                readinessWarning.classList.remove('d-flex');
+                const text = readinessWarning.querySelector('span');
+                if (text) text.textContent = '';
+            };
+
+            const showReadinessWarning = function (message) {
+                if (!readinessWarning) return;
+                const text = readinessWarning.querySelector('span');
+                if (text) text.textContent = message;
+                readinessWarning.classList.remove('d-none');
+                readinessWarning.classList.add('d-flex');
+            };
 
             if (segmentSelect && countLabel) {
                 const fetchCount = function (segmentId) {
+                    hideReadinessWarning();
                     if (!segmentId) {
-                        countLabel.innerHTML = 'Sélectionnez un segment pour voir le nombre de contacts.';
+                        countLabel.innerHTML = 'Sélectionnez un segment pour comparer les correspondants aux destinataires éligibles.';
                         return;
                     }
                     countLabel.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Calcul en cours...';
 
                     axios.get('{{ route("admin.campaigns.segmentCount", "") }}/' + segmentId)
                         .then(function (r) {
-                            countLabel.innerHTML = '<span class="badge badge-light-primary">' + r.data.contact_count + ' contact(s)</span> dans <span class="badge badge-light-info">' + r.data.company_count + ' société(s)</span>.';
+                            const data = r.data || {};
+                            const matched = Number(data.matched_count || 0);
+                            const eligible = Number(data.contacts_count || 0);
+                            const companies = Number(data.company_count || 0);
+                            const coldExcluded = Number(data.funnel?.cold_excluded || 0);
+
+                            countLabel.innerHTML = '<span class="badge badge-light-secondary">' + matched + ' correspondant(s)</span> · '
+                                + '<span class="badge badge-light-primary">' + eligible + ' destinataire(s) éligible(s)</span> dans '
+                                + '<span class="badge badge-light-info">' + companies + ' société(s)</span>.';
+
+                            if (data.cold_gate_closed && coldExcluded > 0) {
+                                let message = coldExcluded + ' prospect(s) sont exclus car l’envoi à froid est désactivé. Les contacts clients restent éligibles.';
+                                if (eligible === 0) {
+                                    message += ' La programmation et l’envoi restent bloqués tant qu’aucun destinataire n’est éligible.';
+                                }
+                                showReadinessWarning(message);
+                            } else if (eligible === 0) {
+                                showReadinessWarning('Aucun destinataire n’est éligible actuellement. Vous pouvez enregistrer la campagne, mais la programmation et l’envoi resteront bloqués par la vérification.');
+                            }
                         })
-                        .catch(function () {
-                            countLabel.innerHTML = '<span class="text-muted">Impossible de récupérer le compte.</span>';
+                        .catch(function (error) {
+                            const message = error?.response?.data?.message || 'Le calcul de l’audience est momentanément indisponible. Réessayez.';
+                            countLabel.textContent = message;
+                            showReadinessWarning('Aucun nombre de destinataires n’est affiché tant que le calcul n’a pas abouti.');
                         });
                 };
 
