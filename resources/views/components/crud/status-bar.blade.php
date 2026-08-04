@@ -108,6 +108,7 @@
 
 @once
 @push('scripts')
+<script src="{{ asset('assets/js/custom/datatables-utils.js') }}"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
         if (window.DataTableUtils) {

@@ -14,9 +14,6 @@
     $config = $viewConfig ?? \App\Crud\ViewConfigs\CampaignViewConfig::make($model);
 
     $heroProps = $heroProps ?? [];
-    if (!$isView && !array_key_exists('statusBar', $heroProps)) {
-        $heroProps['statusBar'] = null;
-    }
 @endphp
 
 @include('backend.partials.crud._tabbar', [
