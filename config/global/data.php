@@ -122,7 +122,7 @@ return [
     // Exécutions de campagne — statut
     //---------------------------------------------------------------------------
     'campaign_run_statuses' => [
-        'prepared' => ['label' => 'Audience préparée', 'color' => 'secondary'],
+        'prepared' => ['label' => 'Audience préparée', 'color' => 'warning'],
         'scheduled' => ['label' => 'Planifiée',   'color' => 'info'],
         'sending' => ['label' => 'En cours',    'color' => 'primary'],
         'sent' => ['label' => 'Envoyée',     'color' => 'success'],

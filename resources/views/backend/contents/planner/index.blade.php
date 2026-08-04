@@ -36,7 +36,7 @@
                 </div>
                 @can('view prospect_criteria')
                 <div class="d-flex align-items-center gap-1">
-                    <span class="w-10px h-10px rounded-1 bg-warning d-inline-block"></span>
+                    <span class="w-10px h-10px rounded-1 bg-dark d-inline-block"></span>
                     <span class="text-muted fs-7 fw-semibold">D&eacute;couverte automatique</span>
                 </div>
                 @endcan

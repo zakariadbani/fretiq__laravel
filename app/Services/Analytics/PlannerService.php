@@ -501,12 +501,12 @@ class PlannerService
                             'id' => 'projected-discovery-'.$criteria->id.'-'.$cursorUtc->format('YmdHis'),
                             'title' => "D\u{00E9}couverte \u{00B7} {$criteria->name}",
                             'start' => $cursorUtc->toIso8601String(),
-                            'color' => self::BOOTSTRAP_HEX_COLORS['warning'],
+                            'color' => self::BOOTSTRAP_HEX_COLORS['dark'],
                             'url' => route('admin.prospect_criteria.view', $criteria->id),
                             'extendedProps' => [
                                 'status' => 'projected',
                                 'statusLabel' => "D\u{00E9}couverte automatique",
-                                'statusColor' => 'warning',
+                                'statusColor' => 'dark',
                                 'eventKind' => 'discovery-projection',
                             ],
                         ];

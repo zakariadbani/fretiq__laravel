@@ -224,6 +224,26 @@ class PlannerFeedTest extends TestCase
             'event url must not be empty for a run with a campaign');
     }
 
+    public function test_materialized_prepared_and_canceled_runs_use_distinct_colors(): void
+    {
+        $this->run->update(['status' => 'prepared']);
+        $canceledRun = CampaignRun::create([
+            'campaign_id' => $this->campaign->id,
+            'occurrence_key' => 'canceled-' . now()->format('YmdHis'),
+            'run_at' => now()->addMinute(),
+            'status' => 'canceled',
+        ]);
+
+        $events = collect(app(PlannerService::class)->runsFeed());
+        $prepared = $events->firstWhere('id', (string) $this->run->id);
+        $canceled = $events->firstWhere('id', (string) $canceledRun->id);
+
+        $this->assertSame('warning', $prepared['extendedProps']['statusColor']);
+        $this->assertSame('#f6c000', $prepared['color']);
+        $this->assertSame('secondary', $canceled['extendedProps']['statusColor']);
+        $this->assertSame('#a1a5b7', $canceled['color']);
+    }
+
     /**
      * runsFeed() with a date range that excludes the seeded run returns an empty array.
      */
@@ -276,6 +296,8 @@ class PlannerFeedTest extends TestCase
         $this->assertCount(2, $events);
         $this->assertTrue($events->every(fn (array $event): bool => $event['title'] === "D\u{00E9}couverte \u{00B7} ".$active->name));
         $this->assertTrue($events->every(fn (array $event): bool => $event['url'] === route('admin.prospect_criteria.view', $active->id)));
+        $this->assertTrue($events->every(fn (array $event): bool => $event['extendedProps']['statusColor'] === 'dark'));
+        $this->assertTrue($events->every(fn (array $event): bool => $event['color'] === '#181c32'));
         $this->assertSame(
             ['2026-07-28 12:00', '2026-07-29 12:00'],
             $events->map(fn (array $event): string => Carbon::parse($event['start'])
