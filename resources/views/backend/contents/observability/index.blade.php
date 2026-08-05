@@ -18,7 +18,7 @@
     $cronColor = $cronHealthy ? 'success' : 'danger';
     $jobStates = [
         'waiting' => ['label' => 'En attente', 'color' => 'primary'],
-        'delayed' => ['label' => 'Différé', 'color' => 'warning'],
+        'delayed' => ['label' => 'Programmé', 'color' => 'warning'],
         'reserved' => ['label' => 'Réservé / en cours', 'color' => 'success'],
     ];
 @endphp
@@ -45,7 +45,7 @@
 
 <div class="row g-5 g-xl-8 mb-8">
     <div class="col-xl-3 col-md-6">
-        <div class="card card-xl-stretch">
+        <div class="card">
             <div class="card-body">
                 <i class="bi bi-clock-history fs-2x text-{{ $cronColor }}"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ $cronLabel }}</div>
@@ -61,17 +61,17 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="card card-xl-stretch">
+        <div class="card">
             <div class="card-body">
                 <i class="bi bi-hourglass-split fs-2x text-primary"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($counts['waiting_jobs']) }}</div>
-                <div class="fw-semibold text-gray-600">Jobs en attente / différés</div>
+                <div class="fw-semibold text-gray-600">Jobs en attente / programmés</div>
                 <div class="mt-2"><span class="badge badge-light-primary fs-8">Table jobs</span></div>
             </div>
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="card card-xl-stretch">
+        <div class="card">
             <div class="card-body">
                 <i class="bi bi-cpu fs-2x text-success"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($counts['reserved_jobs']) }}</div>
@@ -81,7 +81,7 @@
         </div>
     </div>
     <div class="col-xl-3 col-md-6">
-        <div class="card card-xl-stretch">
+        <div class="card">
             <div class="card-body">
                 <i class="bi bi-x-circle fs-2x {{ $counts['failed_jobs'] > 0 ? 'text-danger' : 'text-success' }}"></i>
                 <div class="text-gray-900 fw-bold fs-2 mb-2 mt-5">{{ number_format($counts['failed_jobs']) }}</div>
@@ -112,7 +112,7 @@
             <div class="table-responsive">
                 <table class="table table-row-dashed table-row-gray-300 align-middle gs-0 gy-4">
                     <thead><tr class="fw-bold text-muted">
-                        <th>Job</th><th>File</th><th>État</th><th>Tentatives</th><th>Créé</th><th>Disponible</th><th class="text-end">Action</th>
+                        <th>Job</th><th>File</th><th>État</th><th>Tentatives</th><th>Créé</th><th>Exécution prévue</th><th class="text-end">Action</th>
                     </tr></thead>
                     <tbody>
                     @foreach ($activeJobs as $job)
@@ -123,7 +123,7 @@
                             <td><span class="badge badge-light-{{ $state['color'] }}">{{ $state['label'] }}</span></td>
                             <td>{{ $job->attempts }}</td>
                             <td><span title="{{ $job->created_at_date->format('d/m/Y H:i:s') }}">{{ $job->created_at_date->diffForHumans() }}</span></td>
-                            <td>{{ $job->available_at_date->format('d/m/Y H:i:s') }}</td>
+                            <td>{{ $job->available_at_date->format('d/m/Y à H:i') }}</td>
                             <td class="text-end">
                                 @if ($job->reserved_at === null)
                                     <form method="POST" action="{{ route('admin.observability.jobs.cancel', $job->id) }}" class="d-inline" onsubmit="return confirm('Annuler ce job encore en attente ?');">

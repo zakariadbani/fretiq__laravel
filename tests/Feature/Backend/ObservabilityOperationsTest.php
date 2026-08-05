@@ -51,6 +51,20 @@ class ObservabilityOperationsTest extends TestCase
         $this->assertSame("Job #{$reserved}", $jobs[$reserved]->name);
     }
 
+    public function test_delayed_jobs_use_scheduled_wording(): void
+    {
+        $availableAt = now()->addMinutes(5);
+        $this->insertJob(['displayName' => 'App\\Jobs\\RunDiscoveryPipelineJob'], null, $availableAt->timestamp);
+
+        $this->actingAs($this->superadmin)
+            ->get('/admin/observability')
+            ->assertOk()
+            ->assertSeeText('Jobs en attente / programmés')
+            ->assertSeeText('Programmé')
+            ->assertSeeText('Exécution prévue')
+            ->assertSeeText($availableAt->format('d/m/Y à H:i'));
+    }
+
     public function test_only_unreserved_jobs_can_be_cancelled(): void
     {
         $waiting = $this->insertJob([], null, now()->timestamp);
