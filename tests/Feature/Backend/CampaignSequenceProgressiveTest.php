@@ -1354,12 +1354,12 @@ class CampaignSequenceProgressiveTest extends TestCase
         ]);
         $this->contact($this->company(50));
         $campaign = $this->campaign($segment, $sequence, [
-            'next_run_at' => '2026-07-24 08:00:00',
-            'timezone' => 'UTC',
+            'next_run_at' => '2026-07-24 07:00:00', // 09:00 Europe/Paris (CEST).
+            'timezone' => 'Europe/Paris',
         ]);
 
-        Carbon::setTestNow(Carbon::parse('2026-07-24 09:00:00', 'UTC')); // Friday
-        app(PacedSequenceEnrollmentService::class)->activate($campaign, Carbon::parse('2026-07-24 09:00:00', 'UTC'));
+        Carbon::setTestNow(Carbon::parse('2026-07-24 15:22:00', 'UTC')); // 17:22 Europe/Paris; worker ran late.
+        app(PacedSequenceEnrollmentService::class)->activate($campaign, now());
         $first = CampaignRun::where('campaign_id', $campaign->id)->where('occurrence_key', 'sequence-wave-000001')->firstOrFail();
         $first->update(['zoho_list_key' => 'list-step-1', 'status' => 'scheduled']);
 
@@ -1373,10 +1373,63 @@ class CampaignSequenceProgressiveTest extends TestCase
             ->where('occurrence_key', 'sequence-wave-000001-step-002')
             ->firstOrFail();
 
-        // Friday 09:00 UTC + 1 day = Saturday 09:00 UTC — shifted to Monday
-        // 09:00 UTC (campaign timezone is UTC; no DST boundary here).
-        $this->assertSame('2026-07-27 09:00:00', $child->run_at->format('Y-m-d H:i:s'));
+        // The worker completes at 17:22 Paris; the configured 09:00 campaign clock must win.
+        // Friday + 1 day is blocked Saturday, so the local 09:00 clock shifts to Monday.
+        // In July, 09:00 Europe/Paris is stored as 07:00 UTC.
+        $this->assertSame('2026-07-27 07:00:00', $child->run_at->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-07-27 09:00:00', $child->run_at->copy()->setTimezone('Europe/Paris')->format('Y-m-d H:i:s'));
 
+        Queue::assertPushed(SyncCampaignWaveZohoListJob::class, function ($job) use ($child) {
+            return $job->runId === $child->id
+                && $job->delay !== null
+                && $job->delay->equalTo($child->fresh()->run_at);
+        });
+
+        Carbon::setTestNow();
+    }
+
+    public function test_wave_follow_up_uses_parent_clock_when_campaign_cursor_is_missing(): void
+    {
+        Mail::fake();
+        $segment = $this->segment();
+        $sequence = $this->sequence();
+        $template = CampaignTemplate::create([
+            'name' => 'Template step 2 legacy clock',
+            'subject' => 'Second',
+            'html_content' => '<p>Second step</p>',
+        ]);
+        SequenceStep::create([
+            'sequence_id' => $sequence->id,
+            'step_no' => 2,
+            'delay_days' => 1,
+            'template_id' => $template->id,
+            'subject' => 'Etape 2',
+        ]);
+        $this->contact($this->company(50));
+        $campaign = $this->campaign($segment, $sequence, [
+            'next_run_at' => '2026-07-24 09:00:00',
+            'timezone' => 'UTC',
+        ]);
+
+        Carbon::setTestNow(Carbon::parse('2026-07-24 17:22:00', 'UTC'));
+        app(PacedSequenceEnrollmentService::class)->activate($campaign, now());
+        $first = CampaignRun::where('campaign_id', $campaign->id)
+            ->where('occurrence_key', 'sequence-wave-000001')
+            ->firstOrFail();
+        $campaign->update(['next_run_at' => null]);
+        $first->update(['zoho_list_key' => 'list-step-1', 'status' => 'scheduled']);
+
+        $this->mock(ZohoCampaignsDriver::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('dispatchRun')->once()->andReturn(['campaign_key' => 'zoho-step-1']);
+        });
+
+        app(SequenceWaveService::class)->send($first);
+
+        $child = CampaignRun::where('campaign_id', $campaign->id)
+            ->where('occurrence_key', 'sequence-wave-000001-step-002')
+            ->firstOrFail();
+
+        $this->assertSame('2026-07-27 09:00:00', $child->run_at->format('Y-m-d H:i:s'));
         Queue::assertPushed(SyncCampaignWaveZohoListJob::class, function ($job) use ($child) {
             return $job->runId === $child->id
                 && $job->delay !== null

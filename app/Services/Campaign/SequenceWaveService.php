@@ -175,13 +175,20 @@ class SequenceWaveService
                     'next_send_at' => null,
                 ]);
                 $baseKey = preg_replace('/-step-\d{3}$/', '', $locked->occurrence_key);
+                $timezone = $this->calendar->resolveTimezone($locked->campaign);
+                $clock = ($locked->campaign->next_run_at ?? $locked->run_at)
+                    ->copy()
+                    ->setTimezone($timezone);
+                $nextRunAt = now($timezone)
+                    ->addDays((int) $nextStep->delay_days)
+                    ->setTime($clock->hour, $clock->minute, 0);
                 $child = CampaignRun::firstOrCreate(
                     ['campaign_id' => $locked->campaign_id, 'occurrence_key' => $baseKey . '-step-' . str_pad((string) $nextStep->step_no, 3, '0', STR_PAD_LEFT)],
                     [
                         'sequence_step_id' => $nextStep->id,
                         'run_at' => $this->calendar->shiftToAllowed(
-                            now()->addDays((int) $nextStep->delay_days),
-                            $this->calendar->resolveTimezone($locked->campaign),
+                            $nextRunAt,
+                            $timezone,
                         ),
                         'status' => 'prepared',
                         'driver_ref' => 'zoho-wave-pending',
