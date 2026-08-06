@@ -16,14 +16,14 @@ use Illuminate\Support\Facades\DB;
 class QueueObservabilityService
 {
     private const TASKS = [
-        'campaigns_dispatch_due' => ['command' => 'campaigns:dispatch-due', 'expression' => '* * * * *'],
-        'campaigns_generate_runs' => ['command' => 'campaigns:generate-runs', 'expression' => '* * * * *'],
-        'sequences_process' => ['command' => 'sequences:process', 'expression' => '* * * * *'],
-        'campaigns_sync_sequence_enrollments' => ['command' => 'campaigns:sync-sequence-enrollments', 'expression' => '* * * * *'],
-        'campaign_sync_stats' => ['command' => 'campaign:sync-stats', 'expression' => '*/15 * * * *'],
-        'discovery_terminalize_stale' => ['command' => 'discovery:terminalize-stale', 'expression' => '* * * * *'],
-        'prospect_auto_discover' => ['command' => 'prospect:auto-discover', 'expression' => '0 * * * *'],
-        'inbox_poll' => ['command' => 'inbox:poll', 'expression' => '*/5 * * * *'],
+        'campaigns_dispatch_due' => ['command' => 'campaigns:dispatch-due', 'description' => 'Place les campagnes arrivées à échéance dans la file d’envoi.', 'expression' => '* * * * *'],
+        'campaigns_generate_runs' => ['command' => 'campaigns:generate-runs', 'description' => 'Crée les exécutions dues pour les campagnes récurrentes.', 'expression' => '* * * * *'],
+        'sequences_process' => ['command' => 'sequences:process', 'description' => 'Envoie les prochaines étapes dues des séquences en cours.', 'expression' => '* * * * *'],
+        'campaigns_sync_sequence_enrollments' => ['command' => 'campaigns:sync-sequence-enrollments', 'description' => 'Inscrit les nouveaux contacts éligibles dans les campagnes séquentielles.', 'expression' => '* * * * *'],
+        'campaign_sync_stats' => ['command' => 'campaign:sync-stats', 'description' => 'Met à jour les statistiques des campagnes envoyées.', 'expression' => '*/15 * * * *'],
+        'discovery_terminalize_stale' => ['command' => 'discovery:terminalize-stale', 'description' => 'Clôture les découvertes bloquées et libère leurs crédits réservés.', 'expression' => '* * * * *'],
+        'prospect_auto_discover' => ['command' => 'prospect:auto-discover', 'description' => 'Lance les découvertes automatiques dues selon les critères configurés.', 'expression' => '0 * * * *'],
+        'inbox_poll' => ['command' => 'inbox:poll', 'description' => 'Relève les boîtes IMAP actives et importe les nouvelles réponses.', 'expression' => '*/5 * * * *'],
     ];
 
     public function __construct(private readonly Schedule $schedule) {}
@@ -118,6 +118,7 @@ class QueueObservabilityService
             return [
                 'key' => $key,
                 'command' => $task['command'],
+                'description' => self::TASKS[$key]['description'],
                 'expression' => $expression,
                 'frequency' => $this->frequencyLabel($expression),
                 'enabled' => $enabled,

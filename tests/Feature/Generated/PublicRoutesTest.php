@@ -59,8 +59,10 @@ class PublicRoutesTest extends TestCase
         $this->assertSame(realpath(resource_path('landing/index.html')), $response->baseResponse->getFile()->getRealPath());
         $this->assertIsString($landing);
         $this->assertStringContainsString('href="/login"', $landing);
-        $this->assertStringContainsString('Une prospection fret claire et maîtrisée.', $landing);
-        $this->assertStringContainsString('Préparez des campagnes et séquences avant validation.', $landing);
+        $this->assertStringContainsString('subject=Acc%C3%A8s%20fretiq', $landing);
+        $this->assertStringContainsString('subject=D%C3%A9mo%20fretiq', $landing);
+        $this->assertStringContainsString('RGPD', $landing);
+        $this->assertStringContainsString('aucun envoi', $landing);
         $this->assertStringNotContainsString('href="#"', $landing);
     }
 

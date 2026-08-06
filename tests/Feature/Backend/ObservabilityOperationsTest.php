@@ -144,6 +144,7 @@ class ObservabilityOperationsTest extends TestCase
         $inboxTask = $tasks->firstWhere('key', 'inbox_poll');
         $this->assertNotNull($inboxTask);
         $this->assertSame('Toutes les 5 minutes', $inboxTask['frequency']);
+        $this->assertSame('Relève les boîtes IMAP actives et importe les nouvelles réponses.', $inboxTask['description']);
 
 
         $this->actingAs($this->superadmin)->patch('/admin/observability/scheduler/tasks/campaigns_dispatch_due', ['enabled' => false])

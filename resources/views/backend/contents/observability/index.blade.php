@@ -169,7 +169,10 @@
                 <tbody>
                 @foreach ($tasks as $task)
                     <tr>
-                        <td><code>{{ $task['command'] }}</code></td>
+                        <td>
+                            <code>{{ $task['command'] }}</code>
+                            <span class="text-muted d-block fs-8 mt-1">{{ $task['description'] }}</span>
+                        </td>
                         <td><span title="{{ $task['expression'] }}">{{ $task['frequency'] }}</span></td>
                         <td><span class="badge badge-light-{{ $task['effective_enabled'] ? 'success' : 'secondary' }}">{{ $task['effective_enabled'] ? 'Active' : 'Suspendue' }}</span></td>
                         <td>{{ $task['next_run_at']->format('d/m/Y H:i') }}</td>

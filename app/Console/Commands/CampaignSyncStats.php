@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\DB;
  * Zoho runs (zoho_campaign_key set) will call the Zoho Campaigns API — UNVERIFIED.
  * Local runs will recompute stats from campaign_recipients.
  *
- * Registered in the scheduler (routes/console.php): every 15 minutes, withoutOverlapping.
+ * Registered in the scheduler (routes/console.php): hourly, withoutOverlapping.
  *
  * Signature: campaign:sync-stats
  */
@@ -91,7 +91,7 @@ class CampaignSyncStats extends Command
         // (which inserts active enrollments before setting is_active=1) cannot
         // race this into a wrong closure.
         //
-        // Eventual-consistent: ≤15 min lag before a fully-drained sequence
+        // Eventual-consistent: ≤60 min lag before a fully-drained sequence
         // campaign reaches is_active=0. Re-launch sets is_active=1.
         $closed = DB::update("
             UPDATE campaigns

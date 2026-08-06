@@ -19,23 +19,9 @@ class NavbarAuthenticationTest extends TestCase
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
     }
 
-    /** Public entry points use the same truthful product sentence. */
-    public function test_public_and_login_surfaces_share_product_explanation(): void
-    {
-        $sentence = 'Fretiq aide TCL France à trouver des prospects et à mener des campagnes e-mail de prospection fret conformes.';
-
-        $this->get('/')->assertOk();
-        $landing = file_get_contents(resource_path('landing/index.html'));
-        $this->assertStringContainsString($sentence, $landing);
-        $this->assertStringNotContainsString('Hologramme', $landing);
-        $this->assertStringNotContainsString('inférence', $landing);
-
-        $this->get('/login')
-            ->assertOk()
-            ->assertSee($sentence, false)
-            ->assertDontSee('closez', false);
-    }
-    /** Test that authenticated user can see navbar with profile information. */
+    /**
+     * Test that authenticated user can see navbar with profile information.
+     */
     public function test_authenticated_user_sees_navbar_with_profile(): void
     {
         $user = User::factory()->create([

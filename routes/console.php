@@ -72,14 +72,14 @@ Schedule::command('campaigns:sync-sequence-enrollments')
 |--------------------------------------------------------------------------
 | Refreshes run statistics from Zoho Campaigns API (for zoho-backed runs)
 | or recomputes from campaign_recipients (for local-driver runs).
-| Runs every 15 minutes. withoutOverlapping() prevents concurrent syncs.
+| Runs hourly. withoutOverlapping() prevents concurrent syncs.
 |
 | UNVERIFIED: The Zoho path calls ZohoCampaignsClient::getCampaignReport().
 | That API call has not been live-tinker-confirmed. The local path is safe.
 */
 
 Schedule::command('campaign:sync-stats')
-    ->everyFifteenMinutes()
+    ->hourly()
     ->withoutOverlapping()
     ->when($automationEnabled('campaign_sync_stats'));
 

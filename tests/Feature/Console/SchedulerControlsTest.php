@@ -40,6 +40,11 @@ class SchedulerControlsTest extends TestCase
         $this->assertNull($this->findEvent('inspire'));
     }
 
+    public function test_campaign_stats_sync_runs_hourly(): void
+    {
+        $this->assertSame('0 * * * *', $this->event('campaign:sync-stats')->expression);
+    }
+
     public function test_global_switch_disables_every_scheduled_command(): void
     {
         Setting::set('automatisation.cron_enabled', false);
