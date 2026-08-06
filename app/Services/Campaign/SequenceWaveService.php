@@ -12,6 +12,7 @@ use App\Models\SequenceEnrollment;
 use App\Models\SequenceStepSend;
 use App\Models\Suppression;
 use App\Services\Scheduling\BusinessCalendarService;
+use App\Services\Zoho\ZohoRecipientListGateway;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -20,6 +21,7 @@ class SequenceWaveService
     public function __construct(
         private readonly ZohoCampaignsDriver $driver,
         private readonly BusinessCalendarService $calendar,
+        private readonly ZohoRecipientListGateway $listGateway,
     ) {}
 
     public function isDeferred(CampaignRun $run): bool
@@ -109,7 +111,18 @@ class SequenceWaveService
             return;
         }
 
-        if ($contacts->count() !== $queuedBefore && $run->zoho_list_key) {
+        $audienceChanged = $contacts->count() !== $queuedBefore;
+        if (! $audienceChanged && $run->driver_ref === 'zoho-wave-reused' && $run->zoho_list_key) {
+            $normalize = fn ($emails): array => collect($emails)
+                ->map(fn ($email): string => mb_strtolower(trim((string) $email)))
+                ->filter()
+                ->unique()
+                ->sort()
+                ->values()
+                ->all();
+            $audienceChanged = $normalize($contacts->pluck('email')) !== $normalize($this->listGateway->listEmails($run->zoho_list_key));
+        }
+        if ($audienceChanged && $run->zoho_list_key) {
             if (in_array($run->driver_ref, ['zoho-send-attempted', 'zoho-send-uncertain'], true)) {
                 throw new \RuntimeException('Audience modifiee apres tentative Zoho : reconciliation manuelle requise.');
             }
@@ -191,7 +204,8 @@ class SequenceWaveService
                             $timezone,
                         ),
                         'status' => 'prepared',
-                        'driver_ref' => 'zoho-wave-pending',
+                        'zoho_list_key' => $locked->zoho_list_key,
+                        'driver_ref' => 'zoho-wave-reused',
                     ],
                 );
                 foreach ($enrollments as $enrollment) {
@@ -202,7 +216,7 @@ class SequenceWaveService
                 }
                 $childId = $child->id;
                 $runAt = $child->run_at;
-                DB::afterCommit(fn () => SyncCampaignWaveZohoListJob::dispatch($childId)->delay($runAt));
+                DB::afterCommit(fn () => SendSequenceWaveStepJob::dispatch($childId)->delay($runAt));
             }
 
             $locked->update([

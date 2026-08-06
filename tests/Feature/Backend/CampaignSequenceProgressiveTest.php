@@ -3,10 +3,11 @@
 namespace Tests\Feature\Backend;
 
 use App\Exceptions\ZohoInvalidRecipientException;
-use App\Models\Campaign;
-use App\Jobs\SyncCampaignWaveZohoListJob;
+use App\Jobs\SendCampaignJob;
 use App\Jobs\SendSequenceStepJob;
 use App\Jobs\SendSequenceWaveStepJob;
+use App\Jobs\SyncCampaignWaveZohoListJob;
+use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
@@ -20,6 +21,7 @@ use App\Models\SequenceStep;
 use App\Models\SequenceStepSend;
 use App\Models\Setting;
 use App\Models\User;
+use App\Services\Campaign\CampaignService;
 use App\Services\Campaign\CampaignWaveZohoListSyncService;
 use App\Services\Campaign\PacedSequenceEnrollmentService;
 use App\Services\Campaign\SegmentService;
@@ -1311,6 +1313,9 @@ class CampaignSequenceProgressiveTest extends TestCase
                 ['campaign_key' => 'zoho-step-2'],
             );
         });
+        $this->mock(ZohoRecipientListGateway::class, fn (MockInterface $mock) => $mock
+            ->shouldReceive('listEmails')->once()->with('list-step-1')->andReturn([$contact->email]));
+
         $service = app(SequenceWaveService::class);
         $service->send($first);
 
@@ -1319,7 +1324,13 @@ class CampaignSequenceProgressiveTest extends TestCase
             ->firstOrFail();
         $this->assertSame(2, $child->sequenceStep->step_no);
         $this->assertTrue($child->run_at->greaterThanOrEqualTo(now()->addDays(2)->subMinute()));
-        $child->update(['zoho_list_key' => 'list-step-2', 'status' => 'scheduled', 'run_at' => now()]);
+        $this->assertSame('list-step-1', $child->zoho_list_key);
+        Queue::assertNotPushed(SyncCampaignWaveZohoListJob::class, fn ($job) => $job->runId === $child->id);
+        Queue::assertPushed(SendSequenceWaveStepJob::class, fn ($job) => $job->runId === $child->id);
+        $child->update(['run_at' => now()]);
+        $this->assertSame(0, app(CampaignService::class)->dispatchDue());
+        Queue::assertNotPushed(SendCampaignJob::class, fn ($job) => $job->runId === $child->id);
+        $this->assertSame('prepared', $child->fresh()->status);
         $service->send($child);
 
         Mail::assertNothingSent();
@@ -1330,7 +1341,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     /**
      * Chunk 6: the child follow-up run created at SequenceWaveService:175 must
-     * land on a weekday (shiftToAllowed), and the SyncCampaignWaveZohoListJob
+     * land on a weekday (shiftToAllowed), and the SendSequenceWaveStepJob
      * dispatched with ->delay($runAt) must carry that SAME shifted instant —
      * proving :183-185 reads back the persisted (shifted) run_at rather than
      * recomputing an unshifted one.
@@ -1379,7 +1390,7 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertSame('2026-07-27 07:00:00', $child->run_at->format('Y-m-d H:i:s'));
         $this->assertSame('2026-07-27 09:00:00', $child->run_at->copy()->setTimezone('Europe/Paris')->format('Y-m-d H:i:s'));
 
-        Queue::assertPushed(SyncCampaignWaveZohoListJob::class, function ($job) use ($child) {
+        Queue::assertPushed(SendSequenceWaveStepJob::class, function ($job) use ($child) {
             return $job->runId === $child->id
                 && $job->delay !== null
                 && $job->delay->equalTo($child->fresh()->run_at);
@@ -1430,7 +1441,7 @@ class CampaignSequenceProgressiveTest extends TestCase
             ->firstOrFail();
 
         $this->assertSame('2026-07-27 09:00:00', $child->run_at->format('Y-m-d H:i:s'));
-        Queue::assertPushed(SyncCampaignWaveZohoListJob::class, function ($job) use ($child) {
+        Queue::assertPushed(SendSequenceWaveStepJob::class, function ($job) use ($child) {
             return $job->runId === $child->id
                 && $job->delay !== null
                 && $job->delay->equalTo($child->fresh()->run_at);
@@ -1594,6 +1605,59 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertSame('send_already_attempted', $summary['status']);
         $this->assertSame('campaign-existing', $summary['campaign_key']);
     }
+    public function test_reused_wave_list_is_rebuilt_when_email_membership_changes(): void
+    {
+        $sequence = $this->sequence();
+        $template = CampaignTemplate::create([
+            'name' => 'Changed email step 2',
+            'subject' => 'Second',
+            'html_content' => '<p>Second step</p>',
+        ]);
+        $step = SequenceStep::create([
+            'sequence_id' => $sequence->id,
+            'step_no' => 2,
+            'delay_days' => 1,
+            'template_id' => $template->id,
+        ]);
+        $contact = $this->contact($this->company(50));
+        $oldEmail = $contact->email;
+        $contact->update(['email' => 'changed-' . $contact->id . '@example.test']);
+        $campaign = $this->campaign($this->segment(), $sequence);
+        SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $contact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 1,
+            'status' => 'active',
+            'next_send_at' => null,
+        ]);
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $step->id,
+            'occurrence_key' => 'sequence-wave-000001-step-002',
+            'run_at' => now(),
+            'status' => 'prepared',
+            'zoho_list_key' => 'shared-wave-list',
+            'driver_ref' => 'zoho-wave-reused',
+        ]);
+        CampaignRecipient::create([
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'queued',
+        ]);
+        $this->mock(ZohoRecipientListGateway::class, fn (MockInterface $mock) => $mock
+            ->shouldReceive('listEmails')->once()->with('shared-wave-list')->andReturn([$oldEmail]));
+        $this->mock(ZohoCampaignsDriver::class, fn (MockInterface $mock) => $mock->shouldNotReceive('dispatchRun'));
+
+        app(SequenceWaveService::class)->send($run);
+
+        $run->refresh();
+        $this->assertNull($run->zoho_list_key);
+        $this->assertSame('prepared', $run->status);
+        $this->assertSame('zoho-wave-pending', $run->driver_ref);
+        Queue::assertPushed(SyncCampaignWaveZohoListJob::class, fn ($job) => $job->runId === $run->id);
+    }
+
     public function test_audience_rebuild_clears_old_campaign_key_and_sends_only_the_new_campaign(): void
     {
         Queue::fake();

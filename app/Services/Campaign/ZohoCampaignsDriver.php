@@ -305,7 +305,13 @@ class ZohoCampaignsDriver implements CampaignsClient
         $campaignKey = trim((string) $run->zoho_campaign_key);
         $hadCampaignKey = $campaignKey !== '';
         if (! $hadCampaignKey) {
-            $nameSuffix = " - C{$campaign->id} - R{$run->id} - " . now()->format('Ymd');
+            $sequenceToken = '';
+            if (preg_match('/^sequence-wave-(\d+)(?:-step-\d+)?$/', (string) $run->occurrence_key, $matches)
+                && $run->sequenceStep !== null) {
+                $sequenceToken = ' - WV' . (int) $matches[1] . '-ST' . (int) $run->sequenceStep->step_no;
+            }
+
+            $nameSuffix = $sequenceToken . " - C{$campaign->id} - R{$run->id} - " . now()->format('Ymd');
             // Zoho createCampaign rejects some special characters (`&` confirmed) with
             // code 7006. Sanitize before Str::limit so the 191-char budget still holds.
             $safeName = CampaignWaveZohoListSyncService::sanitizeCampaignName($campaign->name, $campaign->id);

@@ -10,6 +10,8 @@ use App\Models\Company;
 use App\Models\Contact;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
+use App\Models\Sequence;
+use App\Models\SequenceStep;
 use App\Services\Campaign\CampaignsClient;
 use App\Services\Campaign\LocalCampaignsDriver;
 use App\Services\Campaign\ZohoCampaignsDriver;
@@ -318,6 +320,60 @@ class ZohoDriverSelectionTest extends TestCase
         Mail::assertNothingSent();
     }
 
+    public function test_sequence_wave_campaign_name_includes_compact_wave_and_step_token(): void
+    {
+        config([
+            'services.zoho.campaigns.list_key' => 'verified-list-key',
+            'app.url' => 'https://fretiq.example.test',
+        ]);
+
+        $contact = $this->makeClientContact('wave-name@acme.test');
+        $sequence = Sequence::create(['name' => 'Wave naming', 'is_active' => true]);
+        $createdNames = [];
+
+        $zohoClient = \Mockery::mock(\App\Services\Zoho\ZohoCampaignsClient::class);
+        $zohoClient->shouldNotReceive('addListSubscribers');
+        $zohoClient->shouldReceive('createCampaign')
+            ->times(3)
+            ->withArgs(function ($name) use (&$createdNames): bool {
+                $createdNames[] = $name;
+
+                return true;
+            })
+            ->andReturn(
+                ['campaignKey' => 'CK-WAVE-2-STEP-3'],
+                ['campaignKey' => 'CK-WAVE-1-STEP-1'],
+                ['campaignKey' => 'CK-LEGACY'],
+            );
+        $zohoClient->shouldReceive('sendCampaign')->times(3)->andReturn([]);
+        $driver = new ZohoCampaignsDriver($zohoClient);
+
+        foreach ([
+            [2, 3, 'sequence-wave-000002-step-003'],
+            [1, 1, 'sequence-wave-000001'],
+            [3, 2, 'sequence-wave-legacy-000003'],
+        ] as [$wave, $stepNo, $occurrenceKey]) {
+            $run = $this->makeCampaignWithRun($contact);
+            $step = SequenceStep::create([
+                'sequence_id' => $sequence->id,
+                'step_no' => $stepNo,
+                'delay_days' => 0,
+                'template_id' => $run->campaign->template_id,
+            ]);
+            $run->update([
+                'sequence_step_id' => $step->id,
+                'occurrence_key' => $occurrenceKey,
+                'zoho_list_key' => 'verified-list-key',
+            ]);
+
+            $driver->dispatchRun($run->fresh(), collect([$contact]));
+
+            $suffix = " - C{$run->campaign_id} - R{$run->id} - " . now()->format('Ymd');
+            $expectedToken = str_contains($occurrenceKey, 'legacy') ? '' : " - WV{$wave}-ST{$stepNo}";
+            $this->assertSame("Fretiq Campagne Zoho Test{$expectedToken}{$suffix}", array_pop($createdNames));
+        }
+    }
+
     public function test_dispatch_run_caps_campaign_name_while_preserving_traceable_suffix(): void
     {
         config([
@@ -330,11 +386,23 @@ class ZohoDriverSelectionTest extends TestCase
             $contact,
             campaignName: str_repeat('Long   Name ', 20),
         );
-        $suffix = " - C{$run->campaign_id} - R{$run->id} - " . now()->format('Ymd');
+        $sequence = Sequence::create(['name' => 'Long wave naming', 'is_active' => true]);
+        $step = SequenceStep::create([
+            'sequence_id' => $sequence->id,
+            'step_no' => 3,
+            'delay_days' => 0,
+            'template_id' => $run->campaign->template_id,
+        ]);
+        $run->update([
+            'sequence_step_id' => $step->id,
+            'occurrence_key' => 'sequence-wave-000002',
+            'zoho_list_key' => 'verified-list-key',
+        ]);
+        $suffix = " - WV2-ST3 - C{$run->campaign_id} - R{$run->id} - " . now()->format('Ymd');
         $createdName = null;
 
         $zohoClient = \Mockery::mock(\App\Services\Zoho\ZohoCampaignsClient::class);
-        $zohoClient->shouldReceive('addListSubscribers')->once()->andReturn([]);
+        $zohoClient->shouldNotReceive('addListSubscribers');
         $zohoClient->shouldReceive('createCampaign')
             ->once()
             ->withArgs(function ($name) use (&$createdName): bool {
