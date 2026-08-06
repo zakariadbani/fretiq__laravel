@@ -18,7 +18,7 @@ class QueueObservabilityService
     private const TASKS = [
         'campaigns_dispatch_due' => ['command' => 'campaigns:dispatch-due', 'description' => 'Place les campagnes arrivées à échéance dans la file d’envoi.', 'expression' => '* * * * *'],
         'campaigns_generate_runs' => ['command' => 'campaigns:generate-runs', 'description' => 'Crée les exécutions dues pour les campagnes récurrentes.', 'expression' => '* * * * *'],
-        'sequences_process' => ['command' => 'sequences:process', 'description' => 'Envoie les prochaines étapes dues des séquences en cours.', 'expression' => '* * * * *'],
+        'sequences_process' => ['command' => 'sequences:process', 'description' => 'Récupère les vagues Zoho dues et met en file les étapes SMTP dues pour le worker campagnes.', 'expression' => '* * * * *'],
         'campaigns_sync_sequence_enrollments' => ['command' => 'campaigns:sync-sequence-enrollments', 'description' => 'Inscrit les nouveaux contacts éligibles dans les campagnes séquentielles.', 'expression' => '* * * * *'],
         'campaign_sync_stats' => ['command' => 'campaign:sync-stats', 'description' => 'Met à jour les statistiques des campagnes envoyées.', 'expression' => '*/15 * * * *'],
         'discovery_terminalize_stale' => ['command' => 'discovery:terminalize-stale', 'description' => 'Clôture les découvertes bloquées et libère leurs crédits réservés.', 'expression' => '* * * * *'],
