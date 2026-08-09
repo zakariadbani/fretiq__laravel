@@ -25,6 +25,21 @@ class AppServiceProvider extends ServiceProvider
             fn () => \App\Services\Zoho\CrmClientFactory::make()
         );
 
+        // V2's transport is intentionally GET-only. It is independent from the
+        // existing lean CRM client so the campaign/prospection boundary remains intact.
+        $this->app->bind(
+            \App\Services\Zoho\V2\Contracts\ZohoTransport::class,
+            \App\Services\Zoho\V2\Transport\ZohoHttpTransport::class,
+        );
+        $this->app->bind(
+            \App\Services\Zoho\V2\Reconciliation\FailedRecordHydrator::class,
+            \App\Services\Zoho\V2\Reconciliation\MapperFailedRecordHydrator::class,
+        );
+        $this->app->bind(
+            \App\Services\Zoho\V2\PostReconciliation\ZohoPostReconciliationProcessor::class,
+            \App\Services\Zoho\V2\PostReconciliation\DefaultZohoPostReconciliationProcessor::class,
+        );
+
         // Campaign email driver — LocalCampaignsDriver is the default (driver='local').
         // ZohoCampaignsDriver is activated by setting config('services.zoho.driver') = 'zoho'.
         //

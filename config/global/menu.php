@@ -18,6 +18,17 @@ return [
             'path' => 'admin/dashboard',
         ],
 
+        [
+            'title' => 'Marketing & commercial',
+            'permission' => 'view marketing dashboard',
+            'feature' => 'zoho-v2.features.marketing_dashboard_enabled',
+            'icon' => [
+                'svg' => 'chart-line-up-2',
+                'font' => '<i class="bi bi-graph-up-arrow fs-2"></i>',
+            ],
+            'path' => 'admin/dashboard/marketing',
+        ],
+
         //---------------------------------------------------------------------------
         // Section : Prospection
         //---------------------------------------------------------------------------

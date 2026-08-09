@@ -99,6 +99,66 @@ php artisan test
 
 Campaign sending goes through a `CampaignsClient` driver interface. The `local` driver (default) simulates sends via Mailpit and a tracking-pixel stub — safe for development. The `zoho` driver (Zoho Campaigns API) exists but is **UNVERIFIED** and must not be enabled in production until live OAuth credentials, empirical API verification, SPF/DKIM/DMARC, bounce handling, and legal sign-off are all in place. Switch via the `ZOHO_CAMPAIGNS_DRIVER` environment variable.
 
+## Dedicated Zoho V2 worker (deployment template)
+
+Zoho V2 uses its own database-queue connection and queue. The reviewed worker command is:
+
+```bash
+php artisan queue:work zoho --queue=zoho --sleep=3 --tries=5 --timeout=900 --max-time=3600
+```
+
+An example Supervisor program is provided at `deploy/supervisor/fretiq-zoho-worker.conf.example`. It is a template, not proof that Supervisor is installed or provisioned. Review its PHP binary, application directory and operating-system user before copying it into Supervisor. Its safety envelope requires `numprocs=1`, `stopwaitsecs=1500`, `ZOHO_V2_QUEUE_RETRY_AFTER=1260`, and `ZOHO_V2_BULK_LEASE_SECONDS=1500`.
+
+After installing or changing the reviewed template, an operator can reload and inspect Supervisor explicitly:
+
+```bash
+sudo supervisorctl reread
+sudo supervisorctl update
+sudo supervisorctl restart fretiq-worker-zoho:*
+sudo supervisorctl status fretiq-worker-zoho:*
+php artisan queue:monitor zoho:zoho --max=100
+php artisan queue:failed
+```
+
+Keep `ZOHO_V2_SYNC_ENABLED=false`, `ZOHO_V2_SCHEDULES_ENABLED=false`, and `ZOHO_V2_BULK_BACKFILL_ENABLED=false` until the dedicated worker is healthy and the shadow backfill, reconciliation, quarantine, security, and seven-day observation gates have passed. Enabling the worker does not authorize live Zoho calls or enable any V2 feature flag.
+
+## Zoho V2 controlled rollout
+
+V2 is shipped dark. The implementation does not run migrations, seed permissions, call live Zoho, or enable flags automatically. Use this sequence only in an approved maintenance window:
+
+1. Keep every `ZOHO_V2_*_ENABLED` flag `false`, provision the dedicated worker above, and confirm it is healthy.
+2. Review the pending schema without changing data:
+
+   ```bash
+   php artisan migrate:status
+   php artisan migrate --pretend
+   ```
+
+3. After explicit migration and ACL approval, back up the environment using the project deployment runbook, then apply the schema and permissions:
+
+   ```bash
+   php artisan migrate --force
+   php artisan db:seed --class="Database\\Seeders\\Acl\\PermissionsSeeder" --force
+   php artisan permission:cache-reset
+   ```
+
+4. Enable only `ZOHO_V2_OPERATIONS_DASHBOARD_ENABLED=true`. Keep sync, schedules, explorer, marketing, and Bulk disabled; verify OAuth, queue health, schema manifests, and redacted error rendering.
+5. Enable `ZOHO_V2_SYNC_ENABLED=true` with schedules still disabled. Run the read-only inventory, then a shadow Records backfill and reconciliation:
+
+   ```bash
+   php artisan zoho:crm:inventory
+   php artisan zoho:crm:sync --mode=backfill
+   php artisan zoho:crm:sync --mode=reconcile
+   php artisan zoho:crm:retry-failures
+   ```
+
+6. Reconcile remote/local counts, currencies, owners, quote items, tombstones, and quarantines in `/admin/zoho`. Do not continue while a critical quarantine, missing required manifest, or stale required module remains.
+7. Enable `ZOHO_V2_SCHEDULES_ENABLED=true` and observe hourly delta plus nightly reconciliation for seven days. Keep `ZOHO_V2_BULK_BACKFILL_ENABLED=false`; `ZOHO_V2_BULK_VERIFIED_MODULES` remains empty until a module-specific live export is proven complete against Records.
+8. Enable the CRM explorer, then marketing, independently: `ZOHO_V2_EXPLORER_ENABLED=true`, followed by `ZOHO_V2_MARKETING_DASHBOARD_ENABLED=true` only after portfolio isolation and dashboard sample reconciliation pass.
+9. Retire the legacy lean sync only after Accounts/Contacts parity is documented. Roll back a UI stage by disabling its flag; do not delete mirrored or tombstoned history.
+
+Every live Zoho endpoint, parameter, field, or Bulk module enabled after this baseline requires a sanitized `STATUS: 200 + summary` empirical verification. Never place payload PII, OAuth material, or raw exception text in rollout notes.
+
 ## Key environment flags
 
 | Variable | Purpose |

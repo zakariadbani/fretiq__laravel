@@ -1,6 +1,7 @@
 <?php
 
 use App\Helpers\Tools;
+use App\Http\Controllers\Backend\MarketingDashboardController;
 use App\Http\Controllers\Backend\ProspectionDashboardController;
 use Illuminate\Support\Facades\Route;
 
@@ -17,6 +18,9 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('admin/dashboard', [ProspectionDashboardController::class, 'index'])
     ->name('admin.dashboard');
+Route::get('admin/dashboard/marketing', [MarketingDashboardController::class, 'index'])
+    ->name('admin.dashboard.marketing');
 
 Tools::includeRoutes('Backend/Prospection');
 Tools::includeRoutes('Backend/Administration');
+Tools::includeRoutes('Backend/Zoho');

@@ -42,6 +42,17 @@ return [
             'after_commit' => false,
         ],
 
+        // Bulk Zoho deliveries may stream and parse large exports. Keep the
+        // broker retry window above the job timeout so the same delivery is
+        // never redelivered while its original worker can still be running.
+        'zoho' => [
+            'driver' => 'database',
+            'table' => 'jobs',
+            'queue' => env('ZOHO_V2_QUEUE', 'zoho'),
+            'retry_after' => (int) env('ZOHO_V2_QUEUE_RETRY_AFTER', 1260),
+            'after_commit' => false,
+        ],
+
         'beanstalkd' => [
             'driver' => 'beanstalkd',
             'host' => 'localhost',

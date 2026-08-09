@@ -1,0 +1,15 @@
+; Example only. Review paths, PHP binary and user before installing it.
+; Keep every Zoho V2 feature flag dark until the worker and shadow-data gates pass.
+[program:fretiq-worker-zoho]
+process_name=%(program_name)s_%(process_num)02d
+command=php artisan queue:work zoho --queue=zoho --sleep=3 --tries=5 --timeout=900 --max-time=3600
+directory=/var/www/fretiq
+user=www-data
+autostart=true
+autorestart=true
+numprocs=1
+redirect_stderr=true
+stdout_logfile=/var/www/fretiq/storage/logs/worker-zoho.log
+stopwaitsecs=1500
+stopasgroup=true
+killasgroup=true

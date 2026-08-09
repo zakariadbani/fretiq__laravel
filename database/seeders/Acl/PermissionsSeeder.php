@@ -38,12 +38,12 @@ class PermissionsSeeder extends Seeder
             'companies', 'contacts', 'segments', 'campaigns', 'campaign_templates',
             'sequences', 'demandes', 'users', 'prospect_criteria', 'sender_identities', 'suppressions',
         ];
-        $actions  = ['view', 'create', 'edit', 'delete'];
+        $actions = ['view', 'create', 'edit', 'delete'];
 
         foreach ($entities as $entity) {
             foreach ($actions as $action) {
                 Permission::firstOrCreate([
-                    'name'       => "{$action} {$entity}",
+                    'name' => "{$action} {$entity}",
                     'guard_name' => 'web',
                 ]);
             }
@@ -58,6 +58,12 @@ class PermissionsSeeder extends Seeder
             'manage permissions', // superadmin only — gates permission management
             'view zoho',
             'sync zoho',
+            'view marketing dashboard',
+            'view zoho records',
+            'backfill zoho',
+            'manage zoho mappings',
+            'view zoho raw payload',
+            'export zoho records',
             'run discovery',
             'manage packages',   // superadmin only — admin/commercial MUST NOT receive this
             'view settings',     // superadmin only — gates the settings page
@@ -71,7 +77,7 @@ class PermissionsSeeder extends Seeder
 
         foreach ($keywordPermissions as $perm) {
             Permission::firstOrCreate([
-                'name'       => $perm,
+                'name' => $perm,
                 'guard_name' => 'web',
             ]);
         }
@@ -112,7 +118,7 @@ class PermissionsSeeder extends Seeder
             'companies', 'contacts', 'segments', 'campaigns', 'sequences', 'demandes',
             'prospect_criteria', 'campaign_templates', 'sender_identities',
         ];
-        $commercialActions  = ['view', 'create', 'edit'];
+        $commercialActions = ['view', 'create', 'edit'];
 
         $commercialPermissions = [];
         foreach ($commercialEntities as $entity) {
@@ -131,6 +137,10 @@ class PermissionsSeeder extends Seeder
         $commercialPermissions[] = 'view consumption';
         $commercialPermissions[] = 'view inbox';
         $commercialPermissions[] = 'edit inbox';
+        // V2 CRM records remain portfolio-scoped in the controller/query layer.
+        // Commercials never receive sync, backfill, mapping, payload, export, or ops rights.
+        $commercialPermissions[] = 'view marketing dashboard';
+        $commercialPermissions[] = 'view zoho records';
 
         $commercial = Role::where('name', 'commercial')->where('guard_name', 'web')->first();
         if ($commercial) {

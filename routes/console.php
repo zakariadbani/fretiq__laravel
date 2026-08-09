@@ -1,5 +1,7 @@
 <?php
 
+use App\Jobs\Zoho\RecoverZohoBulkTerminalizationsJob;
+use App\Jobs\Zoho\RecoverZohoStandardWorkJob;
 use App\Models\Setting;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -22,6 +24,12 @@ Artisan::command('inspire', function () {
 
 $automationEnabled = fn (string $job): \Closure => fn (): bool => (bool) Setting::get('automatisation.cron_enabled', true)
     && (bool) Setting::get("automatisation.{$job}", true);
+
+// V2 is a dark launch: scheduler entries exist for observability, but no API
+// call can start unless the global automation switch and both V2 switches are on.
+$zohoV2AutomationEnabled = fn (): bool => (bool) Setting::get('automatisation.cron_enabled', true)
+    && (bool) config('zoho-v2.features.sync_enabled', false)
+    && (bool) config('zoho-v2.features.schedules_enabled', false);
 
 // Independent heartbeat: proves the OS cron reached Laravel even when business automations are paused.
 Schedule::call(fn () => Setting::set(
@@ -117,3 +125,50 @@ Schedule::command('inbox:poll')
     ->everyFiveMinutes()
     ->withoutOverlapping()
     ->when($automationEnabled('inbox_poll'));
+
+/*
+|--------------------------------------------------------------------------
+| Zoho CRM V2 mirror scheduler (disabled by default)
+|--------------------------------------------------------------------------
+| Hourly delta begins at :10 so it does not compete with top-of-hour work.
+| Nightly reconciliation uses Europe/Paris reporting time. Both are guarded
+| by the existing automation master gate and V2's explicit sync/schedule flags.
+*/
+Schedule::command('zoho:crm:sync --mode=delta --trigger=scheduled')
+    ->hourlyAt(10)
+    ->timezone((string) config('zoho-v2.reporting_timezone', 'Europe/Paris'))
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->when($zohoV2AutomationEnabled);
+
+Schedule::command('zoho:crm:sync --mode=reconcile --trigger=scheduled')
+    ->dailyAt('02:30')
+    ->timezone((string) config('zoho-v2.reporting_timezone', 'Europe/Paris'))
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->when($zohoV2AutomationEnabled);
+
+Schedule::job(new RecoverZohoBulkTerminalizationsJob)
+    ->name('zoho:v2:bulk-terminalization-recovery')
+    ->everyFiveMinutes()
+    ->timezone((string) config('zoho-v2.reporting_timezone', 'Europe/Paris'))
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->when(fn (): bool => $zohoV2AutomationEnabled()
+        && (bool) config('zoho-v2.features.bulk_backfill_enabled', false));
+
+// The checkpoint and post-reconciliation rows are durable outboxes. This
+// sweep closes the queue-dispatch crash window without bypassing either V2
+// feature gate or the per-module lease fence.
+Schedule::job(new RecoverZohoStandardWorkJob)
+    ->name('zoho:v2:standard-work-recovery')
+    ->everyFiveMinutes()
+    ->timezone((string) config('zoho-v2.reporting_timezone', 'Europe/Paris'))
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->when($zohoV2AutomationEnabled);
+
+// Failure retry, metadata inventory, and deterministic identity linking are
+// dispatched from successful/partial reconciliation batch completion. They
+// are intentionally not clock-based because the 02:30 batch may run for
+// several hours while Quotes are swept in resumable chunks.

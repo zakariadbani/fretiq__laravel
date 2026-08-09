@@ -4,10 +4,19 @@ namespace App\Http\Controllers\Backend;
 
 use App\Http\Controllers\Controller;
 use App\Jobs\RunZohoCrmSyncJob;
+use App\Jobs\Zoho\RetryZohoFailuresJob;
+use App\Models\User;
 use App\Models\ZohoSyncLog;
 use App\Models\ZohoToken;
+use App\Services\Zoho\V2\Bulk\ZohoModuleDispatcher;
+use App\Services\Zoho\V2\Identity\ZohoIdentityLinker;
+use App\Services\Zoho\V2\Operations\ZohoOperationsDashboard;
+use App\Services\Zoho\V2\Registry\ZohoModuleRegistry;
+use App\Services\Zoho\V2\Sync\ZohoSyncOrchestrator;
 use App\Services\Zoho\ZohoCrmTemplatesService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 
 class ZohoController extends Controller
 {
@@ -15,7 +24,9 @@ class ZohoController extends Controller
     {
         $this->middleware(['auth', 'verified']);
         $this->middleware('permission:view zoho')->only(['index']);
-        $this->middleware('permission:sync zoho')->only(['sync']);
+        $this->middleware('permission:sync zoho')->only(['sync', 'v2Sync', 'retry']);
+        $this->middleware('permission:backfill zoho')->only(['v2Backfill']);
+        $this->middleware('permission:manage zoho mappings')->only(['mapping']);
         $this->middleware('permission:create campaign_templates')->only(['syncTemplates']);
     }
 
@@ -24,14 +35,23 @@ class ZohoController extends Controller
      */
     public function index()
     {
+        $operations = app(ZohoOperationsDashboard::class);
+        if (config('zoho-v2.features.operations_dashboard_enabled', false) && $operations->available()) {
+            return view('backend.contents.zoho.v2-index', ['dashboard' => $operations->data()]);
+        }
         // ── Driver config ─────────────────────────────────────────────────────
-        $crmDriver       = config('services.zoho.crm_driver', 'local');
+        $crmDriver = config('services.zoho.crm_driver', 'local');
         $campaignsDriver = config('services.zoho.driver', 'local');
 
         // ── Last sync per module ──────────────────────────────────────────────
+        $hasV2LogColumn = Schema::hasColumn('zoho_sync_logs', 'sync_batch_id');
         $lastByModule = [];
         foreach (['Accounts', 'Contacts'] as $module) {
-            $lastByModule[$module] = ZohoSyncLog::where('module', $module)
+            $query = ZohoSyncLog::query()->where('module', $module);
+            if ($hasV2LogColumn) {
+                $query->whereNull('sync_batch_id');
+            }
+            $lastByModule[$module] = $query
                 ->orderByDesc('synced_at')
                 ->first(['synced_at', 'records_synced', 'status', 'error']);
         }
@@ -39,12 +59,12 @@ class ZohoController extends Controller
         // ── OAuth token ───────────────────────────────────────────────────────
         $token = ZohoToken::where('service', 'crm')->first();
 
-        $tokenStatus     = 'absent';
-        $tokenMinutes    = null;
-        $tokenExpiry     = null;
+        $tokenStatus = 'absent';
+        $tokenMinutes = null;
+        $tokenExpiry = null;
 
         if ($token && $token->expires_at) {
-            $tokenExpiry  = $token->expires_at;
+            $tokenExpiry = $token->expires_at;
             $tokenMinutes = (int) now()->diffInMinutes($token->expires_at, false);
 
             if ($tokenMinutes <= 0) {
@@ -112,7 +132,7 @@ class ZohoController extends Controller
                     [
                         'label' => 'Dernière synchronisation CRM',
                         'value' => $lastCrmSync?->synced_at
-                            ? $lastCrmSync->synced_at->format('d/m/Y H:i') . ' · ' . $lastCrmBadge['label']
+                            ? $lastCrmSync->synced_at->format('d/m/Y H:i').' · '.$lastCrmBadge['label']
                             : 'Jamais synchronisé',
                         'color' => $lastCrmSync ? $lastCrmBadge['color'] : 'secondary',
                     ],
@@ -139,18 +159,22 @@ class ZohoController extends Controller
             ],
         ];
         // ── History (last 15 rows) ────────────────────────────────────────────
-        $history = ZohoSyncLog::orderByDesc('synced_at')->limit(15)->get();
+        $historyQuery = ZohoSyncLog::query();
+        if ($hasV2LogColumn) {
+            $historyQuery->whereNull('sync_batch_id');
+        }
+        $history = $historyQuery->orderByDesc('synced_at')->limit(15)->get();
 
         return view('backend.contents.zoho.index', [
-            'crmDriver'           => $crmDriver,
-            'campaignsDriver'     => $campaignsDriver,
-            'lastByModule'        => $lastByModule,
-            'token'               => $token,
-            'tokenStatus'         => $tokenStatus,
-            'tokenMinutes'        => $tokenMinutes,
-            'tokenExpiry'         => $tokenExpiry,
-            'history'             => $history,
-            'zohoIntegrations'    => $zohoIntegrations,
+            'crmDriver' => $crmDriver,
+            'campaignsDriver' => $campaignsDriver,
+            'lastByModule' => $lastByModule,
+            'token' => $token,
+            'tokenStatus' => $tokenStatus,
+            'tokenMinutes' => $tokenMinutes,
+            'tokenExpiry' => $tokenExpiry,
+            'history' => $history,
+            'zohoIntegrations' => $zohoIntegrations,
         ]);
     }
 
@@ -166,6 +190,7 @@ class ZohoController extends Controller
 
         return $verified ? 'verified' : 'test_ready';
     }
+
     /**
      * Dispatch an async Zoho CRM sync and redirect back with a flash message.
      *
@@ -216,5 +241,107 @@ class ZohoController extends Controller
         }
 
         return redirect()->route('admin.zoho.index');
+    }
+
+    public function v2Sync(
+        Request $request,
+        ZohoModuleRegistry $registry,
+        ZohoSyncOrchestrator $orchestrator,
+        ZohoModuleDispatcher $dispatcher,
+    ) {
+        return $this->dispatchV2($request, $registry, $orchestrator, $dispatcher, 'delta');
+    }
+
+    public function v2Backfill(
+        Request $request,
+        ZohoModuleRegistry $registry,
+        ZohoSyncOrchestrator $orchestrator,
+        ZohoModuleDispatcher $dispatcher,
+    ) {
+        return $this->dispatchV2(
+            $request,
+            $registry,
+            $orchestrator,
+            $dispatcher,
+            (string) $request->input('mode', 'backfill'),
+        );
+    }
+
+    public function retry(Request $request, ZohoModuleRegistry $registry)
+    {
+        abort_unless(config('zoho-v2.features.sync_enabled', false) && app(ZohoOperationsDashboard::class)->available(), 404);
+        $data = $request->validate(['module' => ['nullable', 'string', 'max:64']]);
+        $module = $this->moduleKey($registry, $data['module'] ?? null);
+        RetryZohoFailuresJob::dispatch($module, (int) config('zoho-v2.retry.batch_size', 100));
+
+        return back()->with('success', 'Nouvelle tentative planifiée.');
+    }
+
+    public function mapping(Request $request, ZohoIdentityLinker $identity, ZohoOperationsDashboard $operations)
+    {
+        abort_unless(config('zoho-v2.features.operations_dashboard_enabled', false) && $operations->available(), 404);
+        $observedOwnerIds = $operations->observedOwnerIdentities()->pluck('zoho_id')->all();
+        $commercialUserIds = User::query()->where('is_active', true)->role('commercial')->pluck('id')->all();
+        $data = $request->validate([
+            'zoho_user_id' => ['required', 'string', 'max:100', Rule::in($observedOwnerIds)],
+            'fretiq_user_id' => ['nullable', 'integer', Rule::in($commercialUserIds)],
+        ]);
+        $mapping = $identity->overrideUserMapping($data['zoho_user_id'], $data['fretiq_user_id'] ?? null, (int) $request->user()->id);
+        if (($data['fretiq_user_id'] ?? null) === null) {
+            $mapping->update(['is_confirmed' => false]);
+        }
+
+        return back()->with('success', 'Correspondance utilisateur mise à jour.');
+    }
+
+    private function dispatchV2(
+        Request $request,
+        ZohoModuleRegistry $registry,
+        ZohoSyncOrchestrator $orchestrator,
+        ZohoModuleDispatcher $dispatcher,
+        string $mode,
+    ) {
+        abort_unless(config('zoho-v2.features.sync_enabled', false) && app(ZohoOperationsDashboard::class)->available(), 404);
+        $data = $request->validate(['module' => ['nullable', 'string', 'max:64'], 'mode' => ['nullable', 'in:backfill,reconcile']]);
+        $mode = $mode === 'delta' ? 'delta' : ($data['mode'] ?? $mode);
+        $module = $this->moduleKey($registry, $data['module'] ?? null);
+        $modules = $module ? [$module] : array_keys(array_filter($registry->all(), fn ($d) => ! $d->activationGated && $d->key !== 'quoted_items'));
+        $batch = $orchestrator->createBatch($modules, $mode, 'manual', (int) $request->user()->id);
+        foreach ($modules as $index => $key) {
+            try {
+                $dispatcher->dispatch((int) $batch->id, $key, $mode, (string) $batch->correlation_id);
+            } catch (\Throwable) {
+                foreach (array_slice($modules, $index) as $undispatched) {
+                    $orchestrator->terminalizeModule(
+                        (int) $batch->id,
+                        $undispatched,
+                        $mode,
+                        'dispatch_failed',
+                    );
+                }
+
+                return back()->with(
+                    'error',
+                    'La synchronisation V2 n\'a pas pu être planifiée. Consultez les identifiants de corrélation.',
+                );
+            }
+        }
+
+        return back()->with('success', 'Synchronisation V2 planifiée.');
+    }
+
+    private function moduleKey(ZohoModuleRegistry $registry, ?string $requested): ?string
+    {
+        if ($requested === null || $requested === '') {
+            return null;
+        }
+        foreach ($registry->all() as $definition) {
+            if ($definition->key === $requested || strcasecmp($definition->apiName, $requested) === 0) {
+                abort_if($definition->activationGated || $definition->key === 'quoted_items', 422, 'Module Zoho indisponible.');
+
+                return $definition->key;
+            }
+        }
+        abort(422, 'Module Zoho invalide.');
     }
 }
