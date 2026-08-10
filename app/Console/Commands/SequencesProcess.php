@@ -38,7 +38,10 @@ class SequencesProcess extends Command
      */
     public function handle(SequenceWaveService $waveService): int
     {
-        $waveService->recover();
+        // No live Zoho driver means no gateway/list job should be recovered.
+        if (config('services.zoho.driver', 'local') === 'zoho') {
+            $waveService->recover();
+        }
         $count = app(SequenceService::class)->processDue();
 
         $this->info("{$count} inscription(s) de séquence mise(s) en file d'attente.");

@@ -12,6 +12,6 @@ class ZohoFieldManifest extends Model
 
     protected function casts(): array
     {
-        return ['fields' => 'array', 'layouts' => 'array', 'picklists' => 'array', 'related_lists' => 'array', 'is_current' => 'boolean', 'verified_at' => 'datetime', 'last_seen_at' => 'datetime'];
+        return ['fields' => 'array', 'layouts' => 'array', 'picklists' => 'array', 'related_lists' => 'array', 'mapping_gaps' => 'array', 'is_current' => 'boolean', 'verified_at' => 'datetime', 'last_seen_at' => 'datetime'];
     }
 }

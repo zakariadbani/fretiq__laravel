@@ -122,7 +122,11 @@ class PacedSequenceEnrollmentService
                 foreach ($companyContacts as $contact) {
                     $enrollment = $this->sequenceService->enroll($locked->sequence, $contact, $locked);
                     if ($enrollment?->wasRecentlyCreated) {
-                        $enrollment->update(['next_send_at' => null]);
+                        $usesLiveZohoWave = in_array($locked->delivery_channel, [null, 'zoho'], true)
+                            && config('services.zoho.driver', 'local') === 'zoho';
+                        $enrollment->update([
+                            'next_send_at' => $usesLiveZohoWave ? null : now(),
+                        ]);
                         $enrolled++;
                         $waveContacts->push($contact);
                     } else {
@@ -131,7 +135,8 @@ class PacedSequenceEnrollmentService
                 }
             }
 
-            if ($waveContacts->isNotEmpty()) {
+            if ($waveContacts->isNotEmpty() && in_array($locked->delivery_channel, [null, 'zoho'], true)
+                && config('services.zoho.driver', 'local') === 'zoho') {
                 $lastWaveNumber = $locked->runs()->where('occurrence_key', 'like', 'sequence-wave-%')->pluck('occurrence_key')->map(fn (string $key): int => (int) substr($key, strlen('sequence-wave-')))->max() ?? 0;
                 $waveRun = CampaignRun::create([
                     'campaign_id' => $locked->id,

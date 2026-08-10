@@ -35,9 +35,17 @@ class SenderIdentity extends Model
         'imap_encryption',
         'imap_validate_cert',
         'imap_enabled',
+        'smtp_enabled',
+        'smtp_host',
+        'smtp_port',
+        'smtp_username',
+        'smtp_password',
+        'smtp_encryption',
+        'smtp_hourly_limit',
+        'smtp_daily_limit',
     ];
 
-    protected $hidden = ['imap_password'];
+    protected $hidden = ['imap_password', 'smtp_password'];
 
     /**
      * The attributes that should be cast.
@@ -52,6 +60,11 @@ class SenderIdentity extends Model
         'imap_validate_cert' => 'boolean',
         'imap_enabled' => 'boolean',
         'last_polled_at' => 'datetime',
+        'smtp_enabled' => 'boolean',
+        'smtp_port' => 'integer',
+        'smtp_password' => 'encrypted',
+        'smtp_hourly_limit' => 'integer',
+        'smtp_daily_limit' => 'integer',
     ];
 
     /**
@@ -75,6 +88,26 @@ class SenderIdentity extends Model
             'imap_encryption' => 'nullable|in:ssl,tls,none',
             'imap_validate_cert' => 'boolean',
             'imap_enabled'   => 'boolean',
+            'smtp_enabled'   => 'boolean',
+            'smtp_host'      => 'nullable|required_if:smtp_enabled,1|string|max:255',
+            'smtp_port'      => 'nullable|integer|min:1|max:65535',
+            'smtp_username'  => 'nullable|required_if:smtp_enabled,1|string|max:255',
+            'smtp_password'  => 'nullable|required_if:smtp_enabled,1|string|max:1000',
+            'smtp_encryption' => 'nullable|in:tls,ssl',
+            'smtp_hourly_limit' => 'nullable|integer|min:1|max:100',
+            'smtp_daily_limit' => 'nullable|integer|min:1|max:500',
         ];
+    }
+
+    public function hasCompleteSmtpConfiguration(): bool
+    {
+        return $this->is_active
+            && $this->smtp_enabled
+            && filled($this->smtp_host)
+            && filled($this->smtp_port)
+            && filled($this->smtp_username)
+            && filled($this->smtp_password)
+            && (int) $this->smtp_hourly_limit > 0
+            && (int) $this->smtp_daily_limit > 0;
     }
 }

@@ -3,6 +3,7 @@
 namespace App\Jobs\Zoho;
 
 use App\Services\Zoho\V2\Bulk\BulkBackfillStep;
+use App\Services\Zoho\V2\Bulk\VerifiedBulkModules;
 use App\Services\Zoho\V2\Bulk\ZohoBulkBackfillService;
 use App\Services\Zoho\V2\Bulk\ZohoBulkDeliveryHandoff;
 use App\Services\Zoho\V2\Bulk\ZohoBulkRunTerminator;
@@ -78,9 +79,8 @@ final class RunZohoBulkBackfillJob implements ShouldBeUniqueUntilProcessing, Sho
 
     public function handle(): void
     {
-        if (! config('zoho-v2.features.sync_enabled', false)
-            || ! config('zoho-v2.features.bulk_backfill_enabled', false)) {
-            $this->terminate('kill_switch');
+        if (! app(VerifiedBulkModules::class)->allows($this->module)) {
+            $this->terminate('unverified_module');
 
             return;
         }

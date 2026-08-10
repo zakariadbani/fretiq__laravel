@@ -165,9 +165,8 @@ class SegmentController extends BackendController
      *   filter.status string   nullable, in contact_statuses keys
      *
      * Réponse 200 :
-     *   matched, suppressed, cold_excluded, personal_excluded,
-     *   duplicates_excluded, final, sample[],
-     *   summary (string), cold_gate_closed (bool)
+     *   matched, suppressed, duplicates_excluded, final, sample[],
+     *   summary (string)
      *
      * Réponse 422 : erreurs de validation Laravel standard (JSON).
      * Réponse 500 : { error: 'preview_failed' }
@@ -217,12 +216,10 @@ class SegmentController extends BackendController
             return response()->json(['error' => 'preview_failed'], 500);
         }
 
-        $summary        = $this->buildSummary($scope, $filter);
-        $coldGateClosed = ! (bool) config('prospecting.cold_send_enabled', false);
+        $summary = $this->buildSummary($scope, $filter);
 
         return response()->json($stats + [
-            'summary'          => $summary,
-            'cold_gate_closed' => $coldGateClosed,
+            'summary' => $summary,
         ]);
     }
 

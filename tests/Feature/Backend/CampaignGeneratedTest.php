@@ -70,7 +70,6 @@ class CampaignGeneratedTest extends TestCase
 
         config([
             'services.zoho.driver' => 'local',
-            'prospecting.cold_send_enabled' => false,
         ]);
         // RefreshDatabase does NOT run seeders; seed ACL manually.
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
@@ -427,10 +426,7 @@ class CampaignGeneratedTest extends TestCase
      */
     public function test_segment_count_returns_count_for_known_segment(): void
     {
-        // Seed exactly 2 client contacts with non-empty emails — the service pipeline
-        // filters by company.relationship='client', excludes suppressions, applies cold gate.
-        // With cold_send_enabled=false (test default), prospects are excluded but clients
-        // are always eligible. Two distinct emails -> previewCount must return 2.
+        // Seed exactly 2 client contacts with non-empty, distinct emails.
         $this->makeClientContact();
         $this->makeClientContact();
 
@@ -448,12 +444,10 @@ class CampaignGeneratedTest extends TestCase
             'contacts_count',
             'matched_count',
             'funnel',
-            'cold_gate_closed',
             'available',
         ]);
         $response->assertJson([
             'available' => true,
-            'cold_gate_closed' => true,
             'count' => 2,
             'contact_count' => 2,
             'company_count' => 2,
@@ -509,8 +503,6 @@ class CampaignGeneratedTest extends TestCase
                 return [
                     'matched' => 3,
                     'suppressed' => 0,
-                    'cold_excluded' => 0,
-                    'personal_excluded' => 0,
                     'duplicates_excluded' => 0,
                     'manually_excluded' => 0,
                     'manually_included' => 0,
@@ -583,8 +575,7 @@ class CampaignGeneratedTest extends TestCase
      *   1 client contact  with country='DE'  -> en bucket  (non-francophone)
      *   1 client contact  with country=null  -> unknown bucket
      *
-     * Segment scope='client' matches all four. With cold_send_enabled=false
-     * all four pass the cold gate (clients are never excluded by it).
+     * Segment scope='client' matches all four.
      * Expected: fr=2, en=1, unknown=1, total=4.
      */
     public function test_audience_language_split_returns_expected_shape(): void
@@ -723,7 +714,6 @@ class CampaignGeneratedTest extends TestCase
     {
         Bus::fake();
 
-        config(['prospecting.cold_send_enabled' => false]);
 
         // A client contact ensures the segment is non-empty (SegmentService::previewCount >= 1).
     // schedule

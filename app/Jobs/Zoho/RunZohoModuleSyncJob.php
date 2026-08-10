@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Jobs\Zoho;
 
 use App\Models\Zoho\ZohoSyncBatch;
+use App\Models\ZohoSyncCheckpoint;
 use App\Services\Zoho\V2\Bulk\ZohoModuleDispatcher;
+use App\Services\Zoho\V2\Registry\ZohoModuleRegistry;
 use App\Services\Zoho\V2\Sync\ZohoSyncOrchestrator;
 use Carbon\CarbonImmutable;
 use Illuminate\Bus\Queueable;
@@ -54,7 +56,7 @@ final class RunZohoModuleSyncJob implements ShouldBeUniqueUntilProcessing, Shoul
         // Suppress duplicate deliveries inside one batch without orphaning a
         // later batch. Cross-batch module exclusion is enforced by the shared
         // durable checkpoint lease, not by a queue lock that can drop work.
-        return $this->batchId.':'.$this->module;
+        return $this->batchId.':'.$this->module.':g'.($this->checkpointGeneration ?? 0);
     }
 
     public function uniqueFor(): int
@@ -78,15 +80,11 @@ final class RunZohoModuleSyncJob implements ShouldBeUniqueUntilProcessing, Shoul
         $batch = ZohoSyncBatch::query()->find($this->batchId);
         if ($batch === null
             || $batch->completed_at !== null
+            || ! in_array($batch->status, ['queued', 'running'], true)
             || $batch->mode !== $this->mode
             || ! in_array($this->module, (array) $batch->modules, true)
-            || ! hash_equals((string) $batch->correlation_id, $this->correlationId)) {
-            return;
-        }
-
-        if (! config('zoho-v2.features.sync_enabled', false)) {
-            app(ZohoSyncOrchestrator::class)->terminalizeModule($this->batchId, $this->module, $this->mode, 'disabled', $this->deliveryToken, $this->checkpointGeneration);
-
+            || ! hash_equals((string) $batch->correlation_id, $this->correlationId)
+            || ! $this->preparedGenerationIsCurrent()) {
             return;
         }
 
@@ -150,20 +148,23 @@ final class RunZohoModuleSyncJob implements ShouldBeUniqueUntilProcessing, Shoul
     {
         try {
             $batch = ZohoSyncBatch::query()->find($this->batchId);
-            if ($batch !== null
-                && $batch->completed_at === null
-                && $batch->mode === $this->mode
-                && in_array($this->module, (array) $batch->modules, true)
-                && hash_equals((string) $batch->correlation_id, $this->correlationId)) {
-                app(ZohoSyncOrchestrator::class)->terminalizeModule(
-                    $this->batchId,
-                    $this->module,
-                    $this->mode,
-                    'job_exhausted',
-                    $this->deliveryToken,
-                    $this->checkpointGeneration,
-                );
+            if ($batch === null
+                || $batch->completed_at !== null
+                || ! in_array($batch->status, ['queued', 'running'], true)
+                || $batch->mode !== $this->mode
+                || ! in_array($this->module, (array) $batch->modules, true)
+                || ! hash_equals((string) $batch->correlation_id, $this->correlationId)
+                || ! $this->preparedGenerationIsCurrent()) {
+                return;
             }
+            app(ZohoSyncOrchestrator::class)->terminalizeModule(
+                $this->batchId,
+                $this->module,
+                $this->mode,
+                'job_exhausted',
+                $this->deliveryToken,
+                $this->checkpointGeneration,
+            );
         } catch (Throwable) {
             // Framework failed-job evidence remains authoritative even if the
             // database is unavailable during terminalization.
@@ -175,5 +176,24 @@ final class RunZohoModuleSyncJob implements ShouldBeUniqueUntilProcessing, Shoul
             'correlation_id' => $this->correlationId,
             'exception' => $exception::class,
         ]);
+    }
+
+    private function preparedGenerationIsCurrent(): bool
+    {
+        if ($this->checkpointGeneration === null) {
+            return true;
+        }
+
+        $definition = app(ZohoModuleRegistry::class)->get($this->module);
+
+        return ZohoSyncCheckpoint::query()
+            ->where('module', 'v2:'.$definition->key)
+            ->where('submodule', $definition->submodule ?? '')
+            ->where('sync_batch_id', $this->batchId)
+            ->where('correlation_id', $this->correlationId)
+            ->where('sync_mode', $this->mode)
+            ->where('generation', $this->checkpointGeneration)
+            ->whereIn('status', ['queued', 'running', 'retrying'])
+            ->exists();
     }
 }

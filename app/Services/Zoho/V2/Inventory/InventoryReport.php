@@ -5,7 +5,7 @@ namespace App\Services\Zoho\V2\Inventory;
 /** Sanitised inventory outcome: deliberately contains no CRM record data. */
 final readonly class InventoryReport
 {
-    /** @param array<string, array{status:int,state:string,schema_hash:?string,fields:int,layouts:int,related_lists:int,currencies:list<string>}> $modules */
+    /** @param array<string, array{status:int,state:string,schema_hash:?string,fields:int,layouts:int,related_lists:int,currencies:list<string>,mapping_gaps:array<string,list<string>>}> $modules */
     public function __construct(
         public array $modules,
         public int $discoveredModules,

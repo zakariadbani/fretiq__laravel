@@ -5,6 +5,8 @@ namespace App\Services\Zoho\V2\Sync;
 use App\Jobs\Zoho\RunZohoPostReconciliationJob;
 use App\Jobs\Zoho\ZohoModuleRunOutcome;
 use App\Models\Zoho\ZohoSyncBatch;
+use App\Models\Zoho\ZohoStandardSyncRun;
+use App\Models\Zoho\ZohoStandardSyncWorkItem;
 use App\Models\Zoho\ZohoSyncFailure;
 use App\Models\ZohoSyncCheckpoint;
 use App\Models\ZohoSyncLog;
@@ -37,6 +39,7 @@ class ZohoSyncOrchestrator
         private readonly ZohoMapperResolver $mappers,
         private readonly ZohoRecordIngestor $ingestor,
         private readonly ZohoReconciliationService $reconciliation,
+        private readonly ZohoStandardWorklist $worklist,
     ) {}
 
     /** @param list<string> $moduleKeys */
@@ -59,13 +62,16 @@ class ZohoSyncOrchestrator
     {
         $this->validateMode($mode);
         $definition = $this->registry->get($moduleKey);
-        $batch = ZohoSyncBatch::query()->findOrFail($batchId);
+        $batch = ZohoSyncBatch::query()->find($batchId);
         $started = CarbonImmutable::now();
         $counters = $this->emptyCounters();
 
-        if ($batch->mode !== $mode
+        if ($batch === null
+            || $batch->completed_at !== null
+            || ! in_array($batch->status, ['queued', 'running'], true)
+            || $batch->mode !== $mode
             || ! in_array($definition->key, (array) $batch->modules, true)
-            || $batch->completed_at !== null) {
+        ) {
             return new SyncResult(
                 $counters,
                 warnings: ['The sync batch does not accept this module delivery.'],
@@ -84,6 +90,13 @@ class ZohoSyncOrchestrator
         // is also the terminalization fence for a late failed() callback.
         $leaseOwner = $workerId;
         $checkpoint = $this->claimCheckpoint($definition, $mode, $leaseOwner, $batch->correlation_id, $batch->id, $deliveryGeneration);
+        if ($checkpoint === false) {
+            return new SyncResult(
+                $counters,
+                warnings: ['The sync delivery is stale or its batch is no longer running.'],
+                ignoredDelivery: true,
+            );
+        }
         if ($checkpoint === null) {
             return new SyncResult(
                 $counters,
@@ -102,140 +115,19 @@ class ZohoSyncOrchestrator
         $watermarkAt = CarbonImmutable::parse($batch->requested_at ?? $batch->started_at ?? $started);
         $runAt = CarbonImmutable::now();
         $cursor = $checkpoint->cursor_at?->toIso8601String();
-        $pageToken = $checkpoint->cursor_page_token;
-        $restartCount = 0;
         $warning = [];
 
         try {
-            $batch->update(['status' => 'running', 'started_at' => $batch->started_at ?? $started]);
-            // One Records page per delivery keeps the work bounded.  The
-            // opaque token remains durable until every ID on that page has
-            // either been mirrored or quarantined.
+            // Reconciliation retains its established scan/repair path. The
+            // standard Records API path persists an immutable ID worklist
+            // before it starts specific-record hydration.
             if (! $continuingReconciliation) {
-                $page = $this->listPage($definition, $mode, $checkpoint, $pageToken, $batch->correlation_id);
-                $counters['api_requests'] += $page->apiRequestCount();
-                if ($page->notModified()) {
-                    $pageToken = null;
-                } else {
-                    if (! $page->successful()) {
-                        if ($this->isExpiredPageToken($page) && $pageToken && $restartCount++ === 0) {
-                            $pageToken = null;
-                            $checkpoint->cursor_page_token = null;
-                            $checkpoint->page_last_zoho_id = null;
-                            $warning[] = 'Page token expired; restarted from durable overlap watermark.';
-                            if (! $this->savePageCheckpoint($checkpoint, $leaseOwner, null, $runAt, $counters)) {
-                                throw new \RuntimeException('Sync lease ownership was lost.');
-                            }
-                            if (! $this->releasePageContinuation($checkpoint, $leaseOwner, $counters)) {
-                                throw new \RuntimeException('Sync lease ownership was lost.');
-                            }
-
-                            return new SyncResult($counters, $cursor, warnings: $warning, continuationRequired: true);
-                        }
-                        throw new \RuntimeException('Zoho list request failed: '.($page->errorCode ?? 'unknown'));
-                    }
-
-                    [$ids, $nextPageToken] = $this->parseRecordListPage($page);
-                    $resumeAfter = $checkpoint->page_last_zoho_id;
-                    if ($resumeAfter !== null) {
-                        $position = array_search($resumeAfter, $ids, true);
-                        if ($position === false) {
-                            // Page tokens are opaque and pages can drift while a
-                            // delivery is retried.  Keeping a marker that no
-                            // longer exists would make every retry fail forever.
-                            // Drop only the in-page progress marker and restart
-                            // the page; idempotent ingestion makes re-reading its
-                            // earlier IDs safe.
-                            $checkpoint->page_last_zoho_id = null;
-                            $warning[] = 'Page record progress marker was absent; restarted the current page safely.';
-                            if (! $this->updateLease($checkpoint, $leaseOwner, [
-                                'page_last_zoho_id' => null,
-                                'heartbeat_at' => now(),
-                                'lease_expires_at' => now()->addSeconds($this->leaseSeconds()),
-                                'counters' => $counters,
-                            ])) {
-                                throw new \RuntimeException('Sync lease ownership was lost.');
-                            }
-                            if (! $this->releasePageContinuation($checkpoint, $leaseOwner, $counters)) {
-                                throw new \RuntimeException('Sync lease ownership was lost.');
-                            }
-
-                            return new SyncResult($counters, $cursor, warnings: $warning, continuationRequired: true);
-                        }
-                        $ids = array_slice($ids, $position + 1);
-                    }
-                    foreach ($ids as $id) {
-                        if (! $this->heartbeat($checkpoint, $leaseOwner, $counters)) {
-                            throw new \RuntimeException('Sync lease ownership was lost.');
-                        }
-                        try {
-                            $record = $this->transport->get(
-                                '/'.$definition->apiName.'/'.rawurlencode($id),
-                                $definition->recordQuery,
-                                $batch->correlation_id,
-                            );
-                            $counters['api_requests'] += $record->apiRequestCount();
-                            if (! $record->successful() || $record->notModified()) {
-                                if ($record->errorCode === 'throttle_unavailable') {
-                                    throw new ZohoThrottleUnavailableException;
-                                }
-                                throw new \RuntimeException('Zoho record request failed: '.($record->errorCode ?? 'empty'));
-                            }
-                            $payload = collect((array) $record->root('data'))->first();
-                            if (! is_array($payload)
-                                || ! isset($payload['id'])
-                                || ! is_scalar($payload['id'])
-                                || ! hash_equals($id, (string) $payload['id'])) {
-                                throw new \RuntimeException('Zoho record response did not contain a record payload.');
-                            }
-                            $this->persistRecord($definition, $payload, $batch, $runAt, $counters, $checkpoint, $leaseOwner);
-                            $this->resolveRecordFailure($definition, $id, $checkpoint, $leaseOwner, $batch->id);
-                        } catch (ZohoLeaseLostException $e) {
-                            throw $e;
-                        } catch (ZohoThrottleUnavailableException $e) {
-                            if (! $this->updateLease($checkpoint, $leaseOwner, [
-                                'status' => 'retrying', 'lease_owner' => null, 'lease_expires_at' => null,
-                                'heartbeat_at' => now(), 'counters' => $counters,
-                            ])) {
-                                throw new \RuntimeException('Sync lease ownership was lost.');
-                            }
-
-                            return new SyncResult(
-                                $counters,
-                                $cursor,
-                                warnings: $warning,
-                                retryAfterSeconds: max(
-                                    1,
-                                    (int) config('zoho-v2.module.capacity_deferral_seconds', 60),
-                                ),
-                                continuationRequired: true,
-                            );
-                        } catch (Throwable $e) {
-                            $this->quarantine($batch, $definition, $id, $e, $checkpoint, $leaseOwner);
-                            $counters['quarantined']++;
-                        }
-                        $counters['seen']++;
-                        if (! $this->updateLease($checkpoint, $leaseOwner, [
-                            'page_last_zoho_id' => $id,
-                            'heartbeat_at' => now(),
-                            'lease_expires_at' => now()->addSeconds($this->leaseSeconds()),
-                            'counters' => $counters,
-                        ])) {
-                            throw new \RuntimeException('Sync lease ownership was lost.');
-                        }
-                    }
-
-                    $pageToken = $nextPageToken;
-                    if (! $this->savePageCheckpoint($checkpoint, $leaseOwner, $pageToken, $runAt, $counters)) {
-                        throw new \RuntimeException('Sync lease ownership was lost.');
-                    }
-                    if ($pageToken !== null) {
-                        if (! $this->releasePageContinuation($checkpoint, $leaseOwner, $counters)) {
-                            throw new \RuntimeException('Sync lease ownership was lost.');
-                        }
-
-                        return new SyncResult($counters, $cursor, warnings: $warning, continuationRequired: true);
-                    }
+                $standard = $this->runStandardWorklist(
+                    $definition, $batch, $mode, $checkpoint, $leaseOwner,
+                    $watermarkAt, $runAt, $cursor, $counters, $warning,
+                );
+                if ($standard !== null) {
+                    return $standard;
                 }
             }
 
@@ -419,7 +311,22 @@ class ZohoSyncOrchestrator
         } catch (Throwable $e) {
             // Queue retries are non-terminal.  `failed()` is the only path
             // that turns a retryable delivery into a terminal module result.
-            $this->updateLease($checkpoint, $leaseOwner, ['status' => 'retrying', 'lease_owner' => null, 'lease_expires_at' => null, 'heartbeat_at' => now(), 'retry_count' => ((int) $checkpoint->retry_count) + 1, 'counters' => $counters]);
+            if (! $this->holdsFence($checkpoint, $leaseOwner, $batch->id)
+                || ! $this->updateLease($checkpoint, $leaseOwner, [
+                    'status' => 'retrying',
+                    'lease_owner' => null,
+                    'lease_expires_at' => null,
+                    'heartbeat_at' => now(),
+                    'retry_count' => ((int) $checkpoint->retry_count) + 1,
+                    'counters' => $counters,
+                ])) {
+                return new SyncResult(
+                    $counters,
+                    $cursor,
+                    warnings: $warning,
+                    ignoredDelivery: true,
+                );
+            }
 
             return new SyncResult(
                 $counters,
@@ -435,7 +342,7 @@ class ZohoSyncOrchestrator
     {
         DB::transaction(function () use ($batchId): void {
             $batch = ZohoSyncBatch::query()->lockForUpdate()->findOrFail($batchId);
-            if ($batch->completed_at !== null) {
+            if ($batch->completed_at !== null || ! in_array($batch->status, ['queued', 'running'], true)) {
                 return;
             }
             $expected = collect(array_values(array_unique((array) $batch->modules)))->map(function (string $key): string {
@@ -457,8 +364,7 @@ class ZohoSyncOrchestrator
             // Identity mappings are deterministic local post-processing for
             // every completed healthy V2 batch. Reconcile adds inventory and
             // failure retries in the processor itself.
-            $eligibleForPost = in_array($status, ['success', 'partial'], true)
-                && config('zoho-v2.features.sync_enabled', false);
+            $eligibleForPost = in_array($status, ['success', 'partial'], true);
             $batch->update([
                 'status' => $status,
                 'completed_at' => now(),
@@ -496,7 +402,8 @@ class ZohoSyncOrchestrator
 
         DB::transaction(function () use ($batchId, $definition, $mode, $message, $deliveryToken, $deliveryGeneration): void {
             $batch = ZohoSyncBatch::query()->lockForUpdate()->find($batchId);
-            if ($batch === null || ($batch->completed_at !== null && in_array($batch->status, ['success', 'partial', 'error'], true))) {
+            if ($batch === null || $batch->completed_at !== null
+                || ! in_array($batch->status, ['queued', 'running'], true)) {
                 return;
             }
             if ($batch->mode !== $mode || ! in_array($definition->key, (array) $batch->modules, true)) {
@@ -506,9 +413,13 @@ class ZohoSyncOrchestrator
             $checkpoint = ZohoSyncCheckpoint::query()
                 ->where('module', $this->checkpointModule($definition))
                 ->where('submodule', $definition->submodule ?? '')
+                ->where('sync_batch_id', $batch->id)
                 ->where('correlation_id', $batch->correlation_id)
                 ->lockForUpdate()
                 ->first();
+            if ($deliveryGeneration !== null && $checkpoint === null) {
+                return;
+            }
             if ($deliveryToken !== null && $checkpoint !== null
                 && $checkpoint->lease_expires_at?->isFuture()
                 && $checkpoint->lease_owner !== null
@@ -577,9 +488,207 @@ class ZohoSyncOrchestrator
         $this->finalizeBatch($batchId);
     }
 
-    private function listPage(ModuleDefinition $definition, string $mode, ZohoSyncCheckpoint $checkpoint, ?string $token, string $correlationId): mixed
+    /**
+     * Return a continuation result while durable ID enumeration or bounded
+     * hydration remains. Returning null means it is safe to reconcile/finalize.
+     *
+     * @param array<string, int> $counters
+     * @param list<string> $warning
+     */
+    private function runStandardWorklist(
+        ModuleDefinition $definition,
+        ZohoSyncBatch $batch,
+        string $mode,
+        ZohoSyncCheckpoint $checkpoint,
+        string $leaseOwner,
+        CarbonImmutable $watermarkAt,
+        CarbonImmutable $runAt,
+        ?string $cursor,
+        array &$counters,
+        array &$warning,
+    ): ?SyncResult {
+        $query = $definition->enumerationQuery();
+        $existingRun = ZohoStandardSyncRun::query()
+            ->where('sync_batch_id', $batch->id)
+            ->where('module', $definition->key)
+            ->where('submodule', $definition->submodule ?? '')
+            ->first();
+        $sinceAt = $existingRun instanceof ZohoStandardSyncRun
+            ? ($existingRun->since_at === null ? null : CarbonImmutable::parse($existingRun->since_at))
+            : (in_array($mode, ['delta', 'reconcile'], true) && $definition->fetchStrategy === 'records_if_modified_since'
+                && $checkpoint->cursor_at !== null
+                ? CarbonImmutable::parse($checkpoint->cursor_at)->subMinutes((int) config('zoho-v2.overlap_minutes', 15))
+                : null);
+        $run = $this->worklist->getOrCreateRun($batch, $definition->key, $definition->submodule ?? '', [
+            'correlation_id' => $batch->correlation_id,
+            'mode' => $mode,
+            'query_fingerprint' => $definition->queryFingerprint($mode),
+            'query_params' => $query,
+            'watermark_at' => $watermarkAt,
+            'since_at' => $sinceAt,
+            'status' => 'enumerating',
+            'counters' => $counters,
+            // A legacy interrupted checkpoint may already own a token when
+            // this durable-run release is deployed. Import it once; later
+            // continuations are driven solely by the immutable run state.
+            'page_token' => $checkpoint->cursor_page_token,
+            'page_token_expires_at' => $checkpoint->page_token_expires_at,
+        ]);
+        $sinceAt = $run->since_at === null ? null : CarbonImmutable::parse($run->since_at);
+        $counters = $this->worklist->durableCounters($run);
+
+        if ($run->enumerated_at === null) {
+            $token = $run->page_token;
+            $page = $this->listPage($definition, $mode, $sinceAt, $token, $batch->correlation_id);
+            // Enumeration validation can fail after a successful transport
+            // response but before its page transaction exists. Record every
+            // response first; persistEnumerationPage then writes the same
+            // absolute counters rather than adding the attempt a second time.
+            $this->worklist->recordUnattachedApiRequests(
+                $run,
+                $checkpoint,
+                (int) $checkpoint->generation,
+                $leaseOwner,
+                $page->apiRequestCount(),
+            );
+            $counters = $this->worklist->durableCounters($run);
+            if (! $page->notModified() && ! $page->successful()) {
+                if ($token !== null && $this->isExpiredPageToken($page)) {
+                    $this->worklist->restartEnumeration($run, $checkpoint, (int) $checkpoint->generation, $leaseOwner);
+                    $warning[] = 'Page token expired or request-bound; restarted ID enumeration safely.';
+                    if (! $this->savePageCheckpoint($checkpoint, $leaseOwner, null, null, $counters)
+                        || ! $this->releasePageContinuation($checkpoint, $leaseOwner, $counters)) {
+                        throw new \RuntimeException('Sync lease ownership was lost.');
+                    }
+
+                    return new SyncResult($counters, $cursor, warnings: $warning, continuationRequired: true);
+                }
+
+                throw new \RuntimeException('Zoho list request failed: '.($page->errorCode ?? 'unknown'));
+            }
+
+            [$ids, $nextToken, $expiry] = $page->notModified()
+                ? [[], null, null]
+                : $this->parseRecordListPage($page);
+            $normalizedIds = collect($ids)->map(static fn (string $id): string => trim($id))->unique()->values();
+            $existingIds = $normalizedIds->isEmpty()
+                ? collect()
+                : $run->workItems()->whereIn('zoho_id', $normalizedIds->all())->pluck('zoho_id');
+            $enumeratedCount = $run->workItems()->count() + $normalizedIds->diff($existingIds)->count();
+            $this->assertWithinRecordsTraversalCeiling($enumeratedCount, $nextToken);
+            $complete = $nextToken === null;
+            $this->worklist->persistEnumerationPage(
+                $run,
+                $checkpoint,
+                (int) $checkpoint->generation,
+                $leaseOwner,
+                $ids,
+                $nextToken,
+                $expiry,
+                $complete,
+                $counters,
+            );
+            $run = $run->fresh();
+            $counters = $this->worklist->durableCounters($run);
+            if (! $this->savePageCheckpoint($checkpoint, $leaseOwner, $nextToken, $expiry, $counters)
+                || ! $complete && ! $this->releasePageContinuation($checkpoint, $leaseOwner, $counters)) {
+                throw new \RuntimeException('Sync lease ownership was lost.');
+            }
+            if (! $complete) {
+                return new SyncResult($counters, $cursor, warnings: $warning, continuationRequired: true);
+            }
+        }
+
+        $items = $this->worklist->claimQueued(
+            $run,
+            $checkpoint,
+            (int) $checkpoint->generation,
+            $leaseOwner,
+            max(1, (int) config('zoho-v2.module.hydration_chunk_size', 100)),
+        );
+        foreach ($items as $item) {
+            if (! $this->heartbeat($checkpoint, $leaseOwner, $counters)) {
+                throw new \RuntimeException('Sync lease ownership was lost.');
+            }
+            $recordApiRequests = 0;
+            try {
+                $record = $this->transport->get(
+                    '/'.$definition->apiName.'/'.rawurlencode($item->zoho_id),
+                    $definition->recordQuery,
+                    $batch->correlation_id,
+                );
+                $recordApiRequests = $record->apiRequestCount();
+                if (! $record->successful() || $record->notModified()) {
+                    if ($record->errorCode === 'throttle_unavailable') {
+                        throw new ZohoThrottleUnavailableException;
+                    }
+                    throw new \RuntimeException('Zoho record request failed: '.($record->errorCode ?? 'empty'));
+                }
+                $payload = collect((array) $record->root('data'))->first();
+                if (! is_array($payload) || ! isset($payload['id']) || ! is_scalar($payload['id'])
+                    || ! hash_equals($item->zoho_id, (string) $payload['id'])) {
+                    throw new \RuntimeException('Zoho record response did not contain a record payload.');
+                }
+                $this->persistWorkItemRecord($definition, $payload, $batch, $runAt, $checkpoint, $leaseOwner, $run, $item, $recordApiRequests);
+            } catch (ZohoLeaseLostException $e) {
+                throw $e;
+            } catch (ZohoThrottleUnavailableException $e) {
+                // A throttle deferral deliberately leaves its item queued, so
+                // its request cannot be reconstructed from item outcomes.
+                $this->worklist->recordUnattachedApiRequests(
+                    $run,
+                    $checkpoint,
+                    (int) $checkpoint->generation,
+                    $leaseOwner,
+                    $recordApiRequests,
+                );
+                $counters = $this->worklist->durableCounters($run);
+                if (! $this->updateLease($checkpoint, $leaseOwner, [
+                    'status' => 'retrying', 'lease_owner' => null, 'lease_expires_at' => null,
+                    'heartbeat_at' => now(), 'counters' => $counters,
+                ])) {
+                    throw new \RuntimeException('Sync lease ownership was lost.');
+                }
+
+                return new SyncResult($counters, $cursor, warnings: $warning,
+                    retryAfterSeconds: max(1, (int) config('zoho-v2.module.capacity_deferral_seconds', 60)),
+                    continuationRequired: true);
+            } catch (Throwable $e) {
+                $this->quarantineWorkItem($batch, $definition, $item, $e, $checkpoint, $leaseOwner, $run, $recordApiRequests);
+            }
+            $counters = $this->worklist->durableCounters($run);
+            if (! $this->updateLease($checkpoint, $leaseOwner, [
+                'heartbeat_at' => now(), 'lease_expires_at' => now()->addSeconds($this->leaseSeconds()), 'counters' => $counters,
+            ])) {
+                throw new \RuntimeException('Sync lease ownership was lost.');
+            }
+        }
+
+        $counters = $this->worklist->durableCounters($run);
+        if ($this->worklist->queued($run, 1)->isNotEmpty()) {
+            if (! $this->releasePageContinuation($checkpoint, $leaseOwner, $counters)) {
+                throw new \RuntimeException('Sync lease ownership was lost.');
+            }
+
+            return new SyncResult($counters, $cursor, warnings: $warning, continuationRequired: true);
+        }
+
+        if (! $this->worklist->completeRunIfDrained(
+            $run,
+            $checkpoint,
+            (int) $checkpoint->generation,
+            $leaseOwner,
+            $counters,
+        )) {
+            throw new \RuntimeException('The durable standard sync run still has outstanding work.');
+        }
+
+        return null;
+    }
+
+    private function listPage(ModuleDefinition $definition, string $mode, ?CarbonImmutable $sinceAt, ?string $token, string $correlationId): mixed
     {
-        $query = array_replace(['fields' => 'id', 'per_page' => 200], $definition->listQuery);
+        $query = $definition->enumerationQuery();
         if ($token) {
             $query['page_token'] = $token;
         }
@@ -587,21 +696,18 @@ class ZohoSyncOrchestrator
 
         if (in_array($mode, ['delta', 'reconcile'], true)
             && $definition->fetchStrategy === 'records_if_modified_since'
-            && $checkpoint->cursor_at !== null) {
-            $since = CarbonImmutable::parse($checkpoint->cursor_at)
-                ->subMinutes((int) config('zoho-v2.overlap_minutes', 15));
-
-            return $this->transport->getIfModifiedSince($path, $since, $query, $correlationId);
+            && $sinceAt !== null) {
+            return $this->transport->getIfModifiedSince($path, $sinceAt, $query, $correlationId);
         }
 
         return $this->transport->get($path, $query, $correlationId);
     }
 
-    /** @return array{0:list<string>,1:?string} */
+    /** @return array{0:list<string>,1:?string,2:?string} */
     private function parseRecordListPage(mixed $result): array
     {
         if ($result->status === 204) {
-            return [[], null];
+            return [[], null, null];
         }
 
         $data = $result->root('data');
@@ -635,24 +741,43 @@ class ZohoSyncOrchestrator
             throw new \RuntimeException('Zoho list response had inconsistent continuation metadata.');
         }
 
-        return [$ids, $token];
+        // Zoho can echo expiry metadata for the token that produced the final
+        // page. It is meaningful only when a next token exists.
+        $expiry = $more ? ($info['page_token_expiry'] ?? null) : null;
+        if ($more === true && (! is_string($expiry) || trim($expiry) === '')) {
+            throw new \RuntimeException('Zoho list response omitted its page token expiry.');
+        }
+        if ($expiry !== null) {
+            if (! preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/', $expiry)) {
+                throw new \RuntimeException('Zoho list response contained an invalid page token expiry.');
+            }
+            try {
+                CarbonImmutable::parse($expiry);
+            } catch (Throwable) {
+                throw new \RuntimeException('Zoho list response contained an invalid page token expiry.');
+            }
+        }
+
+        return [$ids, $token, $expiry];
     }
 
     /**
      * Create the durable standard-delivery outbox before a queue dispatch.
      * The returned generation is serialized into that exact queue message.
      */
-    public function prepareModuleDelivery(int $batchId, string $moduleKey, string $mode, string $correlationId, ?string $retryDeadline = null): ?int
+    public function prepareModuleDelivery(int $batchId, string $moduleKey, string $mode, string $correlationId, ?string $retryDeadline = null): ModuleDeliveryPreparation
     {
         $this->validateMode($mode);
         $definition = $this->registry->get($moduleKey);
 
-        return DB::transaction(function () use ($batchId, $definition, $mode, $correlationId, $retryDeadline): ?int {
+        return DB::transaction(function () use ($batchId, $definition, $mode, $correlationId, $retryDeadline): ModuleDeliveryPreparation {
             $batch = ZohoSyncBatch::query()->lockForUpdate()->find($batchId);
-            if ($batch === null || $batch->completed_at !== null || $batch->mode !== $mode
+            if ($batch === null || $batch->completed_at !== null
+                || ! in_array($batch->status, ['queued', 'running'], true)
+                || $batch->mode !== $mode
                 || ! hash_equals((string) $batch->correlation_id, $correlationId)
                 || ! in_array($definition->key, (array) $batch->modules, true)) {
-                return null;
+                return ModuleDeliveryPreparation::ignored();
             }
             $checkpoint = ZohoSyncCheckpoint::query()
                 ->where('module', $this->checkpointModule($definition))
@@ -664,14 +789,17 @@ class ZohoSyncOrchestrator
             // newer manual/scheduled batch must not steal that durable outbox.
             if ($checkpoint !== null && $checkpoint->sync_batch_id !== null
                 && (int) $checkpoint->sync_batch_id !== $batchId) {
-                $ownerBatch = ZohoSyncBatch::query()->lockForUpdate()->find($checkpoint->sync_batch_id);
-                if ($ownerBatch !== null && $ownerBatch->completed_at === null) {
-                    return null;
+                $ownerIsUnfinished = ZohoSyncBatch::query()
+                    ->whereKey($checkpoint->sync_batch_id)
+                    ->whereNull('completed_at')
+                    ->exists();
+                if ($ownerIsUnfinished) {
+                    return ModuleDeliveryPreparation::conflict();
                 }
             }
             if ($checkpoint !== null && $checkpoint->lease_expires_at?->isFuture()
                 && ($checkpoint->sync_batch_id !== $batchId || $checkpoint->correlation_id !== $correlationId)) {
-                return null;
+                return ModuleDeliveryPreparation::conflict();
             }
             if ($checkpoint === null) {
                 $checkpoint = ZohoSyncCheckpoint::query()->create([
@@ -693,15 +821,24 @@ class ZohoSyncOrchestrator
             ]);
             $batch->update(['status' => 'running', 'started_at' => $batch->started_at ?? now()]);
 
-            return (int) $checkpoint->generation;
+            return ModuleDeliveryPreparation::prepared((int) $checkpoint->generation);
         });
     }
 
-    private function claimCheckpoint(ModuleDefinition $definition, string $mode, string $workerId, string $correlationId, ?int $batchId = null, ?int $deliveryGeneration = null): ?ZohoSyncCheckpoint
+    private function claimCheckpoint(ModuleDefinition $definition, string $mode, string $workerId, string $correlationId, int $batchId, ?int $deliveryGeneration = null): ZohoSyncCheckpoint|false|null
     {
-        return DB::transaction(function () use ($definition, $mode, $workerId, $correlationId, $batchId, $deliveryGeneration): ?ZohoSyncCheckpoint {
+        return DB::transaction(function () use ($definition, $mode, $workerId, $correlationId, $batchId, $deliveryGeneration): ZohoSyncCheckpoint|false|null {
             $checkpointModule = $this->checkpointModule($definition);
             $queryFingerprint = $definition->queryFingerprint($mode);
+            $batch = ZohoSyncBatch::query()->lockForUpdate()->find($batchId);
+            if ($batch === null
+                || $batch->completed_at !== null
+                || ! in_array($batch->status, ['queued', 'running'], true)
+                || $batch->mode !== $mode
+                || ! hash_equals((string) $batch->correlation_id, $correlationId)
+                || ! in_array($definition->key, (array) $batch->modules, true)) {
+                return false;
+            }
             $checkpoint = ZohoSyncCheckpoint::query()->where('module', $checkpointModule)->where('submodule', $definition->submodule ?? '')->lockForUpdate()->first();
             if (! $checkpoint) {
                 try {
@@ -720,7 +857,7 @@ class ZohoSyncOrchestrator
             if ($deliveryGeneration !== null && ((int) $checkpoint->generation !== $deliveryGeneration
                 || (int) $checkpoint->sync_batch_id !== $batchId
                 || $checkpoint->correlation_id !== $correlationId)) {
-                return null;
+                return false;
             }
             if ($batchId !== null && $checkpoint->sync_batch_id !== null
                 && (int) $checkpoint->sync_batch_id !== $batchId) {
@@ -728,14 +865,17 @@ class ZohoSyncOrchestrator
                 // between deliveries, but it remains owned until its batch
                 // is terminal. Inline `--now` calls bypass the dispatcher,
                 // so they must enforce this same cross-batch fence here.
-                $ownerBatch = ZohoSyncBatch::query()->lockForUpdate()->find($checkpoint->sync_batch_id);
-                if ($ownerBatch === null || $ownerBatch->completed_at === null) {
+                $ownerIsMissingOrUnfinished = ! ZohoSyncBatch::query()
+                    ->whereKey($checkpoint->sync_batch_id)
+                    ->whereNotNull('completed_at')
+                    ->exists();
+                if ($ownerIsMissingOrUnfinished) {
                     return null;
                 }
             }
             $resumeCompatible = $checkpoint->sync_mode === $mode
                 && hash_equals((string) $checkpoint->page_query_fingerprint, $queryFingerprint)
-                && ($batchId === null || (int) $checkpoint->sync_batch_id === $batchId)
+                && (int) $checkpoint->sync_batch_id === $batchId
                 && $checkpoint->correlation_id === $correlationId;
             $resumeReconciliation = $mode === 'reconcile'
                 && $checkpoint->reconcile_correlation_id === $correlationId;
@@ -762,6 +902,10 @@ class ZohoSyncOrchestrator
                 'reconcile_started_at' => $mode === 'reconcile'
                     ? ($resumeReconciliation ? $checkpoint->reconcile_started_at : now())
                     : null,
+            ]);
+            $batch->update([
+                'status' => 'running',
+                'started_at' => $batch->started_at ?? now(),
             ]);
 
             return $checkpoint->fresh();
@@ -845,9 +989,51 @@ class ZohoSyncOrchestrator
     }
 
     /** @param array<string,int> $counters */
-    private function savePageCheckpoint(ZohoSyncCheckpoint $checkpoint, string $leaseOwner, ?string $token, CarbonImmutable $runAt, array $counters): bool
+    private function savePageCheckpoint(ZohoSyncCheckpoint $checkpoint, string $leaseOwner, ?string $token, ?string $expiry, array $counters): bool
     {
-        return $this->updateLease($checkpoint, $leaseOwner, ['cursor_page_token' => $token, 'page_last_zoho_id' => null, 'page_token_expires_at' => $token ? now()->addMinutes(15) : null, 'heartbeat_at' => now(), 'lease_expires_at' => now()->addSeconds($this->leaseSeconds()), 'counters' => $counters]);
+        return $this->updateLease($checkpoint, $leaseOwner, [
+            'cursor_page_token' => $token,
+            'page_last_zoho_id' => null,
+            'page_token_expires_at' => $token === null ? null : CarbonImmutable::parse((string) $expiry),
+            'heartbeat_at' => now(),
+            'lease_expires_at' => now()->addSeconds($this->leaseSeconds()),
+            'counters' => $counters,
+        ]);
+    }
+
+    private function persistWorkItemRecord(
+        ModuleDefinition $definition,
+        array $payload,
+        ZohoSyncBatch $batch,
+        CarbonImmutable $runAt,
+        ZohoSyncCheckpoint $checkpoint,
+        string $leaseOwner,
+        ZohoStandardSyncRun $run,
+        ZohoStandardSyncWorkItem $item,
+        int $apiRequests,
+    ): void {
+        $outcome = $this->worklist->completeClaimed(
+            $run,
+            $checkpoint,
+            (int) $checkpoint->generation,
+            $leaseOwner,
+            $item,
+            function () use ($definition, $payload, $batch, $runAt, $apiRequests): array {
+                $ingested = $this->ingestor->ingest($definition, $payload, $batch, $runAt);
+                $this->persistResolvedRecordFailure($definition, (string) $payload['id']);
+
+                return [
+                    'records_created' => (int) ($ingested['created'] ?? 0),
+                    'records_updated' => (int) ($ingested['updated'] ?? 0),
+                    'records_unchanged' => (int) ($ingested['unchanged'] ?? 0),
+                    'api_requests' => $apiRequests,
+                    'outcome' => 'persisted',
+                ];
+            },
+        );
+        if ($outcome === false) {
+            throw new ZohoLeaseLostException('The sync work item was reclaimed before persistence completed.');
+        }
     }
 
     /** @param array<string,int> $counters */
@@ -865,22 +1051,86 @@ class ZohoSyncOrchestrator
 
     private function quarantine(ZohoSyncBatch $batch, ModuleDefinition $definition, string $zohoId, Throwable $e, ZohoSyncCheckpoint $checkpoint, string $leaseOwner): void
     {
-        $key = hash('sha256', implode('|', [$definition->key, $definition->submodule ?? '', $zohoId, 'record']));
-        DB::transaction(function () use ($batch, $definition, $zohoId, $e, $key, $checkpoint, $leaseOwner): void {
+        DB::transaction(function () use ($batch, $definition, $zohoId, $e, $checkpoint, $leaseOwner): void {
             if (! $this->holdsFence($checkpoint, $leaseOwner, $batch->id)) {
                 throw new ZohoLeaseLostException('The synchronization lease was reclaimed.');
             }
-            $failure = ZohoSyncFailure::query()->where('failure_key', $key)->lockForUpdate()->first();
-            $values = ['sync_batch_id' => $batch->id, 'module' => $definition->key, 'submodule' => $definition->submodule ?? '', 'zoho_id' => $zohoId, 'failure_kind' => 'record', 'correlation_id' => $batch->correlation_id, 'error_summary' => 'Record synchronization failed.', 'context' => ['exception' => class_basename($e), 'correlation_id' => $batch->correlation_id], 'retry_after' => now()->addMinutes(5), 'resolved_at' => null];
-            if ($failure) {
-                $failure->update($values + ['attempts' => ((int) $failure->attempts) + 1]);
-            } else {
-                ZohoSyncFailure::query()->create($values + ['failure_key' => $key, 'attempts' => 1]);
-            }
+            $this->persistQuarantineFailure($batch, $definition, $zohoId, $e);
         });
     }
 
+    private function quarantineWorkItem(
+        ZohoSyncBatch $batch,
+        ModuleDefinition $definition,
+        ZohoStandardSyncWorkItem $item,
+        Throwable $exception,
+        ZohoSyncCheckpoint $checkpoint,
+        string $leaseOwner,
+        ZohoStandardSyncRun $run,
+        int $apiRequests,
+    ): void {
+        $outcome = $this->worklist->quarantineClaimed(
+            $run,
+            $checkpoint,
+            (int) $checkpoint->generation,
+            $leaseOwner,
+            $item,
+            function () use ($batch, $definition, $item, $exception, $apiRequests): array {
+                $this->persistQuarantineFailure($batch, $definition, $item->zoho_id, $exception);
+
+                return [
+                    'api_requests' => $apiRequests,
+                    'outcome' => 'quarantined',
+                    'error_summary' => 'Record synchronization failed.',
+                ];
+            },
+        );
+        if ($outcome === false) {
+            throw new ZohoLeaseLostException('The sync work item was reclaimed before quarantine completed.');
+        }
+    }
+
+    private function persistQuarantineFailure(
+        ZohoSyncBatch $batch,
+        ModuleDefinition $definition,
+        string $zohoId,
+        Throwable $exception,
+    ): void {
+        $key = hash('sha256', implode('|', [$definition->key, $definition->submodule ?? '', $zohoId, 'record']));
+        $failure = ZohoSyncFailure::query()->where('failure_key', $key)->lockForUpdate()->first();
+        $values = [
+            'sync_batch_id' => $batch->id,
+            'module' => $definition->key,
+            'submodule' => $definition->submodule ?? '',
+            'zoho_id' => $zohoId,
+            'failure_kind' => 'record',
+            'correlation_id' => $batch->correlation_id,
+            'error_summary' => 'Record synchronization failed.',
+            'context' => ['exception' => class_basename($exception), 'correlation_id' => $batch->correlation_id],
+            'retry_after' => now()->addMinutes(5),
+            'resolved_at' => null,
+        ];
+        if ($failure) {
+            $failure->update($values + ['attempts' => ((int) $failure->attempts) + 1]);
+        } else {
+            ZohoSyncFailure::query()->create($values + ['failure_key' => $key, 'attempts' => 1]);
+        }
+    }
+
     private function resolveRecordFailure(ModuleDefinition $definition, string $zohoId, ZohoSyncCheckpoint $checkpoint, string $leaseOwner, int $batchId): void
+    {
+        DB::transaction(function () use ($checkpoint, $leaseOwner, $batchId, $definition, $zohoId): void {
+            // Keep the ownership predicate and the failure resolution inside
+            // one transaction. A worker reclaimed between separate queries
+            // must not resolve the successor's durable quarantine record.
+            if (! $this->holdsFence($checkpoint, $leaseOwner, $batchId)) {
+                throw new ZohoLeaseLostException('The synchronization lease was reclaimed.');
+            }
+            $this->persistResolvedRecordFailure($definition, $zohoId);
+        });
+    }
+
+    private function persistResolvedRecordFailure(ModuleDefinition $definition, string $zohoId): void
     {
         $key = hash('sha256', implode('|', [
             $definition->key,
@@ -888,19 +1138,11 @@ class ZohoSyncOrchestrator
             $zohoId,
             'record',
         ]));
-        DB::transaction(function () use ($checkpoint, $leaseOwner, $batchId, $key): void {
-            // Keep the ownership predicate and the failure resolution inside
-            // one transaction. A worker reclaimed between separate queries
-            // must not resolve the successor's durable quarantine record.
-            if (! $this->holdsFence($checkpoint, $leaseOwner, $batchId)) {
-                throw new ZohoLeaseLostException('The synchronization lease was reclaimed.');
-            }
-            ZohoSyncFailure::query()
-                ->where('failure_key', $key)
-                ->whereNull('resolved_at')
-                ->lockForUpdate()
-                ->update(['resolved_at' => now(), 'retry_after' => null]);
-        });
+        ZohoSyncFailure::query()
+            ->where('failure_key', $key)
+            ->whereNull('resolved_at')
+            ->lockForUpdate()
+            ->update(['resolved_at' => now(), 'retry_after' => null]);
     }
 
     /** @param array<string,int> $counters */
@@ -943,20 +1185,23 @@ class ZohoSyncOrchestrator
     /** Conditional writes prevent a reclaimed stale worker from moving another worker's cursor. */
     private function updateLease(ZohoSyncCheckpoint $checkpoint, string $leaseOwner, array $values): bool
     {
-        $owned = ZohoSyncCheckpoint::query()
-            ->whereKey($checkpoint->id)
-            ->where('sync_batch_id', $checkpoint->sync_batch_id)
-            ->where('generation', $checkpoint->generation)
-            ->where('lease_owner', $leaseOwner)
-            ->where('lease_expires_at', '>', now());
-        if ((clone $owned)->update($values) === 1) {
-            return true;
-        }
+        return DB::transaction(function () use ($checkpoint, $leaseOwner, $values): bool {
+            $batch = $checkpoint->sync_batch_id === null
+                ? null
+                : ZohoSyncBatch::query()->lockForUpdate()->find($checkpoint->sync_batch_id);
+            if (! $this->batchOwnsLiveCheckpoint($batch, $checkpoint)) {
+                return false;
+            }
 
-        // MySQL reports zero affected rows when a same-second heartbeat writes
-        // identical values. Recheck ownership so that a harmless no-op is not
-        // mistaken for a reclaimed lease.
-        return $owned->exists();
+            $locked = ZohoSyncCheckpoint::query()->lockForUpdate()->find($checkpoint->id);
+            if (! $this->checkpointMatchesFence($locked, $checkpoint, $leaseOwner)) {
+                return false;
+            }
+
+            $locked->fill($values)->save();
+
+            return true;
+        });
     }
 
     /**
@@ -966,14 +1211,52 @@ class ZohoSyncOrchestrator
      */
     private function holdsFence(ZohoSyncCheckpoint $checkpoint, string $leaseOwner, int $batchId): bool
     {
-        return ZohoSyncCheckpoint::query()
-            ->whereKey($checkpoint->id)
-            ->where('sync_batch_id', $batchId)
-            ->where('generation', $checkpoint->generation)
-            ->where('lease_owner', $leaseOwner)
-            ->where('lease_expires_at', '>', now())
-            ->lockForUpdate()
-            ->first(['id']) !== null;
+        return DB::transaction(function () use ($checkpoint, $leaseOwner, $batchId): bool {
+            $batch = ZohoSyncBatch::query()->lockForUpdate()->find($batchId);
+            if (! $this->batchOwnsLiveCheckpoint($batch, $checkpoint)) {
+                return false;
+            }
+
+            $locked = ZohoSyncCheckpoint::query()->lockForUpdate()->find($checkpoint->id);
+
+            return $this->checkpointMatchesFence($locked, $checkpoint, $leaseOwner);
+        });
+    }
+
+    private function batchOwnsLiveCheckpoint(?ZohoSyncBatch $batch, ZohoSyncCheckpoint $checkpoint): bool
+    {
+        if ($batch === null || $batch->completed_at !== null || $batch->status !== 'running'
+            || (int) $checkpoint->sync_batch_id !== (int) $batch->id
+            || $checkpoint->correlation_id === null
+            || ! hash_equals((string) $batch->correlation_id, (string) $checkpoint->correlation_id)
+            || $batch->mode !== $checkpoint->sync_mode) {
+            return false;
+        }
+
+        $moduleKey = str_starts_with((string) $checkpoint->module, 'v2:')
+            ? substr((string) $checkpoint->module, 3)
+            : null;
+
+        return $moduleKey !== null
+            && $moduleKey !== ''
+            && in_array($moduleKey, (array) $batch->modules, true);
+    }
+
+    private function checkpointMatchesFence(
+        ?ZohoSyncCheckpoint $locked,
+        ZohoSyncCheckpoint $expected,
+        string $leaseOwner,
+    ): bool
+    {
+        return $locked !== null
+            && (int) $locked->sync_batch_id === (int) $expected->sync_batch_id
+            && $locked->module === $expected->module
+            && $locked->submodule === $expected->submodule
+            && $locked->sync_mode === $expected->sync_mode
+            && $locked->correlation_id === $expected->correlation_id
+            && (int) $locked->generation === (int) $expected->generation
+            && $locked->lease_owner === $leaseOwner
+            && $locked->lease_expires_at?->isFuture() === true;
     }
 
     /** @param array<string,int> $counters */
@@ -1117,6 +1400,13 @@ class ZohoSyncOrchestrator
         }
     }
 
+    private function assertWithinRecordsTraversalCeiling(int $enumeratedCount, ?string $nextToken): void
+    {
+        if ($enumeratedCount > 100000 || ($nextToken !== null && $enumeratedCount >= 100000)) {
+            throw new \RuntimeException('Zoho Records API pagination reached the 100,000-record ceiling.');
+        }
+    }
+
     /** @return array<string,int> */
     private function emptyCounters(): array
     {
@@ -1125,7 +1415,7 @@ class ZohoSyncOrchestrator
 
     private function isExpiredPageToken(mixed $result): bool
     {
-        return in_array($result->status, [400, 401, 410], true) && in_array(strtolower((string) $result->errorCode), ['expired_page_token', 'invalid_page_token', 'invalid_token', 'token_bound_data_mismatch'], true);
+        return in_array($result->status, [400, 401, 410], true) && in_array(strtolower((string) $result->errorCode), ['expired_value', 'expired_page_token', 'invalid_page_token', 'invalid_token', 'token_bound_data_mismatch'], true);
     }
 
     private function safe(string $value): string

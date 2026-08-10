@@ -105,8 +105,7 @@ final class ZohoRecordsController extends BackendController
     private function ensureEnabled(string $module): void
     {
         abort_unless(
-            (bool) config('zoho-v2.features.explorer_enabled', false)
-                && $this->explorer->available($module),
+            $this->explorer->available($module),
             404,
         );
     }

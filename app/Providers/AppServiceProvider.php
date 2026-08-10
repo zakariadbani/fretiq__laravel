@@ -99,6 +99,9 @@ class AppServiceProvider extends ServiceProvider
                 sendWindowGuard: $app->make(\App\Services\Campaign\SendWindowGuard::class),
                 sequenceService: $app->make(\App\Services\Campaign\SequenceService::class),
                 calendar: $app->make(\App\Services\Scheduling\BusinessCalendarService::class),
+                deliveryResolver: $app->make(\App\Services\Campaign\CampaignDeliveryResolver::class),
+                smtpReservations: $app->make(\App\Services\Campaign\SmtpSendReservationService::class),
+                deliveryFence: $app->make(\App\Services\Campaign\CampaignDeliveryFence::class),
             ),
         );
 

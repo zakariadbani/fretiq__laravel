@@ -6,6 +6,8 @@ use App\Models\Zoho\ZohoLead;
 use App\Models\Zoho\ZohoQuote;
 use App\Models\Zoho\ZohoQuoteItem;
 use App\Models\Zoho\ZohoQuoteStatusHistory;
+use App\Models\Zoho\ZohoStandardSyncRun;
+use App\Models\Zoho\ZohoStandardSyncWorkItem;
 use App\Models\Zoho\ZohoSyncFailure;
 use App\Models\Zoho\ZohoUser;
 use App\Models\ZohoSyncCheckpoint;
@@ -14,7 +16,9 @@ use App\Services\Zoho\V2\Contracts\ZohoTransport;
 use App\Services\Zoho\V2\DTO\TransportAttempt;
 use App\Services\Zoho\V2\DTO\TransportResult;
 use App\Services\Zoho\V2\Registry\ZohoModuleRegistry;
+use App\Services\Zoho\V2\Sync\ZohoManualSyncCoordinator;
 use App\Services\Zoho\V2\Sync\ZohoSyncOrchestrator;
+use App\Services\Zoho\V2\Sync\ZohoStandardWorklist;
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -269,14 +273,14 @@ class ZohoSyncOrchestratorTest extends TestCase
     {
         $this->transport->queue('get', '/Leads', $this->ok([
             'data' => [['id' => 'converted-lead']],
-            'info' => ['more_records' => true, 'next_page_token' => 'opaque-page-2'],
-        ]));
-        $this->transport->queue('get', '/Leads/converted-lead', $this->ok([
-            'data' => [['id' => 'converted-lead', 'Converted__s' => true]],
+            'info' => ['more_records' => true, 'next_page_token' => 'opaque-page-2', 'page_token_expiry' => '2026-08-11T12:00:00+00:00'],
         ]));
         $this->transport->queue('get', '/Leads', $this->ok([
             'data' => [],
             'info' => ['more_records' => false],
+        ]));
+        $this->transport->queue('get', '/Leads/converted-lead', $this->ok([
+            'data' => [['id' => 'converted-lead', 'Converted__s' => true]],
         ]));
         $batch = app(ZohoSyncOrchestrator::class)->createBatch(['leads'], 'backfill');
 
@@ -285,17 +289,21 @@ class ZohoSyncOrchestratorTest extends TestCase
         app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'worker-next-page');
 
         $this->assertSame([
-            'fields' => 'id,Converted__s',
-            'per_page' => 200,
+            'fields' => 'id',
             'converted' => 'both',
+            'per_page' => 200,
+            'sort_by' => 'id',
+            'sort_order' => 'asc',
         ], $this->transport->calls[0]['query']);
-        $this->assertSame(['converted' => 'both'], $this->transport->calls[1]['query']);
         $this->assertSame([
-            'fields' => 'id,Converted__s',
-            'per_page' => 200,
+            'fields' => 'id',
             'converted' => 'both',
+            'per_page' => 200,
+            'sort_by' => 'id',
+            'sort_order' => 'asc',
             'page_token' => 'opaque-page-2',
-        ], $this->transport->calls[2]['query']);
+        ], $this->transport->calls[1]['query']);
+        $this->assertSame(['converted' => 'both'], $this->transport->calls[2]['query']);
         $this->assertTrue(ZohoLead::query()->where('zoho_id', 'converted-lead')->value('is_converted'));
     }
 
@@ -458,7 +466,14 @@ class ZohoSyncOrchestratorTest extends TestCase
         CarbonImmutable::setTestNow('2026-08-09 12:00:02');
         $orchestrator = app(ZohoSyncOrchestrator::class);
         $method = new \ReflectionMethod($orchestrator, 'claimCheckpoint');
-        $claimed = $method->invoke($orchestrator, app(ZohoModuleRegistry::class)->get('leads'), 'backfill', 'worker-1', 'corr');
+        $claimed = $method->invoke(
+            $orchestrator,
+            app(ZohoModuleRegistry::class)->get('leads'),
+            'backfill',
+            'worker-1',
+            $batch->correlation_id,
+            $batch->id,
+        );
         $this->assertSame('2026-08-09 12:01:32', $claimed->lease_expires_at->format('Y-m-d H:i:s'));
     }
 
@@ -499,10 +514,9 @@ class ZohoSyncOrchestratorTest extends TestCase
         $this->assertTrue($interrupted->continuationRequired);
         $this->assertSame(1, $interrupted->counters['seen']);
         $this->assertSame(1, $interrupted->counters['created']);
-        $this->assertSame('L1', ZohoSyncCheckpoint::query()->value('page_last_zoho_id'));
+        $this->assertNull(ZohoSyncCheckpoint::query()->value('page_last_zoho_id'));
         $this->assertSame(1, ZohoLead::query()->count());
 
-        $this->transport->queue('get', '/Leads', $this->ok($page));
         $this->transport->queue('get', '/Leads/L2', $this->ok(['data' => [['id' => 'L2', 'Full_Name' => 'Two']]]));
         $again = app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'worker-2');
 
@@ -518,7 +532,182 @@ class ZohoSyncOrchestratorTest extends TestCase
         ]);
     }
 
-    public function test_missing_durable_page_marker_restarts_the_page_without_an_exhaustion_loop(): void
+    public function test_expired_page_token_request_count_survives_restart_and_later_delivery(): void
+    {
+        $expiry = '2026-08-11T12:00:00+00:00';
+        $this->transport->queue('get', '/Leads', $this->ok([
+            'data' => [['id' => 'L-token']],
+            'info' => ['more_records' => true, 'next_page_token' => 'bound-token', 'page_token_expiry' => $expiry],
+        ]));
+        $this->transport->queue('get', '/Leads', $this->error(400, 'TOKEN_BOUND_DATA_MISMATCH'));
+        $this->transport->queue('get', '/Leads', $this->ok([
+            'data' => [['id' => 'L-token']],
+            'info' => ['more_records' => false],
+        ]));
+        $this->transport->queue('get', '/Leads/L-token', $this->ok([
+            'data' => [['id' => 'L-token', 'Full_Name' => 'Recovered token lead']],
+        ]));
+        $batch = app(ZohoSyncOrchestrator::class)->createBatch(['leads'], 'backfill');
+
+        app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'token-worker-1');
+        $restart = app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'token-worker-2');
+        $completed = app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'token-worker-3');
+
+        $this->assertTrue($restart->continuationRequired);
+        $this->assertSame(4, $completed->counters['api_requests']);
+        $this->assertSame(4, ZohoSyncCheckpoint::query()->where('module', 'v2:leads')->value('counters')['api_requests']);
+        $this->assertSame(4, ZohoSyncLog::query()->where('sync_batch_id', $batch->id)->value('api_requests'));
+    }
+
+    public function test_throttled_specific_record_request_count_survives_later_delivery_without_recounting_completed_items(): void
+    {
+        $this->transport->queue('get', '/Leads', $this->ok([
+            'data' => [['id' => 'L-one'], ['id' => 'L-two']],
+            'info' => ['more_records' => false],
+        ]));
+        $this->transport->queue('get', '/Leads/L-one', $this->ok([
+            'data' => [['id' => 'L-one', 'Full_Name' => 'First']],
+        ]));
+        $this->transport->queue('get', '/Leads/L-two', new TransportResult(
+            0,
+            [],
+            [],
+            [],
+            'throttle-attempt',
+            [new TransportAttempt(1, 429, 1, 'throttled')],
+            errorCode: 'throttle_unavailable',
+        ));
+        $batch = app(ZohoSyncOrchestrator::class)->createBatch(['leads'], 'backfill');
+
+        $interrupted = app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'throttle-worker-1');
+        $this->assertSame(3, $interrupted->counters['api_requests']);
+
+        $this->transport->queue('get', '/Leads/L-two', $this->ok([
+            'data' => [['id' => 'L-two', 'Full_Name' => 'Second']],
+        ]));
+        $completed = app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'throttle-worker-2');
+
+        $this->assertSame(2, $completed->counters['seen']);
+        $this->assertSame(2, $completed->counters['created']);
+        $this->assertSame(4, $completed->counters['api_requests']);
+        $this->assertSame(4, ZohoSyncCheckpoint::query()->where('module', 'v2:leads')->value('counters')['api_requests']);
+        $this->assertSame(4, ZohoSyncLog::query()->where('sync_batch_id', $batch->id)->value('api_requests'));
+        $this->assertSame(1, count(array_filter($this->transport->calls, fn (array $call): bool => $call['path'] === '/Leads/L-one')));
+    }
+
+    public function test_standard_records_enumerate_all_pages_before_specific_record_hydration(): void
+    {
+        $expiry = '2026-08-11T12:00:00+00:00';
+        $this->transport->queue('get', '/Leads', $this->ok([
+            'data' => [['id' => 'L2'], ['id' => 'L1']],
+            'info' => ['more_records' => true, 'next_page_token' => 'page-2', 'page_token_expiry' => $expiry],
+        ]));
+        $this->transport->queue('get', '/Leads', $this->ok([
+            'data' => [['id' => 'L3']],
+            'info' => ['more_records' => false],
+        ]));
+        $this->transport->queue('get', '/Leads/L1', $this->ok(['data' => [['id' => 'L1', 'Full_Name' => 'One']]]));
+        $this->transport->queue('get', '/Leads/L2', $this->ok(['data' => [['id' => 'L2', 'Full_Name' => 'Two']]]));
+        $this->transport->queue('get', '/Leads/L3', $this->ok(['data' => [['id' => 'L3', 'Full_Name' => 'Three']]]));
+        $batch = app(ZohoSyncOrchestrator::class)->createBatch(['leads'], 'backfill');
+
+        $first = app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'enumerator-1');
+
+        $this->assertTrue($first->continuationRequired);
+        $this->assertSame(['/Leads'], array_column($this->transport->calls, 'path'));
+        $this->assertSame([
+            'fields' => 'id', 'converted' => 'both', 'per_page' => 200, 'sort_by' => 'id', 'sort_order' => 'asc',
+        ], $this->transport->calls[0]['query']);
+
+        app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'enumerator-2');
+
+        $this->assertSame(3, ZohoLead::query()->count());
+        $this->assertSame('page-2', $this->transport->calls[1]['query']['page_token']);
+        $this->assertSame($this->transport->calls[0]['query'] + ['page_token' => 'page-2'], $this->transport->calls[1]['query']);
+    }
+
+    public function test_completed_work_item_reconstructs_stale_checkpoint_counters_without_rehydration(): void
+    {
+        $definition = app(ZohoModuleRegistry::class)->get('leads');
+        $batch = app(ZohoSyncOrchestrator::class)->createBatch(['leads'], 'backfill');
+        ZohoSyncCheckpoint::query()->create([
+            'module' => 'v2:leads', 'submodule' => '', 'sync_mode' => 'backfill',
+            'page_query_fingerprint' => $definition->queryFingerprint('backfill'), 'status' => 'idle',
+            'sync_batch_id' => $batch->id, 'correlation_id' => $batch->correlation_id,
+            'counters' => ['seen' => 0, 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'quarantined' => 0, 'api_requests' => 0],
+        ]);
+        $run = app(ZohoStandardWorklist::class)->getOrCreateRun($batch, 'leads', '', [
+            'correlation_id' => $batch->correlation_id,
+            'mode' => 'backfill',
+            'query_fingerprint' => $definition->queryFingerprint('backfill'),
+            'query_params' => $definition->enumerationQuery(),
+            'watermark_at' => $batch->requested_at,
+            'since_at' => null,
+            'status' => 'enumerating',
+            'counters' => ['seen' => 0, 'created' => 0, 'updated' => 0, 'unchanged' => 0, 'quarantined' => 0, 'api_requests' => 2],
+        ]);
+        $run->update(['status' => 'hydrating', 'enumerated_at' => now()]);
+        ZohoStandardSyncWorkItem::query()->create([
+            'zoho_standard_sync_run_id' => $run->id,
+            'zoho_id' => 'already-completed',
+            'status' => 'completed',
+            'outcome' => 'persisted',
+            'records_created' => 1,
+            'api_requests' => 3,
+            'processed_at' => now(),
+        ]);
+
+        $result = app(ZohoSyncOrchestrator::class)->runModule(
+            $batch->id,
+            'leads',
+            'backfill',
+            'counter-recovery-worker',
+        );
+
+        $this->assertSame(1, $result->counters['seen']);
+        $this->assertSame(1, $result->counters['created']);
+        $this->assertSame(5, $result->counters['api_requests']);
+        $this->assertCount(0, $this->transport->calls);
+        $this->assertSame($result->counters, ZohoSyncCheckpoint::query()->where('module', 'v2:leads')->value('counters'));
+        $this->assertDatabaseHas('zoho_sync_logs', [
+            'sync_batch_id' => $batch->id, 'records_seen' => 1, 'records_created' => 1, 'api_requests' => 5,
+        ]);
+    }
+
+    public function test_token_chain_reuses_persisted_since_when_overlap_and_checkpoint_change(): void
+    {
+        CarbonImmutable::setTestNow('2026-08-09 12:00:00');
+        config()->set('zoho-v2.overlap_minutes', 15);
+        $definition = app(ZohoModuleRegistry::class)->get('leads');
+        $batch = app(ZohoSyncOrchestrator::class)->createBatch(['leads'], 'delta');
+        ZohoSyncCheckpoint::query()->create([
+            'module' => 'v2:leads', 'submodule' => '', 'sync_mode' => 'delta',
+            'page_query_fingerprint' => $definition->queryFingerprint('delta'), 'status' => 'idle',
+            'cursor_at' => CarbonImmutable::parse('2026-08-09 10:00:00'),
+        ]);
+        $this->transport->queue('conditional', '/Leads', $this->ok([
+            'data' => [],
+            'info' => ['more_records' => true, 'next_page_token' => 'page-2', 'page_token_expiry' => '2026-08-10T12:00:00+00:00'],
+        ]));
+
+        app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'delta', 'since-page-1');
+
+        config()->set('zoho-v2.overlap_minutes', 90);
+        ZohoSyncCheckpoint::query()->where('module', 'v2:leads')->update([
+            'cursor_at' => CarbonImmutable::parse('2026-08-09 08:00:00'),
+        ]);
+        $this->transport->queue('conditional', '/Leads', $this->ok([
+            'data' => [], 'info' => ['more_records' => false],
+        ]));
+
+        app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'delta', 'since-page-2');
+
+        $this->assertSame('2026-08-09 09:45:00', $this->transport->calls[0]['since']->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-08-09 09:45:00', $this->transport->calls[1]['since']->format('Y-m-d H:i:s'));
+        $this->assertSame('page-2', $this->transport->calls[1]['query']['page_token']);
+    }
+
+    public function test_legacy_in_page_marker_does_not_interfere_with_durable_worklist_hydration(): void
     {
         $definition = app(ZohoModuleRegistry::class)->get('leads');
         $batch = app(ZohoSyncOrchestrator::class)->createBatch(['leads'], 'backfill');
@@ -531,24 +720,15 @@ class ZohoSyncOrchestratorTest extends TestCase
         $this->transport->queue('get', '/Leads', $this->ok([
             'data' => [['id' => 'L2'], ['id' => 'L1']], 'info' => ['more_records' => false],
         ]));
-
-        $restart = app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'marker-worker-1');
-
-        $this->assertTrue($restart->continuationRequired);
-        $this->assertNotEmpty($restart->warnings);
-        $this->assertNull(ZohoSyncCheckpoint::query()->where('module', 'v2:leads')->value('page_last_zoho_id'));
-
-        $this->transport->queue('get', '/Leads', $this->ok([
-            'data' => [['id' => 'L2'], ['id' => 'L1']], 'info' => ['more_records' => false],
-        ]));
-        $this->transport->queue('get', '/Leads/L2', $this->ok(['data' => [['id' => 'L2', 'Full_Name' => 'Two']]]));
         $this->transport->queue('get', '/Leads/L1', $this->ok(['data' => [['id' => 'L1', 'Full_Name' => 'One']]]));
+        $this->transport->queue('get', '/Leads/L2', $this->ok(['data' => [['id' => 'L2', 'Full_Name' => 'Two']]]));
 
-        $completed = app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'marker-worker-2');
+        $completed = app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'marker-worker');
 
         $this->assertFalse($completed->retryableFailure);
+        $this->assertNull(ZohoSyncCheckpoint::query()->where('module', 'v2:leads')->value('page_last_zoho_id'));
         $this->assertSame(2, ZohoLead::query()->count());
-        $this->assertSame(2, count(array_filter($this->transport->calls, fn (array $call): bool => $call['path'] === '/Leads')));
+        $this->assertSame(1, count(array_filter($this->transport->calls, fn (array $call): bool => $call['path'] === '/Leads')));
     }
 
     public function test_expired_page_token_restarts_once_from_durable_overlap_cursor(): void
@@ -581,6 +761,60 @@ class ZohoSyncOrchestratorTest extends TestCase
 
         $this->assertCount(2, $this->transport->calls);
         $this->assertArrayNotHasKey('page_token', $this->transport->calls[1]['query']);
+    }
+
+    public function test_expired_token_reenumerates_ids_without_refetching_a_seeded_completed_item(): void
+    {
+        CarbonImmutable::setTestNow('2026-08-09 12:00:00');
+        $definition = app(ZohoModuleRegistry::class)->get('leads');
+        $batch = app(ZohoSyncOrchestrator::class)->createBatch(['leads'], 'backfill');
+        $checkpoint = ZohoSyncCheckpoint::query()->create([
+            'module' => 'v2:leads', 'submodule' => '', 'sync_mode' => 'backfill',
+            'page_query_fingerprint' => $definition->queryFingerprint('backfill'), 'status' => 'idle',
+            'cursor_page_token' => 'expired-token', 'sync_batch_id' => $batch->id,
+            'correlation_id' => $batch->correlation_id,
+        ]);
+        $run = app(ZohoStandardWorklist::class)->getOrCreateRun($batch, 'leads', '', [
+            'correlation_id' => $batch->correlation_id,
+            'mode' => 'backfill',
+            'query_fingerprint' => $definition->queryFingerprint('backfill'),
+            'query_params' => $definition->enumerationQuery(),
+            'watermark_at' => $batch->requested_at,
+            'since_at' => null,
+            'page_token' => 'expired-token',
+            'status' => 'enumerating',
+        ]);
+        app(ZohoStandardWorklist::class)->seedCompleted($run, ['L1']);
+        $this->transport->queue('get', '/Leads', $this->error(400, 'EXPIRED_VALUE'));
+
+        $restart = app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'restart-worker');
+
+        $this->assertTrue($restart->continuationRequired);
+        $this->assertSame(1, $run->fresh()->enumeration_restart_count);
+        $this->transport->queue('get', '/Leads', $this->ok([
+            'data' => [['id' => 'L1'], ['id' => 'L2']],
+            'info' => ['more_records' => false, 'page_token_expiry' => '2026-08-11T12:00:00+00:00'],
+        ]));
+        $this->transport->queue('get', '/Leads/L2', $this->ok(['data' => [['id' => 'L2', 'Full_Name' => 'Two']]]));
+
+        app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'hydration-worker');
+
+        $paths = array_column($this->transport->calls, 'path');
+        $this->assertNotContains('/Leads/L1', $paths);
+        $this->assertContains('/Leads/L2', $paths);
+        $this->assertSame('completed', ZohoStandardSyncWorkItem::query()->where('zoho_id', 'L1')->value('status'));
+        $this->assertSame('completed', $run->fresh()->status);
+    }
+
+    public function test_records_api_traversal_ceiling_fails_before_requesting_an_impossible_page(): void
+    {
+        $method = new \ReflectionMethod(ZohoSyncOrchestrator::class, 'assertWithinRecordsTraversalCeiling');
+        $method->setAccessible(true);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('100,000-record ceiling');
+
+        $method->invoke(app(ZohoSyncOrchestrator::class), 100000, 'page-beyond-ceiling');
     }
 
     public function test_page_tokens_resume_only_for_the_same_query_and_token_bound_mismatch_restarts_once(): void
@@ -629,7 +863,7 @@ class ZohoSyncOrchestratorTest extends TestCase
         $token = str_repeat('t', 1024);
         $this->transport->queue('get', '/Leads', $this->ok([
             'data' => [['id' => 'wide-token-lead']],
-            'info' => ['more_records' => true, 'next_page_token' => $token],
+            'info' => ['more_records' => true, 'next_page_token' => $token, 'page_token_expiry' => '2026-08-11T12:00:00+00:00'],
         ]));
         $this->transport->queue('get', '/Leads/wide-token-lead', $this->ok(['data' => [['id' => 'wide-token-lead']]]));
         $batch = app(ZohoSyncOrchestrator::class)->createBatch(['leads'], 'backfill');
@@ -638,6 +872,43 @@ class ZohoSyncOrchestratorTest extends TestCase
 
         $this->assertTrue($result->continuationRequired);
         $this->assertSame($token, ZohoSyncCheckpoint::query()->value('cursor_page_token'));
+    }
+
+    public function test_list_page_rejects_non_iso_page_token_expiry_without_advancing_enumeration(): void
+    {
+        $this->transport->queue('get', '/Leads', $this->ok([
+            'data' => [['id' => 'L1']],
+            'info' => ['more_records' => true, 'next_page_token' => 'page-2', 'page_token_expiry' => 'tomorrow'],
+        ]));
+        $batch = app(ZohoSyncOrchestrator::class)->createBatch(['leads'], 'backfill');
+
+        $result = app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'invalid-expiry-worker');
+
+        $this->assertTrue($result->retryableFailure);
+        $this->assertNull(ZohoSyncCheckpoint::query()->where('module', 'v2:leads')->value('cursor_page_token'));
+        $this->assertDatabaseMissing('zoho_standard_sync_work_items', ['zoho_id' => 'L1']);
+    }
+
+    public function test_invalid_enumeration_response_request_count_survives_a_later_delivery(): void
+    {
+        $this->transport->queue('get', '/Leads', $this->ok([
+            'data' => [['id' => 'L-invalid-expiry']],
+            'info' => ['more_records' => true, 'next_page_token' => 'page-2', 'page_token_expiry' => 'tomorrow'],
+        ]));
+        $this->transport->queue('get', '/Leads', $this->ok([
+            'data' => [],
+            'info' => ['more_records' => false],
+        ]));
+        $batch = app(ZohoSyncOrchestrator::class)->createBatch(['leads'], 'backfill');
+
+        $failed = app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'invalid-expiry-worker-1');
+        $completed = app(ZohoSyncOrchestrator::class)->runModule($batch->id, 'leads', 'backfill', 'invalid-expiry-worker-2');
+
+        $this->assertTrue($failed->retryableFailure);
+        $this->assertSame(2, $completed->counters['api_requests']);
+        $this->assertSame(2, ZohoStandardSyncRun::query()->where('sync_batch_id', $batch->id)->value('counters')['api_requests']);
+        $this->assertSame(2, ZohoSyncCheckpoint::query()->where('module', 'v2:leads')->value('counters')['api_requests']);
+        $this->assertSame(2, ZohoSyncLog::query()->where('sync_batch_id', $batch->id)->value('api_requests'));
     }
 
     public function test_quote_items_are_tombstoned_and_status_observations_are_replay_safe(): void
@@ -665,6 +936,36 @@ class ZohoSyncOrchestratorTest extends TestCase
         $this->assertSame(2, ZohoQuoteStatusHistory::query()->count());
         $this->assertDatabaseHas('zoho_quote_items', ['zoho_quote_id' => 'Q1', 'zoho_line_item_id' => 'I2', 'zoho_deletion_type' => 'missing_from_quote']);
         $this->assertSame('EUR', ZohoQuoteItem::query()->where('zoho_line_item_id', 'I1')->value('currency_code'));
+    }
+
+    public function test_quote_aggregate_persists_live_verified_198_character_unit_of_measure(): void
+    {
+        $unitOfMeasure = str_repeat('u', 198);
+        $payload = [
+            'id' => 'Q1',
+            'Subject' => 'Quote with long unit of measure',
+            'Exchange_Rate' => 0,
+            'Marchandise_dangereuse' => false,
+            'Quoted_Items' => [[
+                'id' => 'I1',
+                'Unit_de_Mesure' => $unitOfMeasure,
+                'quantity' => 0,
+                'list_price' => 0,
+            ]],
+        ];
+
+        $this->runQuote($payload, 'long-unit-of-measure-worker');
+
+        $this->assertSame(
+            $unitOfMeasure,
+            ZohoQuoteItem::query()->where('zoho_line_item_id', 'I1')->value('unit_of_measure'),
+        );
+        $quote = ZohoQuote::query()->where('zoho_id', 'Q1')->firstOrFail();
+        $item = ZohoQuoteItem::query()->where('zoho_line_item_id', 'I1')->firstOrFail();
+        $this->assertSame('0.000000', $quote->exchange_rate);
+        $this->assertSame('0', $quote->dangerous_goods_status);
+        $this->assertSame('0.0000', $item->quantity);
+        $this->assertSame('0.00', $item->list_price);
     }
 
     public function test_v2_checkpoint_namespace_does_not_collide_with_legacy_module_name(): void
@@ -697,7 +998,7 @@ class ZohoSyncOrchestratorTest extends TestCase
         $orchestrator = app(ZohoSyncOrchestrator::class);
         $save = new \ReflectionMethod($orchestrator, 'savePageCheckpoint');
 
-        $saved = $save->invoke($orchestrator, $checkpoint, 'stale-lease', 'stale-page', CarbonImmutable::now(), ['seen' => 1]);
+        $saved = $save->invoke($orchestrator, $checkpoint, 'stale-lease', 'stale-page', null, ['seen' => 1]);
 
         $this->assertFalse($saved);
         $checkpoint->refresh();
@@ -759,13 +1060,64 @@ class ZohoSyncOrchestratorTest extends TestCase
             'stale-owner',
         );
 
-        $this->assertNotEmpty($result->failures);
+        $this->assertTrue($result->ignoredDelivery);
+        $this->assertFalse($result->retryableFailure);
         $this->assertDatabaseMissing('zoho_leads', ['zoho_id' => 'stale-lead']);
         $this->assertDatabaseMissing('zoho_sync_failures', ['zoho_id' => 'stale-lead']);
         $this->assertDatabaseHas('zoho_sync_checkpoints', [
             'module' => 'v2:leads',
             'generation' => 2,
             'lease_owner' => 'new-owner',
+        ]);
+    }
+
+    public function test_pause_between_specific_get_and_persistence_returns_ignored_without_mutating_local_data(): void
+    {
+        $this->transport->queue('get', '/Leads', $this->ok([
+            'data' => [['id' => 'paused-lead']],
+            'info' => ['more_records' => false],
+        ]));
+        $this->transport->queue('get', '/Leads/paused-lead', $this->ok([
+            'data' => [['id' => 'paused-lead', 'Full_Name' => 'Must not persist']],
+        ]));
+        $batch = app(ZohoSyncOrchestrator::class)->createBatch(['leads'], 'delta');
+        $this->transport->observer = function (string $method, string $path) use ($batch): void {
+            if ($method !== 'get' || $path !== '/Leads/paused-lead') {
+                return;
+            }
+
+            app(ZohoManualSyncCoordinator::class)->pauseAll(
+                $batch->id,
+                ['leads'],
+                'Focused pause fencing test.',
+            );
+        };
+
+        $result = app(ZohoSyncOrchestrator::class)->runModule(
+            $batch->id,
+            'leads',
+            'delta',
+            'paused-owner',
+        );
+
+        $this->assertTrue($result->ignoredDelivery);
+        $this->assertFalse($result->retryableFailure);
+        $this->assertDatabaseMissing('zoho_leads', ['zoho_id' => 'paused-lead']);
+        $this->assertDatabaseMissing('zoho_sync_failures', ['zoho_id' => 'paused-lead']);
+        $this->assertDatabaseMissing('zoho_sync_logs', [
+            'sync_batch_id' => $batch->id,
+            'module' => 'leads',
+        ]);
+        $this->assertDatabaseHas('zoho_standard_sync_work_items', [
+            'zoho_id' => 'paused-lead',
+            'status' => 'processing',
+            'outcome' => null,
+        ]);
+        $this->assertSame('paused', $batch->fresh()->status);
+        $this->assertDatabaseHas('zoho_sync_checkpoints', [
+            'module' => 'v2:leads',
+            'status' => 'paused',
+            'lease_owner' => null,
         ]);
     }
 

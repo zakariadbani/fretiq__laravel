@@ -15,12 +15,6 @@ final class ZohoCrmLinkIdentities extends Command
 
     public function handle(ZohoIdentityLinker $linker): int
     {
-        if (! config('zoho-v2.features.sync_enabled', false)) {
-            $this->error('Zoho CRM V2 identity linking is disabled by feature flag.');
-
-            return self::FAILURE;
-        }
-
         $users = $linker->autoMapUsers();
         $contacts = $linker->linkMarketingContacts();
         $this->info(sprintf(

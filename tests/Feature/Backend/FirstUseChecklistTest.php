@@ -45,7 +45,6 @@ class FirstUseChecklistTest extends TestCase
         config([
             'services.zoho.driver' => 'zoho',
             'services.zoho.campaigns.refresh_token' => 'test-refresh-token',
-            'prospecting.cold_send_enabled' => true,
             'app.url' => 'https://fretiq.test',
         ]);
 

@@ -208,23 +208,153 @@ class ZohoMapperTest extends TestCase
         $this->assertSame('8', $item['total']);
     }
 
+    public function test_verified_org_fields_use_exact_api_keys_and_empirical_types(): void
+    {
+        $context = $this->context();
+        $account = (new AccountMapper)->map([
+            'id' => 'account-custom',
+            'Industry' => 'Legacy value',
+            'Secteur_Activit' => 'Freight',
+            'Type_de_client' => 'Client',
+            'Actif' => 'Oui',
+            'ICE' => 'ICE-100',
+            'I_F' => 'IF-100',
+            'R_C' => 'RC-100',
+            'CNSS' => 'CNSS-100',
+            'Patente' => 'PAT-100',
+            'Nom_de_Responsable_Logistique' => ['id' => 'contact-logistics', 'name' => 'Private label'],
+            'Tag' => ['name' => 'Strategic', 'id' => 'ignored'],
+        ], $context);
+        $contact = (new ContactMapper)->map([
+            'id' => 'contact-custom',
+            'Title' => 'Legacy title',
+            'Intitul_de_Poste' => 'Responsable logistique',
+            'Nom_du_Soci_t' => 'TCL Client',
+            'Email_Opt_Out' => '0',
+            'Email_Ouvert' => 1,
+            'Lien_Cliqu' => 'yes',
+        ], $context);
+        $deal = (new DealMapper)->map([
+            'id' => 'deal-custom',
+            'G_rbable' => 'Oui',
+            'Quantit' => '12',
+            'Type_de_Transpot' => 'Air',
+            'Transite_Time_J' => '3-5',
+            'Date_d_expiration' => 'Fin août',
+        ], $context);
+        $quote = (new QuoteMapper)->map([
+            'id' => 'quote-custom',
+            'Type_de_Transport' => ['Air', 'Sea'],
+            'Incoterm1' => ['FOB', 'CIF'],
+            'Quantit' => '12 palettes',
+            'Transit_Time_J' => 7,
+            'G_rbable' => ['Oui'],
+            'Tag' => [['name' => 'Urgent'], ['name' => 'Urgent']],
+        ], $context);
+        $history = (new DealStageHistoryMapper)->map([
+            'id' => 'history-custom',
+            'Potential_Name' => ['id' => 'deal-custom'],
+            'Moved_To__s' => 'Won',
+            'Stage_Duration_Calendar_Days' => 9,
+        ], $context);
+
+        $this->assertSame('Freight', $account['industry']);
+        $this->assertSame('Client', $account['account_type']);
+        $this->assertSame('Oui', $account['active_status']);
+        $this->assertSame(['ICE-100', 'IF-100', 'RC-100', 'CNSS-100', 'PAT-100'], [
+            $account['ice'], $account['tax_id'], $account['trade_register'], $account['cnss'], $account['business_tax_number'],
+        ]);
+        $this->assertSame('contact-logistics', $account['logistics_manager_zoho_id']);
+        $this->assertSame(['Strategic'], $account['tags']);
+        $this->assertSame('Responsable logistique', $contact['title']);
+        $this->assertSame('TCL Client', $contact['company_name']);
+        $this->assertFalse($contact['email_opt_out']);
+        $this->assertTrue($contact['email_opened']);
+        $this->assertNull($contact['link_clicked']);
+        $this->assertSame('Oui', $deal['stackability']);
+        $this->assertSame(12, $deal['quantity']);
+        $this->assertSame('Air', $deal['transport_type']);
+        $this->assertSame('3-5', $deal['transit_time']);
+        $this->assertSame('Fin août', $deal['expires_on']);
+        $this->assertSame(['Air', 'Sea'], $quote['transport_type']);
+        $this->assertSame(['FOB', 'CIF'], $quote['incoterms']);
+        $this->assertSame('12 palettes', $quote['quantity_text']);
+        $this->assertSame(7, $quote['transit_time_days']);
+        $this->assertSame(['Oui'], $quote['stackability']);
+        $this->assertSame(['Urgent'], $quote['tags']);
+        $this->assertSame('Won', $history['moved_to_stage']);
+        $this->assertSame(9, $history['stage_duration_days']);
+    }
+
+    public function test_activity_submodules_use_verified_subject_status_and_datetime_fields(): void
+    {
+        $context = $this->context();
+        $meeting = (new ActivityMapper('meeting'))->map([
+            'id' => 'meeting-1',
+            'Event_Title' => 'Client meeting',
+            'Start_DateTime' => '2026-08-10T09:00:00+01:00',
+            'End_DateTime' => '2026-08-10T10:00:00+01:00',
+        ], $context);
+        $call = (new ActivityMapper('call'))->map([
+            'id' => 'call-1',
+            'Subject' => 'Follow up',
+            'Outgoing_Call_Status' => 'Completed',
+            'Call_Start_Time' => '2026-08-11T09:00:00+01:00',
+        ], $context);
+        $task = (new ActivityMapper('task'))->map([
+            'id' => 'task-1',
+            'Subject' => 'Send quote',
+            'Status' => 'Not Started',
+            'Due_Date' => '2026-08-12',
+        ], $context);
+        $note = (new ActivityMapper('note'))->map([
+            'id' => 'note-1',
+            'Note_Title' => 'Call notes',
+            'Created_Time' => '2026-08-13T09:00:00+01:00',
+        ], $context);
+
+        $this->assertSame(['meeting', 'Client meeting', '2026-08-10 08:00:00', '2026-08-10 09:00:00'], [
+            $meeting['activity_type'], $meeting['subject'], $meeting['start_at'], $meeting['end_at'],
+        ]);
+        $this->assertSame($meeting['start_at'], $meeting['activity_at']);
+        $this->assertSame(['call', 'Completed', '2026-08-11 08:00:00'], [
+            $call['activity_type'], $call['status'], $call['activity_at'],
+        ]);
+        $this->assertSame($call['activity_at'], $call['start_at']);
+        $this->assertSame(['task', 'Send quote', 'Not Started'], [$task['activity_type'], $task['subject'], $task['status']]);
+        $this->assertSame($task['due_at'], $task['activity_at']);
+        $this->assertSame(['note', 'Call notes', null], [$note['activity_type'], $note['subject'], $note['status']]);
+        $this->assertSame('2026-08-13 08:00:00', $note['activity_at']);
+    }
+
+    public function test_calls_use_call_start_time_when_event_start_datetime_is_also_present(): void
+    {
+        $call = (new ActivityMapper('call'))->map([
+            'id' => 'call-mixed-datetimes',
+            'Start_DateTime' => '2026-08-10T09:00:00+01:00',
+            'Call_Start_Time' => '2026-08-11T09:00:00+01:00',
+        ], $this->context());
+
+        $this->assertSame('2026-08-11 08:00:00', $call['start_at']);
+    }
+
     public function test_mapper_output_keys_match_the_frozen_schema_contract(): void
     {
         $data = $this->fixture();
         $context = $this->context();
         $common = ['zoho_id', 'owner_zoho_id', 'parent_zoho_id', 'zoho_created_at', 'zoho_modified_at', 'last_seen_at', 'last_synced_at', 'zoho_deleted_at', 'zoho_deletion_type', 'payload_hash', 'field_schema_hash', 'raw_payload', 'sync_batch_id'];
         $matrix = [
-            [(new AccountMapper)->map($data['account'], $context), [...$common, 'name', 'phone', 'country', 'industry', 'website', 'account_type', 'parent_account_zoho_id']],
-            [(new ContactMapper)->map($data['contact'], $context), [...$common, 'first_name', 'last_name', 'full_name', 'email', 'normalized_email', 'phone', 'country', 'title', 'account_zoho_id']],
-            [(new LeadMapper)->map(['id' => 'l-contract'], $context), [...$common, 'first_name', 'last_name', 'full_name', 'company_name', 'email', 'normalized_email', 'phone', 'country', 'industry', 'lead_source', 'status', 'is_converted', 'account_zoho_id', 'contact_zoho_id']],
-            [(new DealMapper)->map($data['deal'], $context), [...$common, 'name', 'stage', 'amount', 'currency_code', 'probability', 'weighted_amount', 'closing_date', 'lead_source', 'account_zoho_id', 'contact_zoho_id']],
+            [(new AccountMapper)->map($data['account'], $context), [...$common, 'name', 'phone', 'country', 'industry', 'website', 'account_type', 'parent_account_zoho_id', 'active_status', 'account_status', 'address', 'city', 'language', 'commercial_name', 'assignment_type', 'accounting_number', 'ice', 'tax_id', 'trade_register', 'cnss', 'business_tax_number', 'trade_register_center', 'payment_mode', 'transport_type', 'volume', 'competitor', 'origin_destination', 'observation', 'logistics_manager_zoho_id', 'last_activity_at', 'tags']],
+            [(new ContactMapper)->map($data['contact'], $context), [...$common, 'first_name', 'last_name', 'full_name', 'email', 'normalized_email', 'phone', 'country', 'title', 'account_zoho_id', 'company_name', 'address', 'city', 'postal_code', 'language', 'lead_source', 'email_opt_out', 'email_opened', 'link_clicked', 'unsubscribed_mode', 'unsubscribed_at', 'last_activity_at', 'description', 'tags', 'mobile', 'salutation']],
+            [(new LeadMapper)->map(['id' => 'l-contract'], $context), [...$common, 'first_name', 'last_name', 'full_name', 'company_name', 'email', 'normalized_email', 'phone', 'country', 'industry', 'status', 'is_converted', 'account_zoho_id', 'contact_zoho_id', 'converted_deal_zoho_id', 'converted_at', 'title', 'client_type', 'transport_type', 'language', 'address', 'city', 'website', 'incoterm', 'destination', 'volume', 'competitor', 'origin_destination', 'observation', 'email_opt_out', 'unsubscribed_mode', 'unsubscribed_at', 'last_activity_at', 'tags', 'mobile', 'secondary_phone']],
+            [(new DealMapper)->map($data['deal'], $context), [...$common, 'name', 'stage', 'amount', 'currency_code', 'probability', 'weighted_amount', 'closing_date', 'lead_source', 'account_zoho_id', 'contact_zoho_id', 'exchange_rate', 'pipeline', 'stackability', 'last_activity_at', 'stage_modified_at', 'tags', 'origin', 'destination', 'incoterm', 'cargo_description', 'gross_weight', 'volume', 'quantity', 'dimensions', 'departure_frequency', 'package_type', 'quote_type', 'transport_type', 'transit_time', 'expires_on', 'description']],
             [(new ProductMapper)->map(['id' => 'p-contract'], $context), [...$common, 'name', 'product_code', 'unit_price', 'currency_code', 'product_category', 'vendor_name', 'vendor_zoho_id']],
-            [(new DealStageHistoryMapper)->map($data['history'], $context), [...$common, 'deal_zoho_id', 'stage', 'previous_stage', 'occurred_at', 'amount', 'probability', 'expected_revenue', 'currency_code', 'closing_date']],
+            [(new DealStageHistoryMapper)->map($data['history'], $context), [...$common, 'deal_zoho_id', 'stage', 'previous_stage', 'moved_to_stage', 'stage_duration_days', 'occurred_at', 'amount', 'probability', 'expected_revenue', 'currency_code', 'closing_date']],
             [(new ActionsCommercialsMapper)->map($data['actions_commercials'], $context), [...$common, 'name', 'status', 'priority', 'action_at', 'due_at', 'comment', 'contact_name', 'account_name', 'prospect_name', 'phone', 'mobile']],
             [(new TransportInternationalMapper)->map($data['transport_international'], $context), [...$common, 'name', 'status', 'email', 'secondary_email', 'currency_code', 'exchange_rate']],
             [(new UserMapper)->mapOwnerLookup($data['owner'], $context), [...$common, 'full_name', 'first_name', 'last_name', 'email', 'normalized_email', 'status']],
             [(new ActivityMapper('meeting'))->map($data['activity'], $context), [...$common, 'activity_type', 'subject', 'status', 'activity_at', 'due_at', 'start_at', 'end_at', 'contact_zoho_id']],
-            [(new QuoteMapper)->map($data['quote'], $context), [...$common, 'subject', 'quote_number', 'status', 'follow_up_status', 'valid_till', 'grand_total', 'sub_total', 'discount', 'tax', 'currency_code', 'exchange_rate', 'deal_zoho_id', 'account_zoho_id', 'contact_zoho_id', 'origin', 'destination', 'transport_type', 'quote_date', 'country']],
+            [(new QuoteMapper)->map($data['quote'], $context), [...$common, 'subject', 'quote_number', 'status', 'follow_up_status', 'valid_till', 'grand_total', 'sub_total', 'discount', 'tax', 'currency_code', 'exchange_rate', 'deal_zoho_id', 'account_zoho_id', 'contact_zoho_id', 'origin', 'destination', 'transport_type', 'quote_date', 'country', 'incoterms', 'gross_weight', 'volume', 'quantity_text', 'package_type', 'transit_time_days', 'equipment_type', 'free_time', 'stackability', 'dangerous_goods_status', 'un_number', 'dangerous_goods_class', 'dimensions', 'loading_meters', 'last_activity_at', 'tags']],
         ];
 
         foreach ($matrix as [$mapped, $expected]) {

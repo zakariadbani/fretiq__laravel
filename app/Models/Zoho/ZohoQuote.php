@@ -14,7 +14,7 @@ class ZohoQuote extends ZohoMirror
         return parent::casts() + [
             'grand_total' => 'decimal:2', 'sub_total' => 'decimal:2', 'discount' => 'decimal:2',
             'tax' => 'decimal:2', 'line_items_total' => 'decimal:2', 'line_items_total_complete' => 'boolean', 'exchange_rate' => 'decimal:6', 'valid_till' => 'date',
-            'transport_type' => 'array', 'quote_date' => 'date',
+            'transport_type' => 'array', 'quote_date' => 'date', 'incoterms' => 'array', 'stackability' => 'array', 'tags' => 'array', 'transit_time_days' => 'integer', 'last_activity_at' => 'datetime',
         ];
     }
 

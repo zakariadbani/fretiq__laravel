@@ -18,12 +18,6 @@ final class ZohoCrmRetryFailures extends Command
 
     public function handle(): int
     {
-        if (! config('zoho-v2.features.sync_enabled', false)) {
-            $this->error('Zoho CRM V2 sync is disabled by feature flag.');
-
-            return self::FAILURE;
-        }
-
         $module = $this->argument('module');
         if ($module !== null) {
             try {

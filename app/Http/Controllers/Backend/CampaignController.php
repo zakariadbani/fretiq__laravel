@@ -39,6 +39,7 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class CampaignController extends BackendController
 {
@@ -94,6 +95,171 @@ class CampaignController extends BackendController
                 'schedulerHealth' => $this->schedulerHealth(),
             ]
         );
+    }
+
+    /**
+     * Update under the same sender-identity/campaign fence used by SMTP claims.
+     * This closes the gap between validating editable delivery settings and
+     * persisting them while a queue worker is starting a real delivery.
+     */
+    public function update($id)
+    {
+        /** @var Campaign|null $snapshot */
+        $snapshot = $this->currentModel->find((int) $id);
+        if ($snapshot === null) {
+            return response()->json(['message' => trans('app.not_found')], 404);
+        }
+
+        return DB::transaction(function () use ($id, $snapshot) {
+            if ($snapshot->sender_identity_id !== null) {
+                SenderIdentity::query()->whereKey($snapshot->sender_identity_id)->lockForUpdate()->first();
+            }
+
+            /** @var Campaign|null $model */
+            $model = Campaign::query()->lockForUpdate()->find((int) $id);
+            if ($model === null) {
+                return response()->json(['message' => trans('app.not_found')], 404);
+            }
+            if ((int) $model->sender_identity_id !== (int) $snapshot->sender_identity_id) {
+                throw ValidationException::withMessages([
+                    'sender_identity_id' => 'La campagne a été modifiée en parallèle. Rechargez-la avant de réessayer.',
+                ]);
+            }
+
+            $originalChannel = $model->effectiveDeliveryChannel();
+            $originalSenderId = (int) $model->sender_identity_id;
+            $attributes = $this->beforeSave((int) $id);
+            $validator = $model->validator($attributes, (int) $id);
+            if ($validator->fails()) {
+                return response()->json([
+                    'message' => trans('app.errors_occurred'),
+                    'errors' => $validator->errors(),
+                ], 406);
+            }
+
+            $files = $this->saveFiles($this->currentRequest);
+            $data = array_merge($attributes, $files);
+            if (! $model->update($data)) {
+                return response()->json(['message' => trans('app.error')], 500);
+            }
+
+            $this->reconcileDeliveryChannelChange($model, $originalChannel, $originalSenderId);
+            $afterSaveResponse = $this->afterSave($data, $model);
+            session()->flash('success', trans('app.update_completed'));
+
+            if ($afterSaveResponse instanceof \Illuminate\Http\JsonResponse) {
+                return $afterSaveResponse;
+            }
+
+            $continue = array_key_exists('saveandcontinue', $attributes);
+
+            return response()->json([
+                'message' => 'success',
+                'model' => $model,
+                'redirect' => $continue
+                    ? route($this->currentPrefixName . '.' . $this->modelName . '.edit', $id)
+                    : route($this->currentPrefixName . '.' . $this->modelName . '.index'),
+            ], 200);
+        }, 3);
+    }
+
+    /**
+     * Preserve SMTP quota history and never remove a campaign whose delivery
+     * is in flight, accepted, uncertain, or already completed.
+     */
+    public function delete($id)
+    {
+        /** @var Campaign|null $snapshot */
+        $snapshot = Campaign::query()->find((int) $id);
+        if ($snapshot === null) {
+            return response()->json(['success' => false, 'msg' => trans('app.not_found')]);
+        }
+
+        return DB::transaction(function () use ($id, $snapshot) {
+            if ($snapshot->sender_identity_id !== null) {
+                SenderIdentity::query()->whereKey($snapshot->sender_identity_id)->lockForUpdate()->first();
+            }
+
+            /** @var Campaign|null $campaign */
+            $campaign = Campaign::query()->lockForUpdate()->find((int) $id);
+            if ($campaign === null) {
+                return response()->json(['success' => false, 'msg' => trans('app.not_found')]);
+            }
+            if ((int) $campaign->sender_identity_id !== (int) $snapshot->sender_identity_id) {
+                return response()->json(['success' => false, 'msg' => trans('app.cannot_delete')]);
+            }
+
+            $smtpDeliveryExists = \App\Models\SmtpSendReservation::query()
+                ->where('campaign_id', $campaign->id)
+                ->whereIn('status', ['sending', 'accepted', 'sent', 'uncertain'])
+                ->exists();
+            $runDeliveryExists = $campaign->hasRunDeliveryEvidence();
+            if ($campaign->delivery_started_at !== null || $smtpDeliveryExists || $runDeliveryExists) {
+                return response()->json(['success' => false, 'msg' => trans('app.cannot_delete')]);
+            }
+
+            // A reservation that never crossed the transport boundary is safe
+            // to release. The nullable FK then preserves it as an inert ledger row.
+            \App\Models\SmtpSendReservation::query()
+                ->where('campaign_id', $campaign->id)
+                ->where('status', 'reserved')
+                ->update(['status' => 'released', 'lease_expires_at' => null]);
+
+            $result = $campaign->delete();
+
+            return response()->json([
+                'success' => $result,
+                'msg' => trans($result ? 'app.delete_success' : 'app.cannot_delete'),
+            ]);
+        }, 3);
+    }
+
+    private function reconcileDeliveryChannelChange(Campaign $campaign, string $originalChannel, int $originalSenderId): void
+    {
+        $newChannel = $campaign->effectiveDeliveryChannel();
+        $senderChanged = (int) $campaign->sender_identity_id !== $originalSenderId;
+        $smtpPaused = $newChannel === 'smtp' && $campaign->smtpDailyEmailLimit() === 0;
+        if ($newChannel === $originalChannel && ! $senderChanged && ! $smtpPaused) {
+            return;
+        }
+
+        // Any queued direct-SMTP work was authorized for the old channel.
+        // Release it now so a stale delayed job cannot choose a mailbox later.
+        \App\Models\SmtpSendReservation::query()
+            ->where('campaign_id', $campaign->id)
+            ->where('status', 'reserved')
+            ->update(['status' => 'released', 'lease_expires_at' => null]);
+
+        if ($originalChannel === 'smtp' && ($newChannel !== 'smtp' || $senderChanged)) {
+            CampaignRun::query()
+                ->where('campaign_id', $campaign->id)
+                ->where('status', 'sending')
+                ->where('occurrence_key', 'not like', 'sequence-wave-%')
+                ->update(['status' => 'scheduled', 'started_at' => null, 'finished_at' => null]);
+        }
+
+        if ($campaign->schedule_type !== 'sequence' || $campaign->sequence_enrollment_mode !== 'paced') {
+            return;
+        }
+
+        if ($newChannel === 'smtp' || $senderChanged) {
+            SequenceEnrollment::query()
+                ->where('campaign_id', $campaign->id)
+                ->where('status', 'active')
+                ->whereNull('next_send_at')
+                ->update(['next_send_at' => now()]);
+
+            CampaignRun::query()
+                ->where('campaign_id', $campaign->id)
+                ->where('occurrence_key', 'like', 'sequence-wave-%')
+                ->whereIn('status', ['prepared', 'scheduled', 'failed'])
+                ->whereNotIn('driver_ref', ['zoho-send-attempted', 'zoho-send-uncertain'])
+                ->update([
+                    'status' => 'canceled',
+                    'finished_at' => now(),
+                    'failure_reason' => 'Canal remplacé par SMTP avant envoi.',
+                ]);
+        }
     }
 
     /**
@@ -733,6 +899,39 @@ class CampaignController extends BackendController
         $attributes = $this->currentRequest->all();
         $currentCampaign = $id !== null ? Campaign::find((int) $id) : null;
 
+        if ($currentCampaign === null) {
+            $attributes['delivery_channel'] = in_array($attributes['delivery_channel'] ?? null, ['zoho', 'smtp'], true)
+                ? $attributes['delivery_channel']
+                : 'zoho';
+        } elseif (! array_key_exists('delivery_channel', $attributes)) {
+            $attributes['delivery_channel'] = $currentCampaign->delivery_channel;
+        }
+
+        if ($currentCampaign?->deliverySettingsLocked()) {
+            $lockedErrors = [];
+            if (array_key_exists('delivery_channel', $attributes)
+                && (string) $attributes['delivery_channel'] !== (string) ($currentCampaign->delivery_channel ?? '')) {
+                $lockedErrors['delivery_channel'] = 'Le canal est verrouillé après le début de la livraison.';
+            }
+            if (array_key_exists('sender_identity_id', $attributes)
+                && (int) $attributes['sender_identity_id'] !== (int) $currentCampaign->sender_identity_id) {
+                $lockedErrors['sender_identity_id'] = 'L’expéditeur est verrouillé après le début de la livraison.';
+            }
+
+            if ($lockedErrors !== []) {
+                throw ValidationException::withMessages($lockedErrors);
+            }
+        }
+
+        if (($attributes['delivery_channel'] ?? null) === 'smtp') {
+            $smtpLimit = $attributes['smtp_daily_email_limit'] ?? null;
+            $attributes['smtp_daily_email_limit'] = $smtpLimit === null || (is_string($smtpLimit) && trim($smtpLimit) === '')
+                ? 20
+                : $smtpLimit;
+        } elseif ($currentCampaign === null || $this->currentRequest->has('delivery_channel')) {
+            $attributes['smtp_daily_email_limit'] = null;
+        }
+
         // This operational flag is controlled exclusively by send-campaigns
         // endpoints. Ordinary create/edit payloads must never toggle it.
         unset($attributes['sequence_auto_enroll_enabled']);
@@ -855,7 +1054,6 @@ class CampaignController extends BackendController
      */
     public function segmentCount($id)
     {
-        $coldGateClosed = ! config('prospecting.cold_send_enabled', false);
         $unavailable = [
             'count' => 0,
             'contact_count' => 0,
@@ -863,7 +1061,6 @@ class CampaignController extends BackendController
             'contacts_count' => 0,
             'matched_count' => 0,
             'funnel' => null,
-            'cold_gate_closed' => $coldGateClosed,
             'available' => false,
         ];
 
@@ -903,7 +1100,6 @@ class CampaignController extends BackendController
             'contacts_count' => $count,
             'matched_count' => (int) $stats['matched'],
             'funnel' => $stats,
-            'cold_gate_closed' => $coldGateClosed,
             'available' => true,
         ]);
     }

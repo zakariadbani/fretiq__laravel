@@ -112,7 +112,9 @@ class SendSequenceStepJob implements ShouldQueue, ShouldBeUnique
 
         $enrollment->loadMissing('campaign');
         if ($enrollment->campaign?->schedule_type === 'sequence'
-            && $enrollment->campaign?->sequence_enrollment_mode === 'paced') {
+            && $enrollment->campaign?->sequence_enrollment_mode === 'paced'
+            && in_array($enrollment->campaign?->delivery_channel, [null, 'zoho'], true)
+            && config('services.zoho.driver', 'local') === 'zoho') {
             Log::info('[SendSequenceStepJob] Paced enrollment is handled by Zoho waves - skipping SMTP.', [
                 'enrollment_id' => $this->enrollmentId,
             ]);

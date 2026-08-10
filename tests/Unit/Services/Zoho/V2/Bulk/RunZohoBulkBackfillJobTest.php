@@ -90,4 +90,22 @@ class RunZohoBulkBackfillJobTest extends TestCase
             $this->assertStringNotContainsString('private@example.test', (string) $exception);
         }
     }
+
+    public function test_direct_bulk_delivery_is_terminalized_when_the_module_is_not_live_verified(): void
+    {
+        config()->set('zoho-v2.bulk.verified_modules', []);
+        $terminator = Mockery::mock(ZohoBulkRunTerminator::class);
+        $terminator->shouldReceive('terminate')->once()->with(
+            42,
+            'accounts',
+            'stale-direct-delivery',
+            Mockery::type('string'),
+            Mockery::type('string'),
+            0,
+            'unverified_module',
+        )->andReturnTrue();
+        $this->app->instance(ZohoBulkRunTerminator::class, $terminator);
+
+        (new RunZohoBulkBackfillJob(42, 'accounts', 'stale-direct-delivery'))->handle();
+    }
 }

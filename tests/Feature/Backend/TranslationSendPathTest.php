@@ -41,7 +41,6 @@ class TranslationSendPathTest extends TestCase
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
         config([
-            'prospecting.cold_send_enabled' => false,
             'services.zoho.driver' => 'local',
             'translation.base_language'     => 'fr',
             'translation.target_languages'  => ['en'],

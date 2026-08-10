@@ -3,6 +3,7 @@
 namespace App\Services\Campaign;
 
 use App\Jobs\SendCampaignJob;
+use App\Jobs\SendSmtpReservationJob;
 use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
@@ -43,6 +44,9 @@ class CampaignService
         private readonly SendWindowGuard  $sendWindowGuard,
         private readonly SequenceService  $sequenceService,
         private readonly BusinessCalendarService $calendar,
+        private readonly CampaignDeliveryResolver $deliveryResolver,
+        private readonly SmtpSendReservationService $smtpReservations,
+        private readonly CampaignDeliveryFence $deliveryFence,
     ) {}
 
     // ── Scheduling ─────────────────────────────────────────────────────────────
@@ -147,10 +151,20 @@ class CampaignService
 
         $isPacedSequence = $campaign->schedule_type === 'sequence'
             && $campaign->sequence_enrollment_mode === 'paced';
+        $resolvedDriver = $this->deliveryResolver->resolve($campaign);
+        $preflightUsesZoho = $campaign->delivery_channel === null
+            ? $campaign->usesZohoDriver()
+            : $resolvedDriver instanceof ZohoCampaignsDriver;
 
-        if ($campaign->schedule_type === 'paced' && $campaign->usesZohoDriver()) {
+        if ($campaign->delivery_channel === 'smtp'
+            && app(\App\Services\Mail\SenderIdentitySmtpMailer::class)->usesSenderIdentityTransport()
+            && ! $campaign->senderIdentity?->hasCompleteSmtpConfiguration()) {
+            $messages[] = 'Configuration SMTP incomplète pour l’expéditeur sélectionné.';
+        }
+
+        if ($campaign->schedule_type === 'paced' && $preflightUsesZoho) {
             $messages[] = 'L’envoi progressif est indisponible avec le pilote Zoho tant que l’envoi par lot n’a pas été vérifié.';
-        } elseif ($campaign->usesZohoDriver()) {
+        } elseif ($preflightUsesZoho) {
             $listKey = trim((string) ($campaign->zoho_list_key ?: config('services.zoho.campaigns.list_key')));
             if (! $isPacedSequence && $listKey === '') {
                 $messages[] = 'Préparation Zoho incomplète : ajoutez et vérifiez la liste Zoho dédiée avant de lancer l’envoi.';
@@ -455,13 +469,14 @@ class CampaignService
         }
 
         // ── Step 4: Driver-aware send ──────────────────────────────────────────
-        /** @var CampaignsClient $driver */
-        $driver = app(CampaignsClient::class);
+        $driver = $this->deliveryResolver->resolve($run->campaign);
 
         if ($driver instanceof ZohoCampaignsDriver) {
-            $this->sendViaZoho($run, $contacts);
+            $this->sendViaZoho($run, $contacts, $driver);
+        } elseif ($driver instanceof SmtpCampaignsDriver) {
+            $this->continueSmtpRun($run);
         } else {
-            $this->sendViaLocal($run);
+            $this->sendViaLocal($run, $driver);
         }
 
         // ── One-shot auto-done (branch-agnostic) ──────────────────────────────
@@ -498,10 +513,21 @@ class CampaignService
      *
      * Rethrows on failure — the job retry mechanism handles it.
      */
-    private function sendViaZoho(CampaignRun $run, \Illuminate\Support\Collection $contacts): void
+    private function sendViaZoho(CampaignRun $run, \Illuminate\Support\Collection $contacts, ZohoCampaignsDriver $driver): void
     {
-        /** @var CampaignsClient $driver */
-        $driver = app(CampaignsClient::class);
+        $claimedRun = $this->deliveryFence->claimZohoTransport($run, ['scheduled', 'sending']);
+        if ($claimedRun === null) {
+            CampaignRun::query()->whereKey($run->id)->where('status', 'sending')->update(['status' => 'scheduled']);
+            Log::info('[CampaignService] Envoi Zoho annulé après revalidation du canal.', ['run_id' => $run->id]);
+            return;
+        }
+        $run = $claimedRun->load(['campaign.segment', 'campaign.template.translations', 'campaign.senderIdentity']);
+        $preflight = $this->dispatchPreflight($run->campaign, $run);
+        if (! $preflight['ok']) {
+            $run->update(['status' => 'failed', 'stats_sent' => 0, 'finished_at' => now()]);
+            return;
+        }
+        $contacts = $preflight['contacts'];
 
         Log::info('[CampaignService] Driver zoho détecté — envoi via dispatchRun().', [
             'run_id'   => $run->id,
@@ -510,6 +536,7 @@ class CampaignService
 
         try {
             $summary = $driver->dispatchRun($run, $contacts);
+            $run->campaign->markDeliveryStarted();
 
             $sentCount = 0;
 
@@ -560,11 +587,8 @@ class CampaignService
      * collection). Per-recipient failures are logged and skipped — this path
      * does NOT rethrow, unlike sendViaZoho().
      */
-    private function sendViaLocal(CampaignRun $run): void
+    private function sendViaLocal(CampaignRun $run, CampaignsClient $driver): void
     {
-        /** @var CampaignsClient $driver */
-        $driver = app(CampaignsClient::class);
-
         $recipients = CampaignRecipient::where('campaign_run_id', $run->id)
             ->where('status', 'queued')
             ->whereNull('provider_message_id')
@@ -628,28 +652,6 @@ class CampaignService
                     'skip_reason' => 'suppressed',
                 ]);
                 continue;
-            }
-
-            if ($isPaced) {
-                $coldSendEnabled = (bool) config('prospecting.cold_send_enabled', false);
-
-                if (! $coldSendEnabled && $contact->company?->relationship === 'prospect') {
-                    $recipient->update([
-                        'status' => 'skipped',
-                        'skip_reason' => 'cold_send_disabled',
-                    ]);
-                    continue;
-                }
-
-                if ($coldSendEnabled
-                    && $contact->company?->relationship === 'prospect'
-                    && $contact->email_kind === 'personal') {
-                    $recipient->update([
-                        'status' => 'skipped',
-                        'skip_reason' => 'personal_email',
-                    ]);
-                    continue;
-                }
             }
 
             $attempted++;
@@ -756,6 +758,44 @@ class CampaignService
             'run_id'     => $run->id,
             'stats_sent' => $sentCount,
         ]);
+    }
+
+    public function continueSmtpRun(CampaignRun $run): void
+    {
+        $run->refresh()->loadMissing(['campaign.senderIdentity']);
+        $campaign = $run->campaign;
+        $recipient = CampaignRecipient::query()
+            ->where('campaign_run_id', $run->id)
+            ->where('status', 'queued')
+            ->whereNull('provider_message_id')
+            ->orderBy('id')
+            ->first();
+
+        if ($recipient === null) {
+            $sentCount = CampaignRecipient::where('campaign_run_id', $run->id)->whereNotNull('sent_at')->count();
+            $run->update(['stats_sent' => $sentCount, 'status' => 'sent', 'finished_at' => now()]);
+            if ($campaign->schedule_type === 'one_shot') {
+                $campaign->update(['is_active' => false]);
+            }
+
+            return;
+        }
+
+        $result = $this->smtpReservations->reserve(
+            $campaign->senderIdentity,
+            $campaign,
+            \App\Models\SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT,
+            $recipient->id,
+        );
+
+        if (! $result['ok']) {
+            $run->update(['status' => 'sending', 'finished_at' => null]);
+
+            return;
+        }
+
+        SendSmtpReservationJob::dispatch($result['reservation']->id)->delay($result['send_at']);
+        $run->update(['status' => 'sending', 'driver_ref' => 'smtp', 'finished_at' => null]);
     }
 
     /** Finalize company ledgers after SendCampaignJob exhausts all retries. */

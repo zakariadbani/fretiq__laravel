@@ -15,6 +15,8 @@ class ZohoSyncBatch extends Model
         return [
             'modules' => 'array', 'counters' => 'array', 'requested_at' => 'datetime',
             'scheduled_for' => 'datetime', 'started_at' => 'datetime', 'completed_at' => 'datetime',
+            'paused_at' => 'datetime', 'resumed_at' => 'datetime', 'resume_count' => 'integer',
+            'resume_metadata' => 'array',
             'post_reconciliation_lease_expires_at' => 'datetime',
             'post_reconciliation_started_at' => 'datetime', 'post_reconciliation_completed_at' => 'datetime',
             'post_reconciliation_attempts' => 'integer',

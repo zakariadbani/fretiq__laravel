@@ -30,7 +30,7 @@ class WaveProjectionServiceTest extends TestCase
         parent::setUp();
 
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
-        config(['services.zoho.driver' => 'local', 'prospecting.cold_send_enabled' => false]);
+        config(['services.zoho.driver' => 'local']);
         Queue::fake();
     }
 

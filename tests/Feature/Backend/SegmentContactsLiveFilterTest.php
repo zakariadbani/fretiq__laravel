@@ -126,7 +126,6 @@ class SegmentContactsLiveFilterTest extends TestCase
      */
     public function test_live_filter_returns_different_audience_from_saved(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $transportContact = $this->makeContact($this->clientCompanyTransport, 'transport@test.test');
         $itContact        = $this->makeContact($this->clientCompanyIT, 'it@test.test');
@@ -154,7 +153,6 @@ class SegmentContactsLiveFilterTest extends TestCase
      */
     public function test_live_filter_fragment_carries_count_attribute(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         // Two IT contacts, zero Transport contacts
         $this->makeContact($this->clientCompanyIT, 'it1@test.test');
@@ -181,7 +179,6 @@ class SegmentContactsLiveFilterTest extends TestCase
      */
     public function test_saved_include_pin_applies_on_live_path(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         // IT contact pinned-IN on the saved segment
         $itContact = $this->makeContact($this->clientCompanyIT, 'pinned-it@test.test');
@@ -211,7 +208,6 @@ class SegmentContactsLiveFilterTest extends TestCase
      */
     public function test_saved_exclude_pin_applies_on_live_path(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         // Two IT contacts; one is excluded on the saved segment
         $itKeep    = $this->makeContact($this->clientCompanyIT, 'it-keep@test.test');
@@ -249,7 +245,6 @@ class SegmentContactsLiveFilterTest extends TestCase
      */
     public function test_absent_scope_falls_back_to_saved_audience(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $transportContact = $this->makeContact($this->clientCompanyTransport, 'saved@test.test');
         $itContact        = $this->makeContact($this->clientCompanyIT, 'extra-it@test.test');
@@ -269,7 +264,6 @@ class SegmentContactsLiveFilterTest extends TestCase
      */
     public function test_empty_scope_string_falls_back_to_saved_audience(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $transportContact = $this->makeContact($this->clientCompanyTransport, 'saved2@test.test');
 
@@ -291,7 +285,6 @@ class SegmentContactsLiveFilterTest extends TestCase
      */
     public function test_empty_status_filter_is_normalized_same_as_omitted(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         // Two IT contacts with different statuses
         $this->makeContact($this->clientCompanyIT, 'status-new@test.test',       ['status' => 'new']);
@@ -407,7 +400,6 @@ class SegmentContactsLiveFilterTest extends TestCase
      */
     public function test_saved_path_fragment_carries_correct_count(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         // Two Transport contacts → saved audience count = 2
         $this->makeContact($this->clientCompanyTransport, 'c1@test.test');

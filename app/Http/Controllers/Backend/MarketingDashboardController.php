@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Services\Zoho\V2\Marketing\MarketingAnalyticsQuery;
 use App\Services\Zoho\V2\Marketing\MarketingPeriod;
 use App\Services\Zoho\V2\Marketing\ZohoMarketingAnalytics;
+use App\Services\Zoho\V2\Marketing\ZohoCeoControlTower;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
@@ -20,10 +21,8 @@ final class MarketingDashboardController extends Controller
         $this->middleware(['auth', 'verified', 'permission:view marketing dashboard']);
     }
 
-    public function index(Request $request, ZohoMarketingAnalytics $analytics)
+    public function index(Request $request, ZohoMarketingAnalytics $analytics, ZohoCeoControlTower $controlTower)
     {
-        abort_unless((bool) config('zoho-v2.features.marketing_dashboard_enabled', false), 404);
-
         $permitted = ['period', 'from', 'to', ...self::FILTERS];
         $unexpected = array_values(array_diff(array_keys($request->query()), $permitted));
         if ($unexpected !== []) {
@@ -31,7 +30,7 @@ final class MarketingDashboardController extends Controller
         }
 
         $data = $request->validate([
-            'period' => ['nullable', 'string', 'in:7d,30d,90d,qtd,ytd,custom'],
+            'period' => ['nullable', 'string', 'in:7d,30d,90d,365d,qtd,ytd,custom'],
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d'],
             'commercial' => ['nullable', 'integer'],
@@ -47,7 +46,7 @@ final class MarketingDashboardController extends Controller
 
         try {
             $period = MarketingPeriod::fromInput([
-                'preset' => $data['period'] ?? '30d',
+                'preset' => $data['period'] ?? '90d',
                 'from' => $data['from'] ?? null,
                 'to' => $data['to'] ?? null,
             ]);
@@ -59,13 +58,32 @@ final class MarketingDashboardController extends Controller
             array_intersect_key($data, array_flip(self::FILTERS)),
             static fn (mixed $value): bool => $value !== null && $value !== '',
         );
-        $dashboard = $analytics->analyse(new MarketingAnalyticsQuery($request->user(), $period, $filters))->toArray();
-        $canUseExplorer = (bool) config('zoho-v2.features.explorer_enabled', false)
-            && $request->user()->can('view zoho records');
+
+        // A commercial can only ever view their own CRM scope. Normalize the
+        // request before building both analytics metadata and Explorer links so
+        // neither can disclose or claim a different commercial selection.
+        if ($request->user()->hasRole('commercial') && array_key_exists('commercial', $filters)) {
+            $filters['commercial'] = (string) $request->user()->getKey();
+            $data['commercial'] = $request->user()->getKey();
+            $request->query->set('commercial', $request->user()->getKey());
+        }
+
+        $query = new MarketingAnalyticsQuery($request->user(), $period, $filters);
+        $scope = $analytics->scopeFor($query);
+        $ceo = $controlTower->analyse($query, $scope);
+        $canUseExplorer = $request->user()->can('view zoho records');
 
         return view('backend.contents.marketing-dashboard.index', [
-            'dashboard' => $dashboard,
-            'controls' => ['period' => $data['period'] ?? '30d', 'from' => $data['from'] ?? null, 'to' => $data['to'] ?? null],
+            'dashboard' => ['scope' => $scope->metadata(), 'meta' => [
+                'stale_or_unavailable' => in_array(
+                    $ceo['freshness']['state'] ?? null,
+                    ['Indisponible', 'Périmètre indisponible'],
+                    true,
+                )
+                    || ($ceo['freshness']['stale'] ?? false) === true,
+            ]],
+            'ceo' => $ceo,
+            'controls' => ['period' => $data['period'] ?? '90d', 'from' => $data['from'] ?? null, 'to' => $data['to'] ?? null],
             'drilldowns' => $canUseExplorer ? $this->drilldowns($data) : [],
         ]);
     }
@@ -73,13 +91,17 @@ final class MarketingDashboardController extends Controller
     /** @param array<string,mixed> $data @return array<string,string> */
     private function drilldowns(array $data): array
     {
-        $safe = array_filter(array_intersect_key($data, array_flip([
-            'period', 'from', 'to', 'commercial', 'campaign', 'source', 'country', 'sector', 'transport', 'client_type', 'lead_source', 'currency',
-        ])), static fn (mixed $value): bool => $value !== null && $value !== '');
+        $safe = array_filter(
+            array_intersect_key($data, ['commercial' => true]),
+            static fn (mixed $value): bool => $value !== null && $value !== '',
+        );
         $query = http_build_query($safe);
         $suffix = $query === '' ? '' : '?'.$query;
 
-        return collect(['leads', 'accounts', 'contacts', 'deals', 'quotes'])
+        // Explorer periods and module filters use record creation dates and fields
+        // that do not match this dashboard's evidence windows. Only the authorized
+        // commercial scope is safe to carry without hiding the records just shown.
+        return collect(['accounts', 'contacts', 'deals'])
             ->mapWithKeys(fn (string $module): array => [$module => url('/admin/zoho/records/'.$module).$suffix])
             ->all();
     }

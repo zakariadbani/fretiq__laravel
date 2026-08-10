@@ -6,19 +6,24 @@ return [
     |--------------------------------------------------------------------------
     | Cold-send gate
     |--------------------------------------------------------------------------
-    | Keep false in dev/staging. Flip to true only after legal sign-off +
-    | full compliance prerequisites (SPF/DKIM/DMARC, List-Unsubscribe,
-    | bounce handling) are confirmed.
+    | Keep false in local/staging. Production may enable it only after the
+    | compliance and deliverability prerequisites have been approved.
     */
     'cold_send_enabled' => env('PROSPECTING_COLD_SEND_ENABLED', false),
+
+    'smtp' => [
+        'mode' => env('PROSPECTING_SMTP_MODE', 'mailpit'),
+        'quota_timezone' => env('PROSPECTING_SMTP_QUOTA_TIMEZONE', 'Europe/Paris'),
+        'business_start' => env('PROSPECTING_SMTP_BUSINESS_START', '09:00'),
+        'business_end' => env('PROSPECTING_SMTP_BUSINESS_END', '18:00'),
+    ],
 
     /*
     |--------------------------------------------------------------------------
     | Free-webmail domains
     |--------------------------------------------------------------------------
-    | Emails at these domains are classified as email_kind='personal' (excluded
-    | from cold sends). Everything else is classified as email_kind='role'
-    | (corporate / deliverable). Used by App\Support\EmailKind::classify().
+    | Emails at these domains are classified as email_kind='personal'. Everything
+    | else is classified as email_kind='role'. Used by EmailKind::classify().
     */
     'freemail_domains' => [
         'gmail.com','googlemail.com','yahoo.com','yahoo.fr','yahoo.co.uk',

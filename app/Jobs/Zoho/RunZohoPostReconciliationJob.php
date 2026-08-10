@@ -65,20 +65,6 @@ final class RunZohoPostReconciliationJob implements ShouldBeUniqueUntilProcessin
 
     public function handle(ZohoPostReconciliationProcessor $processor): void
     {
-        if (! config('zoho-v2.features.sync_enabled', false)) {
-            ZohoSyncBatch::query()
-                ->whereKey($this->batchId)
-                ->where('post_reconciliation_status', '!=', 'completed')
-                ->update([
-                    'post_reconciliation_status' => 'failed',
-                    'post_reconciliation_lease_owner' => null,
-                    'post_reconciliation_lease_expires_at' => null,
-                    'post_reconciliation_error' => 'Post-reconciliation processing was disabled.',
-                ]);
-
-            return;
-        }
-
         $owner = $this->deliveryToken;
         $claimedAttempt = DB::transaction(function () use ($owner): ?int {
             $batch = ZohoSyncBatch::query()->lockForUpdate()->find($this->batchId);

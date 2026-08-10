@@ -15,9 +15,8 @@ class ZohoModuleDispatcherTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_backfill_uses_bulk_only_when_flagged_and_supported(): void
+    public function test_backfill_uses_bulk_only_when_verified_and_supported(): void
     {
-        config()->set('zoho-v2.features.bulk_backfill_enabled', true);
         config()->set('zoho-v2.bulk.verified_modules', ['accounts']);
         Bus::fake();
         $dispatcher = new ZohoModuleDispatcher(app(ZohoModuleRegistry::class));
@@ -33,9 +32,9 @@ class ZohoModuleDispatcherTest extends TestCase
         Bus::assertDispatchedTimes(RunZohoModuleSyncJob::class, 2);
     }
 
-    public function test_disabled_bulk_flag_always_uses_standard_dispatch(): void
+    public function test_empty_verified_module_allowlist_uses_standard_dispatch(): void
     {
-        config()->set('zoho-v2.features.bulk_backfill_enabled', false);
+        config()->set('zoho-v2.bulk.verified_modules', []);
         Bus::fake();
         $dispatcher = new ZohoModuleDispatcher(app(ZohoModuleRegistry::class));
 
@@ -49,7 +48,6 @@ class ZohoModuleDispatcherTest extends TestCase
 
     public function test_leads_backfill_uses_records_after_live_bulk_conversion_coverage_was_incomplete(): void
     {
-        config()->set('zoho-v2.features.bulk_backfill_enabled', true);
         Bus::fake();
         $dispatcher = new ZohoModuleDispatcher(app(ZohoModuleRegistry::class));
 
@@ -68,7 +66,6 @@ class ZohoModuleDispatcherTest extends TestCase
 
     public function test_registry_capability_without_live_module_verification_stays_on_records(): void
     {
-        config()->set('zoho-v2.features.bulk_backfill_enabled', true);
         config()->set('zoho-v2.bulk.verified_modules', []);
         Bus::fake();
         $dispatcher = new ZohoModuleDispatcher(app(ZohoModuleRegistry::class));

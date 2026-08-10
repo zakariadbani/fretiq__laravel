@@ -22,6 +22,7 @@ class SequenceWaveService
         private readonly ZohoCampaignsDriver $driver,
         private readonly BusinessCalendarService $calendar,
         private readonly ZohoRecipientListGateway $listGateway,
+        private readonly CampaignDeliveryFence $deliveryFence,
     ) {}
 
     public function isDeferred(CampaignRun $run): bool
@@ -89,6 +90,10 @@ class SequenceWaveService
     public function send(CampaignRun $run): void
     {
         $run->refresh()->load(['campaign.senderIdentity', 'sequenceStep.template', 'recipients.contact.company']);
+        if (config('services.zoho.driver', 'local') !== 'zoho'
+            || ! in_array($run->campaign?->delivery_channel, [null, 'zoho'], true)) {
+            return;
+        }
         if (in_array($run->status, ['sent', 'failed', 'canceled'], true) || $this->isDeferred($run)) {
             return;
         }
@@ -136,7 +141,11 @@ class SequenceWaveService
             return;
         }
 
-        $run->update(['status' => 'sending', 'started_at' => $run->started_at ?? now(), 'failure_reason' => null]);
+        $claimedRun = $this->deliveryFence->claimZohoTransport($run, ['prepared', 'scheduled', 'sending']);
+        if ($claimedRun === null) {
+            return;
+        }
+        $run = $claimedRun->load(['campaign.senderIdentity', 'sequenceStep.template', 'recipients.contact.company']);
         $summary = $this->driver->dispatchRun($run, $contacts);
         $campaignKey = (string) $summary['campaign_key'];
 
@@ -225,11 +234,13 @@ class SequenceWaveService
                 'finished_at' => now(),
                 'driver_ref' => 'zoho',
             ]);
+            $locked->campaign->markDeliveryStarted();
         }, 3);
     }
 
     public function recover(): int
     {
+        if (config('services.zoho.driver', 'local') !== 'zoho') return 0;
         $adopted = $this->adoptLegacyEnrollments();
         $dispatched = 0;
         $runs = CampaignRun::query()
@@ -237,6 +248,7 @@ class SequenceWaveService
             ->where('occurrence_key', 'like', 'sequence-wave-%')
             ->where('run_at', '<=', now())
             ->whereIn('status', ['prepared', 'scheduled', 'sending'])
+            ->whereHas('campaign', fn ($query) => $query->where(fn ($channel) => $channel->whereNull('delivery_channel')->orWhere('delivery_channel', 'zoho')))
             ->get();
 
         foreach ($runs as $run) {
@@ -261,7 +273,8 @@ class SequenceWaveService
             ->whereNotNull('next_send_at')
             ->whereHas('campaign', fn ($query) => $query
                 ->where('schedule_type', 'sequence')
-                ->where('sequence_enrollment_mode', 'paced'))
+                ->where('sequence_enrollment_mode', 'paced')
+                ->where(fn ($channel) => $channel->whereNull('delivery_channel')->orWhere('delivery_channel', 'zoho')))
             ->with(['campaign', 'sequence.steps', 'stepSends'])
             ->orderBy('id')
             ->get()

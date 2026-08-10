@@ -14,6 +14,8 @@ class Campaign extends Model
 {
     use Validator;
 
+    public const AMBIGUOUS_ZOHO_DRIVER_REFS = ['zoho-send-attempted', 'zoho-send-uncertain'];
+
     /**
      * The table associated with the model.
      *
@@ -44,6 +46,9 @@ class Campaign extends Model
         'is_active',
         'sequence_auto_enroll_enabled',
         'driver',
+        'delivery_channel',
+        'smtp_daily_email_limit',
+        'delivery_started_at',
         'zoho_list_key',
     ];
 
@@ -60,6 +65,8 @@ class Campaign extends Model
         'is_active'    => 'boolean',
         'sequence_auto_enroll_enabled' => 'boolean',
         'daily_company_limit' => 'integer',
+        'smtp_daily_email_limit' => 'integer',
+        'delivery_started_at' => 'datetime',
     ];
 
     // ── Relationships ──────────────────────────────────────────────────────────
@@ -139,9 +146,91 @@ class Campaign extends Model
         return max(1, (int) ($this->daily_company_limit ?? 20));
     }
 
+    public function effectiveDeliveryChannel(): string
+    {
+        if (in_array($this->delivery_channel, ['zoho', 'smtp'], true)) {
+            return $this->delivery_channel;
+        }
+
+        return config('services.zoho.driver', 'local') === 'zoho' || $this->driver === 'zoho'
+            ? 'zoho'
+            : 'smtp';
+    }
+
     public function usesZohoDriver(): bool
     {
-        return config('services.zoho.driver', 'local') === 'zoho' || $this->driver === 'zoho';
+        return $this->effectiveDeliveryChannel() === 'zoho';
+    }
+
+    public function smtpDailyEmailLimit(): int
+    {
+        return $this->smtp_daily_email_limit === null
+            ? 20
+            : max(0, (int) $this->smtp_daily_email_limit);
+    }
+
+    public function deliverySettingsLocked(): bool
+    {
+        if ($this->delivery_started_at !== null) {
+            return true;
+        }
+
+        if (! $this->exists) return false;
+        // A queued SMTP run is intentionally editable until a mailbox has
+        // accepted a message. Only a narrow live transport claim blocks a race.
+        if ($this->delivery_channel === 'smtp') {
+            $smtpEvidenceExists = \App\Models\SmtpSendReservation::query()
+                ->where('campaign_id', $this->id)
+                ->where(function ($query): void {
+                    $query->whereIn('status', ['accepted', 'sent', 'uncertain'])
+                        ->orWhere(function ($sending): void {
+                            $sending->where('status', 'sending')
+                                ->whereNotNull('lease_expires_at')
+                                ->where('lease_expires_at', '>', now());
+                        });
+                })
+                ->exists();
+
+            if ($smtpEvidenceExists) {
+                return true;
+            }
+
+            // A regular SMTP run stays "sending" while future recipients are
+            // merely reserved, so that run status alone must not freeze edits.
+            return $this->runs()
+                ->whereIn('driver_ref', self::AMBIGUOUS_ZOHO_DRIVER_REFS)
+                ->exists();
+        }
+
+        return $this->hasRunDeliveryEvidence();
+    }
+
+    public function hasRunDeliveryEvidence(): bool
+    {
+        if (! $this->exists) {
+            return false;
+        }
+
+        return $this->runs()
+            ->where(function ($query): void {
+                $query->whereIn('status', ['sending', 'sent'])
+                    ->orWhereIn('driver_ref', self::AMBIGUOUS_ZOHO_DRIVER_REFS);
+            })
+            ->exists();
+    }
+
+    public function markDeliveryStarted(): void
+    {
+        if (! $this->exists) {
+            return;
+        }
+
+        self::query()
+            ->whereKey($this->getKey())
+            ->whereNull('delivery_started_at')
+            ->update(['delivery_started_at' => now()]);
+
+        $this->refresh();
     }
 
     public function isOverdue(?Carbon $now = null): bool
@@ -223,6 +312,8 @@ class Campaign extends Model
             'send_window'        => 'nullable|array',
             'is_active'          => 'nullable|boolean',
             'driver'             => 'nullable|in:local,zoho',
+            'delivery_channel'   => 'nullable|in:zoho,smtp',
+            'smtp_daily_email_limit' => 'nullable|integer|min:0|max:500',
         ];
     }
 

@@ -45,8 +45,6 @@ class ZohoV2BulkBackfillTest extends TestCase
     {
         parent::setUp();
         Carbon::setTestNow('2026-08-09 10:00:00');
-        config()->set('zoho-v2.features.sync_enabled', true);
-        config()->set('zoho-v2.features.bulk_backfill_enabled', true);
         config()->set('zoho-v2.bulk.verified_modules', ['accounts', 'deals', 'tasks', 'events', 'calls']);
         config()->set('zoho-v2.bulk.poll_delay_seconds', 1);
         config()->set('zoho-v2.bulk.lock_retry_seconds', 1);
@@ -919,8 +917,6 @@ class ZohoV2BulkBackfillTest extends TestCase
 
     public function test_bulk_job_atomically_reserves_and_queues_its_descendant_before_the_parent_returns(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
-        config()->set('zoho-v2.features.bulk_backfill_enabled', true);
         config()->set('zoho-v2.retry.max_attempts', 5);
         $batch = $this->batch();
         $service = Mockery::mock(ZohoBulkBackfillService::class);
@@ -1025,35 +1021,6 @@ class ZohoV2BulkBackfillTest extends TestCase
 
         $this->assertSame(0, $root->fresh()->delivery_generation);
         $this->assertSame(0, DB::table('jobs')->count());
-    }
-
-    public function test_bulk_job_kill_switch_durably_terminalizes_the_batch_without_resolving_sync_service(): void
-    {
-        $batch = $this->batch();
-        config()->set('zoho-v2.features.sync_enabled', false);
-        $this->app->bind(ZohoBulkBackfillService::class, fn () => throw new RuntimeException('service must not resolve'));
-
-        (new RunZohoBulkBackfillJob(
-            $batch->id,
-            'accounts',
-            $batch->correlation_id,
-        ))->handle();
-
-        $this->assertSame('error', $batch->fresh()->status);
-        $this->assertDatabaseHas('zoho_bulk_read_jobs', [
-            'sync_batch_id' => $batch->id,
-            'module' => 'accounts',
-            'status' => 'partial',
-        ]);
-        $this->assertDatabaseHas('zoho_sync_logs', [
-            'sync_batch_id' => $batch->id,
-            'module' => 'accounts',
-            'status' => 'error',
-        ]);
-        $this->assertDatabaseHas('zoho_sync_checkpoints', [
-            'module' => 'v2:accounts',
-            'status' => 'failed',
-        ]);
     }
 
     public function test_bulk_job_failed_callback_quarantines_owned_work_idempotently_without_pii(): void
@@ -1204,7 +1171,6 @@ class ZohoV2BulkBackfillTest extends TestCase
             $dueAt = $root->lease_expires_at;
         }
         Carbon::setTestNow($dueAt->addSecond());
-        config()->set('zoho-v2.features.schedules_enabled', true);
         $recovery = new ZohoBulkRunTerminator(app(ZohoModuleRegistry::class), $orchestrator);
         $sweeper = new RecoverZohoBulkTerminalizationsJob;
         $sweeper->handle($recovery);
@@ -1219,42 +1185,8 @@ class ZohoV2BulkBackfillTest extends TestCase
         $this->assertSame(1, ZohoSyncLog::query()->where('sync_batch_id', $batch->id)->count());
     }
 
-    public function test_bulk_terminalization_recovery_remains_dark_when_disabled(): void
-    {
-        config()->set('zoho-v2.features.schedules_enabled', true);
-        config()->set('zoho-v2.features.bulk_backfill_enabled', false);
-        $batch = $this->batch();
-        $root = ZohoBulkReadJob::query()->create([
-            'sync_batch_id' => $batch->id,
-            'module' => 'accounts',
-            'submodule' => '',
-            'page_key' => 'root',
-            'correlation_id' => $batch->correlation_id,
-            'status' => 'terminalizing',
-            'module_lease_owner' => 'dark-run-owner',
-            'delivery_generation' => 2,
-            'retry_after' => now()->subMinute(),
-            'terminalization_reason' => 'delivery_exhausted',
-            'terminalization_context' => [
-                'version' => 1,
-                'source' => 'framework_failed_job',
-                'delivery_generation' => 2,
-            ],
-            'started_at' => now()->subHour(),
-            'watermark_at' => now()->subHour(),
-        ]);
-        $terminator = Mockery::mock(ZohoBulkRunTerminator::class);
-        $terminator->shouldNotReceive('terminate');
-
-        (new RecoverZohoBulkTerminalizationsJob)->handle($terminator);
-
-        $this->assertSame('terminalizing', $root->fresh()->status);
-        $this->assertNull($root->fresh()->lease_owner);
-    }
-
     public function test_bulk_terminalization_recovery_sanitizes_remote_exception_details(): void
     {
-        config()->set('zoho-v2.features.schedules_enabled', true);
         $batch = $this->batch();
         $root = ZohoBulkReadJob::query()->create([
             'sync_batch_id' => $batch->id,

@@ -36,7 +36,6 @@ class ZohoV2ExplorerTest extends TestCase
         $this->admin->assignRole('admin');
         $this->commercial = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
         $this->commercial->assignRole('commercial');
-        config()->set('zoho-v2.features.explorer_enabled', true);
     }
 
     public function test_routes_are_loaded_normally_and_expose_get_only_surface(): void
@@ -55,10 +54,12 @@ class ZohoV2ExplorerTest extends TestCase
         });
     }
 
-    public function test_feature_flag_hides_the_explorer(): void
+    public function test_specific_permission_protects_the_explorer(): void
     {
-        config()->set('zoho-v2.features.explorer_enabled', false);
-        $this->actingAs($this->admin)->get('/admin/zoho/records/accounts')->assertNotFound();
+        $denied = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
+        $denied->givePermissionTo('backend.access');
+
+        $this->actingAs($denied)->get('/admin/zoho/records/accounts')->assertForbidden();
     }
 
     public function test_commercial_cannot_escape_confirmed_owner_scope_or_view_another_detail(): void
@@ -229,7 +230,44 @@ class ZohoV2ExplorerTest extends TestCase
             ->assertOk()->assertSee('filtre campagne ne s’applique pas', false);
     }
 
-    public function test_marketing_source_filter_is_not_reinterpreted_as_a_deal_lead_source(): void
+    public function test_shared_filter_names_resolve_to_each_modules_typed_columns(): void
+    {
+        $this->account('typed-client', 'owner-a')->update([
+            'account_type' => 'Client',
+            'account_status' => 'Actif',
+            'transport_type' => 'Air',
+        ]);
+        $this->account('typed-prospect', 'owner-a')->update([
+            'account_type' => 'Prospect',
+            'account_status' => 'Inactif',
+            'transport_type' => 'Road',
+        ]);
+        foreach ([['quote-air', ['Air', 'Sea']], ['quote-road', ['Road']]] as [$zohoId, $transport]) {
+            ZohoQuote::query()->create([
+                'zoho_id' => $zohoId,
+                'owner_zoho_id' => 'owner-a',
+                'subject' => $zohoId,
+                'transport_type' => $transport,
+                'raw_payload' => [],
+                'payload_hash' => hash('sha256', $zohoId),
+            ]);
+        }
+
+        $this->actingAs($this->admin)
+            ->get('/admin/zoho/records/accounts/data?draw=1&start=0&length=10&client_type=Client')
+            ->assertOk()->assertJsonPath('recordsFiltered', 1);
+        $this->actingAs($this->admin)
+            ->get('/admin/zoho/records/accounts/data?draw=2&start=0&length=10&status=Actif')
+            ->assertOk()->assertJsonPath('recordsFiltered', 1);
+        $this->actingAs($this->admin)
+            ->get('/admin/zoho/records/accounts/data?draw=3&start=0&length=10&transport=Air')
+            ->assertOk()->assertJsonPath('recordsFiltered', 1);
+        $this->actingAs($this->admin)
+            ->get('/admin/zoho/records/quotes/data?draw=4&start=0&length=10&transport=Air')
+            ->assertOk()->assertJsonPath('recordsFiltered', 1);
+    }
+
+    public function test_absent_deal_lead_source_is_not_exposed_or_used_as_a_filter(): void
     {
         foreach ([['deal-referral', 'Referral'], ['deal-partner', 'Partner']] as [$zohoId, $leadSource]) {
             ZohoDeal::query()->create([
@@ -250,7 +288,9 @@ class ZohoV2ExplorerTest extends TestCase
         $this->actingAs($this->admin)
             ->get('/admin/zoho/records/deals/data?draw=2&start=0&length=10&lead_source=Referral')
             ->assertOk()
-            ->assertJsonPath('recordsFiltered', 1);
+            ->assertJsonPath('recordsFiltered', 2);
+
+        $this->assertNotContains('lead_source', app(ZohoExplorer::class)->visibleFields('deals'));
     }
 
     public function test_admin_commercial_filter_uses_confirmed_owner_mapping_and_fails_closed(): void

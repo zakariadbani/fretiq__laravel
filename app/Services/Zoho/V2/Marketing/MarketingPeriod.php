@@ -38,6 +38,7 @@ final readonly class MarketingPeriod
             [$start, $end] = match ($preset) {
                 '7d' => [$now->startOfDay()->subDays(6), $now->endOfDay()],
                 '90d' => [$now->startOfDay()->subDays(89), $now->endOfDay()],
+                '365d' => [$now->startOfDay()->subDays(364), $now->endOfDay()],
                 'qtd' => [$now->firstOfQuarter()->startOfDay(), $now->endOfDay()],
                 'ytd' => [$now->startOfYear()->startOfDay(), $now->endOfDay()],
                 '30d' => [$now->startOfDay()->subDays(29), $now->endOfDay()],

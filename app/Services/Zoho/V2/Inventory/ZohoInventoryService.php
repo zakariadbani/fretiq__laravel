@@ -23,7 +23,7 @@ final class ZohoInventoryService
             $failedResults = [];
             foreach ($keys as $key) {
                 $this->registry->get($key);
-                $failedResults[$key] = ['status' => $status, 'state' => 'failed', 'schema_hash' => null, 'fields' => 0, 'layouts' => 0, 'related_lists' => 0, 'currencies' => []];
+                $failedResults[$key] = ['status' => $status, 'state' => 'failed', 'schema_hash' => null, 'fields' => 0, 'layouts' => 0, 'related_lists' => 0, 'currencies' => [], 'mapping_gaps' => []];
             }
 
             return new InventoryReport($failedResults, count($keys), count($keys), false, 'degraded');
@@ -36,13 +36,13 @@ final class ZohoInventoryService
         foreach ($keys as $key) {
             $definition = $this->registry->get($key);
             if ($definition->activationGated) {
-                $results[$key] = ['status' => 403, 'state' => 'gated', 'schema_hash' => null, 'fields' => 0, 'layouts' => 0, 'related_lists' => 0, 'currencies' => []];
+                $results[$key] = ['status' => 403, 'state' => 'gated', 'schema_hash' => null, 'fields' => 0, 'layouts' => 0, 'related_lists' => 0, 'currencies' => [], 'mapping_gaps' => []];
 
                 continue;
             }
             if (! $remote->has($definition->apiName)) {
                 $failed++;
-                $results[$key] = ['status' => 404, 'state' => 'missing', 'schema_hash' => null, 'fields' => 0, 'layouts' => 0, 'related_lists' => 0, 'currencies' => []];
+                $results[$key] = ['status' => 404, 'state' => 'missing', 'schema_hash' => null, 'fields' => 0, 'layouts' => 0, 'related_lists' => 0, 'currencies' => [], 'mapping_gaps' => []];
 
                 continue;
             }
@@ -51,11 +51,11 @@ final class ZohoInventoryService
             $related = $this->transport->get('/settings/related_lists', ['module' => $definition->apiName]);
             $fieldRows = $this->metadataRows($fields, 'fields', true);
             $layoutRows = $this->metadataRows($layouts, 'layouts');
-            $relatedRows = $this->metadataRows($related, 'related_lists');
+            $relatedRows = $this->metadataRows($related, 'related_lists', allowNoContent: true);
             if ($fieldRows === null || $layoutRows === null || $relatedRows === null) {
                 $failed++;
                 $transportFailed = ! $fields->successful() || ! $layouts->successful() || ! $related->successful();
-                $results[$key] = ['status' => $transportFailed ? max($fields->status, $layouts->status, $related->status) : 422, 'state' => $transportFailed ? 'failed' : 'malformed', 'schema_hash' => null, 'fields' => 0, 'layouts' => 0, 'related_lists' => 0, 'currencies' => []];
+                $results[$key] = ['status' => $transportFailed ? max($fields->status, $layouts->status, $related->status) : 422, 'state' => $transportFailed ? 'failed' : 'malformed', 'schema_hash' => null, 'fields' => 0, 'layouts' => 0, 'related_lists' => 0, 'currencies' => [], 'mapping_gaps' => []];
 
                 continue;
             }
@@ -65,30 +65,51 @@ final class ZohoInventoryService
             $picklists = $this->picklists($safeFields);
             $document = ['fields' => $safeFields, 'layouts' => $safeLayouts, 'related_lists' => $safeRelated, 'picklists' => $picklists];
             $hash = hash('sha256', json_encode($this->canonical($document), JSON_THROW_ON_ERROR));
-            $this->persist($key, $definition->submodule ?? '', $hash, $safeFields, $safeLayouts, $picklists, $safeRelated);
-            $results[$key] = ['status' => 200, 'state' => 'verified', 'schema_hash' => $hash, 'fields' => count($safeFields), 'layouts' => count($safeLayouts), 'related_lists' => count($safeRelated), 'currencies' => $this->currencies($safeFields)];
+            $gaps = $this->mappingGaps($definition->promotedFieldSources, $safeFields);
+            $this->persist($key, $definition->submodule ?? '', $hash, $safeFields, $safeLayouts, $picklists, $safeRelated, $gaps);
+            $results[$key] = ['status' => 200, 'state' => $gaps === [] ? 'verified' : 'mapping_gap', 'schema_hash' => $hash, 'fields' => count($safeFields), 'layouts' => count($safeLayouts), 'related_lists' => count($safeRelated), 'currencies' => $this->currencies($safeFields), 'mapping_gaps' => $gaps];
         }
 
-        return new InventoryReport($results, count($keys), $failed, $failed === 0, $failed === 0 ? 'healthy' : 'degraded');
+        $hasGaps = collect($results)->contains(fn (array $result): bool => $result['state'] === 'mapping_gap');
+
+        return new InventoryReport($results, count($keys), $failed, $failed === 0, $failed === 0 && ! $hasGaps ? 'healthy' : 'degraded');
     }
 
     public function markReviewed(string $module, string $schemaHash, string $submodule = ''): bool
     {
-        return ZohoFieldManifest::query()
-            ->where(compact('module', 'submodule'))
-            ->where('schema_hash', $schemaHash)
-            ->where('is_current', true)
-            ->update(['drift_state' => 'verified', 'verified_at' => now(), 'last_seen_at' => now()]) === 1;
+        return DB::transaction(function () use ($module, $schemaHash, $submodule): bool {
+            $manifest = ZohoFieldManifest::query()
+                ->where(compact('module', 'submodule'))
+                ->where('schema_hash', $schemaHash)
+                ->where('is_current', true)
+                ->lockForUpdate()
+                ->first();
+
+            if ($manifest === null || (array) ($manifest->mapping_gaps ?? []) !== []) {
+                return false;
+            }
+
+            $manifest->update([
+                'drift_state' => 'verified',
+                'verified_at' => now(),
+                'last_seen_at' => now(),
+            ]);
+
+            return true;
+        });
     }
 
-    private function persist(string $module, string $submodule, string $hash, array $fields, array $layouts, array $picklists, array $relatedLists): void
+    private function persist(string $module, string $submodule, string $hash, array $fields, array $layouts, array $picklists, array $relatedLists, array $mappingGaps): void
     {
-        DB::transaction(function () use ($module, $submodule, $hash, $fields, $layouts, $picklists, $relatedLists): void {
+        DB::transaction(function () use ($module, $submodule, $hash, $fields, $layouts, $picklists, $relatedLists, $mappingGaps): void {
             $current = ZohoFieldManifest::where(compact('module', 'submodule'))->where('is_current', true)->lockForUpdate()->first();
             if ($current && $current->schema_hash === $hash) {
-                $updates = ['last_seen_at' => now(), 'related_lists' => $relatedLists];
-                if ($current->drift_state === 'verified') {
+                $updates = ['last_seen_at' => now(), 'related_lists' => $relatedLists, 'mapping_gaps' => $mappingGaps];
+                if ($current->drift_state === 'verified' && $mappingGaps === []) {
                     $updates['verified_at'] = now();
+                } elseif ($mappingGaps !== []) {
+                    $updates['drift_state'] = 'drifted';
+                    $updates['verified_at'] = null;
                 }
                 $current->update($updates);
 
@@ -103,12 +124,21 @@ final class ZohoInventoryService
                     'picklists' => $picklists,
                     'related_lists' => $relatedLists,
                     'is_current' => true,
-                    'drift_state' => $current ? 'drifted' : 'verified',
-                    'verified_at' => $current ? null : now(),
+                    'mapping_gaps' => $mappingGaps,
+                    'drift_state' => $current || $mappingGaps !== [] ? 'drifted' : 'verified',
+                    'verified_at' => $current || $mappingGaps !== [] ? null : now(),
                     'last_seen_at' => now(),
                 ],
             );
         });
+    }
+
+    /** @param array<string,list<string>> $requirements @param list<array<string,mixed>> $fields */
+    private function mappingGaps(array $requirements, array $fields): array
+    {
+        $available = collect($fields)->pluck('api_name')->filter()->flip();
+
+        return collect($requirements)->filter(fn (array $candidates): bool => collect($candidates)->every(fn (string $source): bool => ! $available->has($source)))->all();
     }
 
     private function safeFields(array $fields): array
@@ -140,8 +170,12 @@ final class ZohoInventoryService
     }
 
     /** @return list<array<string,mixed>>|null */
-    private function metadataRows(mixed $response, string $root, bool $requireApiName = false): ?array
+    private function metadataRows(mixed $response, string $root, bool $requireApiName = false, bool $allowNoContent = false): ?array
     {
+        if ($allowNoContent && $response->successful() && $response->status === 204) {
+            return [];
+        }
+
         $rows = $response->root($root);
         if (! $response->successful() || $response->status !== 200 || ! is_array($rows) || ! array_is_list($rows)) {
             return null;

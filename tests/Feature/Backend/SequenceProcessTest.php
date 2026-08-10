@@ -3,17 +3,23 @@
 namespace Tests\Feature\Backend;
 
 use App\Jobs\SendSequenceStepJob;
+use App\Jobs\SendSmtpReservationJob;
 use App\Mail\SequenceStepMailable;
 use App\Models\Campaign;
 use App\Models\CampaignTemplate;
 use App\Models\Company;
 use App\Models\Contact;
+use App\Models\EmailTrackingEvent;
 use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStep;
 use App\Models\SequenceStepSend;
+use App\Models\Segment;
+use App\Models\SenderIdentity;
+use App\Models\SmtpSendReservation;
 use App\Models\Setting;
 use App\Services\Campaign\SequenceService;
+use App\Services\Campaign\SmtpSendReservationService;
 use Carbon\Carbon;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
@@ -38,7 +44,6 @@ class SequenceProcessTest extends TestCase
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
         config([
-            'prospecting.cold_send_enabled' => true,
             'services.zoho.driver' => 'local',
         ]);
         Mail::fake();
@@ -504,5 +509,320 @@ class SequenceProcessTest extends TestCase
 
         $this->assertSame(1, $dispatchedOnMonday, 'The same held row must dispatch once Monday arrives');
         Queue::assertPushed(SendSequenceStepJob::class, fn ($job) => $job->enrollmentId === $enrollment->id);
+    }
+
+    public function test_process_due_dispatches_an_explicit_smtp_sequence_when_global_driver_is_zoho(): void
+    {
+        Queue::fake();
+        config(['services.zoho.driver' => 'zoho']);
+        $sequence = $this->makeTwoStepSequence();
+        $contact = $this->makeContact('smtp-global-zoho@example.test');
+        $campaign = $this->makeSmtpSequenceCampaign($sequence);
+        $enrollment = app(SequenceService::class)->enroll($sequence, $contact, $campaign);
+
+        $this->assertSame(1, app(SequenceService::class)->processDue());
+        Queue::assertPushed(SendSequenceStepJob::class, fn ($job) => $job->enrollmentId === $enrollment->id);
+    }
+
+    public function test_send_sequence_step_job_reserves_instead_of_skipping_explicit_smtp(): void
+    {
+        Queue::fake();
+        config(['services.zoho.driver' => 'zoho']);
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence);
+        $enrollment = app(SequenceService::class)->enroll($sequence, $this->makeContact('reserve-step@example.test'), $campaign);
+
+        (new SendSequenceStepJob($enrollment->id))->handle();
+
+        $this->assertSame(1, SequenceStepSend::where('enrollment_id', $enrollment->id)->count());
+        $this->assertSame(1, SmtpSendReservation::where('source_type', SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND)->count());
+        Queue::assertPushed(SendSmtpReservationJob::class, 1);
+    }
+
+    public function test_sequence_and_regular_campaign_share_the_sender_identity_quota(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-10 09:00:00', 'Europe/Paris'));
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence);
+        $identity = $campaign->senderIdentity;
+        $identity->update(['smtp_hourly_limit' => 1]);
+        $regularCampaign = $campaign->replicate();
+        $regularCampaign->name = 'SMTP regular campaign ' . uniqid();
+        $regularCampaign->save();
+        $service = app(SmtpSendReservationService::class);
+        $regular = $service->reserve($identity, $regularCampaign, SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT, 9001);
+        $step = $service->reserve($identity, $campaign, SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND, 9002);
+
+        $this->assertNotSame($regularCampaign->id, $campaign->id);
+        $this->assertGreaterThanOrEqual(
+            3600,
+            abs($regular['send_at']->timestamp - $step['send_at']->timestamp),
+            sprintf(
+                'Regular slot %s and sequence slot %s must share sender limit %d.',
+                $regular['send_at']->toIso8601String(),
+                $step['send_at']->toIso8601String(),
+                $identity->fresh()->smtp_hourly_limit,
+            ),
+        );
+    }
+
+    public function test_smtp_sequence_step_uses_selected_identity_mailable_and_advances_after_success(): void
+    {
+        Queue::fake();
+        Carbon::setTestNow(Carbon::parse('2026-08-10 09:00:00', 'Europe/Paris'));
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence);
+        $enrollment = app(SequenceService::class)->enroll($sequence, $this->makeContact('sequence-send@example.test'), $campaign);
+        (new SendSequenceStepJob($enrollment->id))->handle();
+        $reservation = SmtpSendReservation::firstOrFail();
+        $reservation->update(['reserved_for' => now()->subSecond()]);
+
+        $job = new SendSmtpReservationJob($reservation->id);
+        $job->handle(
+            app(SmtpSendReservationService::class),
+            app(\App\Services\Campaign\SmtpCampaignsDriver::class),
+            app(\App\Services\Campaign\CampaignService::class),
+            app(SequenceService::class),
+        );
+
+        $this->assertSame(1, $enrollment->fresh()->current_step);
+        $this->assertSame('sent', SequenceStepSend::firstOrFail()->status);
+        Mail::assertSent(SequenceStepMailable::class);
+    }
+
+    public function test_accepted_smtp_sequence_reservation_reconciles_without_sending_again(): void
+    {
+        Queue::fake();
+        Carbon::setTestNow(Carbon::parse('2026-08-10 09:00:00', 'Europe/Paris'));
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence);
+        $enrollment = app(SequenceService::class)->enroll($sequence, $this->makeContact('sequence-accepted@example.test'), $campaign);
+        (new SendSequenceStepJob($enrollment->id))->handle();
+        $reservation = SmtpSendReservation::firstOrFail();
+        $reservation->update([
+            'status' => 'accepted',
+            'accepted_at' => now(),
+            'provider_message_id' => 'already-accepted-by-smtp',
+        ]);
+
+        (new SendSmtpReservationJob($reservation->id))->handle(
+            app(SmtpSendReservationService::class),
+            app(\App\Services\Campaign\SmtpCampaignsDriver::class),
+            app(\App\Services\Campaign\CampaignService::class),
+            app(SequenceService::class),
+        );
+
+        Mail::assertNothingSent();
+        $this->assertSame('sent', $reservation->fresh()->status);
+        $this->assertSame('already-accepted-by-smtp', SequenceStepSend::firstOrFail()->provider_message_id);
+        $this->assertSame(1, $enrollment->fresh()->current_step);
+        $this->assertNotNull($campaign->fresh()->delivery_started_at);
+    }
+
+    public function test_stopped_enrollment_releases_delayed_smtp_reservation_without_sending(): void
+    {
+        Queue::fake();
+        Carbon::setTestNow(Carbon::parse('2026-08-10 09:00:00', 'Europe/Paris'));
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence);
+        $enrollment = app(SequenceService::class)->enroll($sequence, $this->makeContact('sequence-stopped@example.test'), $campaign);
+        (new SendSequenceStepJob($enrollment->id))->handle();
+        $reservation = SmtpSendReservation::firstOrFail();
+        $reservation->update(['reserved_for' => now()->subSecond()]);
+        $enrollment->update(['status' => 'stopped', 'stopped_reason' => 'replied', 'next_send_at' => null]);
+
+        (new SendSmtpReservationJob($reservation->id))->handle(
+            app(SmtpSendReservationService::class),
+            app(\App\Services\Campaign\SmtpCampaignsDriver::class),
+            app(\App\Services\Campaign\CampaignService::class),
+            app(SequenceService::class),
+        );
+
+        Mail::assertNothingSent();
+        $this->assertSame('released', $reservation->fresh()->status);
+        $this->assertSame('queued', SequenceStepSend::firstOrFail()->status);
+        $this->assertSame(0, $enrollment->fresh()->current_step);
+    }
+
+    public function test_cold_send_disabled_stops_smtp_sequence_before_tracking_or_transport(): void
+    {
+        Queue::fake();
+        config(['prospecting.cold_send_enabled' => false]);
+        Carbon::setTestNow(Carbon::parse('2026-08-10 09:00:00', 'Europe/Paris'));
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence);
+        $contact = $this->makeContact('sequence-cold-disabled@example.test');
+        $contact->company->update(['relationship' => 'prospect']);
+        $enrollment = app(SequenceService::class)->enroll($sequence, $contact, $campaign);
+        (new SendSequenceStepJob($enrollment->id))->handle();
+        $reservation = SmtpSendReservation::firstOrFail();
+        $reservation->update(['reserved_for' => now()->subSecond()]);
+
+        (new SendSmtpReservationJob($reservation->id))->handle(
+            app(SmtpSendReservationService::class),
+            app(\App\Services\Campaign\SmtpCampaignsDriver::class),
+            app(\App\Services\Campaign\CampaignService::class),
+            app(SequenceService::class),
+        );
+
+        Mail::assertNothingSent();
+        $this->assertSame('released', $reservation->fresh()->status);
+        $this->assertSame('skipped', SequenceStepSend::firstOrFail()->status);
+        $this->assertSame('stopped', $enrollment->fresh()->status);
+        $this->assertSame('cold_send_disabled', $enrollment->fresh()->stopped_reason);
+        $this->assertSame(0, EmailTrackingEvent::count());
+    }
+
+    public function test_inactive_sequence_releases_delayed_smtp_reservation_without_sending(): void
+    {
+        Queue::fake();
+        Carbon::setTestNow(Carbon::parse('2026-08-10 09:00:00', 'Europe/Paris'));
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence);
+        $enrollment = app(SequenceService::class)->enroll($sequence, $this->makeContact('sequence-inactive@example.test'), $campaign);
+        (new SendSequenceStepJob($enrollment->id))->handle();
+        $reservation = SmtpSendReservation::firstOrFail();
+        $reservation->update(['reserved_for' => now()->subSecond()]);
+        $sequence->update(['is_active' => false]);
+
+        (new SendSmtpReservationJob($reservation->id))->handle(
+            app(SmtpSendReservationService::class),
+            app(\App\Services\Campaign\SmtpCampaignsDriver::class),
+            app(\App\Services\Campaign\CampaignService::class),
+            app(SequenceService::class),
+        );
+
+        Mail::assertNothingSent();
+        $this->assertSame('released', $reservation->fresh()->status);
+        $this->assertSame('queued', SequenceStepSend::firstOrFail()->status);
+        $this->assertSame(0, $enrollment->fresh()->current_step);
+    }
+
+    public function test_incomplete_sequence_sender_configuration_defers_before_transport(): void
+    {
+        Queue::fake();
+        Carbon::setTestNow(Carbon::parse('2026-08-10 09:00:00', 'Europe/Paris'));
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence);
+        $enrollment = app(SequenceService::class)->enroll($sequence, $this->makeContact('sequence-incomplete-smtp@example.test'), $campaign);
+        (new SendSequenceStepJob($enrollment->id))->handle();
+        $reservation = SmtpSendReservation::firstOrFail();
+        $reservation->update(['reserved_for' => now()->subSecond()]);
+        config(['app.env' => 'production', 'prospecting.smtp.mode' => 'sender_identity']);
+
+        (new SendSmtpReservationJob($reservation->id))->handle(
+            app(SmtpSendReservationService::class),
+            app(\App\Services\Campaign\SmtpCampaignsDriver::class),
+            app(\App\Services\Campaign\CampaignService::class),
+            app(SequenceService::class),
+        );
+
+        Mail::assertNothingSent();
+        $this->assertSame('reserved', $reservation->fresh()->status);
+        $this->assertSame('queued', SequenceStepSend::firstOrFail()->status);
+        $this->assertSame(0, EmailTrackingEvent::count());
+        $this->assertFalse($campaign->fresh()->deliverySettingsLocked());
+    }
+
+    public function test_zoho_paced_sequence_still_uses_zoho_waves(): void
+    {
+        Queue::fake();
+        config(['services.zoho.driver' => 'zoho']);
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence, [
+            'delivery_channel' => 'zoho',
+            'sequence_enrollment_mode' => 'paced',
+        ]);
+        $enrollment = app(SequenceService::class)->enroll($sequence, $this->makeContact('zoho-paced@example.test'), $campaign);
+
+        (new SendSequenceStepJob($enrollment->id))->handle();
+
+        $this->assertSame(0, SmtpSendReservation::count());
+    }
+
+    public function test_local_driver_processes_paced_explicit_zoho_sequence_through_mailpit(): void
+    {
+        Queue::fake();
+        config(['services.zoho.driver' => 'local']);
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence, [
+            'delivery_channel' => 'zoho',
+            'sequence_enrollment_mode' => 'paced',
+        ]);
+        $enrollment = app(SequenceService::class)->enroll(
+            $sequence,
+            $this->makeContact('zoho-local-mailpit@example.test'),
+            $campaign,
+        );
+
+        (new SendSequenceStepJob($enrollment->id))->handle();
+
+        Mail::assertSent(SequenceStepMailable::class, 1);
+        $this->assertSame(1, $enrollment->fresh()->current_step);
+        $this->assertSame(0, SmtpSendReservation::count());
+    }
+
+    public function test_live_zoho_driver_leaves_legacy_null_paced_sequence_for_wave_processing(): void
+    {
+        Queue::fake();
+        config(['services.zoho.driver' => 'zoho']);
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence, [
+            'delivery_channel' => null,
+            'sequence_enrollment_mode' => 'paced',
+        ]);
+        $enrollment = app(SequenceService::class)->enroll(
+            $sequence,
+            $this->makeContact('legacy-live-zoho-wave@example.test'),
+            $campaign,
+        );
+
+        (new SendSequenceStepJob($enrollment->id))->handle();
+
+        Mail::assertNothingSent();
+        $this->assertSame(0, SequenceStepSend::where('enrollment_id', $enrollment->id)->count());
+        $this->assertSame(0, SmtpSendReservation::count());
+        $this->assertSame(0, $enrollment->fresh()->current_step);
+    }
+
+    public function test_sequence_retry_reuses_the_same_step_send_and_reservation(): void
+    {
+        Queue::fake();
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence);
+        $enrollment = app(SequenceService::class)->enroll($sequence, $this->makeContact('sequence-retry@example.test'), $campaign);
+        $service = app(SequenceService::class);
+
+        $service->sendStep($enrollment);
+        $service->sendStep($enrollment->fresh());
+
+        $this->assertSame(1, SequenceStepSend::where('enrollment_id', $enrollment->id)->count());
+        $this->assertSame(1, SmtpSendReservation::count());
+    }
+
+    private function makeSmtpSequenceCampaign(Sequence $sequence, array $attributes = []): Campaign
+    {
+        $segment = Segment::create(['name' => 'Sequence audience ' . uniqid(), 'scope' => 'client']);
+        $sender = SenderIdentity::create([
+            'name' => 'Sequence sender ' . uniqid(),
+            'email' => uniqid('sequence-sender') . '@example.test',
+            'is_active' => true,
+            'smtp_hourly_limit' => 10,
+            'smtp_daily_limit' => 50,
+        ]);
+
+        return Campaign::create(array_merge([
+            'name' => 'SMTP sequence ' . uniqid(),
+            'segment_id' => $segment->id,
+            'template_id' => null,
+            'sender_identity_id' => $sender->id,
+            'sequence_id' => $sequence->id,
+            'schedule_type' => 'sequence',
+            'sequence_enrollment_mode' => 'immediate',
+            'delivery_channel' => 'smtp',
+            'smtp_daily_email_limit' => 20,
+            'timezone' => 'Europe/Paris',
+            'is_active' => true,
+        ], $attributes));
     }
 }

@@ -15,7 +15,6 @@ use Tests\TestCase;
 /**
  * Service-level tests for SegmentService::resolve().
  *
- * Cold gate is OFF (config('prospecting.cold_send_enabled') = false).
  */
 class SegmentResolveTest extends TestCase
 {
@@ -27,8 +26,6 @@ class SegmentResolveTest extends TestCase
 
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
-        // Guarantee the cold gate is off for every test in this class.
-        config(['prospecting.cold_send_enabled' => false]);
     }
 
     // ── Helper ─────────────────────────────────────────────────────────────────
@@ -81,7 +78,7 @@ class SegmentResolveTest extends TestCase
 
     /**
      * A client-scoped segment should include a client contact and exclude a
-     * prospect contact when the cold gate is off.
+     * prospect contact by scope.
      */
     public function test_client_segment_includes_client_excludes_prospect(): void
     {
@@ -124,28 +121,27 @@ class SegmentResolveTest extends TestCase
     }
 
     /**
-     * A prospect-scoped segment resolves to 0 contacts when the cold gate is off.
+     * A prospect-scoped segment resolves its prospect contacts.
      */
-    public function test_prospect_segment_resolves_to_zero_when_cold_gate_off(): void
+    public function test_prospect_segment_resolves_prospect_contacts(): void
     {
-        $this->makeProspectContact('prospect@cold.test');
+        $this->makeProspectContact('prospect@example.test');
 
         $segment = Segment::create(['name' => 'Prospects', 'scope' => 'prospect']);
 
         $service = app(SegmentService::class);
         $count   = $service->resolve($segment)->count();
 
-        $this->assertSame(0, $count, 'Cold gate is off — prospect segment must resolve to 0');
+        $this->assertSame(1, $count);
     }
 
     /**
-     * Mixed-scope segment should include both client and client-owned contacts
-     * (prospects are excluded by the cold gate, but clients are included).
-     * Verifies that scope='mixed' applies no relationship filter (clients pass through).
+     * Mixed-scope segment applies no relationship filter.
      */
     public function test_mixed_segment_includes_client_contacts(): void
     {
         [, $clientContact] = $this->makeClientContact('jean@acme.test');
+        $this->makeProspectContact('prospect@example.test');
 
         $segment = Segment::create(['name' => 'Mixed', 'scope' => 'mixed']);
 
@@ -153,6 +149,7 @@ class SegmentResolveTest extends TestCase
 
         $emails = $result->pluck('email')->all();
         $this->assertContains('jean@acme.test', $emails, 'Client contact should be included in mixed segment');
+        $this->assertContains('prospect@example.test', $emails, 'Prospect contact should be included in mixed segment');
     }
 
     /**

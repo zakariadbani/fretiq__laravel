@@ -30,7 +30,12 @@ final class ZohoOperationsDashboard
     public function available(): bool
     {
         $required = [
-            'zoho_sync_batches' => ['status', 'requested_at', 'mode', 'correlation_id'],
+            'zoho_sync_batches' => [
+                'status', 'requested_at', 'mode', 'correlation_id', 'paused_at', 'resumed_at',
+                'resume_count', 'pause_reason', 'resume_metadata',
+            ],
+            'zoho_standard_sync_runs' => ['sync_batch_id', 'module', 'submodule', 'status'],
+            'zoho_standard_sync_work_items' => ['zoho_standard_sync_run_id', 'zoho_id', 'status'],
             'zoho_sync_failures' => ['module', 'failure_kind', 'error_summary', 'correlation_id', 'resolved_at'],
             'zoho_field_manifests' => ['module', 'is_current', 'drift_state', 'verified_at'],
             'zoho_user_mappings' => ['zoho_user_id', 'fretiq_user_id', 'is_confirmed', 'is_override'],
@@ -51,6 +56,44 @@ final class ZohoOperationsDashboard
                 if (! in_array($column, $available, true)) {
                     return false;
                 }
+            }
+        }
+
+        return true;
+    }
+
+    /** The exact-batch progress endpoint needs only its local aggregate tables. */
+    public function progressAvailable(): bool
+    {
+        $required = [
+            'zoho_sync_batches' => ['id', 'trigger', 'mode', 'modules', 'status', 'requested_at', 'started_at', 'paused_at', 'completed_at', 'resume_count', 'updated_at'],
+            'zoho_standard_sync_runs' => ['id', 'sync_batch_id', 'module', 'submodule', 'status', 'enumerated_at', 'completed_at', 'updated_at'],
+            'zoho_standard_sync_work_items' => ['id', 'zoho_standard_sync_run_id', 'status', 'updated_at'],
+            'zoho_sync_checkpoints' => ['sync_batch_id', 'module', 'submodule', 'status', 'heartbeat_at', 'completed_at', 'updated_at'],
+            'jobs' => ['queue', 'reserved_at'],
+            'failed_jobs' => ['queue'],
+        ];
+
+        if (DB::connection()->getDriverName() !== 'mysql') {
+            foreach ($required as $table => $columns) {
+                if (! Schema::hasColumns($table, $columns)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        $available = DB::table('information_schema.columns')
+            ->where('table_schema', DB::connection()->getDatabaseName())
+            ->whereIn('table_name', array_keys($required))
+            ->get(['table_name as progress_table', 'column_name as progress_column'])
+            ->groupBy('progress_table');
+
+        foreach ($required as $table => $columns) {
+            $availableColumns = $available->get($table, collect())->pluck('progress_column')->all();
+            if (array_diff($columns, $availableColumns) !== []) {
+                return false;
             }
         }
 
@@ -78,6 +121,31 @@ final class ZohoOperationsDashboard
         }
         $reconciliationFailures = ZohoSyncFailure::query()->where('failure_kind', 'reconciliation')->whereNull('resolved_at')->get(['module', 'correlation_id', 'context', 'resolved_at'])
             ->keyBy(fn (ZohoSyncFailure $failure): string => $failure->module.'|'.$failure->correlation_id);
+        $syncAllModuleKeys = array_keys(array_filter(
+            $this->registry->all(),
+            fn ($definition): bool => ! $definition->activationGated && $definition->key !== 'quoted_items',
+        ));
+        $activeManualDelta = ZohoSyncBatch::query()
+            ->where('trigger', 'manual')
+            ->where('mode', 'delta')
+            ->whereNull('completed_at')
+            ->whereIn('status', ['queued', 'running'])
+            ->oldest('requested_at')
+            ->oldest('id')
+            ->first();
+        $pausedSyncAllBatch = ZohoSyncBatch::query()
+            ->where('trigger', 'manual')
+            ->where('mode', 'delta')
+            ->whereNull('completed_at')
+            ->where('status', 'paused')
+            ->orderByDesc('id')
+            ->get()
+            ->first(fn (ZohoSyncBatch $candidate): bool => $this->sameModuleSet((array) $candidate->modules, $syncAllModuleKeys));
+        $activeIsSyncAll = $activeManualDelta !== null
+            && $this->sameModuleSet((array) $activeManualDelta->modules, $syncAllModuleKeys);
+        $syncAllBatch = $activeManualDelta ?? $pausedSyncAllBatch;
+        $syncAllState = $activeManualDelta !== null ? 'active' : ($pausedSyncAllBatch !== null ? 'paused' : 'idle');
+        $pausedOwnerModules = $pausedSyncAllBatch === null ? [] : (array) $pausedSyncAllBatch->modules;
         $modules = [];
 
         foreach ($this->registry->all() as $key => $definition) {
@@ -99,6 +167,7 @@ final class ZohoOperationsDashboard
                 'manifest' => $manifest,
                 'active' => ! $definition->activationGated,
                 'note' => $definition->activationNote,
+                'paused_owner' => in_array($key, $pausedOwnerModules, true),
             ];
         }
 
@@ -113,7 +182,17 @@ final class ZohoOperationsDashboard
             'oauth' => $oauth,
             'tokenExpiry' => $expiry,
             'queue' => $this->queueEvidence(),
-            'batch' => ZohoSyncBatch::query()->whereIn('status', ['queued', 'running'])->oldest('requested_at')->first(),
+            'batch' => ZohoSyncBatch::query()
+                ->whereNull('completed_at')
+                ->whereIn('status', ['queued', 'running', 'paused'])
+                ->orderByRaw("CASE WHEN status IN ('queued', 'running') THEN 0 ELSE 1 END")
+                ->oldest('requested_at')
+                ->oldest('id')
+                ->first(),
+            'syncAllBatch' => $syncAllBatch,
+            'syncProgress' => $syncAllBatch === null ? null : $this->syncProgress($syncAllBatch),
+            'syncAllState' => $syncAllState,
+            'syncAllCanPause' => $activeIsSyncAll,
             'overall' => $overall,
             'modules' => $modules,
             'counts' => $counts,
@@ -125,6 +204,180 @@ final class ZohoOperationsDashboard
             'fretiqUsers' => User::query()->where('is_active', true)->role('commercial')->orderBy('name')->get(['id', 'name']),
             'trend' => ZohoSyncLog::query()->whereNotNull('sync_batch_id')->latest('synced_at')->limit(30)
                 ->get(['module', 'status', 'duration_ms', 'records_seen', 'records_synced', 'api_requests', 'synced_at']),
+        ];
+    }
+
+    /**
+     * Safe, aggregate-only durable worklist progress for one exact manual Sync Tout batch.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function syncProgress(ZohoSyncBatch $batch): ?array
+    {
+        $moduleKeys = array_keys(array_filter(
+            $this->registry->all(),
+            fn ($definition): bool => ! $definition->activationGated && $definition->key !== 'quoted_items',
+        ));
+        if ($batch->trigger !== 'manual' || $batch->mode !== 'delta' || ! $this->sameModuleSet((array) $batch->modules, $moduleKeys)) {
+            return null;
+        }
+
+        $runRows = DB::table('zoho_standard_sync_runs as runs')
+            ->leftJoin('zoho_standard_sync_work_items as items', 'items.zoho_standard_sync_run_id', '=', 'runs.id')
+            ->where('runs.sync_batch_id', $batch->id)
+            ->groupBy('runs.id', 'runs.module', 'runs.submodule', 'runs.status', 'runs.enumerated_at', 'runs.completed_at', 'runs.updated_at')
+            ->select([
+                DB::raw("'run' as progress_row"),
+                'runs.module', 'runs.submodule', 'runs.status as run_status', 'runs.enumerated_at',
+                'runs.completed_at as run_completed_at', 'runs.updated_at as run_updated_at',
+                DB::raw('COUNT(items.id) as discovered'),
+                DB::raw("SUM(CASE WHEN items.status = 'completed' THEN 1 ELSE 0 END) as completed"),
+                DB::raw("SUM(CASE WHEN items.status = 'queued' THEN 1 ELSE 0 END) as queued"),
+                DB::raw("SUM(CASE WHEN items.status = 'processing' THEN 1 ELSE 0 END) as processing"),
+                DB::raw("SUM(CASE WHEN items.status = 'quarantined' THEN 1 ELSE 0 END) as quarantined"),
+                DB::raw('MAX(items.updated_at) as item_updated_at'),
+                DB::raw('NULL as checkpoint_status'), DB::raw('NULL as heartbeat_at'),
+                DB::raw('NULL as checkpoint_completed_at'), DB::raw('NULL as checkpoint_updated_at'),
+            ]);
+        $checkpointRows = DB::table('zoho_sync_checkpoints')
+            ->where('sync_batch_id', $batch->id)
+            ->select([
+                DB::raw("'checkpoint' as progress_row"),
+                'module', 'submodule', DB::raw('NULL as run_status'), DB::raw('NULL as enumerated_at'),
+                DB::raw('NULL as run_completed_at'), DB::raw('NULL as run_updated_at'),
+                DB::raw('0 as discovered'), DB::raw('0 as completed'), DB::raw('0 as queued'),
+                DB::raw('0 as processing'), DB::raw('0 as quarantined'), DB::raw('NULL as item_updated_at'),
+                'status as checkpoint_status', 'heartbeat_at', 'completed_at as checkpoint_completed_at',
+                'updated_at as checkpoint_updated_at',
+            ]);
+        $progressRows = $runRows->unionAll($checkpointRows)->get();
+        $runs = $progressRows->where('progress_row', 'run')
+            ->keyBy(fn ($run): string => $run->module.'|'.$run->submodule);
+        $checkpoints = $progressRows->where('progress_row', 'checkpoint')
+            ->keyBy(fn ($checkpoint): string => str_replace('v2:', '', $checkpoint->module).'|'.$checkpoint->submodule);
+
+        $modules = [];
+        $activity = [$batch->updated_at];
+        $summary = ['modules_total' => count($moduleKeys), 'modules_completed' => 0, 'discovered' => 0, 'processed' => 0, 'completed' => 0, 'queued' => 0, 'processing' => 0, 'quarantined' => 0];
+        $determinate = true;
+        foreach ($moduleKeys as $key) {
+            $definition = $this->registry->get($key);
+            $moduleKey = $key.'|'.($definition->submodule ?? '');
+            $run = $runs->get($moduleKey);
+            $checkpoint = $checkpoints->get($moduleKey);
+            $checkpointStatus = (string) ($checkpoint?->checkpoint_status ?? 'waiting');
+            $enumerationComplete = $run !== null
+                ? ($run->enumerated_at !== null || in_array($run->run_status, ['completed', 'error'], true))
+                : $checkpointStatus === 'completed';
+            $phase = $this->syncProgressPhase($run?->run_status, $checkpointStatus, $enumerationComplete);
+            if ($batch->status === 'paused' && ! in_array($phase, ['completed', 'error'], true)) {
+                $phase = 'paused';
+            }
+            $completed = (int) ($run?->completed ?? 0);
+            $quarantined = (int) ($run?->quarantined ?? 0);
+            $processed = $completed + $quarantined;
+            $discovered = (int) ($run?->discovered ?? 0);
+            $moduleActivity = collect([
+                $run?->run_updated_at, $run?->item_updated_at, $run?->run_completed_at,
+                $checkpoint?->heartbeat_at, $checkpoint?->checkpoint_updated_at, $checkpoint?->checkpoint_completed_at,
+            ])
+                ->filter()
+                ->map(fn ($at) => \Carbon\CarbonImmutable::parse($at))
+                ->max();
+            $activity[] = $moduleActivity;
+            if (! $enumerationComplete) {
+                $determinate = false;
+            }
+            if ($phase === 'completed') {
+                $summary['modules_completed']++;
+            }
+            foreach (['discovered', 'completed', 'queued', 'processing', 'quarantined'] as $counter) {
+                $summary[$counter] += (int) ($counter === 'discovered' ? $discovered : ($counter === 'completed' ? $completed : ($counter === 'quarantined' ? $quarantined : ($run?->{$counter} ?? 0))));
+            }
+            $summary['processed'] += $processed;
+            $modules[$key] = [
+                'key' => $key,
+                'label' => $definition->apiName,
+                'phase' => $phase,
+                'checkpoint_status' => $checkpointStatus,
+                'enumeration_complete' => $enumerationComplete,
+                'discovered' => $discovered,
+                'processed' => $processed,
+                'completed' => $completed,
+                'queued' => (int) ($run?->queued ?? 0),
+                'processing' => (int) ($run?->processing ?? 0),
+                'quarantined' => $quarantined,
+                'percent' => $enumerationComplete && $discovered > 0 ? (int) floor($processed * 100 / $discovered) : null,
+                'last_activity_at' => $this->syncProgressTimestamp($moduleActivity),
+            ];
+        }
+        $summary['determinate'] = $determinate;
+        $summary['percent'] = $determinate && $summary['discovered'] > 0 ? (int) floor($summary['processed'] * 100 / $summary['discovered']) : null;
+        $lastActivity = collect($activity)->filter()->map(fn ($at) => \Carbon\CarbonImmutable::parse($at))->max();
+        $stalledAfter = max((int) config('zoho-v2.module.delivery_timeout_seconds', 1200), (int) config('queue.connections.zoho.retry_after', 1260));
+        $terminal = $batch->completed_at !== null || ! in_array($batch->status, ['queued', 'running', 'paused'], true);
+
+        return [
+            'batch' => [
+                'id' => $batch->id, 'status' => $batch->status, 'terminal' => $terminal, 'resume_count' => (int) $batch->resume_count,
+                'requested_at' => $this->syncProgressTimestamp($batch->requested_at), 'started_at' => $this->syncProgressTimestamp($batch->started_at),
+                'paused_at' => $this->syncProgressTimestamp($batch->paused_at), 'completed_at' => $this->syncProgressTimestamp($batch->completed_at),
+            ],
+            'summary' => $summary,
+            'modules' => $modules,
+            'queue' => $this->syncProgressQueueEvidence(),
+            'last_activity_at' => $this->syncProgressTimestamp($lastActivity),
+            'stalled' => ! $terminal && $batch->status !== 'paused' && ($lastActivity === null || $lastActivity->lessThanOrEqualTo(now()->subSeconds($stalledAfter))),
+            'stalled_after_seconds' => $stalledAfter,
+            'poll_after_ms' => $batch->status === 'paused' ? 15000 : 5000,
+            'observed_at' => now()->toIso8601String(),
+        ];
+    }
+
+    private function syncProgressPhase(?string $runStatus, string $checkpointStatus, bool $enumerationComplete): string
+    {
+        $authoritativeCheckpointPhase = match ($checkpointStatus) {
+            'paused' => 'paused',
+            'retrying' => 'retrying',
+            'completed' => 'completed',
+            'partial', 'failed', 'error' => 'error',
+            default => null,
+        };
+        if ($authoritativeCheckpointPhase !== null) {
+            return $authoritativeCheckpointPhase;
+        }
+
+        return match ($runStatus ?? $checkpointStatus) {
+            'queued', 'waiting', 'idle' => 'waiting',
+            'enumerating' => 'enumerating',
+            'hydrating', 'running' => $enumerationComplete ? 'hydrating' : 'enumerating',
+            'retrying' => 'retrying',
+            'paused' => 'paused',
+            'completed', 'success' => 'completed',
+            default => 'error',
+        };
+    }
+
+    private function syncProgressTimestamp($at): ?string
+    {
+        return $at === null ? null : \Carbon\CarbonImmutable::parse($at)->toIso8601String();
+    }
+
+    /** @return array{waiting:int,reserved:int,failed:int} */
+    private function syncProgressQueueEvidence(): array
+    {
+        $queue = (string) config('zoho-v2.queue', 'zoho');
+        $jobs = DB::table('jobs')
+            ->where('queue', $queue)
+            ->selectRaw('SUM(CASE WHEN reserved_at IS NULL THEN 1 ELSE 0 END) as waiting')
+            ->selectRaw('SUM(CASE WHEN reserved_at IS NOT NULL THEN 1 ELSE 0 END) as reserved')
+            ->selectRaw('(SELECT COUNT(*) FROM failed_jobs WHERE queue = ?) as failed', [$queue])
+            ->first();
+
+        return [
+            'waiting' => (int) ($jobs?->waiting ?? 0),
+            'reserved' => (int) ($jobs?->reserved ?? 0),
+            'failed' => (int) ($jobs?->failed ?? 0),
         ];
     }
 
@@ -261,6 +514,16 @@ final class ZohoOperationsDashboard
         $degraded = in_array($oauth, ['expired', 'absent', 'unknown'], true) || $critical || $notStarted || $reconciliationNotStarted || $drift || $failures->isNotEmpty();
 
         return ['label' => $degraded ? 'Dégradée' : 'Opérationnelle', 'color' => $degraded ? 'warning' : 'success', 'oldest_minutes' => $oldest, 'schema_drift' => $drift];
+    }
+
+    /** @param list<string> $stored @param list<string> $expected */
+    private function sameModuleSet(array $stored, array $expected): bool
+    {
+        $stored = array_values(array_unique(array_filter($stored, 'is_string')));
+        sort($stored);
+        sort($expected);
+
+        return $stored === $expected;
     }
 
     /** @return array{label:string,color:string,minutes:?int} */

@@ -36,7 +36,6 @@ class CampaignDispatchPreflightTest extends TestCase
 
         config([
             'services.zoho.driver' => 'local',
-            'prospecting.cold_send_enabled' => false,
         ]);
 
         Mail::fake();
@@ -50,7 +49,6 @@ class CampaignDispatchPreflightTest extends TestCase
 
     public function test_preview_returns_exact_eligible_count_after_compliance_exclusions(): void
     {
-        config(['prospecting.cold_send_enabled' => true]);
 
         $this->makeClientContact('eligible-one@example.test');
         $this->makeProspectContact('eligible-two@example.test');
@@ -206,7 +204,6 @@ class CampaignDispatchPreflightTest extends TestCase
             'services.zoho.campaigns.client_id' => 'client-id',
             'services.zoho.campaigns.client_secret' => 'client-secret',
             'services.zoho.campaigns.list_key' => '',
-            'prospecting.cold_send_enabled' => true,
             'app.url' => 'https://fretiq.example.test',
         ]);
 
@@ -237,7 +234,6 @@ class CampaignDispatchPreflightTest extends TestCase
             'services.zoho.campaigns.client_secret' => 'client-secret',
             'services.zoho.campaigns.list_key' => 'verified-list-key',
             'services.zoho.campaigns.topic_id' => null,
-            'prospecting.cold_send_enabled' => true,
             'app.url' => 'https://fretiq.example.test',
         ]);
 
@@ -382,7 +378,6 @@ class CampaignDispatchPreflightTest extends TestCase
 
     private function makeMixedAudienceWithSuppressedAndNonCompliantContacts(string $prefix): Segment
     {
-        config(['prospecting.cold_send_enabled' => true]);
 
         $this->makeClientContact("{$prefix}-eligible-client@example.test");
         $this->makeProspectContact("{$prefix}-eligible-prospect@example.test");

@@ -24,7 +24,6 @@ class SegmentManualModeTest extends TestCase
         parent::setUp();
 
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
-        config(['prospecting.cold_send_enabled' => false]);
 
         $this->service = app(SegmentService::class);
         $this->clientCompany = Company::create([

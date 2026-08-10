@@ -23,7 +23,6 @@ use Carbon\Carbon;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
@@ -616,12 +615,10 @@ class CampaignSequenceLaunchTest extends TestCase
     }
 
     /**
-     * Test 7: Suppressed contact excluded; cold gate off → 0 enrolled (RGPD-load-bearing).
+     * Test 7: Suppressed contact excluded (RGPD-load-bearing).
      *
      * Suppression test: a contact in a 'client' segment whose email is suppressed
      * must be excluded.
-     * Cold gate test: a contact in a 'prospect' segment with cold_send_enabled=false
-     * must be excluded (entire prospect audience blocked).
      */
     public function test_suppressed_contact_excluded(): void
     {
@@ -641,11 +638,8 @@ class CampaignSequenceLaunchTest extends TestCase
         $this->assertDatabaseMissing('sequence_enrollments', ['sequence_id' => $sequence->id]);
     }
 
-    public function test_cold_gate_off_excludes_prospect_contacts(): void
+    public function test_prospect_contacts_are_enrolled(): void
     {
-        // cold_send_enabled defaults to false — prospect contacts must be excluded
-        Config::set('prospecting.cold_send_enabled', false);
-
         $company = $this->makeCompany('prospect');
         $contact = $this->makeContact($company);
 
@@ -655,8 +649,11 @@ class CampaignSequenceLaunchTest extends TestCase
 
         $result = app(CampaignService::class)->launchSequence($campaign);
 
-        $this->assertSame(0, $result['enrolled']);
-        $this->assertDatabaseMissing('sequence_enrollments', ['sequence_id' => $sequence->id]);
+        $this->assertSame(1, $result['enrolled']);
+        $this->assertDatabaseHas('sequence_enrollments', [
+            'sequence_id' => $sequence->id,
+            'contact_id' => $contact->id,
+        ]);
     }
 
     /**

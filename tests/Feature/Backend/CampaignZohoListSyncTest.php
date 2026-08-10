@@ -26,7 +26,6 @@ class CampaignZohoListSyncTest extends TestCase
 
         Http::preventStrayRequests();
         config([
-            'prospecting.cold_send_enabled' => false,
             'services.zoho.campaigns.topic_id' => '',
         ]);
     }

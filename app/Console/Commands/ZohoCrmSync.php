@@ -25,12 +25,6 @@ final class ZohoCrmSync extends Command
 
     public function handle(): int
     {
-        if (! config('zoho-v2.features.sync_enabled', false)) {
-            $this->error('Zoho CRM V2 sync is disabled by feature flag.');
-
-            return self::FAILURE;
-        }
-
         $mode = (string) $this->option('mode');
         if (! in_array($mode, ['delta', 'backfill', 'reconcile'], true)) {
             $this->error('Invalid mode. Allowed: delta, backfill, reconcile.');
@@ -43,6 +37,18 @@ final class ZohoCrmSync extends Command
             $this->error('Invalid trigger. Allowed: manual, scheduled.');
 
             return self::FAILURE;
+        }
+        if ($trigger === 'scheduled'
+            && in_array($mode, ['delta', 'reconcile'], true)
+            && ZohoSyncBatch::query()
+                ->where('trigger', 'manual')
+                ->where('mode', 'delta')
+                ->where('status', 'paused')
+                ->whereNull('completed_at')
+                ->exists()) {
+            $this->info("Zoho CRM V2 {$mode} skipped: a manually paused delta batch must be resumed explicitly.");
+
+            return self::SUCCESS;
         }
         if ($trigger === 'scheduled'
             && $mode === 'delta'

@@ -56,4 +56,55 @@ class ZohoModuleRegistryTest extends TestCase
         $this->assertContains('quantity', $registry->get('quoted_items')->visibilityAllowlist);
         $this->assertNotContains('zoho_id', $registry->get('quoted_items')->visibilityAllowlist);
     }
+
+    public function test_every_promoted_primary_crm_field_is_exposed_to_commercials(): void
+    {
+        $registry = new ZohoModuleRegistry;
+
+        foreach (['leads', 'accounts', 'contacts', 'deals', 'quotes'] as $module) {
+            $definition = $registry->get($module);
+            $hiddenPromotedFields = array_diff(
+                array_keys($definition->promotedFieldSources),
+                $definition->visibilityAllowlist,
+            );
+
+            $this->assertSame([], array_values($hiddenPromotedFields), "{$module} has promoted fields hidden from Explorer.");
+        }
+    }
+
+    public function test_it_declares_verified_sources_for_every_locally_remapped_module(): void
+    {
+        $registry = new ZohoModuleRegistry;
+
+        $this->assertSame(['Phone'], $registry->get('leads')->promotedFieldSources['phone']);
+        $this->assertSame(['Phone'], $registry->get('contacts')->promotedFieldSources['phone']);
+
+        $this->assertSame([
+            'subject' => ['Subject'],
+            'status' => ['Status'],
+            'activity_at' => ['Activity_DateTime', 'Due_Date', 'Created_Time'],
+            'due_at' => ['Due_Date'],
+        ], $registry->get('tasks')->promotedFieldSources);
+        $this->assertSame([
+            'subject' => ['Event_Title', 'Subject'],
+            'status' => ['Status'],
+            'activity_at' => ['Start_DateTime', 'Activity_DateTime', 'Created_Time'],
+            'start_at' => ['Start_DateTime'],
+            'end_at' => ['End_DateTime'],
+        ], $registry->get('events')->promotedFieldSources);
+        $this->assertSame([
+            'subject' => ['Subject'],
+            'status' => ['Outgoing_Call_Status', 'Call_Status', 'Status'],
+            'activity_at' => ['Call_Start_Time', 'Activity_DateTime', 'Created_Time'],
+            'start_at' => ['Call_Start_Time'],
+        ], $registry->get('calls')->promotedFieldSources);
+        $this->assertSame([
+            'subject' => ['Note_Title', 'Subject'],
+            'activity_at' => ['Created_Time'],
+        ], $registry->get('notes')->promotedFieldSources);
+        $this->assertSame([
+            'moved_to_stage' => ['Moved_To__s'],
+            'stage_duration_days' => ['Stage_Duration_Calendar_Days'],
+        ], $registry->get('deal_history')->promotedFieldSources);
+    }
 }

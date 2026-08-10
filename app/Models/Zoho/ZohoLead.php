@@ -12,7 +12,7 @@ class ZohoLead extends ZohoMirror
 
     protected function casts(): array
     {
-        return parent::casts() + ['is_converted' => 'boolean'];
+        return parent::casts() + ['is_converted' => 'boolean', 'email_opt_out' => 'boolean', 'converted_at' => 'datetime', 'unsubscribed_at' => 'datetime', 'last_activity_at' => 'datetime', 'tags' => 'array'];
     }
 
     public function fretiqCompany(): BelongsTo

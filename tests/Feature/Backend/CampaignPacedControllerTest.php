@@ -32,7 +32,7 @@ class CampaignPacedControllerTest extends TestCase
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
         $this->admin = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
         $this->admin->assignRole('superadmin');
-        config(['services.zoho.driver' => 'local', 'prospecting.cold_send_enabled' => false]);
+        config(['services.zoho.driver' => 'local']);
     }
 
     protected function tearDown(): void

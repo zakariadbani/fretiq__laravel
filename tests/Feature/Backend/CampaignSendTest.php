@@ -24,7 +24,6 @@ use Tests\TestCase;
  * Service-level tests for CampaignService::scheduleOneShot() and ::sendRun().
  *
  * Mail::fake() is used so no real SMTP calls are made.
- * Cold gate is forced off for all tests in this class.
  */
 class CampaignSendTest extends TestCase
 {
@@ -37,7 +36,6 @@ class CampaignSendTest extends TestCase
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
         config([
-            'prospecting.cold_send_enabled' => false,
             'services.zoho.driver' => 'local',
         ]);
 

@@ -147,8 +147,8 @@ class Segment extends Model
      * Returns the true deliverable contact count for this segment.
      *
      * Delegates to SegmentService::resolveWithStats() so the count reflects
-     * ALL compliance stages (scope + filter + suppression + cold gate +
-     * email-kind + dedup) — identical to the count that resolve() would produce.
+     * ALL audience stages (scope + filter + suppression + dedup) — identical
+     * to the count that resolve() would produce.
      *
      * B2: threads pinned include/exclude id-sets into resolveWithStats so the
      * displayed count reflects manual pins, not filter-only.

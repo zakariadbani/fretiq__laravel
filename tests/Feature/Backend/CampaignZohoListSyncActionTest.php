@@ -24,7 +24,6 @@ class CampaignZohoListSyncActionTest extends TestCase
     {
         Http::preventStrayRequests();
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
-        config(['prospecting.cold_send_enabled' => false]);
 
         $admin = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
         $admin->assignRole('superadmin');

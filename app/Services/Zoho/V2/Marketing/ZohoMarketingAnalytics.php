@@ -62,6 +62,14 @@ final class ZohoMarketingAnalytics
         );
     }
 
+    /** Shared scope resolver for read-only dashboard projections. */
+    public function scopeFor(MarketingAnalyticsQuery $input): MarketingScope
+    {
+        $filters = $input->normalizedFilters();
+
+        return $this->resolveScope($input, $filters);
+    }
+
     public function available(): bool
     {
         $required = [

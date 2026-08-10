@@ -10,6 +10,11 @@ class ZohoAccount extends ZohoMirror
 {
     protected $table = 'zoho_accounts';
 
+    protected function casts(): array
+    {
+        return parent::casts() + ['last_activity_at' => 'datetime', 'tags' => 'array'];
+    }
+
     public function fretiqCompany(): BelongsTo
     {
         return $this->belongsTo(Company::class, 'fretiq_company_id');

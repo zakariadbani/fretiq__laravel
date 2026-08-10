@@ -1,0 +1,688 @@
+<?php
+
+namespace Tests\Feature\Backend;
+
+use App\Models\Campaign;
+use App\Models\CampaignRun;
+use App\Models\CampaignTemplate;
+use App\Models\Company;
+use App\Models\Contact;
+use App\Models\Segment;
+use App\Models\Sequence;
+use App\Models\SequenceEnrollment;
+use App\Models\SequenceStep;
+use App\Models\SequenceStepSend;
+use App\Models\SenderIdentity;
+use App\Models\SmtpSendReservation;
+use App\Models\User;
+use App\Services\Campaign\CampaignDeliveryFence;
+use Database\Seeders\Acl\PermissionsSeeder;
+use Database\Seeders\Acl\RolesSeeder;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
+
+class CampaignDeliveryChannelTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private User $user;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
+        $this->user = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
+        $this->user->assignRole('superadmin');
+    }
+
+    public function test_legacy_null_delivery_channel_keeps_global_and_legacy_driver_semantics(): void
+    {
+        $campaign = $this->campaign(['delivery_channel' => null, 'driver' => 'local']);
+
+        config(['services.zoho.driver' => 'zoho']);
+        $this->assertSame('zoho', $campaign->effectiveDeliveryChannel());
+
+        config(['services.zoho.driver' => 'local']);
+        $this->assertSame('smtp', $campaign->fresh()->effectiveDeliveryChannel());
+
+        $campaign->update(['driver' => 'zoho']);
+        $this->assertSame('zoho', $campaign->fresh()->effectiveDeliveryChannel());
+    }
+
+    public function test_new_campaign_defaults_to_explicit_zoho_delivery(): void
+    {
+        $data = $this->fixtureData();
+
+        $this->actingAs($this->user)->postJson(route('admin.campaigns.store'), [
+            'name' => 'New explicit campaign',
+            'segment_id' => $data['segment']->id,
+            'template_id' => $data['template']->id,
+            'sender_identity_id' => $data['sender']->id,
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+            'is_active' => false,
+        ])->assertOk();
+
+        $this->assertSame('zoho', Campaign::where('name', 'New explicit campaign')->firstOrFail()->delivery_channel);
+    }
+
+    public function test_explicit_smtp_wins_over_the_global_zoho_driver(): void
+    {
+        config(['services.zoho.driver' => 'zoho']);
+        $campaign = $this->campaign(['delivery_channel' => 'smtp']);
+
+        $this->assertSame('smtp', $campaign->effectiveDeliveryChannel());
+        $this->assertFalse($campaign->usesZohoDriver());
+    }
+
+    public function test_smtp_campaign_defaults_to_twenty_emails_per_day(): void
+    {
+        $campaign = $this->campaign(['delivery_channel' => 'smtp', 'smtp_daily_email_limit' => null]);
+
+        $this->assertSame(20, $campaign->smtpDailyEmailLimit());
+    }
+
+    public function test_channel_and_sender_can_change_before_real_delivery(): void
+    {
+        $data = $this->fixtureData();
+        $campaign = $this->campaign(['delivery_channel' => 'smtp'], $data);
+        $otherSender = SenderIdentity::create(['name' => 'Other sender', 'email' => 'other@example.test']);
+
+        $this->actingAs($this->user)->putJson(route('admin.campaigns.update', $campaign), [
+            'name' => $campaign->name,
+            'segment_id' => $campaign->segment_id,
+            'template_id' => $campaign->template_id,
+            'sender_identity_id' => $otherSender->id,
+            'delivery_channel' => 'zoho',
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+        ])->assertOk();
+
+        $campaign->refresh();
+        $this->assertSame('zoho', $campaign->delivery_channel);
+        $this->assertSame($otherSender->id, $campaign->sender_identity_id);
+    }
+
+    public function test_channel_and_sender_lock_after_real_delivery_but_daily_target_stays_editable(): void
+    {
+        $data = $this->fixtureData();
+        $campaign = $this->campaign([
+            'delivery_channel' => 'smtp',
+            'smtp_daily_email_limit' => 20,
+            'delivery_started_at' => now(),
+        ], $data);
+        $otherSender = SenderIdentity::create(['name' => 'Other locked sender', 'email' => 'locked@example.test']);
+
+        $response = $this->actingAs($this->user)->putJson(route('admin.campaigns.update', $campaign), [
+            'name' => $campaign->name,
+            'segment_id' => $campaign->segment_id,
+            'template_id' => $campaign->template_id,
+            'sender_identity_id' => $otherSender->id,
+            'delivery_channel' => 'zoho',
+            'smtp_daily_email_limit' => 5,
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+        ]);
+
+        $response->assertStatus(422);
+        $campaign->refresh();
+        $this->assertSame('smtp', $campaign->delivery_channel);
+        $this->assertSame($data['sender']->id, $campaign->sender_identity_id);
+
+        $this->assertSame(20, $campaign->smtp_daily_email_limit);
+    }
+
+    public function test_failed_preflight_without_delivery_does_not_lock_channel_or_sender(): void
+    {
+        $campaign = $this->campaign(['delivery_channel' => 'smtp', 'delivery_started_at' => null]);
+
+        $this->assertFalse($campaign->deliverySettingsLocked());
+    }
+
+    public function test_durable_smtp_acceptance_locks_delivery_settings_before_local_reconciliation(): void
+    {
+        $campaign = $this->campaign(['delivery_channel' => 'smtp', 'delivery_started_at' => null]);
+        SmtpSendReservation::create([
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'campaign_id' => $campaign->id,
+            'source_type' => SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT,
+            'source_id' => 424242,
+            'reserved_for' => now(),
+            'status' => 'accepted',
+            'accepted_at' => now(),
+            'provider_message_id' => 'accepted-before-reconciliation',
+        ]);
+
+        $this->assertTrue($campaign->fresh()->deliverySettingsLocked());
+    }
+
+    public function test_uncertain_smtp_delivery_rejects_a_channel_change_until_manual_reconciliation(): void
+    {
+        $campaign = $this->campaign(['delivery_channel' => 'smtp', 'delivery_started_at' => null]);
+        SmtpSendReservation::create([
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'campaign_id' => $campaign->id,
+            'source_type' => SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT,
+            'source_id' => 424243,
+            'reserved_for' => now(),
+            'status' => 'uncertain',
+            'attempted_at' => now(),
+        ]);
+
+        $this->actingAs($this->user)->putJson(route('admin.campaigns.update', $campaign), [
+            'name' => $campaign->name,
+            'segment_id' => $campaign->segment_id,
+            'template_id' => $campaign->template_id,
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'delivery_channel' => 'zoho',
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+        ])->assertStatus(422);
+
+        $this->assertSame('smtp', $campaign->fresh()->delivery_channel);
+    }
+
+    /** @dataProvider ambiguousZohoDriverRefs */
+    public function test_failed_zoho_delivery_evidence_locks_settings_and_blocks_deletion(string $driverRef): void
+    {
+        $campaign = $this->campaign(['delivery_channel' => 'zoho', 'delivery_started_at' => null]);
+        CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'ambiguous-' . $driverRef,
+            'run_at' => now(),
+            'status' => 'failed',
+            'driver_ref' => $driverRef,
+            'finished_at' => now(),
+        ]);
+
+        $this->assertTrue($campaign->fresh()->deliverySettingsLocked());
+
+        $this->actingAs($this->user)->putJson(route('admin.campaigns.update', $campaign), [
+            'name' => $campaign->name,
+            'segment_id' => $campaign->segment_id,
+            'template_id' => $campaign->template_id,
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'delivery_channel' => 'smtp',
+            'smtp_daily_email_limit' => 20,
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+        ])->assertStatus(422);
+
+        $this->actingAs($this->user)
+            ->deleteJson(route('admin.campaigns.delete', $campaign))
+            ->assertOk()
+            ->assertJson(['success' => false]);
+
+        $this->assertDatabaseHas('campaigns', ['id' => $campaign->id]);
+    }
+
+    public function test_legacy_campaign_with_a_sent_run_keeps_delivery_settings_locked(): void
+    {
+        $campaign = $this->campaign(['delivery_channel' => null, 'delivery_started_at' => null]);
+        CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'legacy-sent',
+            'run_at' => now(),
+            'status' => 'sent',
+            'driver_ref' => 'local',
+            'finished_at' => now(),
+        ]);
+
+        $this->assertTrue($campaign->fresh()->deliverySettingsLocked());
+
+        $this->actingAs($this->user)->putJson(route('admin.campaigns.update', $campaign), [
+            'name' => $campaign->name,
+            'segment_id' => $campaign->segment_id,
+            'template_id' => $campaign->template_id,
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'delivery_channel' => 'smtp',
+            'smtp_daily_email_limit' => 20,
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+        ])->assertStatus(422);
+
+        $this->assertNull($campaign->fresh()->delivery_channel);
+    }
+
+    public function test_campaign_form_shows_delivery_choice_and_full_smtp_guidance(): void
+    {
+        $response = $this->actingAs($this->user)->get(route('admin.campaigns.create'));
+
+        $response->assertOk()
+            ->assertSee('delivery_channel', false)
+            ->assertSee('15 emails/jour', false)
+            ->assertSee('2 emails/minute', false)
+            ->assertSee('SPF', false)
+            ->assertSee('DKIM', false)
+            ->assertSee('DMARC', false)
+            ->assertSee('APP_URL', false);
+    }
+
+    public function test_locked_campaign_rejects_channel_or_sender_changes_server_side(): void
+    {
+        $this->test_channel_and_sender_lock_after_real_delivery_but_daily_target_stays_editable();
+    }
+
+    public function test_locked_smtp_campaign_accepts_a_daily_target_change(): void
+    {
+        $data = $this->fixtureData();
+        $campaign = $this->campaign([
+            'delivery_channel' => 'smtp',
+            'smtp_daily_email_limit' => 20,
+            'delivery_started_at' => now(),
+        ], $data);
+
+        $this->actingAs($this->user)->putJson(route('admin.campaigns.update', $campaign), [
+            'name' => $campaign->name,
+            'segment_id' => $campaign->segment_id,
+            'template_id' => $campaign->template_id,
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'delivery_channel' => 'smtp',
+            'smtp_daily_email_limit' => 0,
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+        ])->assertOk();
+
+        $this->assertSame(0, $campaign->fresh()->smtp_daily_email_limit);
+    }
+
+    public function test_setting_the_smtp_daily_target_to_zero_releases_future_reserved_work(): void
+    {
+        $data = $this->fixtureData();
+        $campaign = $this->campaign([
+            'delivery_channel' => 'smtp',
+            'smtp_daily_email_limit' => 20,
+            'delivery_started_at' => now(),
+            'is_active' => true,
+        ], $data);
+        $reservation = SmtpSendReservation::create([
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'campaign_id' => $campaign->id,
+            'source_type' => SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT,
+            'source_id' => 717171,
+            'reserved_for' => now()->addDay(),
+            'status' => 'reserved',
+        ]);
+
+        $this->actingAs($this->user)->putJson(route('admin.campaigns.update', $campaign), [
+            'name' => $campaign->name,
+            'segment_id' => $campaign->segment_id,
+            'template_id' => $campaign->template_id,
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'delivery_channel' => 'smtp',
+            'smtp_daily_email_limit' => 0,
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+            'is_active' => true,
+        ])->assertOk();
+
+        $this->assertSame('released', $reservation->fresh()->status);
+    }
+
+    public function test_switching_a_prepared_zoho_sequence_to_smtp_rearms_enrollments_and_cancels_wave_work(): void
+    {
+        config(['services.zoho.driver' => 'zoho']);
+        [$campaign, $sequence, $step, $enrollment] = $this->pacedSequenceCampaign('zoho', null);
+        $wave = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $step->id,
+            'occurrence_key' => 'sequence-wave-000001',
+            'run_at' => now()->addHour(),
+            'status' => 'prepared',
+            'driver_ref' => 'zoho-wave-pending',
+        ]);
+
+        $this->actingAs($this->user)
+            ->putJson(route('admin.campaigns.update', $campaign), $this->sequenceUpdatePayload($campaign, $sequence, 'smtp'))
+            ->assertOk();
+
+        $this->assertSame('smtp', $campaign->fresh()->delivery_channel);
+        $this->assertNotNull($enrollment->fresh()->next_send_at);
+        $this->assertTrue($enrollment->fresh()->next_send_at->lte(now()));
+        $this->assertSame('canceled', $wave->fresh()->status);
+    }
+
+    public function test_switching_an_unsent_smtp_sequence_to_live_zoho_releases_direct_smtp_work(): void
+    {
+        config(['services.zoho.driver' => 'zoho']);
+        [$campaign, $sequence, $step, $enrollment] = $this->pacedSequenceCampaign('smtp', now());
+        $stepSend = SequenceStepSend::create([
+            'enrollment_id' => $enrollment->id,
+            'step_no' => 1,
+            'status' => 'queued',
+        ]);
+        $reservation = SmtpSendReservation::create([
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'campaign_id' => $campaign->id,
+            'source_type' => SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND,
+            'source_id' => $stepSend->id,
+            'reserved_for' => now()->addMinute(),
+            'status' => 'reserved',
+        ]);
+
+        $this->actingAs($this->user)
+            ->putJson(route('admin.campaigns.update', $campaign), $this->sequenceUpdatePayload($campaign, $sequence, 'zoho'))
+            ->assertOk();
+
+        $this->assertSame('zoho', $campaign->fresh()->delivery_channel);
+        $this->assertSame('released', $reservation->fresh()->status);
+        $this->assertNotNull($enrollment->fresh()->next_send_at);
+    }
+
+    public function test_switching_an_unsent_regular_smtp_campaign_reschedules_its_existing_run(): void
+    {
+        $campaign = $this->campaign([
+            'delivery_channel' => 'smtp',
+            'smtp_daily_email_limit' => 20,
+            'is_active' => true,
+        ]);
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'one-shot-transition',
+            'run_at' => now(),
+            'status' => 'sending',
+            'started_at' => now(),
+        ]);
+        $reservation = SmtpSendReservation::create([
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'campaign_id' => $campaign->id,
+            'source_type' => SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT,
+            'source_id' => 515151,
+            'reserved_for' => now()->addHour(),
+            'status' => 'reserved',
+        ]);
+
+        $this->actingAs($this->user)->putJson(route('admin.campaigns.update', $campaign), [
+            'name' => $campaign->name,
+            'segment_id' => $campaign->segment_id,
+            'template_id' => $campaign->template_id,
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'delivery_channel' => 'zoho',
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+            'is_active' => true,
+        ])->assertOk();
+
+        $this->assertSame('released', $reservation->fresh()->status);
+        $this->assertSame('scheduled', $run->fresh()->status);
+        $this->assertNull($run->fresh()->started_at);
+    }
+
+    public function test_changing_only_the_smtp_sender_releases_old_quota_and_reschedules_the_run(): void
+    {
+        $campaign = $this->campaign([
+            'delivery_channel' => 'smtp',
+            'smtp_daily_email_limit' => 20,
+            'is_active' => true,
+        ]);
+        $newSender = SenderIdentity::create([
+            'name' => 'Replacement sender',
+            'email' => uniqid('replacement_') . '@example.test',
+            'is_active' => true,
+        ]);
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'sender-transition',
+            'run_at' => now(),
+            'status' => 'sending',
+            'started_at' => now(),
+        ]);
+        $reservation = SmtpSendReservation::create([
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'campaign_id' => $campaign->id,
+            'source_type' => SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT,
+            'source_id' => 616161,
+            'reserved_for' => now()->addHour(),
+            'status' => 'reserved',
+        ]);
+
+        $this->actingAs($this->user)->putJson(route('admin.campaigns.update', $campaign), [
+            'name' => $campaign->name,
+            'segment_id' => $campaign->segment_id,
+            'template_id' => $campaign->template_id,
+            'sender_identity_id' => $newSender->id,
+            'delivery_channel' => 'smtp',
+            'smtp_daily_email_limit' => 20,
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+            'is_active' => true,
+        ])->assertOk();
+
+        $this->assertSame($newSender->id, $campaign->fresh()->sender_identity_id);
+        $this->assertSame('released', $reservation->fresh()->status);
+        $this->assertSame('scheduled', $run->fresh()->status);
+        $this->assertNull($run->fresh()->started_at);
+    }
+
+    public function test_model_deletion_preserves_sent_smtp_quota_history_without_campaign_reference(): void
+    {
+        $campaign = $this->campaign(['delivery_channel' => 'smtp']);
+        $reservation = SmtpSendReservation::create([
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'campaign_id' => $campaign->id,
+            'source_type' => SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT,
+            'source_id' => 818181,
+            'reserved_for' => now(),
+            'status' => 'sent',
+            'sent_at' => now(),
+        ]);
+
+        $campaign->delete();
+
+        $this->assertDatabaseMissing('campaigns', ['id' => $campaign->id]);
+        $this->assertDatabaseHas('smtp_send_reservations', [
+            'id' => $reservation->id,
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'campaign_id' => null,
+            'status' => 'sent',
+        ]);
+    }
+
+    /** @dataProvider campaignDeletionBlockingStates */
+    public function test_delete_endpoint_rejects_started_in_flight_or_uncertain_delivery(
+        bool $deliveryStarted,
+        ?string $reservationStatus,
+    ): void {
+        $campaign = $this->campaign([
+            'delivery_channel' => 'smtp',
+            'delivery_started_at' => $deliveryStarted ? now() : null,
+        ]);
+
+        if ($reservationStatus !== null) {
+            SmtpSendReservation::create([
+                'sender_identity_id' => $campaign->sender_identity_id,
+                'campaign_id' => $campaign->id,
+                'source_type' => SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT,
+                'source_id' => 828282,
+                'reserved_for' => now(),
+                'status' => $reservationStatus,
+                'attempted_at' => now(),
+                'lease_expires_at' => $reservationStatus === 'sending' ? now()->addMinutes(5) : null,
+            ]);
+        }
+
+        $this->actingAs($this->user)
+            ->deleteJson(route('admin.campaigns.delete', $campaign))
+            ->assertOk()
+            ->assertJson(['success' => false]);
+
+        $this->assertDatabaseHas('campaigns', ['id' => $campaign->id]);
+        if ($reservationStatus !== null) {
+            $this->assertDatabaseHas('smtp_send_reservations', [
+                'campaign_id' => $campaign->id,
+                'status' => $reservationStatus,
+            ]);
+        }
+    }
+
+    public function test_delete_endpoint_releases_queued_smtp_work_for_an_unstarted_campaign(): void
+    {
+        $campaign = $this->campaign(['delivery_channel' => 'smtp', 'delivery_started_at' => null]);
+        $reservation = SmtpSendReservation::create([
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'campaign_id' => $campaign->id,
+            'source_type' => SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT,
+            'source_id' => 838383,
+            'reserved_for' => now(),
+            'status' => 'reserved',
+        ]);
+
+        $this->actingAs($this->user)
+            ->deleteJson(route('admin.campaigns.delete', $campaign))
+            ->assertOk()
+            ->assertJson(['success' => true]);
+
+        $this->assertDatabaseMissing('campaigns', ['id' => $campaign->id]);
+        $this->assertDatabaseHas('smtp_send_reservations', [
+            'id' => $reservation->id,
+            'campaign_id' => null,
+            'status' => 'released',
+        ]);
+    }
+
+    public static function campaignDeletionBlockingStates(): array
+    {
+        return [
+            'started marker' => [true, null],
+            'live SMTP lease' => [false, 'sending'],
+            'uncertain SMTP transport' => [false, 'uncertain'],
+        ];
+    }
+
+    public static function ambiguousZohoDriverRefs(): array
+    {
+        return [
+            'attempted marker' => ['zoho-send-attempted'],
+            'uncertain marker' => ['zoho-send-uncertain'],
+        ];
+    }
+
+    public function test_live_zoho_transport_claim_revalidates_the_channel_under_the_delivery_fence(): void
+    {
+        $this->assertTrue(class_exists(CampaignDeliveryFence::class));
+        config(['services.zoho.driver' => 'zoho']);
+        $campaign = $this->campaign(['delivery_channel' => 'zoho', 'is_active' => true]);
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'zoho-fence',
+            'run_at' => now(),
+            'status' => 'scheduled',
+        ]);
+        $fence = app(CampaignDeliveryFence::class);
+
+        $claimed = $fence->claimZohoTransport($run, ['scheduled']);
+
+        $this->assertNotNull($claimed);
+        $this->assertSame('sending', $run->fresh()->status);
+
+        CampaignRun::whereKey($run->id)->update(['status' => 'scheduled']);
+        $campaign->update(['delivery_channel' => 'smtp']);
+
+        $this->assertNull($fence->claimZohoTransport($run->fresh(), ['scheduled']));
+        $this->assertSame('scheduled', $run->fresh()->status);
+    }
+
+    private function campaign(array $attributes = [], ?array $data = null): Campaign
+    {
+        $data ??= $this->fixtureData();
+
+        return Campaign::create(array_merge([
+            'name' => 'Campaign ' . uniqid(),
+            'segment_id' => $data['segment']->id,
+            'template_id' => $data['template']->id,
+            'sender_identity_id' => $data['sender']->id,
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+            'is_active' => false,
+        ], $attributes));
+    }
+
+    private function fixtureData(): array
+    {
+        return [
+            'segment' => Segment::create(['name' => 'Segment ' . uniqid(), 'scope' => 'client']),
+            'template' => CampaignTemplate::create([
+                'name' => 'Template ' . uniqid(),
+                'subject' => 'Subject',
+                'html_content' => '<p>Hello</p>',
+            ]),
+            'sender' => SenderIdentity::create([
+                'name' => 'Sender ' . uniqid(),
+                'email' => uniqid('sender') . '@example.test',
+                'is_active' => true,
+            ]),
+        ];
+    }
+
+    /** @return array{Campaign, Sequence, SequenceStep, SequenceEnrollment} */
+    private function pacedSequenceCampaign(string $channel, $nextSendAt): array
+    {
+        $data = $this->fixtureData();
+        $sequence = Sequence::create(['name' => 'Sequence ' . uniqid(), 'is_active' => true, 'stop_on_reply' => false]);
+        $step = SequenceStep::create([
+            'sequence_id' => $sequence->id,
+            'step_no' => 1,
+            'delay_days' => 0,
+            'template_id' => $data['template']->id,
+            'subject' => 'Step one',
+        ]);
+        $campaign = Campaign::create([
+            'name' => 'Sequence campaign ' . uniqid(),
+            'segment_id' => $data['segment']->id,
+            'sequence_id' => $sequence->id,
+            'sender_identity_id' => $data['sender']->id,
+            'schedule_type' => 'sequence',
+            'sequence_enrollment_mode' => 'paced',
+            'delivery_channel' => $channel,
+            'smtp_daily_email_limit' => $channel === 'smtp' ? 20 : null,
+            'daily_company_limit' => 1,
+            'next_run_at' => now()->addDay(),
+            'timezone' => 'Europe/Paris',
+            'is_active' => true,
+        ]);
+        $company = Company::create([
+            'name' => 'Company ' . uniqid(),
+            'relationship' => 'client',
+            'source' => 'manual',
+            'qualification_status' => 'pending',
+        ]);
+        $contact = Contact::create([
+            'company_id' => $company->id,
+            'email' => uniqid('contact_') . '@example.test',
+            'name' => 'Contact',
+            'status' => 'new',
+            'source' => 'manual',
+            'legal_basis' => 'relationship',
+            'email_kind' => 'role',
+        ]);
+        $enrollment = SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $contact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+            'next_send_at' => $nextSendAt,
+        ]);
+
+        return [$campaign, $sequence, $step, $enrollment];
+    }
+
+    private function sequenceUpdatePayload(Campaign $campaign, Sequence $sequence, string $channel): array
+    {
+        return [
+            'name' => $campaign->name,
+            'segment_id' => $campaign->segment_id,
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'sequence_id' => $sequence->id,
+            'delivery_channel' => $channel,
+            'smtp_daily_email_limit' => $channel === 'smtp' ? 20 : null,
+            'schedule_type' => 'sequence',
+            'sequence_enrollment_mode' => 'paced',
+            'sequence_first_batch_at' => now()->addDay()->setTimezone('Europe/Paris')->format('Y-m-d\TH:i'),
+            'sequence_daily_company_limit' => 1,
+            'timezone' => 'Europe/Paris',
+            'is_active' => true,
+        ];
+    }
+}

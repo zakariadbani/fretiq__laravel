@@ -6,11 +6,15 @@ use App\DataTables\Backend\SenderIdentitiesDataTable;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
 use App\Models\SenderIdentity;
+use App\Mail\SmtpConnectionTestMailable;
+use App\Services\Mail\SenderIdentitySmtpMailer;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class SenderIdentityController extends BackendController
 {
     private const IMAP_CONNECTION_FIELDS = ['imap_host', 'imap_port', 'imap_username', 'imap_encryption', 'imap_validate_cert'];
+    private const SMTP_CONNECTION_FIELDS = ['smtp_host', 'smtp_port', 'smtp_username', 'smtp_encryption'];
 
     use Crudable {
         beforeSave as crudBeforeSave;
@@ -32,6 +36,8 @@ class SenderIdentityController extends BackendController
         $this->middleware('permission:create sender_identities')->only(['create', 'store']);
         $this->middleware('permission:edit sender_identities')->only(['edit', 'update', 'executeSwitch']);
         $this->middleware('permission:edit sender_identities')->only(['testImap']);
+        $this->middleware('permission:edit sender_identities')->only(['testSmtp']);
+        $this->middleware('permission:send campaigns')->only(['testSmtp']);
         $this->middleware('permission:delete sender_identities')->only(['delete']);
 
         $this->listTitle = "Identités d'expéditeur";
@@ -98,10 +104,51 @@ class SenderIdentityController extends BackendController
         );
     }
 
-    protected function beforeSave($id = null): array
+    public function update($id)
+    {
+        return DB::transaction(function () use ($id) {
+            /** @var SenderIdentity|null $model */
+            $model = SenderIdentity::query()->lockForUpdate()->find((int) $id);
+            if ($model === null) {
+                return response()->json(['message' => trans('app.not_found')], 404);
+            }
+
+            $attributes = $this->beforeSave((int) $id, $model);
+            $validator = $model->validator($attributes, (int) $id);
+            if ($validator->fails()) {
+                return response()->json([
+                    'message' => trans('app.errors_occurred'),
+                    'errors' => $validator->errors(),
+                ], 406);
+            }
+
+            $files = $this->saveFiles($this->currentRequest);
+            $data = array_merge($attributes, $files);
+            if (! $model->update($data)) {
+                return response()->json(['message' => trans('app.error')], 500);
+            }
+
+            $afterSaveResponse = $this->afterSave($data, $model);
+            session()->flash('success', trans('app.update_completed'));
+
+            if ($afterSaveResponse instanceof \Illuminate\Http\JsonResponse) {
+                return $afterSaveResponse;
+            }
+
+            return response()->json([
+                'message' => 'success',
+                'model' => $model,
+                'redirect' => array_key_exists('saveandcontinue', $attributes)
+                    ? route($this->currentPrefixName . '.' . $this->modelName . '.edit', $id)
+                    : route($this->currentPrefixName . '.' . $this->modelName . '.index'),
+            ]);
+        }, 3);
+    }
+
+    protected function beforeSave($id = null, ?SenderIdentity $lockedIdentity = null): array
     {
         $attributes = $this->crudBeforeSave($id);
-        $identity = $id === null ? null : SenderIdentity::find((int) $id);
+        $identity = $lockedIdentity ?? ($id === null ? null : SenderIdentity::find((int) $id));
         if (array_key_exists('imap_enabled', $attributes)) {
             $attributes['imap_enabled'] = (bool) $attributes['imap_enabled'] ? 1 : 0;
         }
@@ -116,7 +163,103 @@ class SenderIdentityController extends BackendController
             }
         }
 
+        if (array_key_exists('smtp_enabled', $attributes)) {
+            $attributes['smtp_enabled'] = (bool) $attributes['smtp_enabled'] ? 1 : 0;
+        }
+
+        if (blank($attributes['smtp_password'] ?? null)) {
+            // A crafted partial payload must not silently retain a credential
+            // when it changes a live SMTP connection.
+            $effectiveSmtpEnabled = (bool) ($attributes['smtp_enabled'] ?? $identity?->smtp_enabled ?? false);
+            $connectionChanged = $identity !== null && $this->smtpConnectionChanged($identity, $attributes);
+            if ($identity !== null && $effectiveSmtpEnabled && $connectionChanged) {
+                // Feed the effective persisted state into model validation so
+                // required_if rejects partial payloads that omit smtp_enabled.
+                $attributes['smtp_enabled'] = 1;
+                $attributes['smtp_password'] = null;
+            } elseif ($identity !== null && $connectionChanged) {
+                // A password belongs to one SMTP endpoint. Never carry it to
+                // changed connection details merely because SMTP is disabled.
+                $attributes['smtp_password'] = null;
+            } elseif ($identity !== null && (bool) ($attributes['smtp_enabled'] ?? $identity->smtp_enabled)) {
+                $attributes['smtp_password'] = $identity->smtp_password;
+            } else {
+                unset($attributes['smtp_password']);
+            }
+        }
+
+        $attributes['smtp_port'] = $attributes['smtp_port'] ?? ($identity?->smtp_port ?? 587);
+        $attributes['smtp_encryption'] = $attributes['smtp_encryption'] ?? ($identity?->smtp_encryption ?? 'tls');
+        $attributes['smtp_hourly_limit'] = $attributes['smtp_hourly_limit'] ?? ($identity?->smtp_hourly_limit ?? 10);
+        $attributes['smtp_daily_limit'] = $attributes['smtp_daily_limit'] ?? ($identity?->smtp_daily_limit ?? 50);
+
         return $attributes;
+    }
+
+    public function testSmtp(Request $request, $id): \Illuminate\Http\JsonResponse
+    {
+        $identity = SenderIdentity::find((int) $id);
+        if ($identity === null) {
+            return response()->json(['success' => false, 'message' => 'Identité introuvable.'], 404);
+        }
+
+        $attributes = $request->validate([
+            'receiver_email' => 'required|email:rfc|max:191',
+            'smtp_enabled' => 'sometimes|boolean',
+            'smtp_host' => 'sometimes|nullable|string|max:255',
+            'smtp_port' => 'sometimes|nullable|integer|min:1|max:65535',
+            'smtp_username' => 'sometimes|nullable|string|max:255',
+            'smtp_password' => 'sometimes|nullable|string|max:1000',
+            'smtp_encryption' => 'sometimes|nullable|in:tls,ssl',
+            'smtp_hourly_limit' => 'sometimes|nullable|integer|min:1|max:100',
+            'smtp_daily_limit' => 'sometimes|nullable|integer|min:1|max:500',
+        ]);
+
+        $testing = clone $identity;
+        $connectionChanged = $this->smtpConnectionChanged($identity, $attributes);
+        foreach (array_merge(self::SMTP_CONNECTION_FIELDS, ['smtp_enabled', 'smtp_hourly_limit', 'smtp_daily_limit']) as $field) {
+            if (array_key_exists($field, $attributes)) {
+                $testing->setAttribute($field, $attributes[$field]);
+            }
+        }
+
+        if (blank($attributes['smtp_password'] ?? null)) {
+            if ($connectionChanged) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Saisissez le mot de passe pour tester de nouveaux paramètres SMTP.',
+                ], 422);
+            }
+        } else {
+            $testing->smtp_password = $attributes['smtp_password'];
+        }
+
+        $mailer = app(SenderIdentitySmtpMailer::class);
+        if ($mailer->usesSenderIdentityTransport() && ! $testing->hasCompleteSmtpConfiguration()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Renseignez et activez la configuration SMTP complète avant de tester.',
+            ], 422);
+        }
+
+        try {
+            $mailer->send($testing, $attributes['receiver_email'], new SmtpConnectionTestMailable($testing));
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Message accepté par le transport SMTP. Vérifiez la boîte de réception et les indésirables.',
+            ]);
+        } catch (\Throwable $exception) {
+            \Illuminate\Support\Facades\Log::warning('SMTP connection test failed.', [
+                'sender_identity_id' => $identity->id,
+                'exception_class' => $exception::class,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Connexion SMTP impossible. Vérifiez les paramètres.',
+            ], 422);
+        }
     }
 
     public function testImap(Request $request, $id): \Illuminate\Http\JsonResponse
@@ -208,6 +351,23 @@ class SenderIdentityController extends BackendController
                 $incoming = (string) $incoming;
             }
 
+            if ($current !== $incoming) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function smtpConnectionChanged(SenderIdentity $identity, array $attributes): bool
+    {
+        foreach (self::SMTP_CONNECTION_FIELDS as $field) {
+            if (! array_key_exists($field, $attributes)) {
+                continue;
+            }
+
+            $current = $field === 'smtp_port' ? (int) $identity->{$field} : (string) $identity->{$field};
+            $incoming = $field === 'smtp_port' ? (int) $attributes[$field] : (string) $attributes[$field];
             if ($current !== $incoming) {
                 return true;
             }

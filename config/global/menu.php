@@ -18,17 +18,6 @@ return [
             'path' => 'admin/dashboard',
         ],
 
-        [
-            'title' => 'Marketing & commercial',
-            'permission' => 'view marketing dashboard',
-            'feature' => 'zoho-v2.features.marketing_dashboard_enabled',
-            'icon' => [
-                'svg' => 'chart-line-up-2',
-                'font' => '<i class="bi bi-graph-up-arrow fs-2"></i>',
-            ],
-            'path' => 'admin/dashboard/marketing',
-        ],
-
         //---------------------------------------------------------------------------
         // Section : Prospection
         //---------------------------------------------------------------------------
@@ -191,7 +180,7 @@ return [
         //---------------------------------------------------------------------------
         [
             'content' => 'Administration',
-            'permission' => ['view users', 'manage roles', 'manage permissions', 'view zoho', 'view settings'],
+            'permission' => ['view users', 'manage roles', 'manage permissions', 'view zoho', 'view marketing dashboard', 'view zoho records', 'view settings'],
             'classes' => ['content' => 'pt-8 pb-2'],
         ],
 
@@ -227,12 +216,30 @@ return [
 
         [
             'title' => 'Zoho',
-            'permission' => 'view zoho',
+            'permission' => ['view zoho', 'view marketing dashboard', 'view zoho records'],
+            'classes' => ['item' => 'menu-accordion'],
+            'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
             'icon' => [
                 'svg' => 'cloud',
                 'font' => '<i class="bi bi-cloud fs-2"></i>',
             ],
-            'path' => 'admin/zoho',
+            'sub' => [
+                [
+                    'title' => 'Synchronisation',
+                    'permission' => 'view zoho',
+                    'path' => 'admin/zoho',
+                ],
+                [
+                    'title' => 'Marketing & commercial',
+                    'permission' => 'view marketing dashboard',
+                    'path' => 'admin/dashboard/marketing',
+                ],
+                [
+                    'title' => 'Explorateur CRM',
+                    'permission' => 'view zoho records',
+                    'path' => 'admin/zoho/records/leads',
+                ],
+            ],
         ],
 
         [

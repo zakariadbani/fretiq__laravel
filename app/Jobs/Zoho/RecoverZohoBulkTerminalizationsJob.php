@@ -69,12 +69,6 @@ final class RecoverZohoBulkTerminalizationsJob implements ShouldBeUniqueUntilPro
 
     public function handle(ZohoBulkRunTerminator $terminator): void
     {
-        if (! config('zoho-v2.features.sync_enabled', false)
-            || ! config('zoho-v2.features.schedules_enabled', false)
-            || ! config('zoho-v2.features.bulk_backfill_enabled', false)) {
-            return;
-        }
-
         $rootIds = ZohoBulkReadJob::query()
             ->where('page_key', 'root')
             ->where('status', 'terminalizing')

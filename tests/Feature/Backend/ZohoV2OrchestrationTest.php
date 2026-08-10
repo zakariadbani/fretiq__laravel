@@ -2,12 +2,11 @@
 
 namespace Tests\Feature\Backend;
 
-use App\Jobs\Zoho\RecoverZohoStandardWorkJob;
-use App\Jobs\Zoho\RetryZohoFailuresJob;
 use App\Jobs\Zoho\RunZohoModuleSyncJob;
 use App\Jobs\Zoho\RunZohoPostReconciliationJob;
 use App\Jobs\Zoho\ZohoModuleRunOutcome;
 use App\Models\Contact;
+use App\Models\Setting;
 use App\Models\Zoho\ZohoLead;
 use App\Models\Zoho\ZohoMarketingLink;
 use App\Models\Zoho\ZohoSyncBatch;
@@ -20,6 +19,7 @@ use App\Services\Zoho\V2\Identity\ZohoIdentityLinker;
 use App\Services\Zoho\V2\PostReconciliation\ZohoPostReconciliationProcessor;
 use App\Services\Zoho\V2\Reconciliation\FailedRecordHydrator;
 use App\Services\Zoho\V2\Reconciliation\MapperFailedRecordHydrator;
+use App\Services\Zoho\V2\Sync\ModuleDeliveryPreparation;
 use App\Services\Zoho\V2\Sync\ZohoStandardRecoveryService;
 use App\Services\Zoho\V2\Sync\ZohoSyncOrchestrator;
 use Database\Seeders\Acl\PermissionsSeeder;
@@ -38,13 +38,11 @@ class ZohoV2OrchestrationTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_v2_orchestration_is_disabled_by_default_and_uses_the_dedicated_queue(): void
+    public function test_v2_automation_is_disabled_by_default_and_jobs_use_the_dedicated_queue(): void
     {
-        $this->assertFalse(config('zoho-v2.features.sync_enabled'));
-        $this->assertFalse(config('zoho-v2.features.schedules_enabled'));
-        $this->assertFalse(config('zoho-v2.features.operations_dashboard_enabled'));
-        $this->assertFalse(config('zoho-v2.features.explorer_enabled'));
-        $this->assertFalse(config('zoho-v2.features.marketing_dashboard_enabled'));
+        $this->assertFalse(Setting::get('zoho.auto_sync_enabled', false));
+        $this->assertFalse(Setting::get('zoho.nightly_reconciliation_enabled', false));
+        $this->assertSame('hourly', Setting::get('zoho.sync_frequency', 'hourly'));
         $this->assertSame('zoho', config('zoho-v2.queue'));
 
         $job = new RunZohoModuleSyncJob(42, 'accounts', 'delta', 'test-correlation');
@@ -52,8 +50,12 @@ class ZohoV2OrchestrationTest extends TestCase
         $this->assertInstanceOf(ShouldBeUniqueUntilProcessing::class, $job);
         $this->assertSame('zoho', $job->queue);
         $this->assertSame('zoho', $job->connection);
-        $this->assertSame('42:accounts', $job->uniqueId());
+        $this->assertSame('42:accounts:g0', $job->uniqueId());
         $this->assertSame($job->uniqueId(), (new RunZohoModuleSyncJob(42, 'accounts', 'reconcile', 'duplicate'))->uniqueId());
+        $this->assertNotSame(
+            (new RunZohoModuleSyncJob(42, 'accounts', 'delta', 'test-correlation', checkpointGeneration: 3))->uniqueId(),
+            (new RunZohoModuleSyncJob(42, 'accounts', 'delta', 'test-correlation', checkpointGeneration: 4))->uniqueId(),
+        );
         $this->assertNotSame($job->uniqueId(), (new RunZohoModuleSyncJob(43, 'accounts', 'delta', 'next-batch'))->uniqueId());
         $this->assertSame(5, $job->tries);
         $this->assertSame(1200, $job->timeout);
@@ -87,26 +89,8 @@ class ZohoV2OrchestrationTest extends TestCase
         $this->assertInstanceOf(MapperFailedRecordHydrator::class, app(FailedRecordHydrator::class));
     }
 
-    public function test_queued_sync_job_kill_switch_terminalizes_its_durable_batch(): void
-    {
-        config()->set('zoho-v2.features.sync_enabled', false);
-        $batch = $this->syncBatch('kill-switch');
-        $batch->update(['mode' => 'delta']);
-
-        (new RunZohoModuleSyncJob($batch->id, 'accounts', 'delta', 'kill-switch'))->handle();
-
-        $this->assertSame('error', $batch->fresh()->status);
-        $this->assertDatabaseHas('zoho_sync_logs', [
-            'sync_batch_id' => $batch->id,
-            'module' => 'accounts',
-            'status' => 'error',
-            'error' => 'Synchronization disabled before execution.',
-        ]);
-    }
-
     public function test_lease_conflict_returns_for_delayed_retry_without_fabricating_a_module_log(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         $batch = $this->syncBatch('lease-conflict');
         $batch->update(['mode' => 'delta']);
         $orchestrator = Mockery::mock(ZohoSyncOrchestrator::class);
@@ -122,7 +106,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_reconciliation_continuation_dispatches_the_same_durable_batch_without_finalizing_it(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $batch = $this->syncBatch('reconcile-continuation');
         $job = new RunZohoModuleSyncJob(
@@ -146,7 +129,7 @@ class ZohoV2OrchestrationTest extends TestCase
             'reconcile',
             $batch->correlation_id,
             $job->retryDeadline,
-        )->andReturn(7);
+        )->andReturn(ModuleDeliveryPreparation::prepared(7));
         $orchestrator->shouldNotReceive('finalizeBatch');
         $this->app->instance(ZohoSyncOrchestrator::class, $orchestrator);
 
@@ -166,7 +149,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_reconciliation_completion_dispatches_post_processing_once_and_only_after_terminal_logs_exist(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $batch = $this->syncBatch('reconcile-post-processing');
         $this->syncLog($batch, 'success');
@@ -198,7 +180,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_post_reconciliation_enqueue_failure_rolls_back_batch_completion_atomically(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         config()->set('zoho-v2.queue_connection', 'missing-post-test-connection');
         $batch = $this->syncBatch('post-enqueue-rollback');
         $this->syncLog($batch, 'success');
@@ -215,7 +196,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_delta_completion_revalidates_exact_email_links_without_waiting_for_nightly_reconciliation(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $contact = Contact::factory()->create(['email' => 'delta-link@example.test']);
         $lead = ZohoLead::query()->create([
@@ -259,7 +239,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_post_reconciliation_failure_is_sanitized_reclaimable_and_a_late_failure_cannot_regress_completion(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $batch = $this->syncBatch('post-reconciliation-retry');
         $this->syncLog($batch, 'success');
@@ -299,28 +278,6 @@ class ZohoV2OrchestrationTest extends TestCase
         $firstJob->failed(new RuntimeException('late ancestor failure'));
         $this->assertSame('completed', $batch->fresh()->post_reconciliation_status);
         $this->assertNull($batch->fresh()->post_reconciliation_error);
-    }
-
-    public function test_disabled_post_reconciliation_job_is_durably_visible_instead_of_silently_disappearing(): void
-    {
-        config()->set('zoho-v2.features.sync_enabled', true);
-        Queue::fake();
-        $batch = $this->syncBatch('post-disabled');
-        $this->syncLog($batch, 'success');
-        app(ZohoSyncOrchestrator::class)->finalizeBatch($batch->id);
-        config()->set('zoho-v2.features.sync_enabled', false);
-
-        $processor = new class implements ZohoPostReconciliationProcessor
-        {
-            public function process(int $batchId): array
-            {
-                throw new RuntimeException('processor must not run');
-            }
-        };
-        (new RunZohoPostReconciliationJob($batch->id))->handle($processor);
-
-        $this->assertSame('failed', $batch->fresh()->post_reconciliation_status);
-        $this->assertSame('Post-reconciliation processing was disabled.', $batch->fresh()->post_reconciliation_error);
     }
 
     public function test_finalize_batch_waits_for_terminal_latest_module_logs(): void
@@ -366,22 +323,8 @@ class ZohoV2OrchestrationTest extends TestCase
         $this->assertSame('error', $batch->fresh()->status);
     }
 
-    public function test_queued_failure_retry_honors_the_kill_switch_before_resolving_services(): void
-    {
-        config()->set('zoho-v2.features.sync_enabled', false);
-        $this->app->bind(
-            \App\Services\Zoho\V2\Reconciliation\ZohoFailureRetryService::class,
-            fn () => throw new RuntimeException('retry service must not resolve'),
-        );
-
-        (new RetryZohoFailuresJob('accounts', 100))->handle();
-
-        $this->addToAssertionCount(1);
-    }
-
     public function test_retryable_sync_result_is_rethrown_without_finalizing_the_batch(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         $batch = $this->syncBatch('fatal-correlation');
         $orchestrator = Mockery::mock(ZohoSyncOrchestrator::class);
         $orchestrator->shouldReceive('runModule')->once()->andReturn(new SyncResult(
@@ -481,7 +424,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_now_command_returns_nonzero_and_skips_reconciliation_after_fatal_sync(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         $batch = $this->syncBatch('fatal-now');
         $this->syncLog($batch, 'error');
         $orchestrator = Mockery::mock(ZohoSyncOrchestrator::class);
@@ -502,7 +444,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_now_command_reports_partial_sync_without_treating_it_as_fatal(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         $batch = $this->syncBatch('partial-now');
         $this->syncLog($batch, 'partial');
         $orchestrator = Mockery::mock(ZohoSyncOrchestrator::class);
@@ -522,7 +463,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_scheduled_delta_skips_while_a_nightly_reconciliation_batch_is_unfinished(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
 
         $this->syncBatch('unfinished-nightly-reconciliation');
 
@@ -543,7 +483,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_scheduled_sync_skips_an_unfinished_batch_of_the_same_mode(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         $batch = $this->syncBatch('unfinished-scheduled-delta');
         $batch->update(['mode' => 'delta']);
 
@@ -562,9 +501,56 @@ class ZohoV2OrchestrationTest extends TestCase
         $this->assertDatabaseCount('zoho_sync_batches', 1);
     }
 
+    public function test_scheduled_delta_leaves_a_manually_paused_delta_batch_untouched(): void
+    {
+        $batch = ZohoSyncBatch::query()->create([
+            'correlation_id' => 'manually-paused-scheduled-fence',
+            'mode' => 'delta',
+            'trigger' => 'manual',
+            'status' => 'paused',
+            'modules' => ['accounts'],
+            'requested_at' => now()->subHour(),
+        ]);
+
+        $this->artisan('zoho:crm:sync', [
+            'module' => 'accounts',
+            '--mode' => 'delta',
+            '--trigger' => 'scheduled',
+        ])->expectsOutputToContain('manually paused')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseCount('zoho_sync_batches', 1);
+        $this->assertSame('paused', $batch->fresh()->status);
+        $this->assertNull($batch->fresh()->completed_at);
+    }
+
+    public function test_scheduled_reconcile_leaves_a_manually_paused_delta_batch_untouched(): void
+    {
+        Queue::fake();
+        $batch = ZohoSyncBatch::query()->create([
+            'correlation_id' => 'manually-paused-reconcile-fence',
+            'mode' => 'delta',
+            'trigger' => 'manual',
+            'status' => 'paused',
+            'modules' => ['accounts'],
+            'requested_at' => now()->subHour(),
+        ]);
+
+        $this->artisan('zoho:crm:sync', [
+            'module' => 'accounts',
+            '--mode' => 'reconcile',
+            '--trigger' => 'scheduled',
+        ])->expectsOutputToContain('manually paused')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseCount('zoho_sync_batches', 1);
+        $this->assertSame('paused', $batch->fresh()->status);
+        $this->assertNull($batch->fresh()->completed_at);
+        Queue::assertNothingPushed();
+    }
+
     public function test_dispatch_failure_terminalizes_the_created_batch_without_orphaning_it(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         config()->set('zoho-v2.queue_connection', 'missing-zoho-test-connection');
 
         $this->artisan('zoho:crm:sync', [
@@ -584,9 +570,179 @@ class ZohoV2OrchestrationTest extends TestCase
         ]);
     }
 
+    public function test_paused_batch_without_a_checkpoint_is_ignored_by_dispatch_without_a_log(): void
+    {
+        Queue::fake();
+        $batch = ZohoSyncBatch::query()->create([
+            'correlation_id' => 'paused-before-first-delivery',
+            'mode' => 'delta',
+            'trigger' => 'manual',
+            'status' => 'paused',
+            'modules' => ['accounts'],
+            'requested_at' => now(),
+        ]);
+
+        app(ZohoModuleDispatcher::class)->dispatch(
+            $batch->id,
+            'accounts',
+            'delta',
+            $batch->correlation_id,
+        );
+
+        Queue::assertNotPushed(RunZohoModuleSyncJob::class);
+        $this->assertDatabaseMissing('zoho_sync_checkpoints', [
+            'module' => 'v2:accounts',
+            'sync_batch_id' => $batch->id,
+        ]);
+        $this->assertDatabaseMissing('zoho_sync_logs', ['sync_batch_id' => $batch->id]);
+        $this->assertSame('paused', $batch->fresh()->status);
+        $this->assertNull($batch->fresh()->completed_at);
+    }
+
+    public function test_resume_after_an_ignored_preparation_cannot_turn_it_into_terminalization(): void
+    {
+        Queue::fake();
+        $batch = ZohoSyncBatch::query()->create([
+            'correlation_id' => 'ignored-then-resumed-preparation',
+            'mode' => 'delta',
+            'trigger' => 'manual',
+            'status' => 'paused',
+            'modules' => ['accounts'],
+            'requested_at' => now(),
+        ]);
+        $orchestrator = Mockery::mock(ZohoSyncOrchestrator::class);
+        $orchestrator->shouldReceive('prepareModuleDelivery')->once()->andReturnUsing(
+            function () use ($batch): ModuleDeliveryPreparation {
+                $batch->update(['status' => 'running', 'resumed_at' => now()]);
+
+                return ModuleDeliveryPreparation::ignored();
+            },
+        );
+        $orchestrator->shouldNotReceive('terminalizeModule');
+        $this->app->instance(ZohoSyncOrchestrator::class, $orchestrator);
+
+        app(ZohoModuleDispatcher::class)->dispatch(
+            $batch->id,
+            'accounts',
+            'delta',
+            $batch->correlation_id,
+        );
+
+        Queue::assertNotPushed(RunZohoModuleSyncJob::class);
+        $this->assertSame('running', $batch->fresh()->status);
+        $this->assertDatabaseMissing('zoho_sync_logs', ['sync_batch_id' => $batch->id]);
+    }
+
+    public function test_paused_module_job_handle_and_late_failed_callback_are_harmless(): void
+    {
+        $batch = ZohoSyncBatch::query()->create([
+            'correlation_id' => 'paused-queued-delivery',
+            'mode' => 'delta',
+            'trigger' => 'manual',
+            'status' => 'paused',
+            'modules' => ['accounts'],
+            'requested_at' => now(),
+        ]);
+        ZohoSyncCheckpoint::query()->create([
+            'module' => 'v2:accounts',
+            'submodule' => '',
+            'sync_mode' => 'delta',
+            'status' => 'paused',
+            'sync_batch_id' => $batch->id,
+            'correlation_id' => $batch->correlation_id,
+            'generation' => 4,
+        ]);
+        $orchestrator = Mockery::mock(ZohoSyncOrchestrator::class);
+        $orchestrator->shouldNotReceive('runModule');
+        $orchestrator->shouldNotReceive('terminalizeModule');
+        $this->app->instance(ZohoSyncOrchestrator::class, $orchestrator);
+        $job = new RunZohoModuleSyncJob(
+            $batch->id,
+            'accounts',
+            'delta',
+            $batch->correlation_id,
+            null,
+            'module:paused-ancestor',
+            3,
+        );
+
+        $job->handle();
+        $job->failed(new RuntimeException('late paused delivery'));
+
+        $this->assertSame('paused', $batch->fresh()->status);
+        $this->assertDatabaseMissing('zoho_sync_logs', ['sync_batch_id' => $batch->id]);
+    }
+
+    public function test_stale_queued_generation_handle_and_late_failed_callback_are_harmless(): void
+    {
+        $batch = ZohoSyncBatch::query()->create([
+            'correlation_id' => 'stale-queued-generation',
+            'mode' => 'delta',
+            'trigger' => 'manual',
+            'status' => 'running',
+            'modules' => ['accounts'],
+            'requested_at' => now(),
+        ]);
+        $checkpoint = ZohoSyncCheckpoint::query()->create([
+            'module' => 'v2:accounts',
+            'submodule' => '',
+            'sync_mode' => 'delta',
+            'status' => 'queued',
+            'sync_batch_id' => $batch->id,
+            'correlation_id' => $batch->correlation_id,
+            'generation' => 6,
+        ]);
+        $orchestrator = Mockery::mock(ZohoSyncOrchestrator::class);
+        $orchestrator->shouldNotReceive('runModule');
+        $orchestrator->shouldNotReceive('terminalizeModule');
+        $this->app->instance(ZohoSyncOrchestrator::class, $orchestrator);
+        $job = new RunZohoModuleSyncJob(
+            $batch->id,
+            'accounts',
+            'delta',
+            $batch->correlation_id,
+            null,
+            'module:stale-queued-generation',
+            5,
+        );
+
+        $job->handle();
+        $job->failed(new RuntimeException('late stale delivery'));
+
+        $this->assertSame('running', $batch->fresh()->status);
+        $this->assertSame(6, $checkpoint->fresh()->generation);
+        $this->assertSame('queued', $checkpoint->fresh()->status);
+        $this->assertDatabaseMissing('zoho_sync_logs', ['sync_batch_id' => $batch->id]);
+    }
+
+    public function test_paused_batch_is_not_finalized_or_terminalized(): void
+    {
+        Queue::fake();
+        $batch = ZohoSyncBatch::query()->create([
+            'correlation_id' => 'paused-terminal-fence',
+            'mode' => 'delta',
+            'trigger' => 'manual',
+            'status' => 'paused',
+            'modules' => ['accounts'],
+            'requested_at' => now(),
+        ]);
+        $this->syncLog($batch, 'success')->update(['mode' => 'delta']);
+
+        app(ZohoSyncOrchestrator::class)->terminalizeModule(
+            $batch->id,
+            'accounts',
+            'delta',
+            'job_exhausted',
+        );
+        app(ZohoSyncOrchestrator::class)->finalizeBatch($batch->id);
+
+        $this->assertSame('paused', $batch->fresh()->status);
+        $this->assertNull($batch->fresh()->completed_at);
+        Queue::assertNotPushed(RunZohoPostReconciliationJob::class);
+    }
+
     public function test_forged_or_late_module_delivery_is_ignored_without_mutating_the_batch(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         $batch = $this->syncBatch('expected-correlation');
         $orchestrator = Mockery::mock(ZohoSyncOrchestrator::class);
         $orchestrator->shouldNotReceive('runModule');
@@ -605,7 +761,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_missing_reconciliation_result_is_retried_without_sealing_the_batch(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         $batch = $this->syncBatch('reconcile-exception');
         $this->syncLog($batch, 'success');
         $orchestrator = Mockery::mock(ZohoSyncOrchestrator::class);
@@ -624,7 +779,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_late_terminalization_does_not_overwrite_a_same_correlation_successful_module(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
 
         $batch = $this->syncBatch('terminalized-reconciliation');
@@ -646,7 +800,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_quarantined_partial_sync_finalizes_without_triggering_a_job_retry(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         $batch = $this->syncBatch('partial-job');
         $batch->update(['mode' => 'delta']);
         $log = $this->syncLog($batch, 'partial');
@@ -666,7 +819,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_standard_recovery_requeues_a_crash_window_continuation_only_for_its_exact_unfinished_batch(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $batch = $this->syncBatch('continuation-outbox');
         $checkpoint = ZohoSyncCheckpoint::query()->create([
@@ -729,9 +881,40 @@ class ZohoV2OrchestrationTest extends TestCase
         $this->assertNull($claim->invoke($recovery, $finishedCheckpoint->id));
     }
 
+    public function test_standard_recovery_leaves_a_paused_batch_and_queued_checkpoint_untouched(): void
+    {
+        Queue::fake();
+        $batch = ZohoSyncBatch::query()->create([
+            'correlation_id' => 'paused-recovery-fence',
+            'mode' => 'delta',
+            'trigger' => 'manual',
+            'status' => 'paused',
+            'modules' => ['accounts'],
+            'requested_at' => now()->subHour(),
+        ]);
+        $checkpoint = ZohoSyncCheckpoint::query()->create([
+            'module' => 'v2:accounts',
+            'submodule' => '',
+            'sync_mode' => 'delta',
+            'status' => 'queued',
+            'sync_batch_id' => $batch->id,
+            'correlation_id' => $batch->correlation_id,
+            'generation' => 9,
+            'heartbeat_at' => now()->subHour(),
+        ]);
+
+        $result = app(ZohoStandardRecoveryService::class)->recover();
+
+        $this->assertSame(['module_jobs' => 0, 'post_jobs' => 0], $result);
+        Queue::assertNothingPushed();
+        $this->assertSame('paused', $batch->fresh()->status);
+        $this->assertSame('queued', $checkpoint->fresh()->status);
+        $this->assertSame(9, $checkpoint->fresh()->generation);
+        $this->assertNull($checkpoint->fresh()->lease_owner);
+    }
+
     public function test_standard_recovery_requeues_pending_failed_and_expired_post_reconciliation_work(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $pending = $this->syncBatch('post-pending');
         $pending->update(['status' => 'success', 'completed_at' => now(), 'post_reconciliation_status' => 'pending']);
@@ -755,7 +938,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_standard_recovery_never_steals_bulk_work_and_stops_exhausted_post_retries(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         config()->set('zoho-v2.retry.max_attempts', 2);
         Queue::fake();
 
@@ -802,7 +984,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_standard_recovery_terminalizes_a_hard_killed_final_post_attempt_without_requeueing(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         config()->set('zoho-v2.retry.max_attempts', 2);
         Queue::fake();
         $batch = $this->syncBatch('post-hard-killed-final-attempt');
@@ -833,7 +1014,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_standard_recovery_recreates_initial_delivery_despite_historical_checkpoint(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $historical = $this->syncBatch('historical-completed-checkpoint');
         $historical->update(['status' => 'success', 'completed_at' => now()]);
@@ -869,7 +1049,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_standard_recovery_ignores_live_marker_and_recovers_stale_marker_once(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         config()->set('zoho-v2.module.recovery_stale_seconds', 60);
         config()->set('zoho-v2.module.retrying_recovery_stale_seconds', 60);
         Queue::fake();
@@ -895,7 +1074,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_standard_recovery_does_not_invalidate_a_queued_delivery_when_its_unique_lock_suppresses_reenqueue(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         config()->set('zoho-v2.module.recovery_stale_seconds', 60);
         $batch = ZohoSyncBatch::query()->create([
             'correlation_id' => 'queued-unique-lock-owner', 'mode' => 'delta', 'trigger' => 'schedule',
@@ -931,7 +1109,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_standard_recovery_recovers_a_stale_queued_initial_delivery_and_uses_the_activity_submodule(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $batch = ZohoSyncBatch::query()->create([
             'correlation_id' => 'queued-activity-orphan', 'mode' => 'delta', 'trigger' => 'manual',
@@ -950,8 +1127,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_standard_recovery_uses_bulk_policy_for_a_stale_initial_backfill(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
-        config()->set('zoho-v2.features.bulk_backfill_enabled', true);
         config()->set('zoho-v2.bulk.verified_modules', ['accounts']);
         Queue::fake();
         $batch = ZohoSyncBatch::query()->create([
@@ -969,8 +1144,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_standard_recovery_stops_re_dispatching_an_initial_bulk_batch_after_its_root_exists(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
-        config()->set('zoho-v2.features.bulk_backfill_enabled', true);
         config()->set('zoho-v2.bulk.verified_modules', ['accounts']);
         Queue::fake();
         $batch = ZohoSyncBatch::query()->create([
@@ -993,7 +1166,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_standard_recovery_claims_an_idle_historical_checkpoint_but_never_steals_a_live_or_newer_owner(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $checkpoint = ZohoSyncCheckpoint::query()->create([
             'module' => 'v2:accounts', 'submodule' => '', 'sync_mode' => 'delta', 'status' => 'completed',
@@ -1033,7 +1205,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_standard_recovery_respects_framework_retry_backoff_and_a_fresh_heartbeat(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         config()->set('zoho-v2.module.recovery_stale_seconds', 60);
         config()->set('zoho-v2.module.retrying_recovery_stale_seconds', 1860);
         Queue::fake();
@@ -1053,7 +1224,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_post_retry_not_before_prevents_recovery_from_cloning_the_framework_backoff_chain(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $batch = $this->syncBatch('post-retry-not-before');
         $this->syncLog($batch, 'success');
@@ -1095,7 +1265,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_recovery_finalizes_a_complete_terminal_module_log_set_exactly_once(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $batch = $this->syncBatch('finalize-orphaned-terminal-logs');
         $this->syncLog($batch, 'success');
@@ -1110,7 +1279,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_recovered_module_delivery_uses_its_persisted_retry_deadline(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $batch = $this->syncBatch('recovered-retry-deadline');
         $deadline = now()->addHours(3)->toIso8601String();
@@ -1128,7 +1296,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_new_batch_cannot_steal_a_lease_free_unfinished_module_outbox(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         config()->set('zoho-v2.module.recovery_stale_seconds', 60);
         Queue::fake();
         $older = ZohoSyncBatch::query()->create([
@@ -1161,7 +1328,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_inline_module_run_cannot_steal_a_lease_free_unfinished_module_outbox(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         config()->set('zoho-v2.module.recovery_stale_seconds', 60);
         Queue::fake();
         $older = ZohoSyncBatch::query()->create([
@@ -1196,7 +1362,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_post_recovery_terminalizes_an_expired_durable_retry_window_without_enqueuing(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $batch = $this->syncBatch('expired-post-retry-window');
         $batch->update([
@@ -1213,7 +1378,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_late_module_failed_callback_cannot_regress_a_newer_successful_generation(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         $batch = $this->syncBatch('late-module-generation');
         $checkpoint = ZohoSyncCheckpoint::query()->create([
             'module' => 'v2:accounts', 'submodule' => '', 'sync_mode' => 'reconcile',
@@ -1232,7 +1396,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_late_module_failed_callback_cannot_regress_a_newer_live_generation(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         $batch = $this->syncBatch('late-module-live-generation');
         $checkpoint = ZohoSyncCheckpoint::query()->create([
             'module' => 'v2:accounts', 'submodule' => '', 'sync_mode' => 'reconcile', 'status' => 'running',
@@ -1251,7 +1414,6 @@ class ZohoV2OrchestrationTest extends TestCase
 
     public function test_late_post_failed_callback_cannot_regress_a_newer_live_attempt(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Queue::fake();
         $batch = $this->syncBatch('late-post-live-generation');
         $this->syncLog($batch, 'success');
@@ -1299,15 +1461,6 @@ class ZohoV2OrchestrationTest extends TestCase
         $log = ZohoSyncLog::query()->where('sync_batch_id', $batch->id)->where('module', 'accounts')->sole();
         $this->assertSame('error', $log->status);
         $this->assertSame($batch->correlation_id, $log->correlation_id);
-    }
-
-    public function test_standard_recovery_job_requires_the_schedule_gate(): void
-    {
-        config()->set('zoho-v2.features.sync_enabled', true);
-        config()->set('zoho-v2.features.schedules_enabled', false);
-        (new RecoverZohoStandardWorkJob)->handle(app(ZohoStandardRecoveryService::class));
-
-        $this->addToAssertionCount(1);
     }
 
     private function syncBatch(string $correlationId): ZohoSyncBatch

@@ -28,7 +28,7 @@ final class ZohoExplorer
         'industry' => 'industry',
         'transport' => 'transport_type',
         'transport_type' => 'transport_type',
-        'client_type' => 'account_type',
+        'client_type' => 'client_type',
         'account_type' => 'account_type',
         'currency' => 'currency_code',
         'currency_code' => 'currency_code',
@@ -136,10 +136,10 @@ final class ZohoExplorer
     public function listingFields(string $module): array
     {
         $preferred = match ($module) {
-            'leads' => ['full_name', 'company_name', 'status', 'lead_source', 'country', 'owner_zoho_id', 'zoho_modified_at'],
+            'leads' => ['full_name', 'company_name', 'status', 'client_type', 'country', 'owner_zoho_id', 'zoho_modified_at'],
             'accounts' => ['name', 'account_type', 'industry', 'country', 'owner_zoho_id', 'zoho_modified_at'],
             'contacts' => ['full_name', 'email', 'title', 'country', 'owner_zoho_id', 'zoho_modified_at'],
-            'deals' => ['name', 'stage', 'amount', 'probability', 'currency_code', 'closing_date', 'owner_zoho_id'],
+            'deals' => ['name', 'stage', 'amount', 'currency_code', 'closing_date', 'owner_zoho_id'],
             'quotes' => ['quote_number', 'subject', 'follow_up_status', 'line_items_total', 'currency_code', 'valid_till', 'owner_zoho_id'],
         };
 
@@ -244,7 +244,7 @@ final class ZohoExplorer
         }
         $this->applyCommercialFilter($query, $request);
 
-        $filters = self::FILTER_ALIASES;
+        $filters = $this->filterAliases($definition);
         if ($definition->key === 'leads' && isset($allowed['lead_source'])) {
             $filters['source'] = 'lead_source';
         }
@@ -256,12 +256,25 @@ final class ZohoExplorer
             }
             $value = mb_substr(trim($value), 0, 255);
 
-            if ($column === 'transport_type') {
+            if (in_array($column, $definition->multiValueFields, true)) {
                 $query->whereJsonContains($column, $value);
             } else {
                 $query->where($column, $value);
             }
         }
+    }
+
+    /** @return array<string, string> */
+    private function filterAliases(ModuleDefinition $definition): array
+    {
+        $filters = self::FILTER_ALIASES;
+
+        if ($definition->key === 'accounts') {
+            $filters['client_type'] = 'account_type';
+            $filters['status'] = 'account_status';
+        }
+
+        return $filters;
     }
 
     private function applyCommercialFilter(Builder $query, Request $request): void

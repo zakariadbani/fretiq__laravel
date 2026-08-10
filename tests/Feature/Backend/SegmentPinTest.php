@@ -21,12 +21,12 @@ use Tests\TestCase;
  * Tests:
  *  - Include of a filter-miss contact appears in resolve()
  *  - B3: whitespace-padded suppression match (LOWER/TRIM normalization)
- *  - Include of a cold-excluded prospect does NOT appear (compliance applies)
+ *  - Include of a prospect appears when it is eligible
  *  - Exclude removes a filter-matched contact
  *  - Exclude wins when contact also matches the filter
  *  - N2: resolveWithStats final === resolve count when exclude overlaps a dup
  *  - N3: soft-deleted included contact never appears
- *  - Funnel identity: matched − suppressed − cold − personal − dups − manually_excluded === final
+ *  - Funnel identity: matched − suppressed − dups − manually_excluded === final
  *  - B2 parity: Segment::contactsCount() === resolve()->count() when pins exist
  *  - manually_included / manually_excluded keys present on no-pin path (= 0)
  */
@@ -36,9 +36,9 @@ class SegmentPinTest extends TestCase
 
     private SegmentService $service;
 
-    /** Client company — passes cold gate regardless of setting */
+    /** Client company fixture. */
     private Company $clientCompany;
-    /** Prospect company — cold gate blocks it when disabled */
+    /** Prospect company fixture. */
     private Company $prospectCompany;
 
     protected function setUp(): void
@@ -100,7 +100,6 @@ class SegmentPinTest extends TestCase
      */
     public function test_include_of_filter_miss_appears_in_resolve(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         // contact at client company, sector = Transport — matches filter
         $matched = $this->makeContact($this->clientCompany, 'matched@client.test');
@@ -141,7 +140,6 @@ class SegmentPinTest extends TestCase
      */
     public function test_b3_whitespace_padded_suppressed_include_does_not_appear(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         // Insert contact with padded email directly (bypass unique validation)
         \Illuminate\Support\Facades\DB::table('contacts')->insert([
@@ -188,7 +186,6 @@ class SegmentPinTest extends TestCase
      */
     public function test_b3_manually_included_reflects_suppressed_drop(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         \Illuminate\Support\Facades\DB::table('contacts')->insert([
             'company_id'  => $this->clientCompany->id,
@@ -233,20 +230,14 @@ class SegmentPinTest extends TestCase
     }
 
     /**
-     * A pinned-include of a cold-excluded prospect (cold gate OFF) must NOT
-     * appear in resolve() — compliance pipeline still applies to includes.
+     * A pinned prospect remains eligible after the scope/filter union.
      */
-    public function test_include_of_cold_excluded_prospect_does_not_appear(): void
+    public function test_include_of_prospect_appears(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
+        $prospect = $this->makeContact($this->prospectCompany, 'contact@prospect.test');
 
-        $prospect = $this->makeContact($this->prospectCompany, 'cold@prospect.test');
+        $segment = $this->makeSegment('client');
 
-        // Segment is client-scoped; prospect company won't match scope.
-        // We use mixed scope to let it through stage 1, then cold gate kills it.
-        $segment = $this->makeSegment('mixed');
-
-        // Pin prospect as include (bypasses scope, but cold gate still applies)
         $segment->pinnedContacts()->syncWithoutDetaching([
             $prospect->id => ['mode' => 'include'],
         ]);
@@ -254,11 +245,7 @@ class SegmentPinTest extends TestCase
         $resolved = $this->service->resolve($segment);
         $ids      = $resolved->pluck('id')->all();
 
-        $this->assertNotContains(
-            $prospect->id,
-            $ids,
-            'Cold-excluded prospect include must NOT appear in resolve() (compliance applies to includes)'
-        );
+        $this->assertContains($prospect->id, $ids);
     }
 
     /**
@@ -266,7 +253,6 @@ class SegmentPinTest extends TestCase
      */
     public function test_exclude_removes_filter_matched_contact(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $keep    = $this->makeContact($this->clientCompany, 'keep@client.test');
         $exclude = $this->makeContact($this->clientCompany, 'exclude@client.test');
@@ -289,7 +275,6 @@ class SegmentPinTest extends TestCase
      */
     public function test_exclude_wins_over_filter_match(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $contact = $this->makeContact($this->clientCompany, 'both@client.test');
 
@@ -316,7 +301,6 @@ class SegmentPinTest extends TestCase
      */
     public function test_n2_resolve_count_equals_stats_final_with_exclude_dup_overlap(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         // Insert two contacts with emails that trim to the same value
         \Illuminate\Support\Facades\DB::table('contacts')->insert([
@@ -376,7 +360,6 @@ class SegmentPinTest extends TestCase
      */
     public function test_n3_soft_deleted_included_contact_never_appears(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $alive   = $this->makeContact($this->clientCompany, 'alive@client.test');
         $deleted = $this->makeContact($this->clientCompany, 'deleted@client.test');
@@ -401,11 +384,10 @@ class SegmentPinTest extends TestCase
 
     /**
      * Funnel identity:
-     * matched − suppressed − cold_excluded − personal_excluded − duplicates_excluded − manually_excluded === final
+     * matched − suppressed − duplicates_excluded − manually_excluded === final
      */
     public function test_funnel_identity_holds_with_pins(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         // 2 client contacts that match the filter
         $keep    = $this->makeContact($this->clientCompany, 'keep@client.test');
@@ -439,15 +421,13 @@ class SegmentPinTest extends TestCase
 
         $computed = $stats['matched']
             - $stats['suppressed']
-            - $stats['cold_excluded']
-            - $stats['personal_excluded']
             - $stats['duplicates_excluded']
             - $stats['manually_excluded'];
 
         $this->assertSame(
             $stats['final'],
             $computed,
-            'Funnel identity must hold with pins: matched − suppressed − cold − personal − dups − manually_excluded === final'
+            'Funnel identity must hold with pins'
         );
     }
 
@@ -456,7 +436,6 @@ class SegmentPinTest extends TestCase
      */
     public function test_no_pin_path_manually_keys_exist_and_are_zero(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $this->makeContact($this->clientCompany, 'a@client.test');
 
@@ -475,7 +454,6 @@ class SegmentPinTest extends TestCase
      */
     public function test_b2_contacts_count_matches_resolve_count_with_pins(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $filterMatch = $this->makeContact($this->clientCompany, 'match@client.test');
 

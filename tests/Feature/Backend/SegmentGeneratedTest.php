@@ -21,7 +21,6 @@ use Tests\TestCase;
  *                              commercial can store, guest store.
  *   SegmentPreviewTest:        ALL preview cases (auth, response structure, funnel math,
  *                              validation, sample ≤10, sample keys, sample order, summary,
- *                              cold_gate_closed).
  *   SegmentFilterPipelineTest: service-level 6-stage pipeline (scope/filter/D11a/D11b/
  *                              suppression/cold-gate/personal-exclusion/resolve parity).
  *   SegmentResolveTest:        service-level resolve() (client/prospect/mixed/suppressed/

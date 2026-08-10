@@ -40,7 +40,6 @@ class ZohoDriverSelectionTest extends TestCase
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
         // Default: local driver, no mail sent to real SMTP
-        config(['prospecting.cold_send_enabled' => false]);
         Mail::fake();
     }
 
@@ -55,7 +54,6 @@ class ZohoDriverSelectionTest extends TestCase
             'services.zoho.campaigns.client_secret' => 'y',
             'services.zoho.campaigns.list_key' => 'verified-list-key',
             'services.zoho.campaigns.topic_id' => 'fake-topic-id',
-            'prospecting.cold_send_enabled' => true,
             'app.url' => 'https://fretiq.example.test',
         ]);
     }

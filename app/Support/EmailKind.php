@@ -6,7 +6,7 @@ class EmailKind
 {
     /**
      * Classify an email address by domain into a deliverability kind.
-     *   free-webmail / private inbox  → 'personal'  (excluded from cold sends)
+     *   free-webmail / private inbox  → 'personal'
      *   corporate domain (named or role) → 'role'    (deliverable)
      */
     public static function classify(?string $email): string

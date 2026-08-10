@@ -18,10 +18,10 @@ class ZohoInventoryServiceTest extends TestCase
     {
         $transport = new InventoryTransport([
             '/settings/modules' => ['modules' => [['api_name' => 'Leads']]],
-            '/settings/fields' => ['fields' => [[
+            '/settings/fields' => ['fields' => $this->completeLeadFields([[
                 'api_name' => 'Currency', 'data_type' => 'picklist', 'field_label' => 'Currency',
                 'pick_list_values' => [['display_value' => 'Euro', 'actual_value' => 'EUR']],
-            ]]],
+            ]])],
             '/settings/layouts' => ['layouts' => [['id' => 'layout-1', 'name' => 'Standard', 'api_name' => 'Standard']]],
             '/settings/related_lists' => ['related_lists' => []],
         ]);
@@ -35,10 +35,10 @@ class ZohoInventoryServiceTest extends TestCase
         $this->assertSame(['EUR'], $first->modules['leads']['currencies']);
         $this->assertSame(1, ZohoFieldManifest::query()->where('module', 'leads')->count());
 
-        $transport->responses['/settings/fields'] = ['fields' => [[
+        $transport->responses['/settings/fields'] = ['fields' => [...$this->completeLeadFields([[
             'api_name' => 'Currency', 'data_type' => 'picklist', 'field_label' => 'Currency',
             'pick_list_values' => [['display_value' => 'Euro', 'actual_value' => 'EUR']],
-        ], ['api_name' => 'Industry', 'data_type' => 'text', 'field_label' => 'Industry']]];
+        ]]), ['api_name' => 'Industry', 'data_type' => 'text', 'field_label' => 'Industry']]];
         $changed = $service->inventory(['leads']);
 
         $this->assertNotSame($first->modules['leads']['schema_hash'], $changed->modules['leads']['schema_hash']);
@@ -59,6 +59,39 @@ class ZohoInventoryServiceTest extends TestCase
         $this->assertSame('verified', ZohoFieldManifest::query()->where('module', 'leads')->where('is_current', true)->value('drift_state'));
     }
 
+    public function test_missing_promoted_sources_are_persisted_as_mapping_gaps_and_block_review(): void
+    {
+        $fields = array_values(array_filter(
+            $this->completeLeadFields(),
+            fn (array $field): bool => $field['api_name'] !== 'Secteur_Activit',
+        ));
+        $transport = new InventoryTransport([
+            '/settings/modules' => ['modules' => [['api_name' => 'Leads']]],
+            '/settings/fields' => ['fields' => $fields],
+            '/settings/layouts' => ['layouts' => []],
+            '/settings/related_lists' => ['related_lists' => []],
+        ]);
+        $this->app->instance(ZohoTransport::class, $transport);
+        $service = app(ZohoInventoryService::class);
+
+        $gapped = $service->inventory(['leads']);
+
+        $this->assertTrue($gapped->complete);
+        $this->assertSame(0, $gapped->failedModules);
+        $this->assertSame('degraded', $gapped->status);
+        $this->assertSame('mapping_gap', $gapped->modules['leads']['state']);
+        $this->assertSame(['industry' => ['Secteur_Activit']], $gapped->modules['leads']['mapping_gaps']);
+        $this->assertFalse($service->markReviewed('leads', $gapped->modules['leads']['schema_hash']));
+        $this->assertSame(['industry' => ['Secteur_Activit']], ZohoFieldManifest::where('module', 'leads')->sole()->mapping_gaps);
+
+        $transport->responses['/settings/fields'] = ['fields' => $this->completeLeadFields()];
+        $resolved = $service->inventory(['leads']);
+
+        $this->assertSame([], $resolved->modules['leads']['mapping_gaps']);
+        $this->assertTrue($service->markReviewed('leads', $resolved->modules['leads']['schema_hash']));
+        $this->assertSame('verified', ZohoFieldManifest::where('module', 'leads')->where('is_current', true)->sole()->drift_state);
+    }
+
     public function test_root_module_inventory_failure_degrades_every_requested_module_without_fake_204s(): void
     {
         $transport = new InventoryTransport(['/settings/modules' => ['status' => 503]]);
@@ -69,6 +102,7 @@ class ZohoInventoryServiceTest extends TestCase
         $this->assertSame(2, $report->failedModules);
         $this->assertSame(503, $report->modules['leads']['status']);
         $this->assertSame(503, $report->modules['accounts']['status']);
+        $this->assertSame([], $report->modules['leads']['mapping_gaps']);
         $this->assertFalse($report->complete);
         $this->assertSame('degraded', $report->status);
 
@@ -95,6 +129,28 @@ class ZohoInventoryServiceTest extends TestCase
         $this->assertEquals([['api_name' => 'Notes', 'display_label' => 'Notes', 'module' => 'Notes']], $related);
     }
 
+    public function test_notes_inventory_accepts_related_lists_no_content_and_persists_empty_metadata(): void
+    {
+        $this->app->instance(ZohoTransport::class, new InventoryTransport([
+            '/settings/modules' => ['modules' => [['api_name' => 'Notes']]],
+            '/settings/fields' => ['fields' => [
+                ['api_name' => 'Note_Title', 'data_type' => 'text'],
+                ['api_name' => 'Created_Time', 'data_type' => 'datetime'],
+            ]],
+            '/settings/layouts' => ['layouts' => []],
+            '/settings/related_lists' => ['status' => 204],
+        ]));
+
+        $report = app(ZohoInventoryService::class)->inventory(['notes']);
+
+        $this->assertTrue($report->complete);
+        $this->assertSame(0, $report->failedModules);
+        $this->assertSame('healthy', $report->status);
+        $this->assertSame('verified', $report->modules['notes']['state']);
+        $this->assertSame(0, $report->modules['notes']['related_lists']);
+        $this->assertSame([], ZohoFieldManifest::where('module', 'notes')->sole()->related_lists);
+    }
+
     public function test_missing_expected_modules_and_malformed_metadata_degrade_while_activation_gates_are_explicit(): void
     {
         $this->app->instance(ZohoTransport::class, new InventoryTransport([
@@ -113,6 +169,7 @@ class ZohoInventoryServiceTest extends TestCase
         $this->assertTrue($gated->complete);
         $this->assertSame(0, $gated->failedModules);
         $this->assertSame('gated', $gated->modules['users']['state']);
+        $this->assertSame([], $gated->modules['users']['mapping_gaps']);
 
         $this->app->instance(ZohoTransport::class, new InventoryTransport([
             '/settings/modules' => ['modules' => [['api_name' => 'Leads']]],
@@ -145,6 +202,23 @@ class ZohoInventoryServiceTest extends TestCase
         $report = app(ZohoInventoryService::class)->inventory(['leads']);
 
         $this->assertSame(['GBP'], $report->modules['leads']['currencies']);
+    }
+
+    /** @param list<array<string,mixed>> $extra */
+    private function completeLeadFields(array $extra = []): array
+    {
+        $apiNames = [
+            'Phone', 'Secteur_Activit', 'Converted_Account', 'Converted_Contact', 'Converted_Deal',
+            'Converted_Date_Time', 'Intitul_de_Poste', 'Type_de_client', 'Type_de_transport_utilis',
+            'Langue', 'Adresse', 'City', 'Website', 'Incoterm', 'Destination', 'Volume',
+            'Prestataire_Concurrent', 'Provenance_Destination', 'Observation', 'Email_Opt_Out',
+            'Unsubscribed_Mode', 'Unsubscribed_Time', 'Last_Activity_Time', 'Tag', 'Mobile', 'T_l_phone_2',
+        ];
+
+        return [...$extra, ...array_map(
+            fn (string $apiName): array => ['api_name' => $apiName, 'data_type' => 'text'],
+            $apiNames,
+        )];
     }
 }
 

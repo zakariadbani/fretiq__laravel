@@ -25,6 +25,7 @@ use App\Services\Campaign\CampaignService;
 use App\Services\Campaign\CampaignWaveZohoListSyncService;
 use App\Services\Campaign\PacedSequenceEnrollmentService;
 use App\Services\Campaign\SegmentService;
+use App\Services\Campaign\SequenceService;
 use App\Services\Campaign\SequenceWaveService;
 use App\Services\Campaign\ZohoCampaignsDriver;
 use App\Services\Zoho\ZohoCampaignsClient;
@@ -49,6 +50,12 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
         config(['services.zoho.driver' => 'local']);
         Queue::fake();
+    }
+
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+        parent::tearDown();
     }
 
     public function test_default_mode_keeps_existing_campaigns_immediate(): void
@@ -102,6 +109,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_due_batch_caps_companies_and_enrolls_every_contact_in_each_selected_company(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $segment = $this->segment();
         $sequence = $this->sequence();
         $high = $this->company(90);
@@ -139,8 +147,37 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertSame(0, SequenceEnrollment::where('campaign_id', $campaign->id)->whereNotNull('next_send_at')->count());
     }
 
+    public function test_local_driver_enrolls_paced_zoho_campaign_for_mailpit_without_creating_a_wave(): void
+    {
+        config(['services.zoho.driver' => 'local']);
+        $segment = $this->segment();
+        $sequence = $this->sequence();
+        $contact = $this->contact($this->company(50));
+        $campaign = $this->campaign($segment, $sequence, [
+            'delivery_channel' => 'zoho',
+            'next_run_at' => '2026-07-21 08:00:00',
+        ]);
+
+        $result = app(PacedSequenceEnrollmentService::class)->activate(
+            $campaign,
+            Carbon::parse('2026-07-21 09:00:00', 'UTC'),
+        );
+        $enrollment = SequenceEnrollment::where('campaign_id', $campaign->id)
+            ->where('contact_id', $contact->id)
+            ->firstOrFail();
+
+        $this->assertTrue($result['processed_due']);
+        $this->assertNotNull($enrollment->next_send_at);
+        $this->assertSame(0, CampaignRun::where('campaign_id', $campaign->id)->count());
+        Queue::assertNotPushed(SyncCampaignWaveZohoListJob::class);
+
+        $this->assertSame(1, app(SequenceService::class)->processDue());
+        Queue::assertPushed(SendSequenceStepJob::class, fn ($job) => $job->enrollmentId === $enrollment->id);
+    }
+
     public function test_second_call_for_same_occurrence_is_a_no_op(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $company = $this->company(50);
         $this->contact($company);
         $campaign = $this->campaign($this->segment(), $this->sequence(), [
@@ -296,6 +333,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_zoho_driver_accepts_progressive_sequence_activation(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $campaign = $this->campaign($this->segment(), $this->sequence(), [
             'driver' => 'zoho',
             'next_run_at' => now()->subMinute(),
@@ -439,6 +477,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_consecutive_batches_use_stable_wave_numbers(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $segment = $this->segment();
         $sequence = $this->sequence();
         $firstContact = $this->contact($this->company(90));
@@ -463,6 +502,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_wave_zoho_sync_uses_frozen_membership_and_reuses_key_after_failure(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $campaign = $this->campaign($this->segment(), $this->sequence(), ['name' => 'Campagne Test']);
         $contact = $this->contact($this->company(50));
         $run = CampaignRun::create([
@@ -511,6 +551,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_wave_sync_skips_and_suppresses_invalid_contact_then_schedules_remaining_audience(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $sequence = $this->sequence();
         $campaign = $this->campaign($this->segment(), $sequence);
         $valid = $this->contact($this->company(50));
@@ -582,6 +623,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_wave_sync_with_only_invalid_contacts_finishes_without_send(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $sequence = $this->sequence();
         $campaign = $this->campaign($this->segment(), $sequence);
         $invalid = $this->contact($this->company(50));
@@ -649,6 +691,7 @@ class CampaignSequenceProgressiveTest extends TestCase
      */
     public function test_wave_sync_with_only_verified_code_2005_rejection_finishes_without_send(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $sequence = $this->sequence();
         $campaign = $this->campaign($this->segment(), $sequence);
         $invalid = $this->contact($this->company(50));
@@ -717,6 +760,7 @@ class CampaignSequenceProgressiveTest extends TestCase
      */
     public function test_wave_sync_skips_unverified_rejection_for_wave_only_and_schedules_remaining_audience(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $sequence = $this->sequence();
         $campaign = $this->campaign($this->segment(), $sequence);
         $valid = $this->contact($this->company(50));
@@ -795,6 +839,7 @@ class CampaignSequenceProgressiveTest extends TestCase
      */
     public function test_wave_sync_with_only_unverified_rejections_and_zero_acceptances_fails_loudly(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $sequence = $this->sequence();
         $campaign = $this->campaign($this->segment(), $sequence);
         $bad = $this->contact($this->company(50));
@@ -861,6 +906,7 @@ class CampaignSequenceProgressiveTest extends TestCase
      */
     public function test_wave_sync_skips_multiple_contacts_with_different_unverified_codes(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $sequence = $this->sequence();
         $campaign = $this->campaign($this->segment(), $sequence);
         $good = $this->contact($this->company(50));
@@ -937,6 +983,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_empty_wave_sync_finishes_without_calling_zoho(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
         $contact = $this->contact($this->company(50));
         SequenceEnrollment::create(['sequence_id' => $sequence->id, 'contact_id' => $contact->id, 'campaign_id' => $campaign->id, 'current_step' => 1, 'status' => 'active']);
@@ -962,6 +1009,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_send_time_empty_wave_finishes_without_dispatching_zoho(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
         $contact = $this->contact($this->company(50));
         SequenceEnrollment::create(['sequence_id' => $sequence->id, 'contact_id' => $contact->id, 'campaign_id' => $campaign->id, 'current_step' => 1, 'status' => 'active']);
@@ -1090,6 +1138,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_failed_zoho_wave_can_be_retried_from_campaign_view_by_sender(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
         $contact = $this->contact($this->company(50));
         SequenceEnrollment::create([
@@ -1151,6 +1200,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_wave_sync_job_ignores_stale_retry_after_zoho_campaign_creation(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $campaign = $this->campaign($this->segment(), $this->sequence());
         $run = CampaignRun::create([
             'campaign_id' => $campaign->id,
@@ -1169,6 +1219,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_legacy_paced_enrollment_with_queued_step_send_is_adopted_without_smtp(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         Mail::fake();
         $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
         $contact = $this->contact($this->company(50));
@@ -1194,6 +1245,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_attempted_campaign_key_finalizes_without_duplicate_zoho_calls(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
         $contact = $this->contact($this->company(50));
         SequenceEnrollment::create([
@@ -1225,10 +1277,12 @@ class CampaignSequenceProgressiveTest extends TestCase
 
         $this->assertSame('sent', $run->fresh()->status);
         $this->assertSame('zoho', $run->fresh()->driver_ref);
+        $this->assertNotNull($campaign->fresh()->delivery_started_at);
     }
 
     public function test_definite_send_failure_retries_but_ambiguous_failure_requires_manual_reconciliation(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
         $contact = $this->contact($this->company(50));
         $step = $sequence->steps()->firstOrFail();
@@ -1286,6 +1340,8 @@ class CampaignSequenceProgressiveTest extends TestCase
     }
     public function test_two_step_wave_sends_through_zoho_and_never_smtp(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
+        Carbon::setTestNow(Carbon::parse('2026-07-21 07:00:00', 'UTC'));
         Mail::fake();
         $segment = $this->segment();
         $sequence = $this->sequence();
@@ -1348,6 +1404,7 @@ class CampaignSequenceProgressiveTest extends TestCase
      */
     public function test_wave_follow_up_run_lands_on_a_weekday_and_dispatch_delay_matches_shifted_run_at(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         Mail::fake();
         $segment = $this->segment();
         $sequence = $this->sequence();
@@ -1401,6 +1458,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_wave_follow_up_uses_parent_clock_when_campaign_cursor_is_missing(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         Mail::fake();
         $segment = $this->segment();
         $sequence = $this->sequence();
@@ -1452,6 +1510,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_wave_with_multiple_recipients_marks_all_sent_without_provider_id_collision(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         // Regression for the shared Zoho campaign_key being written into every
         // recipient row (campaign_recipients.provider_message_id is globally
         // unique) — see SequenceWaveService::send(). Needs 2+ recipients to
@@ -1482,6 +1541,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_legacy_paced_enrollment_is_adopted_and_existing_job_skips_smtp(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         Mail::fake();
         Queue::fake();
         $contact = $this->contact($this->company(50));
@@ -1517,6 +1577,7 @@ class CampaignSequenceProgressiveTest extends TestCase
      */
     public function test_legacy_adoption_run_at_and_dispatch_delay_agree_on_the_shifted_instant(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         Mail::fake();
         Queue::fake();
         $contact = $this->contact($this->company(50));
@@ -1549,6 +1610,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_paused_or_inactive_wave_is_deferred_without_send(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         // Pinned to a weekday: activate() defaults to real now() when no $now
         // is passed, and PacedSequenceEnrollmentService::evaluateDue() (already
         // wired) holds the whole occurrence on a blocked day (weekend/blackout)
@@ -1584,6 +1646,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_existing_attempted_zoho_campaign_is_not_created_or_sent_again(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $contact = $this->contact($this->company(50));
         $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
         $run = CampaignRun::create([
@@ -1607,6 +1670,7 @@ class CampaignSequenceProgressiveTest extends TestCase
     }
     public function test_reused_wave_list_is_rebuilt_when_email_membership_changes(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         $sequence = $this->sequence();
         $template = CampaignTemplate::create([
             'name' => 'Changed email step 2',
@@ -1660,6 +1724,7 @@ class CampaignSequenceProgressiveTest extends TestCase
 
     public function test_audience_rebuild_clears_old_campaign_key_and_sends_only_the_new_campaign(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         Queue::fake();
         $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
         $step = $sequence->steps()->firstOrFail();
@@ -1709,6 +1774,7 @@ class CampaignSequenceProgressiveTest extends TestCase
     }
     public function test_suppressed_contact_is_removed_before_the_next_wave_step(): void
     {
+        config(['services.zoho.driver' => 'zoho']);
         // Pinned to a weekday for the same reason as
         // test_paused_or_inactive_wave_is_deferred_without_send() above.
         Carbon::setTestNow(Carbon::parse('2026-07-27 10:00:00', 'UTC')); // Monday

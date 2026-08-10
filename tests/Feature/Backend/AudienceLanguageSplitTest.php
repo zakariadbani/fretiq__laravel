@@ -33,7 +33,6 @@ class AudienceLanguageSplitTest extends TestCase
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
 
         config([
-            'prospecting.cold_send_enabled' => false,
             'translation.base_language'     => 'fr',
             'translation.target_languages'  => ['en'],
             'translation.francophone_countries' => ['FR', 'BE', 'LU', 'MC', 'CH', 'CA', 'MA'],

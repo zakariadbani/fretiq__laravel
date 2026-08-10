@@ -6,25 +6,29 @@ use App\Http\Controllers\Controller;
 use App\Jobs\RunZohoCrmSyncJob;
 use App\Jobs\Zoho\RetryZohoFailuresJob;
 use App\Models\User;
+use App\Models\Zoho\ZohoSyncBatch;
 use App\Models\ZohoSyncLog;
 use App\Models\ZohoToken;
 use App\Services\Zoho\V2\Bulk\ZohoModuleDispatcher;
 use App\Services\Zoho\V2\Identity\ZohoIdentityLinker;
 use App\Services\Zoho\V2\Operations\ZohoOperationsDashboard;
 use App\Services\Zoho\V2\Registry\ZohoModuleRegistry;
+use App\Services\Zoho\V2\Sync\ZohoManualSyncCoordinator;
 use App\Services\Zoho\V2\Sync\ZohoSyncOrchestrator;
 use App\Services\Zoho\ZohoCrmTemplatesService;
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
+use InvalidArgumentException;
 
 class ZohoController extends Controller
 {
     public function __construct()
     {
         $this->middleware(['auth', 'verified']);
-        $this->middleware('permission:view zoho')->only(['index']);
-        $this->middleware('permission:sync zoho')->only(['sync', 'v2Sync', 'retry']);
+        $this->middleware('permission:view zoho')->only(['index', 'v2Progress']);
+        $this->middleware('permission:sync zoho')->only(['sync', 'v2Sync', 'v2Pause', 'retry']);
         $this->middleware('permission:backfill zoho')->only(['v2Backfill']);
         $this->middleware('permission:manage zoho mappings')->only(['mapping']);
         $this->middleware('permission:create campaign_templates')->only(['syncTemplates']);
@@ -36,7 +40,7 @@ class ZohoController extends Controller
     public function index()
     {
         $operations = app(ZohoOperationsDashboard::class);
-        if (config('zoho-v2.features.operations_dashboard_enabled', false) && $operations->available()) {
+        if ($operations->available()) {
             return view('backend.contents.zoho.v2-index', ['dashboard' => $operations->data()]);
         }
         // ── Driver config ─────────────────────────────────────────────────────
@@ -178,6 +182,15 @@ class ZohoController extends Controller
         ]);
     }
 
+    public function v2Progress(ZohoSyncBatch $batch, ZohoOperationsDashboard $operations): JsonResponse
+    {
+        abort_unless($operations->progressAvailable(), 404);
+        $progress = $operations->syncProgress($batch);
+        abort_if($progress === null, 404);
+
+        return response()->json($progress)->header('Cache-Control', 'no-store, private');
+    }
+
     private function readinessStatus(bool $selected, bool $configured, bool $verified): string
     {
         if (! $selected) {
@@ -248,8 +261,66 @@ class ZohoController extends Controller
         ZohoModuleRegistry $registry,
         ZohoSyncOrchestrator $orchestrator,
         ZohoModuleDispatcher $dispatcher,
+        ZohoManualSyncCoordinator $coordinator,
     ) {
-        return $this->dispatchV2($request, $registry, $orchestrator, $dispatcher, 'delta');
+        abort_unless(app(ZohoOperationsDashboard::class)->available(), 404);
+        $data = $request->validate(['module' => ['nullable', 'string', 'max:64']]);
+        $module = $this->moduleKey($registry, $data['module'] ?? null);
+
+        if ($module !== null) {
+            if ($coordinator->pausedBatchOwningModule($module) !== null) {
+                return back()->with(
+                    'error',
+                    'Ce module appartient au lot complet en pause. Reprenez la synchronisation complète pour continuer.',
+                );
+            }
+
+            $batch = $orchestrator->createBatch([$module], 'delta', 'manual', (int) $request->user()->id);
+
+            return $this->dispatchBatchModules($batch, [$module], 'delta', $orchestrator, $dispatcher);
+        }
+
+        $decision = $coordinator->beginOrResumeAll($this->syncAllModuleKeys($registry), (int) $request->user()->id);
+        if ($decision->outcome === 'already_running') {
+            return back()->with('success', 'Une synchronisation complète est déjà en cours. Aucun nouveau lot n’a été créé.');
+        }
+        if ($decision->needsFinalization) {
+            $orchestrator->finalizeBatch((int) $decision->batch->id);
+
+            return back()->with('success', 'La synchronisation complète reprise était déjà terminée. Le lot a été finalisé.');
+        }
+
+        return $this->dispatchBatchModules(
+            $decision->batch,
+            $decision->modulesToDispatch,
+            'delta',
+            $orchestrator,
+            $dispatcher,
+        );
+    }
+
+    public function v2Pause(
+        Request $request,
+        ZohoModuleRegistry $registry,
+        ZohoManualSyncCoordinator $coordinator,
+    ) {
+        abort_unless(app(ZohoOperationsDashboard::class)->available(), 404);
+        $data = $request->validate([
+            'batch_id' => ['required', 'integer', 'min:1', 'exists:zoho_sync_batches,id'],
+            'reason' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        try {
+            $coordinator->pauseAll(
+                (int) $data['batch_id'],
+                $this->syncAllModuleKeys($registry),
+                $data['reason'] ?? null,
+            );
+        } catch (InvalidArgumentException) {
+            return back()->with('error', 'Ce lot ne peut pas être mis en pause. Actualisez la page puis réessayez.');
+        }
+
+        return back()->with('success', 'La synchronisation complète est en pause. Elle reprendra avec le même lot au prochain clic.');
     }
 
     public function v2Backfill(
@@ -269,7 +340,7 @@ class ZohoController extends Controller
 
     public function retry(Request $request, ZohoModuleRegistry $registry)
     {
-        abort_unless(config('zoho-v2.features.sync_enabled', false) && app(ZohoOperationsDashboard::class)->available(), 404);
+        abort_unless(app(ZohoOperationsDashboard::class)->available(), 404);
         $data = $request->validate(['module' => ['nullable', 'string', 'max:64']]);
         $module = $this->moduleKey($registry, $data['module'] ?? null);
         RetryZohoFailuresJob::dispatch($module, (int) config('zoho-v2.retry.batch_size', 100));
@@ -279,7 +350,7 @@ class ZohoController extends Controller
 
     public function mapping(Request $request, ZohoIdentityLinker $identity, ZohoOperationsDashboard $operations)
     {
-        abort_unless(config('zoho-v2.features.operations_dashboard_enabled', false) && $operations->available(), 404);
+        abort_unless($operations->available(), 404);
         $observedOwnerIds = $operations->observedOwnerIdentities()->pluck('zoho_id')->all();
         $commercialUserIds = User::query()->where('is_active', true)->role('commercial')->pluck('id')->all();
         $data = $request->validate([
@@ -301,12 +372,24 @@ class ZohoController extends Controller
         ZohoModuleDispatcher $dispatcher,
         string $mode,
     ) {
-        abort_unless(config('zoho-v2.features.sync_enabled', false) && app(ZohoOperationsDashboard::class)->available(), 404);
+        abort_unless(app(ZohoOperationsDashboard::class)->available(), 404);
         $data = $request->validate(['module' => ['nullable', 'string', 'max:64'], 'mode' => ['nullable', 'in:backfill,reconcile']]);
         $mode = $mode === 'delta' ? 'delta' : ($data['mode'] ?? $mode);
         $module = $this->moduleKey($registry, $data['module'] ?? null);
-        $modules = $module ? [$module] : array_keys(array_filter($registry->all(), fn ($d) => ! $d->activationGated && $d->key !== 'quoted_items'));
+        $modules = $module ? [$module] : $this->syncAllModuleKeys($registry);
         $batch = $orchestrator->createBatch($modules, $mode, 'manual', (int) $request->user()->id);
+
+        return $this->dispatchBatchModules($batch, $modules, $mode, $orchestrator, $dispatcher);
+    }
+
+    /** @param list<string> $modules */
+    private function dispatchBatchModules(
+        ZohoSyncBatch $batch,
+        array $modules,
+        string $mode,
+        ZohoSyncOrchestrator $orchestrator,
+        ZohoModuleDispatcher $dispatcher,
+    ) {
         foreach ($modules as $index => $key) {
             try {
                 $dispatcher->dispatch((int) $batch->id, $key, $mode, (string) $batch->correlation_id);
@@ -328,6 +411,15 @@ class ZohoController extends Controller
         }
 
         return back()->with('success', 'Synchronisation V2 planifiée.');
+    }
+
+    /** @return list<string> */
+    private function syncAllModuleKeys(ZohoModuleRegistry $registry): array
+    {
+        return array_keys(array_filter(
+            $registry->all(),
+            fn ($definition): bool => ! $definition->activationGated && $definition->key !== 'quoted_items',
+        ));
     }
 
     private function moduleKey(ZohoModuleRegistry $registry, ?string $requested): ?string

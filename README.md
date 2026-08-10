@@ -120,13 +120,13 @@ php artisan queue:monitor zoho:zoho --max=100
 php artisan queue:failed
 ```
 
-Keep `ZOHO_V2_SYNC_ENABLED=false`, `ZOHO_V2_SCHEDULES_ENABLED=false`, and `ZOHO_V2_BULK_BACKFILL_ENABLED=false` until the dedicated worker is healthy and the shadow backfill, reconciliation, quarantine, security, and seven-day observation gates have passed. Enabling the worker does not authorize live Zoho calls or enable any V2 feature flag.
+Keep automatic synchronization and nightly reconciliation disabled in Paramètres > Zoho until the dedicated worker is healthy and the shadow backfill, reconciliation, quarantine, security, and seven-day observation gates have passed. Enabling the worker does not authorize live Zoho calls.
 
 ## Zoho V2 controlled rollout
 
-V2 is shipped dark. The implementation does not run migrations, seed permissions, call live Zoho, or enable flags automatically. Use this sequence only in an approved maintenance window:
+Zoho screens and manual actions are controlled by permissions. Automatic delta synchronization and nightly reconciliation are stored in Paramètres > Zoho and both default to disabled. The implementation does not run migrations, seed permissions, or call live Zoho automatically. Use this sequence only in an approved maintenance window:
 
-1. Keep every `ZOHO_V2_*_ENABLED` flag `false`, provision the dedicated worker above, and confirm it is healthy.
+1. Leave both Zoho automation switches disabled, provision the dedicated worker above, and confirm it is healthy.
 2. Review the pending schema without changing data:
 
    ```bash
@@ -138,12 +138,12 @@ V2 is shipped dark. The implementation does not run migrations, seed permissions
 
    ```bash
    php artisan migrate --force
-   php artisan db:seed --class="Database\\Seeders\\Acl\\PermissionsSeeder" --force
+   php artisan db:seed --class="Database\Seeders\Acl\PermissionsSeeder" --force
    php artisan permission:cache-reset
    ```
 
-4. Enable only `ZOHO_V2_OPERATIONS_DASHBOARD_ENABLED=true`. Keep sync, schedules, explorer, marketing, and Bulk disabled; verify OAuth, queue health, schema manifests, and redacted error rendering.
-5. Enable `ZOHO_V2_SYNC_ENABLED=true` with schedules still disabled. Run the read-only inventory, then a shadow Records backfill and reconciliation:
+4. Verify the permission-controlled operations dashboard, explorer, and marketing screens; verify OAuth, queue health, schema manifests, and redacted error rendering.
+5. Keep automatic synchronization disabled. Run the read-only inventory, then a shadow Records backfill and reconciliation:
 
    ```bash
    php artisan zoho:crm:inventory
@@ -153,9 +153,9 @@ V2 is shipped dark. The implementation does not run migrations, seed permissions
    ```
 
 6. Reconcile remote/local counts, currencies, owners, quote items, tombstones, and quarantines in `/admin/zoho`. Do not continue while a critical quarantine, missing required manifest, or stale required module remains.
-7. Enable `ZOHO_V2_SCHEDULES_ENABLED=true` and observe hourly delta plus nightly reconciliation for seven days. Keep `ZOHO_V2_BULK_BACKFILL_ENABLED=false`; `ZOHO_V2_BULK_VERIFIED_MODULES` remains empty until a module-specific live export is proven complete against Records.
-8. Enable the CRM explorer, then marketing, independently: `ZOHO_V2_EXPLORER_ENABLED=true`, followed by `ZOHO_V2_MARKETING_DASHBOARD_ENABLED=true` only after portfolio isolation and dashboard sample reconciliation pass.
-9. Retire the legacy lean sync only after Accounts/Contacts parity is documented. Roll back a UI stage by disabling its flag; do not delete mirrored or tombstoned history.
+7. Enable automatic synchronization and nightly reconciliation in Paramètres > Zoho, then observe hourly delta plus nightly reconciliation for seven days. `ZOHO_V2_BULK_VERIFIED_MODULES` remains empty until a module-specific live export is proven complete against Records.
+8. Grant CRM explorer and marketing permissions independently only after portfolio isolation and dashboard sample reconciliation pass.
+9. Retire the legacy lean sync only after Accounts/Contacts parity is documented. Roll back UI access by revoking the corresponding permission, and pause automated runs from Paramètres > Zoho; do not delete mirrored or tombstoned history.
 
 Every live Zoho endpoint, parameter, field, or Bulk module enabled after this baseline requires a sanitized `STATUS: 200 + summary` empirical verification. Never place payload PII, OAuth material, or raw exception text in rollout notes.
 
@@ -167,7 +167,6 @@ Every live Zoho endpoint, parameter, field, or Bulk module enabled after this ba
 | `ZOHO_CAMPAIGNS_DRIVER` | Campaign send driver: `local` (default, Mailpit simulation) or `zoho` (live — see prerequisites above) |
 | `SERPAPI_API_KEY` / `HUNTER_API_KEY` | Prospect discovery APIs |
 | `DISCOVERY_DRIVER` | Discovery driver: `local` or live |
-| `PROSPECTING_COLD_SEND_ENABLED` | Hard gate on cold outreach; keep `false` everywhere except production after legal sign-off |
 | `APP_URL` | Must be a publicly reachable host for open-tracking pixels to register; `localhost` means opens never record (use ngrok or a resolvable local domain when testing tracking) |
 
 ## Conventions
@@ -182,7 +181,6 @@ All backend CRUD modules follow one pattern: `BackendController` base extended w
 
 - Never use `Mail::raw()` for prospection emails — Gmail silently drops it. Always use a real Mailable class.
 - Campaign sending is gated by the `send campaigns` permission, enforced at the controller layer.
-- Cold sends are additionally gated by `PROSPECTING_COLD_SEND_ENABLED` and stay off without legal sign-off.
 - Secrets live in `.env` only — never committed, never logged.
 
 ## Further documentation

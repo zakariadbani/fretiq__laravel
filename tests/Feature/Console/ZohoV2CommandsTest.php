@@ -10,6 +10,7 @@ use App\Services\Zoho\V2\Contracts\ZohoTransport;
 use App\Services\Zoho\V2\DTO\TransportResult;
 use App\Services\Zoho\V2\Inventory\ZohoInventoryService;
 use App\Services\Zoho\V2\Registry\ZohoModuleRegistry;
+use App\Services\Zoho\V2\Sync\ModuleDeliveryPreparation;
 use App\Services\Zoho\V2\Sync\ZohoSyncOrchestrator;
 use DateTimeInterface;
 use Illuminate\Console\Scheduling\Schedule;
@@ -19,16 +20,8 @@ use Tests\TestCase;
 
 class ZohoV2CommandsTest extends TestCase
 {
-    public function test_sync_command_refuses_when_v2_sync_is_disabled(): void
-    {
-        $this->artisan('zoho:crm:sync', ['module' => 'accounts'])
-            ->expectsOutputToContain('disabled')
-            ->assertExitCode(1);
-    }
-
     public function test_sync_command_rejects_an_unknown_module_before_dispatching(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
 
         $this->artisan('zoho:crm:sync', ['module' => 'not-a-module'])
             ->expectsOutputToContain('Unknown Zoho CRM module')
@@ -37,7 +30,6 @@ class ZohoV2CommandsTest extends TestCase
 
     public function test_sync_command_dispatches_each_selected_module_to_the_zoho_queue(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Bus::fake();
 
         $batch = new ZohoSyncBatch;
@@ -47,7 +39,7 @@ class ZohoV2CommandsTest extends TestCase
         $orchestrator->shouldReceive('createBatch')->once()->with(['accounts'], 'delta', 'manual', null)->andReturn($batch);
         $orchestrator->shouldReceive('prepareModuleDelivery')->once()
             ->with(91, 'accounts', 'delta', 'safe-test-correlation', null)
-            ->andReturn(1);
+            ->andReturn(ModuleDeliveryPreparation::prepared(1));
         $orchestrator->shouldReceive('finalizeBatch')->never();
         $this->app->instance(ZohoSyncOrchestrator::class, $orchestrator);
 
@@ -61,10 +53,8 @@ class ZohoV2CommandsTest extends TestCase
             && $job->queue === 'zoho');
     }
 
-    public function test_backfill_command_uses_bulk_only_when_enabled_and_supported(): void
+    public function test_backfill_command_uses_bulk_only_for_a_verified_module(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
-        config()->set('zoho-v2.features.bulk_backfill_enabled', true);
         config()->set('zoho-v2.bulk.verified_modules', ['accounts']);
         Bus::fake();
 
@@ -87,8 +77,6 @@ class ZohoV2CommandsTest extends TestCase
 
     public function test_now_bulk_backfill_is_rejected_before_a_batch_is_created(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
-        config()->set('zoho-v2.features.bulk_backfill_enabled', true);
         config()->set('zoho-v2.bulk.verified_modules', ['accounts']);
         Bus::fake();
 
@@ -106,7 +94,6 @@ class ZohoV2CommandsTest extends TestCase
 
     public function test_sync_command_records_the_validated_scheduled_trigger(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Bus::fake();
 
         $batch = new ZohoSyncBatch;
@@ -116,7 +103,7 @@ class ZohoV2CommandsTest extends TestCase
         $orchestrator->shouldReceive('createBatch')->once()->with(['accounts'], 'delta', 'scheduled', null)->andReturn($batch);
         $orchestrator->shouldReceive('prepareModuleDelivery')->once()
             ->with(92, 'accounts', 'delta', 'scheduled-correlation', null)
-            ->andReturn(1);
+            ->andReturn(ModuleDeliveryPreparation::prepared(1));
         $this->app->instance(ZohoSyncOrchestrator::class, $orchestrator);
 
         $this->artisan('zoho:crm:sync', [
@@ -128,7 +115,6 @@ class ZohoV2CommandsTest extends TestCase
 
     public function test_sync_command_rejects_an_unknown_trigger(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
 
         $this->artisan('zoho:crm:sync', ['module' => 'accounts', '--trigger' => 'browser'])
             ->expectsOutputToContain('Invalid trigger')
@@ -137,7 +123,6 @@ class ZohoV2CommandsTest extends TestCase
 
     public function test_sync_command_rejects_standalone_quote_items(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Bus::fake();
 
         $this->artisan('zoho:crm:sync', ['module' => 'Quoted_Items'])
@@ -191,7 +176,6 @@ class ZohoV2CommandsTest extends TestCase
 
     public function test_retry_command_normalizes_api_name_and_dispatches_a_full_retry_batch(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Bus::fake();
 
         $this->artisan('zoho:crm:retry-failures', ['module' => 'Accounts'])
@@ -205,7 +189,6 @@ class ZohoV2CommandsTest extends TestCase
 
     public function test_retry_command_rejects_standalone_quote_items(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
         Bus::fake();
 
         $this->artisan('zoho:crm:retry-failures', ['module' => 'Quoted_Items'])

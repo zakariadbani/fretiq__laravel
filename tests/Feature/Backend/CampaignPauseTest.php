@@ -55,7 +55,6 @@ class CampaignPauseTest extends TestCase
         $this->superadmin->assignRole('superadmin');
 
         config([
-            'prospecting.cold_send_enabled' => false,
             'services.zoho.driver' => 'local',
         ]);
 

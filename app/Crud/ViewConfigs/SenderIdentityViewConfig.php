@@ -74,11 +74,13 @@ class SenderIdentityViewConfig
         // ── Tabs ──────────────────────────────────────────────────────────────
         $tabs = [
             ['key' => 'sender_apercu',  'label' => 'Aperçu',  'icon' => 'bi-grid',        'mode' => 'view'],
-            ['key' => 'sender_general', 'label' => 'Général', 'icon' => 'bi-person-badge', 'mode' => 'edit'],
+            // _tabbar prefixes route_base_id (sender); the pane is sender_general.
+            ['key' => 'general', 'label' => 'Général', 'icon' => 'bi-person-badge', 'mode' => 'edit'],
         ];
 
         if ($hasId) {
             $tabs[] = ['key' => 'imap', 'label' => 'IMAP', 'icon' => 'bi-inbox-fill', 'mode' => 'edit'];
+            $tabs[] = ['key' => 'smtp', 'label' => 'SMTP', 'icon' => 'bi-send-fill', 'mode' => 'edit'];
         }
 
         // ── Detail rows ───────────────────────────────────────────────────────

@@ -4,9 +4,11 @@ namespace Tests\Feature\Backend;
 
 use App\Models\Zoho\ZohoAccount;
 use App\Models\Zoho\ZohoActivity;
+use App\Models\Zoho\ZohoContact;
 use App\Models\Zoho\ZohoDeal;
 use App\Models\Zoho\ZohoDealStageHistory;
 use App\Models\Zoho\ZohoFieldManifest;
+use App\Models\Zoho\ZohoLead;
 use App\Models\Zoho\ZohoQuote;
 use App\Models\Zoho\ZohoQuoteItem;
 use App\Models\Zoho\ZohoSyncBatch;
@@ -44,11 +46,37 @@ class ZohoV2SchemaTest extends TestCase
 
     public function test_mapper_promoted_fields_are_persistable(): void
     {
-        $this->assertTrue(Schema::hasColumns('zoho_accounts', ['parent_account_zoho_id', 'industry']));
-        $this->assertTrue(Schema::hasColumns('zoho_leads', ['phone', 'industry', 'account_zoho_id', 'contact_zoho_id', 'is_converted']));
+        $this->assertTrue(Schema::hasColumns('zoho_leads', [
+            'phone', 'mobile', 'secondary_phone', 'industry', 'account_zoho_id', 'contact_zoho_id',
+            'converted_deal_zoho_id', 'converted_at', 'is_converted', 'title', 'client_type', 'transport_type',
+            'language', 'address', 'city', 'website', 'incoterm', 'destination', 'volume', 'competitor',
+            'origin_destination', 'observation', 'email_opt_out', 'unsubscribed_mode', 'unsubscribed_at',
+            'last_activity_at', 'tags',
+        ]));
+        $this->assertTrue(Schema::hasColumns('zoho_accounts', [
+            'parent_account_zoho_id', 'industry', 'account_type', 'active_status', 'account_status', 'address',
+            'city', 'language', 'commercial_name', 'assignment_type', 'accounting_number', 'ice', 'tax_id',
+            'trade_register', 'cnss', 'business_tax_number', 'trade_register_center', 'payment_mode',
+            'transport_type', 'volume', 'competitor', 'origin_destination', 'observation',
+            'logistics_manager_zoho_id', 'last_activity_at', 'tags',
+        ]));
+        $this->assertTrue(Schema::hasColumns('zoho_contacts', [
+            'phone', 'mobile', 'title', 'company_name', 'address', 'city', 'postal_code', 'language',
+            'lead_source', 'email_opt_out', 'email_opened', 'link_clicked', 'unsubscribed_mode',
+            'unsubscribed_at', 'last_activity_at', 'description', 'tags', 'salutation',
+        ]));
+        $this->assertTrue(Schema::hasColumns('zoho_deals', [
+            'exchange_rate', 'pipeline', 'stackability', 'last_activity_at', 'stage_modified_at', 'tags',
+            'origin', 'destination', 'incoterm', 'cargo_description', 'gross_weight', 'volume', 'quantity',
+            'dimensions', 'departure_frequency', 'package_type', 'quote_type', 'transport_type',
+            'transit_time', 'expires_on', 'description',
+        ]));
         $this->assertTrue(Schema::hasColumns('zoho_quotes', [
             'quote_number', 'discount', 'tax', 'exchange_rate', 'origin', 'destination',
             'transport_type', 'quote_date', 'follow_up_status', 'country', 'line_items_total', 'line_items_total_complete',
+            'incoterms', 'gross_weight', 'volume', 'quantity_text', 'package_type', 'transit_time_days',
+            'equipment_type', 'free_time', 'stackability', 'dangerous_goods_status', 'un_number',
+            'dangerous_goods_class', 'dimensions', 'loading_meters', 'last_activity_at', 'tags',
         ]));
         $this->assertTrue(Schema::hasColumns('zoho_quote_items', [
             'product_name', 'description', 'unit_of_measure', 'list_price', 'unit_price', 'unit_price_raw',
@@ -57,7 +85,8 @@ class ZohoV2SchemaTest extends TestCase
         $this->assertTrue(Schema::hasColumns('zoho_activities', ['start_at', 'end_at', 'contact_zoho_id']));
         $this->assertFalse(Schema::hasColumn('zoho_activities', 'related_zoho_id'));
         $this->assertTrue(Schema::hasColumns('zoho_deal_stage_history', [
-            'parent_zoho_id', 'amount', 'probability', 'expected_revenue', 'closing_date', 'currency_code', 'zoho_deletion_type',
+            'parent_zoho_id', 'amount', 'probability', 'expected_revenue', 'closing_date', 'currency_code',
+            'zoho_deletion_type', 'moved_to_stage', 'stage_duration_days',
         ]));
         $this->assertTrue(Schema::hasColumns('zoho_quote_status_history', ['parent_zoho_id', 'zoho_deletion_type']));
         $this->assertTrue(Schema::hasColumns('zoho_actions_commercials', [
@@ -67,6 +96,15 @@ class ZohoV2SchemaTest extends TestCase
         $this->assertTrue(Schema::hasColumns('zoho_transport_international', ['email', 'secondary_email', 'currency_code', 'exchange_rate', 'status']));
         $this->assertTrue(Schema::hasColumns('zoho_products', ['vendor_name', 'vendor_zoho_id']));
         $this->assertFalse(Schema::hasColumn('zoho_transport_international', 'origin_country'));
+        $this->assertTrue(Schema::hasColumn('zoho_field_manifests', 'mapping_gaps'));
+
+        $this->assertTrue((new ZohoLead)->hasCast('tags', 'array'));
+        $this->assertTrue((new ZohoLead)->hasCast('email_opt_out', 'boolean'));
+        $this->assertTrue((new ZohoContact)->hasCast('email_opened', 'boolean'));
+        $this->assertTrue((new ZohoDeal)->hasCast('quantity', 'integer'));
+        $this->assertTrue((new ZohoQuote)->hasCast('incoterms', 'array'));
+        $this->assertTrue((new ZohoDealStageHistory)->hasCast('stage_duration_days', 'integer'));
+        $this->assertTrue((new ZohoFieldManifest)->hasCast('mapping_gaps', 'array'));
     }
 
     public function test_sync_control_tables_expose_durable_idempotency_and_drift_state(): void

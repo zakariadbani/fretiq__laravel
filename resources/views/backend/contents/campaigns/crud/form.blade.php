@@ -122,6 +122,14 @@
     <div class="tab-pane fade show active" id="campaign_general" role="tabpanel">
     @endif
 
+    @php
+        $deliveryLocked = isset($model) && $model->id && $model->deliverySettingsLocked();
+        $selectedDeliveryChannel = old(
+            'delivery_channel',
+            isset($model) && $model->id ? ($model->delivery_channel ?? '') : 'zoho'
+        );
+    @endphp
+
     <div class="row g-5">
 
         {{-- ── Section 1: Identité & Nom ────────────────────────────── --}}
@@ -153,7 +161,10 @@
                         <div class="col-lg-6">
                             <div class="fv-row mb-7">
                                 <label class="required fw-semibold fs-6 mb-2">Identité d'expéditeur</label>
-                                <select name="sender_identity_id" class="form-select form-select-solid" data-control="select2" data-placeholder="Sélectionner une identité..." required>
+                                @if($deliveryLocked)
+                                    <input type="hidden" name="sender_identity_id" value="{{ (int) $model->sender_identity_id }}">
+                                @endif
+                                <select name="sender_identity_id" class="form-select form-select-solid" data-control="select2" data-placeholder="Sélectionner une identité..." required {{ $deliveryLocked ? 'disabled' : '' }}>
                                     <option value="">Sélectionner une identité...</option>
                                     @foreach($senderIdentities as $identity)
                                         <option value="{{ $identity->id }}"
@@ -163,6 +174,72 @@
                                         </option>
                                     @endforeach
                                 </select>
+                            </div>
+                        </div>
+
+                        <div class="col-lg-6">
+                            <div class="fv-row mb-7">
+                                <label class="required fw-semibold fs-6 mb-2" for="delivery_channel">Canal d’envoi</label>
+                                @if($deliveryLocked)
+                                    <input type="hidden" name="delivery_channel" value="{{ e((string) $model->delivery_channel) }}">
+                                @endif
+                                <select name="delivery_channel" id="delivery_channel" class="form-select form-select-solid" data-control="select2" data-hide-search="true" {{ $deliveryLocked ? 'disabled' : '' }}>
+                                    @if(isset($model) && $model->id && $model->delivery_channel === null)
+                                        <option value="" selected>Mode historique ({{ $model->effectiveDeliveryChannel() === 'zoho' ? 'Zoho Campaigns' : 'mail local' }})</option>
+                                    @endif
+                                    <option value="zoho" {{ $selectedDeliveryChannel === 'zoho' ? 'selected' : '' }}>Zoho Campaigns (par défaut)</option>
+                                    <option value="smtp" {{ $selectedDeliveryChannel === 'smtp' ? 'selected' : '' }}>SMTP direct progressif</option>
+                                </select>
+                                @if($deliveryLocked)
+                                    <div class="form-text text-warning">Le canal et l’expéditeur sont verrouillés car une livraison réelle a déjà commencé.</div>
+                                @endif
+                            </div>
+                        </div>
+
+                        <div class="col-lg-6" id="smtp_daily_limit_wrapper">
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2" for="smtp_daily_email_limit">Objectif SMTP — emails par jour</label>
+                                <input type="number" min="0" max="500" step="1"
+                                       class="form-control form-control-solid"
+                                       name="smtp_daily_email_limit"
+                                       id="smtp_daily_email_limit"
+                                       value="{{ old('smtp_daily_email_limit', $model->smtp_daily_email_limit ?? 20) }}">
+                                <div class="form-text">20 par défaut. Utilisez 0 pour mettre l’envoi SMTP en pause sans changer de canal.</div>
+                            </div>
+                        </div>
+
+                        <div class="col-12" id="smtp_guidance_card">
+                            <div class="rounded border border-primary border-dashed p-6 bg-light-primary">
+                                <div class="alert alert-primary mb-4">
+                                    <strong>SMTP progressif :</strong> l’espacement réduit les rafales, mais ne garantit jamais l’onglet Principal ni la boîte de réception.
+                                </div>
+                                <div class="row g-4">
+                                    <div class="col-lg-6">
+                                        <div class="alert alert-success h-100 mb-0">
+                                            <div class="fw-bold mb-2">Démarrage recommandé</div>
+                                            <div>Jours 1–3 : <strong>15 emails/jour</strong>, maximum 3/heure.</div>
+                                            <div>Jours 4–7 : <strong>20 emails/jour</strong>, maximum 4/heure.</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-6">
+                                        <div class="alert alert-warning h-100 mb-0">
+                                            <div class="fw-bold mb-2">Montée progressive</div>
+                                            <div>Semaine 2 : 30/jour, maximum 6/heure.</div>
+                                            <div>Semaine 3+ : 40–50/jour, maximum 8–10/heure.</div>
+                                            <div>Lundi–vendredi, heures ouvrées, répartition régulière sans rafale.</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-12">
+                                        <div class="alert alert-danger mb-0">
+                                            <div class="fw-bold mb-2">À éviter absolument</div>
+                                            <div>Ne jamais envoyer <strong>2 emails/minute</strong> (120/heure). Plafond initial : 50/jour par boîte.</div>
+                                            <div>Mettez en pause vers plus de 2 % de hard bounces, ou dès la première plainte à ce volume.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="mt-4 text-gray-800">
+                                    <strong>Avant production :</strong> vérifier SPF, DKIM, DMARC, le désabonnement et un <code>APP_URL</code> public stable pour le suivi.
+                                </div>
                             </div>
                         </div>
 
@@ -613,6 +690,17 @@
     @if(class_exists(\App\Services\Campaign\SegmentService::class))
     <script>
         document.addEventListener('DOMContentLoaded', function () {
+            const deliverySelect = document.getElementById('delivery_channel');
+            const smtpLimitWrapper = document.getElementById('smtp_daily_limit_wrapper');
+            const smtpGuidanceCard = document.getElementById('smtp_guidance_card');
+            const toggleSmtpDeliveryFields = () => {
+                const visible = deliverySelect?.value === 'smtp';
+                smtpLimitWrapper?.classList.toggle('d-none', !visible);
+                smtpGuidanceCard?.classList.toggle('d-none', !visible);
+            };
+            deliverySelect?.addEventListener('change', toggleSmtpDeliveryFields);
+            toggleSmtpDeliveryFields();
+
             const campaignTemplatePreviews = {!! \Illuminate\Support\Js::from($templates->mapWithKeys(function ($template) {
                 return [
                     (string) $template->id => [
@@ -671,19 +759,12 @@
                             const matched = Number(data.matched_count || 0);
                             const eligible = Number(data.contacts_count || 0);
                             const companies = Number(data.company_count || 0);
-                            const coldExcluded = Number(data.funnel?.cold_excluded || 0);
 
                             countLabel.innerHTML = '<span class="badge badge-light-secondary">' + matched + ' correspondant(s)</span> · '
                                 + '<span class="badge badge-light-primary">' + eligible + ' destinataire(s) éligible(s)</span> dans '
                                 + '<span class="badge badge-light-info">' + companies + ' société(s)</span>.';
 
-                            if (data.cold_gate_closed && coldExcluded > 0) {
-                                let message = coldExcluded + ' prospect(s) sont exclus car l’envoi à froid est désactivé. Les contacts clients restent éligibles.';
-                                if (eligible === 0) {
-                                    message += ' La programmation et l’envoi restent bloqués tant qu’aucun destinataire n’est éligible.';
-                                }
-                                showReadinessWarning(message);
-                            } else if (eligible === 0) {
+                            if (eligible === 0) {
                                 showReadinessWarning('Aucun destinataire n’est éligible actuellement. Vous pouvez enregistrer la campagne, mais la programmation et l’envoi resteront bloqués par la vérification.');
                             }
                         })

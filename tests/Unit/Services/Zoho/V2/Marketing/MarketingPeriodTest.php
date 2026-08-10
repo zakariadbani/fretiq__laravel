@@ -49,4 +49,21 @@ class MarketingPeriodTest extends TestCase
         $this->assertSame('2026-07-01', MarketingPeriod::fromInput(['preset' => 'qtd'], $now)->startsAt->toDateString());
         $this->assertSame('2026-01-01', MarketingPeriod::fromInput(['preset' => 'ytd'], $now)->startsAt->toDateString());
     }
+
+    public function test_ninety_and_three_hundred_sixty_five_day_presets_have_exact_inclusive_previous_windows(): void
+    {
+        $now = CarbonImmutable::parse('2026-08-10 09:00:00', 'Europe/Paris');
+
+        $ninety = MarketingPeriod::fromInput(['preset' => '90d'], $now);
+        $this->assertSame('2026-05-13', $ninety->startsAt->toDateString());
+        $this->assertSame('2026-08-10', $ninety->endsAt->toDateString());
+        $this->assertSame('2026-02-12', $ninety->previousStartsAt->toDateString());
+        $this->assertSame('2026-05-12', $ninety->previousEndsAt->toDateString());
+
+        $year = MarketingPeriod::fromInput(['preset' => '365d'], $now);
+        $this->assertSame('2025-08-11', $year->startsAt->toDateString());
+        $this->assertSame('2026-08-10', $year->endsAt->toDateString());
+        $this->assertSame('2024-08-11', $year->previousStartsAt->toDateString());
+        $this->assertSame('2025-08-10', $year->previousEndsAt->toDateString());
+    }
 }

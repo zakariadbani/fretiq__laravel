@@ -19,8 +19,6 @@ class ZohoV2BulkDispatchTest extends TestCase
 
     public function test_manual_backfill_reaches_the_same_bulk_dispatch_policy_as_the_cli(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
-        config()->set('zoho-v2.features.bulk_backfill_enabled', true);
         config()->set('zoho-v2.bulk.verified_modules', ['accounts']);
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
         $admin = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
@@ -36,10 +34,8 @@ class ZohoV2BulkDispatchTest extends TestCase
         Bus::assertNotDispatched(RunZohoModuleSyncJob::class);
     }
 
-    public function test_manual_backfill_uses_standard_sync_when_bulk_is_disabled(): void
+    public function test_manual_backfill_uses_standard_sync_when_the_module_is_not_verified_for_bulk(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
-        config()->set('zoho-v2.features.bulk_backfill_enabled', false);
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
         $admin = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
         $admin->assignRole('admin');
@@ -56,8 +52,6 @@ class ZohoV2BulkDispatchTest extends TestCase
 
     public function test_manual_dispatch_failure_terminalizes_every_undispatched_module_without_leaking_the_exception(): void
     {
-        config()->set('zoho-v2.features.sync_enabled', true);
-        config()->set('zoho-v2.features.bulk_backfill_enabled', false);
         config()->set('queue.connections.zoho.driver', 'unsupported-zoho-test-driver');
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
         $admin = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);

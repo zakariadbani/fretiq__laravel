@@ -3,6 +3,7 @@
 namespace App\Services\Campaign;
 
 use App\Jobs\SendSequenceStepJob;
+use App\Jobs\SendSmtpReservationJob;
 use App\Mail\SequenceStepMailable;
 use App\Models\Campaign;
 use App\Models\Contact;
@@ -12,9 +13,11 @@ use App\Models\SequenceEnrollment;
 use App\Models\SequenceStepSend;
 use App\Models\Suppression;
 use App\Services\Scheduling\BusinessCalendarService;
+use App\Services\Mail\SenderIdentitySmtpMailer;
 use App\Support\TrackingToken;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
@@ -37,7 +40,10 @@ use Illuminate\Support\Str;
  */
 class SequenceService
 {
-    public function __construct(private readonly BusinessCalendarService $calendar)
+    public function __construct(
+        private readonly BusinessCalendarService $calendar,
+        private readonly SmtpSendReservationService $smtpReservations,
+    )
     {
     }
 
@@ -131,7 +137,7 @@ class SequenceService
     {
         $enrollments = SequenceEnrollment::where('status', 'active')
             ->where('next_send_at', '<=', now())
-            ->with('campaign')
+            ->with(['campaign', 'sequence'])
             ->get();
 
         $eligible = $enrollments->filter($this->canSendViaSmtp(...))
@@ -239,6 +245,22 @@ class SequenceService
             return;
         }
 
+        // Legacy/null campaigns keep their established path. Reservations are
+        // only for an explicit user choice of SMTP.
+        if ($e->campaign?->delivery_channel === 'smtp') {
+            $result = $this->smtpReservations->reserve(
+                $e->campaign->senderIdentity,
+                $e->campaign,
+                \App\Models\SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND,
+                $stepSend->id,
+            );
+            if ($result['ok']) {
+                SendSmtpReservationJob::dispatch($result['reservation']->id)->delay($result['send_at']);
+            }
+
+            return;
+        }
+
         // ── 6. Build tracking token + EmailTrackingEvent ──────────────────────
         $token = TrackingToken::generate($e->id, $stepNo);
 
@@ -306,6 +328,142 @@ class SequenceService
 
         // ── 11. Advance enrollment cursor ─────────────────────────────────────
         $this->advanceEnrollment($e, $stepNo);
+    }
+
+    public function sendReservedStep(
+        \App\Models\SmtpSendReservation $reservation,
+        SmtpCampaignsDriver $driver,
+        SmtpSendReservationService $reservations,
+        ?callable $beforeTransport = null,
+    ): void {
+        $stepSend = SequenceStepSend::with(['enrollment.contact.company', 'enrollment.sequence', 'enrollment.campaign.senderIdentity'])
+            ->find($reservation->source_id);
+        if ($stepSend === null) {
+            $reservations->release($reservation);
+            return;
+        }
+
+        $enrollment = $stepSend->enrollment;
+        $campaign = $enrollment->campaign;
+        if ($campaign === null || $campaign->delivery_channel !== 'smtp'
+            || (int) $campaign->sender_identity_id !== (int) $reservation->sender_identity_id) {
+            $reservations->release($reservation);
+            return;
+        }
+
+        if ($reservation->status === 'accepted') {
+            $this->finalizeAcceptedReservedStep($reservation, $stepSend, $campaign);
+            return;
+        }
+
+        // Re-read state after the queue delay. A reply, pause, or already
+        // advanced cursor must win over a stale reservation.
+        $valid = DB::transaction(function () use ($stepSend, $enrollment, $campaign, $reservation): bool {
+            $freshEnrollment = \App\Models\SequenceEnrollment::lockForUpdate()->find($enrollment->id);
+            $freshStep = SequenceStepSend::lockForUpdate()->find($stepSend->id);
+            $freshCampaign = Campaign::query()->find($campaign->id);
+            $freshSequence = Sequence::query()->find($enrollment->sequence_id);
+
+            return $freshEnrollment !== null && $freshStep !== null
+                && $freshCampaign !== null && $freshSequence !== null
+                && $freshEnrollment->status === 'active'
+                && $freshCampaign->is_active && $freshSequence->is_active
+                && $freshCampaign->delivery_channel === 'smtp'
+                && (int) $freshCampaign->sender_identity_id === (int) $reservation->sender_identity_id
+                && $freshEnrollment->next_send_at !== null
+                && $freshEnrollment->next_send_at->lte(now())
+                && (int) $freshEnrollment->current_step === ((int) $freshStep->step_no - 1)
+                && $freshStep->status === 'queued';
+        });
+        if (! $valid) { $reservations->release($reservation); return; }
+
+        if ($stepSend->provider_message_id !== null) {
+            $reservations->markSent($reservation);
+            $this->advanceEnrollment($enrollment, (int) $stepSend->step_no);
+            return;
+        }
+
+        if (app(SenderIdentitySmtpMailer::class)->usesSenderIdentityTransport()
+            && ! $campaign->senderIdentity?->hasCompleteSmtpConfiguration()) {
+            $reservations->defer($reservation, now()->addMinutes(5));
+            return;
+        }
+
+        $contact = $enrollment->contact;
+        $ineligibleReason = null;
+        if (Suppression::isSuppressed($contact->email)) {
+            $ineligibleReason = 'suppressed';
+        } elseif ($contact->company?->relationship === 'prospect'
+            && ! config('prospecting.cold_send_enabled', false)) {
+            $ineligibleReason = 'cold_send_disabled';
+        } elseif ($contact->company?->relationship === 'prospect'
+            && $contact->email_kind === 'personal') {
+            $ineligibleReason = 'personal_email';
+        }
+
+        if ($ineligibleReason !== null) {
+            $stepSend->update(['status' => 'skipped']);
+            $enrollment->update([
+                'status' => 'stopped',
+                'stopped_reason' => $ineligibleReason,
+                'next_send_at' => null,
+            ]);
+            $reservations->release($reservation);
+            return;
+        }
+
+        $step = $enrollment->sequence->steps()
+            ->where('step_no', $stepSend->step_no)
+            ->with('template.translations')
+            ->firstOrFail();
+        $token = TrackingToken::generate($enrollment->id, (int) $stepSend->step_no);
+        EmailTrackingEvent::createForSend($stepSend, $token);
+        $unsubscribeUrl = URL::signedRoute('unsubscribe', ['contact' => $contact->id]);
+        if ($beforeTransport !== null) {
+            $beforeTransport();
+        }
+        try {
+            $providerId = $driver->sendSequence($stepSend, $enrollment, $step, $campaign->senderIdentity, $token, $unsubscribeUrl);
+        } catch (\Throwable $exception) {
+            $reservations->markUncertainAfterTransport($reservation);
+            throw $exception;
+        }
+
+        try {
+            \App\Models\SmtpSendReservation::whereKey($reservation->id)->update([
+                'status' => 'accepted', 'accepted_at' => now(), 'provider_message_id' => $providerId, 'lease_expires_at' => null,
+            ]);
+        } catch (\Throwable $exception) {
+            $reservations->markUncertainAfterTransport($reservation);
+            throw $exception;
+        }
+        $reservation->refresh();
+        $this->finalizeAcceptedReservedStep($reservation, $stepSend, $campaign);
+    }
+
+    private function finalizeAcceptedReservedStep(
+        \App\Models\SmtpSendReservation $reservation,
+        SequenceStepSend $stepSend,
+        Campaign $campaign,
+    ): void
+    {
+        DB::transaction(function () use ($stepSend, $campaign, $reservation): void {
+            $fresh = \App\Models\SmtpSendReservation::lockForUpdate()->findOrFail($reservation->id);
+            if ($fresh->status !== 'accepted') {
+                return;
+            }
+
+            $freshStep = SequenceStepSend::lockForUpdate()->findOrFail($stepSend->id);
+            $freshEnrollment = SequenceEnrollment::lockForUpdate()->findOrFail($freshStep->enrollment_id);
+            $freshStep->update([
+                'provider_message_id' => $fresh->provider_message_id,
+                'status' => 'sent',
+                'sent_at' => now(),
+            ]);
+            $fresh->update(['status' => 'sent', 'sent_at' => now(), 'lease_expires_at' => null]);
+            $campaign->markDeliveryStarted();
+            $this->advanceEnrollment($freshEnrollment, (int) $freshStep->step_no);
+        });
     }
 
     // ── Stop on reply ──────────────────────────────────────────────────────────
@@ -393,14 +551,25 @@ class SequenceService
 
     private function canSendViaSmtp(SequenceEnrollment $enrollment): bool
     {
-        if ($enrollment->status !== 'active' || config('services.zoho.driver', 'local') === 'zoho') {
+        if ($enrollment->status !== 'active' || ! $enrollment->sequence?->is_active) {
             return false;
         }
 
-        return $enrollment->campaign === null
-            || ($enrollment->campaign->is_active
-                && $enrollment->campaign->sequence_enrollment_mode === 'immediate'
-                && ! $enrollment->campaign->usesZohoDriver());
+        if ($enrollment->campaign === null) {
+            return true;
+        }
+
+        if ($enrollment->campaign?->delivery_channel === 'smtp') {
+            return $enrollment->campaign->is_active;
+        }
+
+        if (config('services.zoho.driver', 'local') === 'zoho') {
+            return false;
+        }
+
+        // The global local driver is the Mailpit safety fallback for both
+        // legacy/null and explicit Zoho campaigns, including paced enrollments.
+        return $enrollment->campaign->is_active;
     }
 
     /**

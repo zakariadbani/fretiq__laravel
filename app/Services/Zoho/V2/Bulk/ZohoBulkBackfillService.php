@@ -47,11 +47,6 @@ class ZohoBulkBackfillService
         ?string $runOwner = null,
         int $deliveryGeneration = 0,
     ): BulkBackfillStep {
-        if (! config('zoho-v2.features.sync_enabled', false)
-            || ! config('zoho-v2.features.bulk_backfill_enabled', false)) {
-            return BulkBackfillStep::complete($requestedPageId);
-        }
-
         $batch = ZohoSyncBatch::query()->findOrFail($batchId);
         if (! hash_equals((string) $batch->correlation_id, $correlationId)
             || ! in_array($module, (array) $batch->modules, true)) {

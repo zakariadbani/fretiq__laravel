@@ -54,6 +54,65 @@ abstract class AbstractZohoMapper implements ZohoRecordMapper
         return $value === '' ? null : $value;
     }
 
+    protected function nullableBoolean(mixed $value): ?bool
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_int($value)) {
+            return match ($value) {
+                0 => false, 1 => true, default => null
+            };
+        }
+        if (! is_string($value)) {
+            return null;
+        }
+
+        return match (strtolower(trim($value))) {
+            '0', 'false' => false, '1', 'true' => true, default => null
+        };
+    }
+
+    /** @return list<string>|null */
+    protected function stringList(mixed $value): ?array
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        $items = is_array($value) && ! array_is_list($value) ? [$value] : (is_array($value) ? $value : [$value]);
+        $result = [];
+        foreach ($items as $item) {
+            if (is_array($item)) {
+                $item = $item['name'] ?? $item['display_value'] ?? $item['actual_value'] ?? null;
+            }
+            if (! is_scalar($item)) {
+                continue;
+            }
+            $item = trim((string) $item);
+            if ($item !== '') {
+                $result[$item] = $item;
+            }
+        }
+
+        return $result === [] ? null : array_values($result);
+    }
+
+    protected function integer(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+        if (is_string($value) && preg_match('/^-?\d+$/', trim($value))) {
+            return (int) trim($value);
+        }
+
+        return null;
+    }
+
     protected function normalizedEmail(mixed $value): ?string
     {
         $value = $this->value($value);

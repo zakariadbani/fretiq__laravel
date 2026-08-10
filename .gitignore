@@ -76,6 +76,8 @@ test-results/
 
 # AI/GSD planning scratch
 .planning/
+/.superpowers/
+/docs/superpowers/
 
 /.qa/
 

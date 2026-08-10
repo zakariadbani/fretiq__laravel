@@ -24,6 +24,7 @@ class SettingsModuleTest extends TestCase
     use RefreshDatabase;
 
     private User $admin;
+
     private User $commercial;
 
     protected function setUp(): void
@@ -34,13 +35,13 @@ class SettingsModuleTest extends TestCase
 
         $this->admin = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $this->admin->assignRole('superadmin');
 
         $this->commercial = User::factory()->create([
             'email_verified_at' => now(),
-            'is_active'         => true,
+            'is_active' => true,
         ]);
         $this->commercial->assignRole('commercial');
     }
@@ -55,6 +56,56 @@ class SettingsModuleTest extends TestCase
         $this->actingAs($this->admin)
             ->get('/admin/settings')
             ->assertStatus(200);
+    }
+
+    public function test_zoho_settings_tab_renders_the_safe_automation_defaults(): void
+    {
+        $this->actingAs($this->admin)
+            ->get('/admin/settings')
+            ->assertOk()
+            ->assertSee('kt_tab_zoho', false)
+            ->assertSee('settings[zoho][auto_sync_enabled]', false)
+            ->assertSee('settings[zoho][sync_frequency]', false)
+            ->assertSee('settings[zoho][nightly_reconciliation_enabled]', false)
+            ->assertDontSee('Zoho &amp; Intégrations', false)
+            ->assertSee('hourly', false);
+    }
+
+    public function test_editor_can_persist_zoho_automation_settings(): void
+    {
+        $this->actingAs($this->admin)
+            ->post('/admin/settings/save', [
+                '_token' => csrf_token(),
+                'active_tab' => 'zoho',
+                'settings' => [
+                    'zoho' => [
+                        'auto_sync_enabled' => '1',
+                        'sync_frequency' => 'every_30_minutes',
+                        'nightly_reconciliation_enabled' => '1',
+                    ],
+                ],
+            ])
+            ->assertRedirect('/admin/settings#kt_tab_zoho');
+
+        $this->assertTrue((bool) Setting::get('zoho.auto_sync_enabled', false));
+        $this->assertSame('every_30_minutes', Setting::get('zoho.sync_frequency'));
+        $this->assertTrue((bool) Setting::get('zoho.nightly_reconciliation_enabled', false));
+    }
+
+    public function test_unsupported_zoho_sync_frequency_is_rejected_without_changing_existing_value(): void
+    {
+        Setting::set('zoho.sync_frequency', 'hourly');
+
+        $this->actingAs($this->admin)
+            ->from('/admin/settings#kt_tab_zoho')
+            ->post('/admin/settings/save', [
+                '_token' => csrf_token(),
+                'active_tab' => 'zoho',
+                'settings' => ['zoho' => ['sync_frequency' => 'instant']],
+            ])
+            ->assertSessionHasErrors('settings.zoho.sync_frequency');
+
+        $this->assertSame('hourly', Setting::get('zoho.sync_frequency'));
     }
 
     /**
@@ -85,15 +136,15 @@ class SettingsModuleTest extends TestCase
     {
         $response = $this->actingAs($this->admin)
             ->post('/admin/settings/save', [
-                '_token'     => csrf_token(),
+                '_token' => csrf_token(),
                 'active_tab' => 'decouverte',
-                'settings'   => [
+                'settings' => [
                     'decouverte' => [
-                        'auto_scoring'     => '1',
-                        'auto_enrich'      => '1',
+                        'auto_scoring' => '1',
+                        'auto_enrich' => '1',
                         'min_score_enrich' => '75',
                         'discovery_engines' => ['google', 'google_maps'],
-                        'timezone'         => 'Europe/Paris',
+                        'timezone' => 'Europe/Paris',
                     ],
                 ],
             ]);
@@ -103,7 +154,7 @@ class SettingsModuleTest extends TestCase
 
         // Value must be persisted
         $this->assertDatabaseHas('settings', [
-            'group_name'  => 'decouverte',
+            'group_name' => 'decouverte',
             'setting_key' => 'min_score_enrich',
         ]);
 
@@ -130,12 +181,12 @@ class SettingsModuleTest extends TestCase
     {
         $this->actingAs($this->admin)
             ->post('/admin/settings/save', [
-                '_token'     => csrf_token(),
+                '_token' => csrf_token(),
                 'active_tab' => 'decouverte',
-                'settings'   => [
+                'settings' => [
                     'decouverte' => [
-                        'auto_scoring'     => '1',
-                        'auto_enrich'      => '0',
+                        'auto_scoring' => '1',
+                        'auto_enrich' => '0',
                         'min_score_enrich' => '150',
                         'discovery_engines' => ['google', 'google_maps'],
                     ],
@@ -155,15 +206,15 @@ class SettingsModuleTest extends TestCase
         // Post WITHOUT auto_scoring key (simulates unchecked checkbox)
         $this->actingAs($this->admin)
             ->post('/admin/settings/save', [
-                '_token'     => csrf_token(),
+                '_token' => csrf_token(),
                 'active_tab' => 'decouverte',
-                'settings'   => [
+                'settings' => [
                     'decouverte' => [
                         // auto_scoring intentionally absent → unchecked
-                        'auto_enrich'      => '1',
+                        'auto_enrich' => '1',
                         'min_score_enrich' => '50',
                         'discovery_engines' => ['google', 'google_maps'],
-                        'timezone'         => 'Europe/Paris',
+                        'timezone' => 'Europe/Paris',
                     ],
                 ],
             ]);
@@ -206,15 +257,15 @@ class SettingsModuleTest extends TestCase
         // Save new value via HTTP
         $this->actingAs($this->admin)
             ->post('/admin/settings/save', [
-                '_token'     => csrf_token(),
+                '_token' => csrf_token(),
                 'active_tab' => 'decouverte',
-                'settings'   => [
+                'settings' => [
                     'decouverte' => [
-                        'auto_scoring'     => '1',
-                        'auto_enrich'      => '1',
+                        'auto_scoring' => '1',
+                        'auto_enrich' => '1',
                         'min_score_enrich' => '90',
                         'discovery_engines' => ['google', 'google_maps'],
-                        'timezone'         => 'Europe/Paris',
+                        'timezone' => 'Europe/Paris',
                     ],
                 ],
             ]);
@@ -237,15 +288,15 @@ class SettingsModuleTest extends TestCase
     {
         $this->actingAs($this->admin)
             ->post('/admin/settings/save', [
-                '_token'     => csrf_token(),
+                '_token' => csrf_token(),
                 'active_tab' => 'decouverte',
-                'settings'   => [
+                'settings' => [
                     'decouverte' => [
-                        'auto_scoring'     => '1',
-                        'auto_enrich'      => '1',
+                        'auto_scoring' => '1',
+                        'auto_enrich' => '1',
                         'min_score_enrich' => '50',
                         'discovery_engines' => ['google', 'google_maps'],
-                        'timezone'         => 'Europe/Paris',
+                        'timezone' => 'Europe/Paris',
                         'unknown_evil_key' => 'should_be_ignored',
                     ],
                     'hacker_group' => [

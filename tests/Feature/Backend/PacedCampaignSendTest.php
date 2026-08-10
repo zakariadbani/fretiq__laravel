@@ -37,7 +37,6 @@ class PacedCampaignSendTest extends TestCase
         parent::setUp();
 
         config([
-            'prospecting.cold_send_enabled' => false,
             'services.zoho.driver' => 'local',
         ]);
     }
@@ -79,9 +78,8 @@ class PacedCampaignSendTest extends TestCase
         $this->assertSame('sent', $run->fresh()->status);
     }
 
-    public function test_paced_send_rechecks_cold_gate_after_snapshot_without_reapplying_segment_filters(): void
+    public function test_paced_send_keeps_prospect_eligible_after_snapshot(): void
     {
-        config(['prospecting.cold_send_enabled' => true]);
         $campaign = $this->makeCampaign();
         $campaign->segment->update(['scope' => 'mixed']);
         $company = Company::factory()->create(['relationship' => 'prospect']);
@@ -93,24 +91,23 @@ class PacedCampaignSendTest extends TestCase
         $sendCalls = 0;
         $this->bindDriver(function () use (&$sendCalls): string {
             $sendCalls++;
-            return 'unexpected';
+            return 'provider-prospect';
         });
 
-        config(['prospecting.cold_send_enabled' => false]);
+        $this->app->forgetInstance(CampaignService::class);
         app(CampaignService::class)->sendRun($run);
 
-        $this->assertSame(0, $sendCalls);
+        $this->assertSame(1, $sendCalls);
         $this->assertDatabaseHas('campaign_recipients', [
             'contact_id' => $contact->id,
-            'status' => 'skipped',
-            'skip_reason' => 'cold_send_disabled',
+            'status' => 'sent',
+            'skip_reason' => null,
         ]);
         $this->assertSame('processed', $run->companyDispatches()->firstOrFail()->fresh()->status);
     }
 
-    public function test_paced_send_rechecks_personal_email_rule_for_prospect_when_cold_gate_opens(): void
+    public function test_paced_send_keeps_personal_prospect_eligible(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
         $campaign = $this->makeCampaign();
         $company = $this->makeCompanyWithContacts(1);
         $contact = $company->contacts()->firstOrFail();
@@ -120,23 +117,22 @@ class PacedCampaignSendTest extends TestCase
         $sendCalls = 0;
         $this->bindDriver(function () use (&$sendCalls): string {
             $sendCalls++;
-            return 'unexpected';
+            return 'provider-personal-prospect';
         });
 
-        config(['prospecting.cold_send_enabled' => true]);
+        $this->app->forgetInstance(CampaignService::class);
         app(CampaignService::class)->sendRun($run);
 
-        $this->assertSame(0, $sendCalls);
+        $this->assertSame(1, $sendCalls);
         $this->assertDatabaseHas('campaign_recipients', [
             'contact_id' => $contact->id,
-            'status' => 'skipped',
-            'skip_reason' => 'personal_email',
+            'status' => 'sent',
+            'skip_reason' => null,
         ]);
     }
 
-    public function test_client_personal_email_stays_eligible_when_cold_gate_is_enabled(): void
+    public function test_client_personal_email_stays_eligible(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
         $campaign = $this->makeCampaign();
         $company = $this->makeCompanyWithContacts(1);
         $contact = $company->contacts()->firstOrFail();
@@ -148,7 +144,6 @@ class PacedCampaignSendTest extends TestCase
             return 'provider-client-personal';
         });
 
-        config(['prospecting.cold_send_enabled' => true]);
         app(CampaignService::class)->sendRun($run);
 
         $this->assertSame(1, $sendCalls);

@@ -33,49 +33,51 @@ class SettingsSeeder extends Seeder
     {
         return [
             'decouverte' => [
-                'auto_scoring'            => true,
-                'auto_enrich'             => false,
-                'min_score_enrich'        => 50,
-                'timezone'                => 'Europe/Paris',
-                'blocked_domains'         => DomainBlocklist::defaultDomainsText(),
-                'blocked_url_extensions'  => DomainBlocklist::defaultExtensionsText(),
-                'fetch_homepage'          => true,
-                'homepage_excerpt_chars'  => 2000,
-                'homepage_cache_days'     => 7,
-                'homepage_timeout'        => 3,
-                'homepage_http_fallback'  => false,
-                'run_time_budget'         => 240,
+                'auto_scoring' => true,
+                'auto_enrich' => false,
+                'min_score_enrich' => 50,
+                'timezone' => 'Europe/Paris',
+                'blocked_domains' => DomainBlocklist::defaultDomainsText(),
+                'blocked_url_extensions' => DomainBlocklist::defaultExtensionsText(),
+                'fetch_homepage' => true,
+                'homepage_excerpt_chars' => 2000,
+                'homepage_cache_days' => 7,
+                'homepage_timeout' => 3,
+                'homepage_http_fallback' => false,
+                'run_time_budget' => 240,
             ],
             'conformite' => [
-                'cold_send_enabled' => false,
-                'retention_months'  => 18,
+                'retention_months' => 18,
             ],
             'envoi' => [
-                'timezone'    => 'Europe/Paris',
-                'daily_cap'   => 200,
+                'timezone' => 'Europe/Paris',
+                'daily_cap' => 200,
                 'send_window' => 'Mon-Fri 09:00-17:00',
             ],
             'automatisation' => [
-                'cron_enabled'                        => true,
-                'campaigns_dispatch_due'              => true,
-                'campaigns_generate_runs'             => true,
-                'sequences_process'                   => true,
+                'cron_enabled' => true,
+                'campaigns_dispatch_due' => true,
+                'campaigns_generate_runs' => true,
+                'sequences_process' => true,
                 'campaigns_sync_sequence_enrollments' => true,
-                'campaign_sync_stats'                 => true,
-                'discovery_terminalize_stale'         => true,
-                'prospect_auto_discover'              => true,
+                'campaign_sync_stats' => true,
+                'discovery_terminalize_stale' => true,
+                'prospect_auto_discover' => true,
             ],
             'planification' => [
-                'skip_weekends'  => true,
+                'skip_weekends' => true,
                 'blackout_dates' => '',
+            ],
+            'zoho' => [
+                'auto_sync_enabled' => false,
+                'sync_frequency' => 'hourly',
+                'nightly_reconciliation_enabled' => false,
             ],
         ];
     }
 
     /**
      * Run the database seeds.
-     *
-     * @return void
      */
     public function run(): void
     {

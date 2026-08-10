@@ -82,6 +82,57 @@ class SchedulerControlsTest extends TestCase
         $this->artisan('prospect:auto-discover')->assertExitCode(0);
     }
 
+    public function test_zoho_delta_scheduler_uses_the_saved_frequency_and_automation_settings(): void
+    {
+        $delta = $this->event('zoho:crm:sync --mode=delta');
+        $reconciliation = $this->event('zoho:crm:sync --mode=reconcile');
+
+        $this->assertSame('10 * * * *', $delta->expression);
+        $this->assertSame('Europe/Paris', $delta->timezone);
+        $this->assertFalse($delta->filtersPass($this->app));
+        $this->assertFalse($reconciliation->filtersPass($this->app));
+
+        Setting::set('zoho.auto_sync_enabled', true);
+        $this->assertTrue($delta->filtersPass($this->app));
+        $this->assertFalse($reconciliation->filtersPass($this->app));
+    }
+
+    public function test_zoho_reconciliation_is_controlled_independently_at_0230(): void
+    {
+        $reconciliation = $this->event('zoho:crm:sync --mode=reconcile');
+        $delta = $this->event('zoho:crm:sync --mode=delta');
+
+        $this->assertSame('30 2 * * *', $reconciliation->expression);
+        $this->assertSame('Europe/Paris', $reconciliation->timezone);
+        $this->assertFalse($reconciliation->filtersPass($this->app));
+
+        Setting::set('zoho.nightly_reconciliation_enabled', true);
+        $this->assertTrue($reconciliation->filtersPass($this->app));
+        $this->assertFalse($delta->filtersPass($this->app));
+    }
+
+    public function test_global_switch_blocks_all_zoho_schedules_while_recovery_ignores_the_two_zoho_toggles(): void
+    {
+        $delta = $this->event('zoho:crm:sync --mode=delta');
+        $reconciliation = $this->event('zoho:crm:sync --mode=reconcile');
+        $standardRecovery = $this->eventByDescription('zoho:v2:standard-work-recovery');
+        $bulkRecovery = $this->eventByDescription('zoho:v2:bulk-terminalization-recovery');
+
+        $this->assertSame('Europe/Paris', $standardRecovery->timezone);
+        $this->assertSame('Europe/Paris', $bulkRecovery->timezone);
+        $this->assertTrue($standardRecovery->filtersPass($this->app));
+        $this->assertTrue($bulkRecovery->filtersPass($this->app));
+
+        Setting::set('zoho.auto_sync_enabled', true);
+        Setting::set('zoho.nightly_reconciliation_enabled', true);
+        Setting::set('automatisation.cron_enabled', false);
+
+        $this->assertFalse($delta->filtersPass($this->app));
+        $this->assertFalse($reconciliation->filtersPass($this->app));
+        $this->assertFalse($standardRecovery->filtersPass($this->app));
+        $this->assertFalse($bulkRecovery->filtersPass($this->app));
+    }
+
     private function event(string $command): Event
     {
         $event = $this->findEvent($command);
@@ -95,5 +146,15 @@ class SchedulerControlsTest extends TestCase
     {
         return collect(app(Schedule::class)->events())
             ->first(fn (Event $event): bool => str_contains($event->command ?? '', $command));
+    }
+
+    private function eventByDescription(string $description): Event
+    {
+        $event = collect(app(Schedule::class)->events())
+            ->first(fn (Event $event): bool => $event->description === $description);
+
+        $this->assertNotNull($event, "Scheduled event {$description} was not registered.");
+
+        return $event;
     }
 }

@@ -21,7 +21,6 @@ final class ZohoModuleDispatcher
         $definition = $this->registry->get($module);
 
         return $mode === 'backfill'
-            && (bool) config('zoho-v2.features.bulk_backfill_enabled', false)
             && $definition->bulkReadSupported
             && ($this->verifiedModules ?? new VerifiedBulkModules)->allows($module)
             && ! $definition->activationGated;
@@ -45,18 +44,29 @@ final class ZohoModuleDispatcher
         // Unit callers without a persisted batch retain the lightweight
         // dispatch contract; real deliveries first receive a durable outbox
         // generation, which fences late framework failed() callbacks.
-        $generation = ($this->orchestrator ?? app(ZohoSyncOrchestrator::class))
+        $preparation = ($this->orchestrator ?? app(ZohoSyncOrchestrator::class))
             ->prepareModuleDelivery($batchId, $module, $mode, $correlationId, $retryDeadline);
-        if ($generation === null) {
-            // The durable outbox was not claimed (completed/invalid batch or
-            // a foreign live/lease-free unfinished generation). Never enqueue
-            // an unfenced fallback or leave the requesting batch orphaned.
+        if ($preparation->isIgnored()) {
+            return;
+        }
+        if ($preparation->isConflict()) {
+            // A different unfinished batch owns this module. Keep the legacy
+            // explicit terminal outcome for the competing request, while an
+            // ignored stale/paused request above remains a true no-op.
             ($this->orchestrator ?? app(ZohoSyncOrchestrator::class))
                 ->terminalizeModule($batchId, $module, $mode, 'dispatch_failed');
 
             return;
         }
-        $this->dispatchPrepared($batchId, $module, $mode, $correlationId, $retryDeadline, $generation, $delaySeconds);
+        $this->dispatchPrepared(
+            $batchId,
+            $module,
+            $mode,
+            $correlationId,
+            $retryDeadline,
+            (int) $preparation->generation,
+            $delaySeconds,
+        );
     }
 
     /**

@@ -17,11 +17,10 @@ use Tests\TestCase;
  * Tests:
  *  - Auth gating: guest → redirect, no-permission → 403, permitted → 200
  *  - Response structure: required JSON keys present
- *  - Funnel math: matched - suppressed - cold_excluded - personal_excluded - duplicates_excluded === final
+ *  - Funnel math: matched - suppressed - duplicates_excluded === final
  *  - Validation: missing scope, invalid country, too-many-sector items, invalid status → 422
  *  - Sample: ≤ 10 items, each has name/company/email, deterministic (ordered by id)
  *  - summary: non-empty French string
- *  - cold_gate_closed: reflects config('prospecting.cold_send_enabled')
  */
 class SegmentPreviewTest extends TestCase
 {
@@ -143,7 +142,6 @@ class SegmentPreviewTest extends TestCase
 
     public function test_permitted_user_gets_200_with_expected_keys(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $response = $this->postPreview(['scope' => 'client']);
 
@@ -151,15 +149,12 @@ class SegmentPreviewTest extends TestCase
         $response->assertJsonStructure([
             'matched',
             'suppressed',
-            'cold_excluded',
-            'personal_excluded',
             'duplicates_excluded',
             'manually_excluded',
             'manually_included',
             'final',
             'sample',
             'summary',
-            'cold_gate_closed',
         ]);
     }
 
@@ -169,7 +164,6 @@ class SegmentPreviewTest extends TestCase
      */
     public function test_preview_manually_keys_are_zero_on_no_pin_path(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $this->makeClientContact();
 
@@ -178,42 +172,19 @@ class SegmentPreviewTest extends TestCase
         $response->assertJson(['manually_included' => 0, 'manually_excluded' => 0]);
     }
 
-    public function test_cold_gate_closed_true_when_disabled(): void
-    {
-        config(['prospecting.cold_send_enabled' => false]);
-
-        $response = $this->postPreview(['scope' => 'client']);
-
-        $response->assertStatus(200);
-        $response->assertJson(['cold_gate_closed' => true]);
-    }
-
-    public function test_cold_gate_closed_false_when_enabled(): void
-    {
-        config(['prospecting.cold_send_enabled' => true]);
-
-        $response = $this->postPreview(['scope' => 'client']);
-
-        $response->assertStatus(200);
-        $response->assertJson(['cold_gate_closed' => false]);
-    }
-
     // ── Funnel math ────────────────────────────────────────────────────────────
 
     /**
      * Funnel identity must hold:
-     *   matched − suppressed − cold_excluded − personal_excluded − duplicates_excluded === final
+     *   matched − suppressed − duplicates_excluded === final
      *
      * Fixture:
      *   - 2 client contacts (both in FR/Transport)
      *   - 1 suppressed client contact
-     *   - 1 prospect contact (cold gate OFF → cold_excluded = 1)
-     *
-     * Cold gate is off so prospects land in cold_excluded.
+     *   - 1 prospect contact
      */
     public function test_funnel_math_closes(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         // Client contacts
         [, $c1] = $this->makeClientContact('alice@acme.test', 'role', 'Alice');
@@ -226,8 +197,7 @@ class SegmentPreviewTest extends TestCase
             'source' => 'manual',
         ]);
 
-        // Prospect contact (cold gate closed → cold_excluded)
-        $this->makeProspectContact('prospect@cold.test');
+        $this->makeProspectContact('prospect@example.test');
 
         $response = $this->postPreview(['scope' => 'mixed']);
         $response->assertStatus(200);
@@ -236,16 +206,13 @@ class SegmentPreviewTest extends TestCase
 
         $computed = $data['matched']
             - $data['suppressed']
-            - $data['cold_excluded']
-            - $data['personal_excluded']
             - $data['duplicates_excluded']
             - $data['manually_excluded'];  // new term — 0 on the no-pin preview path
 
         $this->assertSame($data['final'], $computed, 'Funnel identity must hold (incl. manually_excluded)');
-        // alice is suppressed, prospect is cold-excluded, bob is final
+        // alice is suppressed; bob and the prospect remain eligible.
         $this->assertSame(1, $data['suppressed'], 'One suppressed contact');
-        $this->assertSame(1, $data['cold_excluded'], 'One cold-excluded contact');
-        $this->assertSame(1, $data['final'], 'Only bob survives');
+        $this->assertSame(2, $data['final']);
     }
 
     // ── Validation ─────────────────────────────────────────────────────────────
@@ -313,7 +280,6 @@ class SegmentPreviewTest extends TestCase
 
     public function test_sample_has_at_most_10_items(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         // Shared company to reduce FK+lock pressure (one company, 12 contacts)
         $co = Company::create([
@@ -349,7 +315,6 @@ class SegmentPreviewTest extends TestCase
      */
     public function test_sample_items_have_name_company_email_keys(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $this->makeClientContact('sample@acme.test', 'role', 'Henri Lebrun', 'Lebrun SARL');
 
@@ -370,7 +335,6 @@ class SegmentPreviewTest extends TestCase
      */
     public function test_sample_is_ordered_by_contact_id(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $response = $this->postPreview(['scope' => 'client']);
         $response->assertStatus(200);
@@ -384,7 +348,6 @@ class SegmentPreviewTest extends TestCase
 
     public function test_summary_is_non_empty_french_string(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $response = $this->postPreview(['scope' => 'client']);
         $response->assertStatus(200);
@@ -398,7 +361,6 @@ class SegmentPreviewTest extends TestCase
 
     public function test_summary_mentions_scope_in_french(): void
     {
-        config(['prospecting.cold_send_enabled' => false]);
 
         $response = $this->postPreview(['scope' => 'prospect']);
         $response->assertStatus(200);

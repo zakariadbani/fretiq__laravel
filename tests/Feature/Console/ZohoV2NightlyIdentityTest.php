@@ -28,10 +28,8 @@ class ZohoV2NightlyIdentityTest extends TestCase
         $this->assertNull($retry);
     }
 
-    public function test_identity_command_is_flag_gated_and_links_without_zoho_users(): void
+    public function test_identity_command_links_without_zoho_users(): void
     {
-        $this->artisan('zoho:crm:link-identities')->expectsOutputToContain('disabled')->assertExitCode(1);
-
         Contact::factory()->create(['email' => 'nightly@example.test']);
         ZohoContact::query()->create([
             'zoho_id' => 'nightly-contact',
@@ -40,7 +38,6 @@ class ZohoV2NightlyIdentityTest extends TestCase
             'raw_payload' => [],
             'payload_hash' => hash('sha256', 'nightly-contact'),
         ]);
-        config()->set('zoho-v2.features.sync_enabled', true);
 
         $this->artisan('zoho:crm:link-identities')
             ->expectsOutputToContain('1 created')
@@ -61,7 +58,6 @@ class ZohoV2NightlyIdentityTest extends TestCase
             'raw_payload' => [],
             'payload_hash' => hash('sha256', 'owner-zoho-id'),
         ]);
-        config()->set('zoho-v2.features.sync_enabled', true);
 
         $this->artisan('zoho:crm:link-identities')
             ->expectsOutputToContain('1 mapped')

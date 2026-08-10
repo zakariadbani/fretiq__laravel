@@ -20,7 +20,6 @@
                  class="fs-2hx fw-bolder text-gray-900 lh-1"
                  aria-live="polite">—</div>
             <div class="text-muted fs-8 mt-1">destinataires</div>
-            <div id="preview_parked" class="text-warning fs-8 fw-semibold mt-1 d-none"></div>
         </div>
 
         {{-- Separator --}}
@@ -46,12 +45,6 @@
             {{-- Funnel chips rendered by segment-form.js into this div --}}
             <div id="preview_funnel" class="d-flex flex-wrap gap-2 align-items-center">
                 {{-- JS populates: <span class="badge badge-light-...">label : value</span> --}}
-            </div>
-
-            {{-- Cold-gate warning --}}
-            <div id="preview_warning" class="alert alert-warning d-none py-2 px-3 fs-7 mt-2 mb-0" role="alert">
-                <i class="bi bi-exclamation-triangle-fill me-2"></i>
-                <span class="warning-text">L'envoi à froid est désactivé — ce segment ne recevra aucun email.</span>
             </div>
 
         </div>

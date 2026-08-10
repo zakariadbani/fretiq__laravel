@@ -34,10 +34,6 @@ final class RecoverZohoStandardWorkJob implements ShouldBeUniqueUntilProcessing,
 
     public function handle(ZohoStandardRecoveryService $recovery): void
     {
-        if (! config('zoho-v2.features.schedules_enabled', false)) {
-            return;
-        }
-
         $recovery->recover();
     }
 }

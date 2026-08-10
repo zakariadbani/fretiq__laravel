@@ -5,15 +5,6 @@
  * separate, reviewed release decision; the mirror is always read-only.
  */
 return [
-    'features' => [
-        'sync_enabled' => (bool) env('ZOHO_V2_SYNC_ENABLED', false),
-        'schedules_enabled' => (bool) env('ZOHO_V2_SCHEDULES_ENABLED', false),
-        'operations_dashboard_enabled' => (bool) env('ZOHO_V2_OPERATIONS_DASHBOARD_ENABLED', false),
-        'explorer_enabled' => (bool) env('ZOHO_V2_EXPLORER_ENABLED', false),
-        'marketing_dashboard_enabled' => (bool) env('ZOHO_V2_MARKETING_DASHBOARD_ENABLED', false),
-        'bulk_backfill_enabled' => (bool) env('ZOHO_V2_BULK_BACKFILL_ENABLED', false),
-    ],
-
     'queue' => env('ZOHO_V2_QUEUE', 'zoho'),
     'queue_connection' => env('ZOHO_V2_QUEUE_CONNECTION', 'zoho'),
     'reporting_timezone' => env('ZOHO_V2_REPORTING_TIMEZONE', 'Europe/Paris'),
@@ -23,6 +14,7 @@ return [
         'delivery_timeout_seconds' => (int) env('ZOHO_V2_MODULE_DELIVERY_TIMEOUT_SECONDS', 1200),
         'lease_seconds' => (int) env('ZOHO_V2_MODULE_LEASE_SECONDS', 1500),
         'continuation_delay_seconds' => (int) env('ZOHO_V2_MODULE_CONTINUATION_DELAY_SECONDS', 5),
+        'hydration_chunk_size' => (int) env('ZOHO_V2_MODULE_HYDRATION_CHUNK_SIZE', 100),
         'capacity_deferral_seconds' => (int) env('ZOHO_V2_MODULE_CAPACITY_DEFERRAL_SECONDS', 60),
         'lease_conflict_max_delay_seconds' => (int) env('ZOHO_V2_MODULE_LEASE_CONFLICT_MAX_DELAY_SECONDS', 3600),
         // Standard outbox recovery may reclaim a lost running delivery quickly,

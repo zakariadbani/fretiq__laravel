@@ -14,8 +14,6 @@ var KTSegmentForm = function () {
         final:       '#preview_final',
         summary:     '#preview_summary',
         funnel:      '#preview_funnel',
-        warning:     '#preview_warning',
-        parked:      '#preview_parked',
         loading:     '#preview_loading',
         error:       '#preview_error',
         card:        '#segment_preview_card',
@@ -39,8 +37,6 @@ var KTSegmentForm = function () {
         { key: 'matched',             label: 'correspondants',           alwaysShow: true,  bold: false, variant: 'secondary' },
         { key: 'manually_included',   label: 'dont épinglés',            alwaysShow: false, bold: false, variant: 'primary',  prefix: '+' },
         { key: 'suppressed',          label: '− suppression',             alwaysShow: false, bold: false, variant: 'danger'   },
-        { key: 'cold_excluded',       label: 'en attente (froid)',        alwaysShow: false, bold: false, variant: 'warning',  warning: true },
-        { key: 'personal_excluded',   label: '− emails personnels',       alwaysShow: false, bold: false, variant: 'danger'   },
         { key: 'duplicates_excluded', label: '− doublons',                alwaysShow: false, bold: false, variant: 'secondary'},
         { key: 'manually_excluded',   label: '− exclus manuellement',     alwaysShow: false, bold: false, variant: 'danger'   },
         { key: 'final',               label: 'destinataires éligibles',             alwaysShow: true,  bold: true,  variant: 'primary'  },
@@ -194,25 +190,6 @@ var KTSegmentForm = function () {
 
         renderFunnel(data);
 
-        var scope = $(SEL.scope).val() || '';
-        var coldExcluded = data.cold_excluded || 0;
-        if (scope === 'mixed' && coldExcluded > 0) {
-            $(IDS.parked).text('+' + coldExcluded + ' prospect(s) en attente').removeClass('d-none');
-        } else {
-            $(IDS.parked).addClass('d-none').text('');
-        }
-
-        var $warnText = $(IDS.warning).find('.warning-text');
-        if (data.cold_gate_closed && scope === 'prospect') {
-            $warnText.text("L'envoi à froid est désactivé — les prospects sont exclus. La programmation et l’envoi restent bloqués tant qu’aucun destinataire n’est éligible.");
-            $(IDS.warning).removeClass('d-none');
-        } else if (data.cold_gate_closed && scope === 'mixed' && coldExcluded > 0) {
-            $warnText.text(coldExcluded + " prospect(s) en attente — l'envoi à froid est désactivé. Les clients du segment reçoivent l'email ; les prospects seront contactés dès son activation.");
-            $(IDS.warning).removeClass('d-none');
-        } else {
-            $(IDS.warning).addClass('d-none');
-        }
-
         renderSample(data.sample || []);
 
         $(IDS.error).addClass('d-none');
@@ -229,8 +206,6 @@ var KTSegmentForm = function () {
         $(IDS.loading).addClass('d-none');
         $(IDS.error).addClass('d-none');
         $(IDS.funnel).empty();
-        $(IDS.warning).addClass('d-none');
-        $(IDS.parked).addClass('d-none').text('');
         $(IDS.final).text('—').removeClass('text-gray-900').addClass('text-muted');
         $(IDS.summary).text('Choisissez une portée pour calculer l\'aperçu.').addClass('text-muted');
     }

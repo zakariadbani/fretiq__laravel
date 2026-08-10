@@ -98,10 +98,8 @@ class ZohoCampaignsDriver implements CampaignsClient
      *   1. Sending a live Zoho test campaign via the content-URL flow used by dispatchRun().
      *   2. Confirming empirically that Zoho injects its own unsubscribe footer/link.
      *   3. Recording `STATUS: 200` + the exact received footer markup in the task/PR notes.
-     * Until then this defaults to true — client campaigns (not just prospects) send via
-     * Zoho when cold-send is disabled (SegmentService::applyColdGateStage only excludes
-     * relationship=prospect), so an opt-out link is a compliance requirement (LCEN/CNIL),
-     * not merely a style choice.
+     * Until then this defaults to true because an opt-out link is a compliance requirement
+     * (LCEN/CNIL), not merely a style choice.
      *
      * The normalizer-FAILURE rescue is NOT gated by this flag: when
      * UnsubscribeHtmlNormalizer::normalize() hits its PCRE failure branch (backtrack/JIT

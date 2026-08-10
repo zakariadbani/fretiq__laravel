@@ -12,7 +12,7 @@ class ZohoDealStageHistory extends ZohoMirror
     {
         return parent::casts() + [
             'occurred_at' => 'datetime', 'amount' => 'decimal:2', 'probability' => 'decimal:4',
-            'expected_revenue' => 'decimal:2', 'closing_date' => 'date',
+            'expected_revenue' => 'decimal:2', 'closing_date' => 'date', 'stage_duration_days' => 'integer',
         ];
     }
 

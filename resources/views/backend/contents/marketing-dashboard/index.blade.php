@@ -1,183 +1,410 @@
+@php
+    $ceo = $ceo ?? [];
+    $metrics = $ceo['metrics'] ?? [];
+    $cards = $ceo['decision_cards'] ?? [];
+    $queueData = $ceo['queue'] ?? [];
+    $queue = $queueData['items'] ?? [];
+    $owners = $ceo['owners'] ?? [];
+    $freshness = $ceo['freshness'] ?? [];
+    $meta = $ceo['meta'] ?? [];
+    $confidence = $ceo['confidence'] ?? [];
+    $filterScope = is_array($meta['filter_scope'] ?? null) ? $meta['filter_scope'] : [];
+    $filterScopeStatus = static function (string $surface, ?string $key = null) use ($filterScope): string {
+        $surfaceValue = $filterScope[$surface] ?? null;
+        $value = $key === null
+            ? ($surfaceValue ?? 'Sans filtre')
+            : (is_array($surfaceValue) ? ($surfaceValue[$key] ?? 'Sans filtre') : 'Sans filtre');
+
+        return in_array($value, ['Sans filtre', 'Filtré', 'Partiel', 'Non filtré'], true)
+            ? $value
+            : 'Sans filtre';
+    };
+    $filterScopeNeedsNotice = static fn (string $status): bool => in_array($status, ['Partiel', 'Non filtré'], true);
+    $filterScopeClass = static fn (string $status): string => $status === 'Non filtré' ? 'danger' : 'warning';
+    $queueAvailability = collect(['P1', 'P2', 'P3', 'enrichment'])->mapWithKeys(
+        static fn (string $priority): array => [$priority => (bool) ($queueData['availability_by_priority'][$priority] ?? false)],
+    )->all();
+    $queueCompleteness = collect(['P1', 'P2', 'P3', 'enrichment'])->mapWithKeys(static function (string $priority) use ($queueData, $queueAvailability): array {
+        $fallback = $queueAvailability[$priority] ? 'complete' : 'unavailable';
+        $value = $queueData['completeness_by_priority'][$priority] ?? $fallback;
+
+        return [$priority => in_array($value, ['complete', 'partial', 'unavailable'], true) ? $value : $fallback];
+    })->all();
+    $overallQueueCompleteness = collect($queueCompleteness)->every(static fn (string $value): bool => $value === 'complete')
+        ? 'complete'
+        : (collect($queueCompleteness)->contains(static fn (string $value): bool => $value !== 'unavailable') ? 'partial' : 'unavailable');
+    $completenessLabel = static fn (string $value): string => match ($value) {
+        'complete' => 'Complet', 'partial' => 'Sous-ensemble connu · partiel', default => 'Indisponible',
+    };
+    $briefingCompleteness = is_array($ceo['briefing']['completeness'] ?? null)
+        ? $ceo['briefing']['completeness']
+        : [
+            'reachable_accounts' => $overallQueueCompleteness,
+            'highest_deadline' => $overallQueueCompleteness,
+            'owner_escalations' => ($ceo['briefing']['owner_escalations'] ?? 'Indisponible') === 'Indisponible' ? 'unavailable' : 'complete',
+        ];
+    $format = static fn (mixed $value): string => is_numeric($value)
+        ? number_format((int) $value, 0, ',', ' ')
+        : (is_string($value) && $value !== '' ? $value : 'Indisponible');
+    $confidenceClass = static fn (mixed $value): string => match ($value) { 'Fiable' => 'success', 'Partiel' => 'warning', default => 'secondary' };
+    $priorityLabel = static fn (string $value): string => $value === 'enrichment' ? 'À enrichir' : $value;
+    $canExplore = $drilldowns !== [];
+    $businessTimezone = $ceo['period']['timezone'] ?? 'Europe/Paris';
+    $lastSynced = ! empty($freshness['last_synced_at'])
+        ? \Illuminate\Support\Carbon::parse($freshness['last_synced_at'])->setTimezone($businessTimezone)->format('d/m/Y H:i')
+        : 'Indisponible';
+    $totalByPriority = $queueData['total_by_priority'] ?? [];
+    $numericQueueTotal = collect($totalByPriority)->filter(static fn (mixed $value): bool => is_numeric($value))->sum();
+    $displayedOwners = collect($queue)->pluck('owner')->filter()->unique()->sort()->values();
+    $applicability = $meta['filter_applicability'] ?? [];
+    $filterLabel = static fn (string $filter): string => match ($filter) {
+        'campaign' => 'campagne (P3 uniquement)', 'country' => 'pays (panneaux CRM)',
+        'transport' => 'transport (panneaux CRM)', 'currency' => 'devise (panneaux CRM)',
+        default => str_replace('_', ' ', $filter),
+    };
+    $moduleLabel = static fn (string $module): string => match ($module) {
+        'quotes' => 'devis', 'deals' => 'opportunités', 'activities' => 'activités',
+        'accounts' => 'comptes', 'contacts' => 'contacts', 'tasks' => 'tâches',
+        'events' => 'réunions', 'calls' => 'appels', 'notes' => 'notes', default => $module,
+    };
+    $freshnessStatus = $freshness['status'] ?? match ($freshness['state'] ?? null) {
+        'Fiable' => 'À jour', 'Partiel' => 'Incomplet', default => 'Indisponible',
+    };
+    $freshnessModules = collect($freshness['modules'] ?? []);
+    $affectedFreshnessModules = collect($freshness['affected_modules'] ?? [])
+        ->merge($freshnessModules->filter(static fn (mixed $evidence): bool => is_array($evidence)
+            && (($evidence['available'] ?? true) === false || ($evidence['status'] ?? 'À jour') !== 'À jour'))->keys())
+        ->filter()->unique()->values();
+    $freshnessDetails = $affectedFreshnessModules->map(function (string $module) use ($freshnessModules, $moduleLabel): string {
+        $evidence = $freshnessModules->get($module, []);
+        $status = is_array($evidence) ? ($evidence['status'] ?? 'Indisponible') : 'Indisponible';
+        $failed = is_array($evidence) ? collect($evidence['failed_submodules'] ?? [])->map($moduleLabel)->implode(', ') : '';
+        $partial = is_array($evidence) ? collect($evidence['partial_submodules'] ?? [])->map($moduleLabel)->implode(', ') : '';
+        $missing = is_array($evidence) ? collect($evidence['missing_submodules'] ?? [])->map($moduleLabel)->implode(', ') : '';
+        $details = [];
+        if ($failed !== '') {
+            $details[] = 'sous-modules en échec : '.$failed;
+        }
+        if ($partial !== '') {
+            $details[] = 'sous-modules partiels : '.$partial;
+        }
+        if ($missing !== '') {
+            $details[] = 'sous-modules manquants : '.$missing;
+        }
+
+        return $moduleLabel($module).' — '.$status.($details === [] ? '' : ' ('.implode(' ; ', $details).')');
+    });
+    $briefingConfidence = $confidence['briefing'] ?? 'Indisponible';
+    $metricConfidences = $confidence['metrics'] ?? [];
+    $decisionConfidences = $confidence['decision_cards'] ?? [];
+    $panelConfidences = $confidence['panels'] ?? [];
+    $panelConfidence = static fn (string $panel): string => $panelConfidences[$panel] ?? 'Indisponible';
+    $briefingFilterScope = $filterScopeStatus('briefing');
+    $queueFilterScope = $filterScopeStatus('queue');
+    $panelFilterScope = static fn (string $panel): string => $filterScopeStatus('panels', $panel);
+    $emptyState = static fn (string $panel): string => $panelConfidence($panel) === 'Indisponible'
+        ? 'Indisponible'
+        : 'Aucun résultat sur la période';
+    $monthlyMeta = $ceo['monthly_meta'] ?? [];
+    $currentMonth = $monthlyMeta['current_month'] ?? null;
+    $monthlyAsOf = ! empty($monthlyMeta['as_of'])
+        ? \Illuminate\Support\Carbon::parse($monthlyMeta['as_of'], $businessTimezone)->format('d/m/Y')
+        : null;
+    $priorityCards = [
+        'P1' => ['fallback' => 'expired_missing_decision', 'label' => 'P1 · décision urgente', 'note' => 'Devis expiré ou échéance très proche sans décision.'],
+        'P2' => ['fallback' => 'open_deals_stale', 'label' => 'P2 · progression à obtenir', 'note' => 'Relancer un dossier sans progrès humain prouvé.'],
+        'P3' => ['fallback' => 'soft_campaign_signal', 'label' => 'P3 · signal doux', 'note' => 'Signal doux, pas un lead chaud.'],
+        'enrichment' => ['fallback' => null, 'label' => 'À enrichir', 'note' => 'Compléter un canal autorisé avant toute relance.'],
+    ];
+@endphp
+
 <x-default-layout>
-    @section('title', 'Marketing & commercial')
+    @section('title', 'Tour de contrôle commerciale')
 
     @section('breadcrumbs')
-        <x-crud.breadcrumb :items="[['label' => 'Marketing & commercial']]" />
+        <x-crud.breadcrumb :items="[['label' => 'Zoho'], ['label' => 'Tour de contrôle commerciale']]" />
     @endsection
 
-    @php
-        $options = $dashboard['filter_options'] ?? [];
-        $filters = $dashboard['filters'] ?? [];
-        $kpis = $dashboard['kpis'] ?? [];
-        $campaign = $dashboard['campaign']['counts'] ?? [];
-        $previousCampaign = $dashboard['comparison']['campaign']['counts'] ?? [];
-        $quotes = $kpis['quotes'] ?? [];
-        $previousQuotes = $dashboard['comparison']['quotes'] ?? [];
-        $outcomes = $kpis['deal_outcomes'] ?? [];
-        $previousOutcomes = $dashboard['comparison']['deal_outcomes'] ?? [];
-        $pipeline = $kpis['pipeline'] ?? [];
-        $zohoFunnel = $dashboard['funnels']['zoho'] ?? [];
-        $money = static fn ($value, $currency): string => is_numeric($value) ? number_format((float) $value, 2, ',', ' ').' '.e((string) $currency) : '—';
-        $rate = static fn ($value): string => is_numeric($value) ? number_format((float) $value, 1, ',', ' ').' %' : 'non calculable';
-        $selects = [
-            'commercial' => ['label' => 'Commercial', 'options' => 'commercials'],
-            'source' => ['label' => 'Source', 'options' => 'sources'],
-            'campaign' => ['label' => 'Campagne', 'options' => 'campaigns'],
-            'country' => ['label' => 'Pays', 'options' => 'countries'],
-            'sector' => ['label' => 'Secteur', 'options' => 'sectors'],
-            'transport' => ['label' => 'Transport', 'options' => 'transports'],
-            'client_type' => ['label' => 'Type client', 'options' => 'client_types'],
-            'lead_source' => ['label' => 'Source Zoho', 'options' => 'lead_sources'],
-            'currency' => ['label' => 'Devise', 'options' => 'currencies'],
-        ];
-        $periodLabels = ['7d' => '7 jours', '30d' => '30 jours', '90d' => '90 jours', 'qtd' => 'Trimestre en cours', 'ytd' => 'Année en cours', 'custom' => 'Personnalisée'];
-    @endphp
+    <div data-ceo-root class="ceo-control-tower">
+        <header class="d-flex flex-wrap align-items-start justify-content-between gap-4 mb-6">
+            <div>
+                <div class="text-muted text-uppercase fw-bold fs-8 mb-1">Fretiq · CEO</div>
+                <h1 class="fs-2hx fw-bolder mb-2">Tour de contrôle commerciale</h1>
+                <p class="text-muted mb-0">Lecture seule du miroir Zoho · priorités de suivi, aucun forecast ni taux de gain.</p>
+            </div>
+            <div class="text-xl-end">
+                <span class="badge badge-light-{{ ($freshness['state'] ?? 'Indisponible') === 'Fiable' ? 'success' : (($freshness['state'] ?? '') === 'Partiel' ? 'warning' : 'danger') }}">
+                    Synchronisation {{ $freshness['state'] ?? 'Indisponible' }} · statut {{ $freshnessStatus }} · {{ $lastSynced }} ({{ $businessTimezone }})
+                </span>
+                <div class="small text-muted mt-2">Lecture seule · simulation uniquement, aucune action Zoho n’est effectuée.</div>
+            </div>
+        </header>
 
-    <section class="card border-0 mb-6 marketing-hero overflow-hidden" data-testid="marketing-dashboard-shell">
-        <div class="card-body p-6 p-lg-8 position-relative">
-            <div class="marketing-orb marketing-orb-one"></div><div class="marketing-orb marketing-orb-two"></div>
-            <div class="position-relative d-flex flex-column flex-xl-row align-items-xl-center justify-content-between gap-5">
-                <div>
-                    <div class="text-white-50 text-uppercase fw-semibold fs-8 mb-2">Vue de pilotage</div>
-                    <h1 class="text-white fw-bolder fs-2x mb-2">Pilotage marketing & commercial</h1>
-                    <p class="text-white-75 mb-0">Prospection Fretiq et miroir Zoho CRM, en lecture seule — fuseau Europe/Paris.</p>
+        @if(($dashboard['scope']['mapping_required'] ?? false) === true)
+            <div class="alert alert-warning" role="alert">Votre portefeuille Zoho doit être confirmé par un administrateur avant de pouvoir afficher vos données CRM.</div>
+        @endif
+        @if(($dashboard['scope']['selection_invalid'] ?? false) === true)
+            <div class="alert alert-info" role="status">Le commercial demandé n’est pas disponible. Les indicateurs sont volontairement vides.</div>
+        @endif
+        @if(($freshness['state'] ?? null) === 'Périmètre indisponible')
+            <div class="alert alert-info" role="status">
+                <strong>Fraîcheur non évaluée.</strong> Le périmètre CRM doit être confirmé avant d’inspecter les synchronisations de ce portefeuille.
+            </div>
+        @elseif(($dashboard['meta']['stale_or_unavailable'] ?? false) === true || $freshnessDetails->isNotEmpty() || $freshnessStatus !== 'À jour')
+            <div class="alert alert-warning" role="alert">
+                <strong>Fraîcheur du miroir : {{ $freshnessStatus }}.</strong> Les états indisponibles ne sont pas des zéros.
+                @if(isset($freshness['age_minutes'])) Preuve exploitable la plus ancienne parmi les modules disponibles : il y a {{ $freshness['age_minutes'] }} min. @endif
+                @if($freshnessDetails->isNotEmpty())
+                    <span class="d-block mt-1">Modules concernés : {{ $freshnessDetails->implode(' · ') }}.</span>
+                @endif
+            </div>
+        @endif
+        @if(($applicability['ignored'] ?? []) !== [] || ($applicability['partial'] ?? []) !== [] || ($applicability['applied'] ?? []) !== [])
+            <div class="alert alert-light-info" role="status"><strong>Filtres :</strong>
+                @if(($applicability['applied'] ?? []) !== []) Appliqués : {{ collect($applicability['applied'])->map($filterLabel)->implode(', ') }}. @endif
+                @if(($applicability['partial'] ?? []) !== []) Partiels : {{ collect($applicability['partial'])->map($filterLabel)->implode(', ') }}. @endif
+                @if(($applicability['ignored'] ?? []) !== []) Ignorés : {{ collect($applicability['ignored'])->map($filterLabel)->implode(', ') }}. @endif
+            </div>
+        @endif
+
+        <div class="card mb-6">
+            <div class="card-body py-4 d-flex flex-wrap align-items-center gap-3">
+                <div class="btn-group" role="tablist" aria-label="Vue du tableau de bord">
+                    <button class="btn btn-sm btn-primary" id="tab-today" type="button" role="tab" aria-controls="ceo-today" aria-selected="true" tabindex="0" data-ceo-tab="today">Aujourd’hui</button>
+                    <button class="btn btn-sm btn-light" id="tab-pilotage" type="button" role="tab" aria-controls="ceo-pilotage" aria-selected="false" tabindex="-1" data-ceo-tab="pilotage">Pilotage et trajectoire</button>
                 </div>
-                <div class="alert alert-light-primary mb-0 py-3 px-4 marketing-attribution-note" role="note">
-                    <i class="bi bi-shield-check me-2" aria-hidden="true"></i>Interactions rapprochées sans attribution causale de chiffre d’affaires.
+                <div class="ms-auto d-flex gap-2" aria-label="Période">
+                    @foreach(['30d' => '30 jours', '90d' => '90 jours', '365d' => '365 jours'] as $period => $label)
+                        <a class="btn btn-sm {{ ($controls['period'] ?? '90d') === $period ? 'btn-primary' : 'btn-light' }}" href="{{ request()->fullUrlWithQuery(['period' => $period]) }}" data-testid="period-{{ str_replace('d', '', $period) }}">{{ $label }}</a>
+                    @endforeach
                 </div>
             </div>
         </div>
-    </section>
 
-    <section class="card mb-6">
-        <div class="card-body">
-            <form method="GET" action="{{ route('admin.dashboard.marketing') }}" class="row g-3" aria-label="Filtres du tableau de bord marketing">
-                <div class="col-12 col-md-4 col-xl-2">
-                    <label class="form-label" for="marketing-period">Période</label>
-                    <select id="marketing-period" name="period" class="form-select form-select-solid">
-                        @foreach($periodLabels as $value => $label)<option value="{{ $value }}" @selected($controls['period'] === $value)>{{ $label }}</option>@endforeach
-                    </select>
-                </div>
-                <div class="col-6 col-md-4 col-xl-2 marketing-custom-date">
-                    <label class="form-label" for="marketing-from">Du</label><input id="marketing-from" name="from" type="date" class="form-control form-control-solid" value="{{ $controls['from'] }}">
-                </div>
-                <div class="col-6 col-md-4 col-xl-2 marketing-custom-date">
-                    <label class="form-label" for="marketing-to">Au</label><input id="marketing-to" name="to" type="date" class="form-control form-control-solid" value="{{ $controls['to'] }}">
-                </div>
-                @foreach($selects as $name => $definition)
-                    <div class="col-6 col-md-4 col-xl-2">
-                        <label class="form-label" for="marketing-{{ $name }}">{{ $definition['label'] }}</label>
-                        <select id="marketing-{{ $name }}" name="{{ $name }}" class="form-select form-select-solid">
-                            <option value="">Tous</option>
-                            @foreach($options[$definition['options']] ?? [] as $option)<option value="{{ $option['value'] }}" @selected(($filters[$name] ?? '') === $option['value'])>{{ $option['label'] }}</option>@endforeach
-                        </select>
+        <section id="ceo-today" role="tabpanel" aria-labelledby="tab-today" tabindex="0">
+            <div class="alert alert-light-primary d-flex flex-wrap gap-3 align-items-center mb-6" role="status">
+                <i class="bi bi-sunrise fs-2" aria-hidden="true"></i>
+                <div><strong>Briefing du matin.</strong> {{ $format($ceo['briefing']['reachable_accounts'] ?? null) }} comptes joignables · échéance la plus haute : {{ $ceo['briefing']['highest_deadline'] ?? 'Indisponible' }} · {{ $format($ceo['briefing']['owner_escalations'] ?? null) }} escalade(s) propriétaire.</div>
+                <span class="ceo-source-completeness small text-muted">Sources : comptes/échéance — {{ $completenessLabel($briefingCompleteness['reachable_accounts'] ?? 'unavailable') }} · escalades — {{ $completenessLabel($briefingCompleteness['owner_escalations'] ?? 'unavailable') }}.</span>
+                @if($filterScopeNeedsNotice($briefingFilterScope))
+                    <span class="ceo-filter-scope ceo-filter-scope-{{ $filterScopeClass($briefingFilterScope) }}" role="status">Filtre du briefing : {{ $briefingFilterScope }}</span>
+                @endif
+                <span class="badge badge-light-{{ $confidenceClass($briefingConfidence) }} ms-xl-auto">{{ $briefingConfidence }}</span>
+            </div>
+
+            <div class="row g-5 mb-6" aria-label="Décisions à prendre">
+                @foreach($priorityCards as $priority => $definition)
+                    @php
+                        $card = $cards[$priority] ?? [];
+                        $value = is_array($card) ? ($card['value'] ?? null) : ($definition['fallback'] ? ($cards[$definition['fallback']] ?? null) : ($totalByPriority[$priority] ?? null));
+                        $cardConfidence = $decisionConfidences[$priority] ?? (is_array($card) ? ($card['confidence'] ?? 'Indisponible') : 'Indisponible');
+                        $note = is_array($card) ? ($card['note'] ?? $definition['note']) : $definition['note'];
+                        $priorityAvailable = $queueAvailability[$priority] ?? false;
+                    @endphp
+                    <div class="col-sm-6 col-xl-3">
+                        <button type="button" class="card h-100 w-100 text-start border border-gray-200 ceo-decision-card" data-ceo-decision="{{ $priority }}" aria-pressed="false" aria-disabled="{{ $priorityAvailable ? 'false' : 'true' }}" @disabled(! $priorityAvailable)>
+                            <span class="card-body d-block">
+                                <span class="d-flex justify-content-between gap-2"><span class="text-muted fw-bold fs-8">{{ $definition['label'] }}</span><span class="badge badge-light-{{ $confidenceClass($cardConfidence) }}">{{ $cardConfidence }}</span></span>
+                                <span class="d-block fs-2qx fw-bolder my-2">{{ $format($value) }}</span>
+                                <span class="small text-muted">{{ $note }}</span>
+                                @if(($queueCompleteness[$priority] ?? 'unavailable') === 'partial')<span class="d-block small text-warning fw-bold mt-2">Source : sous-ensemble connu · partiel.</span>@endif
+                            </span>
+                        </button>
                     </div>
                 @endforeach
-                <div class="col-12 d-flex flex-wrap gap-3 pt-2">
-                    <button type="submit" class="btn btn-primary"><i class="bi bi-funnel me-1" aria-hidden="true"></i>Appliquer</button>
-                    <a href="{{ route('admin.dashboard.marketing') }}" class="btn btn-light">Réinitialiser</a>
-                </div>
-            </form>
-        </div>
-    </section>
-
-    @if(($dashboard['meta']['stale_or_unavailable'] ?? false) === true)
-        <div class="alert alert-warning d-flex align-items-center mb-6" role="alert"><i class="bi bi-exclamation-triangle fs-2 me-3" aria-hidden="true"></i><div>Le miroir Zoho n’est pas encore disponible ou son schéma est incomplet. Les indicateurs CRM seront affichés dès que la synchronisation contrôlée aura produit des données vérifiées.</div></div>
-    @endif
-    @if(($dashboard['scope']['mapping_required'] ?? false) === true)
-        <div class="alert alert-warning d-flex align-items-center mb-6" role="alert"><i class="bi bi-person-lock fs-2 me-3" aria-hidden="true"></i><div>Votre portefeuille Zoho doit être confirmé par un administrateur avant de pouvoir afficher vos données CRM.</div></div>
-    @endif
-    @if(($dashboard['scope']['selection_invalid'] ?? false) === true)
-        <div class="alert alert-info mb-6" role="status">Le commercial demandé n’est pas disponible. Les indicateurs sont volontairement vides.</div>
-    @endif
-    @foreach(($dashboard['filter_applicability'] ?? []) as $filter => $applicability)
-        @if(($applicability['ignored_by'] ?? []) !== [])
-            <div class="alert alert-light-info py-3 mb-4" role="status"><strong>Filtre {{ $filter }} :</strong> non applicable aux panneaux {{ implode(', ', $applicability['ignored_by']) }}@if(($applicability['partially_applies_to'] ?? []) !== []) ; application partielle signalée pour {{ implode(', ', array_keys($applicability['partially_applies_to'])) }}@endif.</div>
-        @endif
-    @endforeach
-
-    <div class="row g-5 mb-6">
-        @foreach([
-            ['Entreprises découvertes', $kpis['discovered_companies'] ?? 0, 'bi-buildings', 'primary'],
-            ['Contacts découverts', $kpis['discovered_contacts'] ?? 0, 'bi-people', 'info'],
-            ['Nouveaux leads Zoho', $kpis['new_leads'] ?? 0, 'bi-person-plus', 'warning'],
-            ['Nouveaux comptes Zoho', $kpis['new_accounts'] ?? 0, 'bi-building-add', 'primary'],
-            ['Nouveaux contacts Zoho', $kpis['new_contacts'] ?? 0, 'bi-person-vcard', 'info'],
-            ['Opportunités créées', $kpis['deals_created'] ?? 0, 'bi-briefcase', 'success'],
-            ['Devis créés', $kpis['quotes_created'] ?? 0, 'bi-file-earmark-text', 'success'],
-        ] as [$label, $value, $icon, $color])
-            <div class="col-sm-6 col-xl-3"><article class="card h-100 marketing-kpi"><div class="card-body d-flex align-items-center gap-4"><span class="marketing-icon bg-light-{{ $color }} text-{{ $color }}"><i class="bi {{ $icon }} fs-2" aria-hidden="true"></i></span><div><div class="text-muted fw-semibold fs-7">{{ $label }}</div><div class="fs-2 fw-bolder">{{ number_format((int) $value, 0, ',', ' ') }}</div></div></div></article></div>
-        @endforeach
-    </div>
-
-    <section class="card mb-6"><div class="card-header"><h2 class="card-title fw-bolder">Comparaison avec la période précédente</h2></div><div class="card-body"><div class="row g-4">@foreach(['discovered_companies' => 'Entreprises découvertes', 'discovered_contacts' => 'Contacts découverts', 'new_leads' => 'Leads', 'new_accounts' => 'Comptes', 'new_contacts' => 'Contacts Zoho', 'deals_created' => 'Opportunités', 'quotes_created' => 'Devis'] as $key => $label)<div class="col-6 col-md-3"><div class="text-muted fs-8">{{ $label }}</div><div class="fw-bolder fs-4">{{ number_format((int) ($kpis[$key] ?? 0), 0, ',', ' ') }}</div><div class="small text-muted">précédent : {{ number_format((int) ($dashboard['comparison'][$key] ?? 0), 0, ',', ' ') }}</div></div>@endforeach</div></div></section>
-
-    @if($drilldowns !== [])
-    <nav class="card mb-6" aria-label="Accès aux explorateurs CRM">
-        <div class="card-body d-flex flex-wrap align-items-center gap-3">
-            <span class="fw-bold me-2">Explorer le CRM :</span>
-            @foreach(['leads' => 'Leads', 'accounts' => 'Comptes', 'contacts' => 'Contacts', 'deals' => 'Opportunités', 'quotes' => 'Devis'] as $module => $label)
-                <a href="{{ $drilldowns[$module] }}" class="btn btn-sm btn-light-primary">{{ $label }}</a>
-            @endforeach
-        </div>
-    </nav>
-    @endif
-
-    <div class="row g-5 mb-6">
-        <div class="col-xl-6"><section class="card h-100"><div class="card-header"><h2 class="card-title fw-bolder">Entonnoir Fretiq</h2></div><div class="card-body">
-            <div class="table-responsive"><table class="table align-middle table-row-dashed mb-3"><thead><tr><th>Étape</th><th class="text-end">Période actuelle</th><th class="text-end">Période précédente</th></tr></thead><tbody>
-                @foreach(['sent' => 'Envoyés', 'delivered' => 'Délivrés', 'opened' => 'Ouverts', 'clicked' => 'Cliqués', 'replied' => 'Réponses', 'demandes' => 'Demandes observées'] as $key => $label)
-                    <tr><td>{{ $label }}</td><td class="text-end"><span data-testid="campaign-{{ $key }}-current">{{ number_format((int) ($campaign[$key] ?? 0), 0, ',', ' ') }}</span></td><td class="text-end"><span data-testid="campaign-{{ $key }}-previous">{{ number_format((int) ($previousCampaign[$key] ?? 0), 0, ',', ' ') }}</span></td></tr>
-                @endforeach
-            </tbody></table></div>
-            <div class="d-flex flex-wrap gap-3 small text-muted">
-                <span>Engagement : <strong data-testid="campaign-engagement-rate-current">{{ $rate($campaign['engagement_rate'] ?? null) }}</strong> (précédent : <span data-testid="campaign-engagement-rate-previous">{{ $rate($previousCampaign['engagement_rate'] ?? null) }}</span>)</span>
-                <span>Conversion en demande observée : <strong data-testid="campaign-demande-rate-current">{{ $rate($campaign['demande_conversion_rate'] ?? null) }}</strong> (précédent : <span data-testid="campaign-demande-rate-previous">{{ $rate($previousCampaign['demande_conversion_rate'] ?? null) }}</span>)</span>
             </div>
-        </div></section></div>
-        <div class="col-xl-6"><section class="card h-100"><div class="card-header d-flex align-items-center"><h2 class="card-title fw-bolder">Entonnoir commercial Zoho</h2>@isset($drilldowns['deals'])<a href="{{ $drilldowns['deals'] }}" class="btn btn-sm btn-light-primary ms-auto">Voir les opportunités</a>@endisset</div><div class="card-body">
-            @foreach(['Leads' => $kpis['new_leads'] ?? 0, 'Opportunités créées' => $kpis['deals_created'] ?? 0, 'Devis créés' => $kpis['quotes_created'] ?? 0, 'Affaires gagnées' => $outcomes['won'] ?? 0, 'Affaires perdues' => $outcomes['lost'] ?? 0] as $label => $count)<div class="d-flex justify-content-between align-items-center py-3 border-bottom"><span>{{ $label }}</span><span class="badge badge-light-success fs-7">{{ number_format((int) $count, 0, ',', ' ') }}</span></div>@endforeach
-            <div class="table-responsive mt-4"><table class="table table-sm align-middle mb-2"><thead><tr><th>Résultat</th><th class="text-end">Actuel</th><th class="text-end">Précédent</th></tr></thead><tbody>
-                <tr><td>Opportunités gagnées</td><td class="text-end"><span data-testid="deal-won-current">{{ (int) ($outcomes['won'] ?? 0) }}</span></td><td class="text-end"><span data-testid="deal-won-previous">{{ (int) ($previousOutcomes['won'] ?? 0) }}</span></td></tr>
-                <tr><td>Opportunités perdues</td><td class="text-end"><span data-testid="deal-lost-current">{{ (int) ($outcomes['lost'] ?? 0) }}</span></td><td class="text-end"><span data-testid="deal-lost-previous">{{ (int) ($previousOutcomes['lost'] ?? 0) }}</span></td></tr>
-                <tr><td>Devis gagnés</td><td class="text-end"><span data-testid="quote-won-current">{{ (int) ($quotes['won_count'] ?? 0) }}</span></td><td class="text-end"><span data-testid="quote-won-previous">{{ (int) ($previousQuotes['won_count'] ?? 0) }}</span></td></tr>
-                <tr><td>Devis perdus</td><td class="text-end"><span data-testid="quote-lost-current">{{ (int) ($quotes['lost_count'] ?? 0) }}</span></td><td class="text-end"><span data-testid="quote-lost-previous">{{ (int) ($previousQuotes['lost_count'] ?? 0) }}</span></td></tr>
-            </tbody></table></div>
-            <p class="text-muted small mt-3 mb-0">Taux de gain des devis : <strong data-testid="quote-win-rate-current">{{ $rate($quotes['win_rate'] ?? null) }}</strong> · précédent : <span data-testid="quote-win-rate-previous">{{ $rate($previousQuotes['win_rate'] ?? null) }}</span> · délai médian de décision : {{ $quotes['median_decision_days'] ?? '—' }} jours.</p>
-        </div></section></div>
+
+            <div class="row g-5 mb-6">
+                @foreach([
+                    ['Devis émis · date métier proxy', 'quotes', 'quote_date ; timestamp Zoho indisponible.'],
+                    ['Sans statut', 'missing_status', 'État actuel, pas un taux de conversion.'],
+                    ['Tâches créées', 'tasks_created', $format($metrics['not_started_tasks'] ?? null).' non commencées.'],
+                    ['Suivi humain prouvé*', 'proven_human_follow_up', $format($metrics['completed_tasks'] ?? null).' tâches créées sur la période et actuellement terminées (date de fin indisponible) + '.$format($metrics['meetings'] ?? null).' réunions + '.$format($metrics['calls'] ?? null).' appels + '.$format($metrics['notes'] ?? null).' notes.'],
+                ] as [$label, $key, $note])
+                    @php
+                        $metricValue = $metrics[$key] ?? null;
+                        $metricConfidence = $metricConfidences[$key] ?? 'Indisponible';
+                        $metricFilterScope = $filterScopeStatus('metrics', $key);
+                    @endphp
+                    <div class="col-sm-6 col-xl-3"><article class="card h-100 ceo-kpi"><div class="card-body"><div class="text-muted fw-bold fs-8">{{ $label }} <span class="badge badge-light-{{ $confidenceClass($metricConfidence) }}">{{ $metricConfidence }}</span></div>@if($filterScopeNeedsNotice($metricFilterScope))<div class="ceo-filter-scope ceo-filter-scope-{{ $filterScopeClass($metricFilterScope) }} mt-2" role="status">Filtre de cet indicateur : {{ $metricFilterScope }}</div>@endif<div class="fs-2qx fw-bolder my-2" data-testid="ceo-{{ $key }}">{{ $format($metricValue) }}</div><div class="small text-muted">{{ $note }}</div></div></article></div>
+                @endforeach
+            </div>
+
+            <div class="row g-5">
+                <div class="col-xl-9">
+                    <section class="card">
+                        <div class="card-header flex-wrap gap-3">
+                            <div><h2 class="card-title fw-bolder">Comptes à contacter ou relancer</h2><span class="text-muted small">Dédupliqués par compte · canaux masqués · {{ count($queue) }} affiché(s) · sources {{ mb_strtolower($completenessLabel($overallQueueCompleteness)) }}</span>@if($filterScopeNeedsNotice($queueFilterScope))<span class="ceo-filter-scope ceo-filter-scope-{{ $filterScopeClass($queueFilterScope) }} d-table mt-2" role="status">Filtre de la file : {{ $queueFilterScope }}</span>@endif</div>
+                            <div class="d-flex flex-wrap gap-2 ms-xl-auto" data-testid="ceo-queue-filters">
+                                <div class="d-flex flex-wrap gap-1" role="group" aria-label="Filtrer par priorité">
+                                    <button type="button" class="btn btn-sm btn-primary" aria-pressed="true" data-ceo-priority="all">Toutes</button>
+                                    @foreach(['P1', 'P2', 'P3', 'enrichment'] as $priority)
+                                        <button type="button" class="btn btn-sm btn-light" aria-pressed="false" aria-disabled="{{ $queueAvailability[$priority] ? 'false' : 'true' }}" data-ceo-priority="{{ $priority }}" @disabled(! $queueAvailability[$priority])>{{ $priorityLabel($priority) }} <span class="badge badge-light">{{ $queueAvailability[$priority] ? $format($totalByPriority[$priority] ?? 0) : 'Indisponible' }}</span>@if(($queueCompleteness[$priority] ?? 'unavailable') === 'partial') <span class="badge badge-light-warning">partiel</span>@endif</button>
+                                    @endforeach
+                                </div>
+                                <select class="form-select form-select-sm w-auto" aria-label="Filtrer par propriétaire parmi les lignes affichées" data-ceo-owner><option value="all">Propriétaires des lignes affichées</option>@foreach($displayedOwners as $owner)<option value="{{ $owner }}">{{ $owner }}</option>@endforeach</select>
+                            </div>
+                        </div>
+                        <div class="card-body pt-0">
+                            @if(($queueData['truncated'] ?? false) === true)<p class="alert alert-light-info small mt-4 mb-3">File tronquée : {{ $format($numericQueueTotal) }} comptes identifiés dans les priorités disponibles, {{ count($queue) }} affichés. {{ $overallQueueCompleteness === 'complete' ? 'Les compteurs par priorité sont complets.' : 'Les compteurs marqués partiels couvrent uniquement le sous-ensemble connu.' }}</p>@endif
+                            <div class="table-responsive ceo-table ceo-action-table-wrap">
+                                <table class="table align-middle table-row-dashed ceo-action-table">
+                                    <thead><tr><th scope="col">Priorité</th><th scope="col">Compte / contact</th><th scope="col">Pourquoi maintenant</th><th scope="col">Dernière action humaine prouvée</th><th scope="col">Canal</th><th scope="col">Propriétaire</th><th scope="col">Échéance</th><th scope="col">Action recommandée</th></tr></thead>
+                                    <tbody>
+                                        @forelse($queue as $index => $item)
+                                            @php($priority = $item['priority'] ?? 'enrichment')
+                                            <tr data-ceo-row data-priority="{{ $priority }}" data-signals="{{ collect($item['signals'] ?? [$priority])->implode(',') }}" data-owner="{{ $item['owner'] ?? 'Propriétaire Zoho indisponible' }}">
+                                                <td data-label="Priorité"><span class="badge badge-light-{{ $priority === 'P1' ? 'danger' : ($priority === 'P2' ? 'warning' : 'info') }}">{{ $priorityLabel($priority) }}</span></td>
+                                                <td data-label="Compte / contact"><button class="btn btn-link p-0 text-start fw-bold" type="button" data-ceo-open="{{ $index }}">{{ $item['account'] ?? 'Compte non nommé' }}<span class="d-block small text-muted">{{ $item['contact'] ?? 'Contact non nommé' }}</span></button></td>
+                                                <td data-label="Pourquoi maintenant">{{ implode(' · ', $item['reasons'] ?? []) }}<span class="d-block small text-muted">{{ $item['quote_context'] ?? 'Contexte indisponible' }}</span></td>
+                                                <td data-label="Dernière action humaine prouvée">{{ $item['last_proven_action'] ?? 'Indisponible' }}</td>
+                                                <td data-label="Canal">{{ $item['channel'] ?? 'Indisponible' }}</td>
+                                                <td data-label="Propriétaire">{{ $item['owner'] ?? 'Propriétaire Zoho indisponible' }}</td>
+                                                <td data-label="Échéance">{{ $item['deadline'] ?? 'Indisponible' }}</td>
+                                                <td data-label="Action recommandée"><button class="btn btn-sm btn-light-primary" type="button" data-ceo-open="{{ $index }}">{{ $item['recommended_action'] ?? 'Préparer le briefing' }}</button></td>
+                                            </tr>
+                                        @empty
+                                            <tr class="ceo-action-empty"><td colspan="8" class="text-muted">{{ $overallQueueCompleteness === 'complete' ? 'Aucun résultat sur la période' : ($overallQueueCompleteness === 'partial' ? 'Aucune action prouvée dans le sous-ensemble connu · sources partielles' : 'Indisponible · aucune priorité calculable') }}</td></tr>
+                                        @endforelse
+                                        <tr class="ceo-action-empty" data-ceo-empty-filter hidden><td colspan="8" class="text-muted text-center">Aucun compte ne correspond aux filtres affichés.</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+                <div class="col-xl-3"><section class="card h-100"><div class="card-header flex-wrap gap-2"><h2 class="card-title fw-bolder">Escalade propriétaire</h2><span class="badge badge-light-{{ $confidenceClass($panelConfidence('owners')) }}">{{ $panelConfidence('owners') }}</span>@if($filterScopeNeedsNotice($panelFilterScope('owners')))<span class="ceo-filter-scope ceo-filter-scope-{{ $filterScopeClass($panelFilterScope('owners')) }}" role="status">Filtre : {{ $panelFilterScope('owners') }}</span>@endif</div><div class="card-body">@forelse($owners as $owner)<div class="border-bottom py-3"><strong>{{ $owner['owner'] ?? 'Propriétaire Zoho indisponible' }}</strong><div class="small text-muted">{{ $format($owner['overdue_tasks'] ?? null) }} tâches en retard · {{ $format($owner['missing_status'] ?? null) }} devis sans statut</div></div>@empty<div class="text-muted">{{ $emptyState('owners') }}</div>@endforelse</div></section></div>
+            </div>
+        </section>
+
+        <section id="ceo-pilotage" role="tabpanel" aria-labelledby="tab-pilotage" tabindex="0" hidden>
+            <div class="row g-5">
+                <div class="col-xl-7">
+                    <section class="card h-100">
+                        <div class="card-header flex-wrap gap-2"><h2 class="card-title fw-bolder">Trajectoire mensuelle</h2><span class="badge badge-light-{{ $confidenceClass($panelConfidence('monthly')) }}">{{ $panelConfidence('monthly') }}</span>@if($filterScopeNeedsNotice($panelFilterScope('monthly')))<span class="ceo-filter-scope ceo-filter-scope-{{ $filterScopeClass($panelFilterScope('monthly')) }}" role="status">Filtre : {{ $panelFilterScope('monthly') }}</span>@endif</div>
+                        <div class="card-body">
+                            <div class="table-responsive ceo-table">
+                                <table class="table">
+                                    <thead><tr><th>Mois</th><th>Devis</th><th>Décisions actuelles*</th><th>Tâches créées</th><th>Tâches créées ce mois, actuellement terminées*</th><th>Réunions</th><th>Appels</th><th>Notes</th><th>Deals</th></tr></thead>
+                                    <tbody>
+                                        @forelse($ceo['monthly'] ?? [] as $month)
+                                            @php($monthLabel = $month['month'] ?? 'Indisponible')
+                                            <tr>
+                                                <td>{{ $monthLabel }}@if($monthLabel === $currentMonth && $monthlyAsOf) · en cours au {{ $monthlyAsOf }}@endif</td>
+                                                <td>{{ $format($month['quotes'] ?? null) }}</td><td>{{ $format($month['current_decisions'] ?? null) }}</td><td>{{ $format($month['tasks_created'] ?? null) }}</td><td>{{ $format($month['completed_tasks'] ?? null) }}</td><td>{{ $format($month['meetings'] ?? null) }}</td><td>{{ $format($month['calls'] ?? null) }}</td><td>{{ $format($month['notes'] ?? null) }}</td><td>{{ $format($month['deals'] ?? null) }}</td>
+                                            </tr>
+                                        @empty
+                                            <tr><td colspan="9" class="text-muted">{{ $emptyState('monthly') }}</td></tr>
+                                        @endforelse
+                                    </tbody>
+                                </table>
+                            </div>
+                            <p class="small text-muted mb-0">* État gagné/perdu actuel attaché à la cohorte <code>quote_date</code>, pas une décision historique. Les tâches dites terminées sont la cohorte des tâches créées ce mois et dont le statut actuel est terminé ; la date de fin est indisponible.</p>
+                        </div>
+                    </section>
+                </div>
+                <div class="col-xl-5">
+                    <section class="card h-100"><div class="card-header flex-wrap gap-2"><h2 class="card-title fw-bolder">Entonnoir de traçabilité</h2><span class="badge badge-light-{{ $confidenceClass($panelConfidence('funnel')) }}">{{ $panelConfidence('funnel') }}</span>@if($filterScopeNeedsNotice($panelFilterScope('funnel')))<span class="ceo-filter-scope ceo-filter-scope-{{ $filterScopeClass($panelFilterScope('funnel')) }}" role="status">Filtre : {{ $panelFilterScope('funnel') }}</span>@endif</div><div class="card-body">@foreach(['quotes' => 'Devis émis', 'named_contacts' => 'Contact nommé lié', 'linked_deals' => 'Deal lié', 'current_decisions' => 'Décision enregistrée', 'completed_quote_tasks' => 'Tâches devis terminées (statut actuel)'] as $key => $label)<div class="d-flex justify-content-between border-bottom py-3"><span>{{ $label }}</span><strong>{{ $format($ceo['funnel'][$key] ?? null) }}</strong></div>@endforeach</div></section>
+                </div>
+            </div>
+            <div class="row g-5 mt-1">
+                <div class="col-xl-4"><section class="card h-100"><div class="card-header flex-wrap gap-2"><h2 class="card-title fw-bolder">Risque devis</h2><span class="badge badge-light-{{ $confidenceClass($panelConfidence('quote_risks')) }}">{{ $panelConfidence('quote_risks') }}</span>@if($filterScopeNeedsNotice($panelFilterScope('quote_risks')))<span class="ceo-filter-scope ceo-filter-scope-{{ $filterScopeClass($panelFilterScope('quote_risks')) }}" role="status">Filtre : {{ $panelFilterScope('quote_risks') }}</span>@endif</div><div class="card-body">@foreach(['expired_missing_decision' => 'Expirés sans décision', 'due_7_days' => 'Sous 7 jours', 'due_30_days' => 'Sous 30 jours', 'unreachable' => 'Sans canal joignable', 'future_date_anomalies' => 'Dates futures'] as $key => $label)<div class="d-flex justify-content-between py-2 border-bottom"><span>{{ $label }}</span><strong>{{ $format($ceo['quote_risks'][$key] ?? null) }}</strong></div>@endforeach</div></section></div>
+                <div class="col-xl-4"><section class="card h-100"><div class="card-header flex-wrap gap-2"><h2 class="card-title fw-bolder">Mix de volume, pas de revenu</h2><span class="badge badge-light-{{ $confidenceClass($panelConfidence('mix')) }}">{{ $panelConfidence('mix') }}</span>@if($filterScopeNeedsNotice($panelFilterScope('mix')))<span class="ceo-filter-scope ceo-filter-scope-{{ $filterScopeClass($panelFilterScope('mix')) }}" role="status">Filtre : {{ $panelFilterScope('mix') }}</span>@endif</div><div class="card-body"><h3 class="fs-6">Transport</h3>@forelse($ceo['transport_mix'] ?? [] as $transport => $count)<div class="d-flex justify-content-between py-2 border-bottom"><span>{{ $transport }}</span><strong>{{ $format($count) }}</strong></div>@empty<div class="text-muted">{{ $emptyState('mix') }}</div>@endforelse<h3 class="fs-6 mt-4">Mix des axes</h3>@forelse($ceo['lane_mix'] ?? [] as $lane => $count)<div class="d-flex justify-content-between py-2 border-bottom"><span>{{ $lane }}</span><strong>{{ $format($count) }}</strong></div>@empty<div class="text-muted small">{{ $emptyState('mix') }}</div>@endforelse</div></section></div>
+                <div class="col-xl-4"><section class="card h-100"><div class="card-header flex-wrap gap-2"><h2 class="card-title fw-bolder">Préparation des données</h2><span class="badge badge-light-{{ $confidenceClass($panelConfidence('readiness')) }}">{{ $panelConfidence('readiness') }}</span>@if($filterScopeNeedsNotice($panelFilterScope('readiness')))<span class="ceo-filter-scope ceo-filter-scope-{{ $filterScopeClass($panelFilterScope('readiness')) }}" role="status">Filtre : {{ $panelFilterScope('readiness') }}</span>@endif</div><div class="card-body">@forelse($ceo['readiness'] ?? [] as $key => $note)<p class="small border-bottom pb-2"><strong>{{ is_string($key) ? str_replace('_', ' ', $key) : 'État' }} :</strong> {{ $note }}</p>@empty<p class="text-muted">{{ $emptyState('readiness') }}</p>@endforelse</div></section></div>
+            </div>
+            <section class="card mt-6"><div class="card-header flex-wrap gap-2"><h2 class="card-title fw-bolder">Preuves par propriétaire</h2><span class="badge badge-light-{{ $confidenceClass($panelConfidence('owners')) }}">{{ $panelConfidence('owners') }}</span>@if($filterScopeNeedsNotice($panelFilterScope('owners')))<span class="ceo-filter-scope ceo-filter-scope-{{ $filterScopeClass($panelFilterScope('owners')) }}" role="status">Filtre : {{ $panelFilterScope('owners') }}</span>@endif<span class="text-muted small">Éléments observés, pas un score de performance.</span></div><div class="card-body"><div class="table-responsive ceo-table"><table class="table align-middle"><thead><tr><th>Propriétaire</th><th>Devis</th><th>Sans statut</th><th>En retard</th><th>Terminées (statut actuel)</th><th>Réunions</th><th>Appels</th><th>Notes</th><th>Contacts liés</th><th>Deals liés</th></tr></thead><tbody>@forelse($owners as $owner)<tr><td>{{ $owner['owner'] ?? 'Propriétaire Zoho indisponible' }}</td><td>{{ $format($owner['quotes'] ?? null) }}</td><td>{{ $format($owner['missing_status'] ?? null) }}</td><td>{{ $format($owner['overdue_tasks'] ?? null) }}</td><td>{{ $format($owner['completed_tasks'] ?? null) }}</td><td>{{ $format($owner['meetings'] ?? null) }}</td><td>{{ $format($owner['calls'] ?? null) }}</td><td>{{ $format($owner['notes'] ?? null) }}</td><td>{{ $format($owner['linked_contacts'] ?? null) }}</td><td>{{ $format($owner['linked_deals'] ?? null) }}</td></tr>@empty<tr><td colspan="10" class="text-muted">{{ $emptyState('owners') }}</td></tr>@endforelse</tbody></table></div><p class="small text-muted mb-0">Les tâches terminées sont celles créées sur la période et dont le statut actuel est terminé ; la date de fin est indisponible.</p></div></section>
+            @if($canExplore)
+                <nav class="mt-6" aria-label="Explorer le CRM">
+                    <span class="fw-bold me-3">Explorer le CRM :</span>
+                    @foreach(['leads' => 'Leads', 'accounts' => 'Comptes', 'quotes' => 'Devis', 'deals' => 'Opportunités', 'contacts' => 'Contacts'] as $module => $label)
+                        @if(isset($drilldowns[$module]))
+                            <a class="btn btn-sm btn-light-primary me-2" href="{{ $drilldowns[$module] }}">{{ $label }}</a>
+                        @endif
+                    @endforeach
+                </nav>
+            @endif
+        </section>
+
+        <div class="modal fade" id="ceo-drawer" tabindex="-1" aria-hidden="true" aria-labelledby="ceo-drawer-title"><div class="modal-dialog modal-dialog-end modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h2 class="modal-title fs-3" id="ceo-drawer-title">Briefing du compte</h2><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button></div><div class="modal-body" id="ceo-drawer-body"></div><div class="modal-footer"><button type="button" class="btn btn-primary" id="ceo-simulate">Préparer l’action</button><button type="button" class="btn btn-light" data-bs-dismiss="modal">Fermer</button></div></div></div></div>
     </div>
-
-    <section class="card mb-6"><div class="card-header"><h2 class="card-title fw-bolder">Qualification, étapes et statuts Zoho</h2></div><div class="card-body"><div class="row g-5">
-        @foreach(['lead_qualification' => 'Qualification actuelle des nouveaux leads', 'deal_stages' => 'Étapes des opportunités créées', 'quote_statuses' => 'Statuts des devis créés'] as $key => $label)
-            <div class="col-md-4"><h3 class="fs-6 fw-bold">{{ $label }}</h3>@forelse(($zohoFunnel[$key] ?? []) as $entry => $count)<div class="d-flex justify-content-between small border-bottom py-2"><span>{{ $entry }}</span><span class="badge badge-light">{{ number_format((int) $count, 0, ',', ' ') }}</span></div>@empty <div class="text-muted small">Aucune donnée</div>@endforelse</div>
-        @endforeach
-    </div><hr class="my-5"><h3 class="fs-6 fw-bold mb-3">Transitions de statut observées</h3><div class="row g-5">
-        <div class="col-md-6"><div class="text-muted fs-8 text-uppercase mb-2">Opportunités</div>@forelse(($zohoFunnel['transitions']['deals'] ?? []) as $entry => $count)@php($transitionKey = \Illuminate\Support\Str::slug((string) $entry))<div class="d-flex justify-content-between small border-bottom py-2" data-testid="deal-transition-row-{{ $transitionKey }}"><span>{{ $entry }}</span><span data-testid="deal-transition-{{ $transitionKey }}">{{ $count }}</span></div>@empty <div class="text-muted small">Aucune transition</div>@endforelse</div>
-        <div class="col-md-6"><div class="text-muted fs-8 text-uppercase mb-2">Devis</div>@forelse(($zohoFunnel['transitions']['quotes'] ?? []) as $entry => $count)@php($transitionKey = \Illuminate\Support\Str::slug((string) $entry))<div class="d-flex justify-content-between small border-bottom py-2" data-testid="quote-transition-row-{{ $transitionKey }}"><span>{{ $entry }}</span><span data-testid="quote-transition-{{ $transitionKey }}">{{ $count }}</span></div>@empty <div class="text-muted small">Aucune transition</div>@endforelse</div>
-    </div></div></section>
-
-    <div class="row g-5 mb-6">
-        <div class="col-xl-7"><section class="card h-100"><div class="card-header"><h2 class="card-title fw-bolder">Tendances de la période</h2></div><div class="card-body table-responsive"><table class="table align-middle table-row-dashed"><thead><tr><th>Indicateur</th><th>Événements observés</th></tr></thead><tbody>@foreach(['leads' => 'Leads', 'deals' => 'Opportunités', 'quotes' => 'Devis', 'wins' => 'Gains', 'demandes' => 'Demandes'] as $key => $label)<tr><td>{{ $label }}</td><td>@forelse(($dashboard['trends'][$key] ?? []) as $date => $count)<span class="badge badge-light me-1 mb-1">{{ $date }} : {{ $count }}</span>@empty <span class="text-muted">Aucune donnée</span>@endforelse</td></tr>@endforeach</tbody></table></div></section></div>
-        <div class="col-xl-5"><section class="card h-100"><div class="card-header"><h2 class="card-title fw-bolder">Valeurs par devise native</h2></div><div class="card-body"><p class="text-muted small">Aucune conversion ni total multi-devise n’est affiché. Une valeur n’est couverte que si son montant et sa devise native sont tous deux renseignés.</p><div class="small mb-4"><div>Pipeline actif : {{ $pipeline['amount_known_count'] ?? 0 }}/{{ $pipeline['count'] ?? 0 }} couverts · montant manquant <span data-testid="pipeline-amount-missing-value">{{ (int) ($pipeline['amount_missing_value_count'] ?? 0) }}</span> · devise manquante <span data-testid="pipeline-amount-missing-currency">{{ (int) ($pipeline['amount_missing_currency_count'] ?? 0) }}</span></div><div>Pipeline pondéré : {{ $pipeline['weighted_known_count'] ?? 0 }}/{{ $pipeline['count'] ?? 0 }} couverts · montant manquant <span data-testid="pipeline-weighted-missing-value">{{ (int) ($pipeline['weighted_missing_value_count'] ?? 0) }}</span> · devise manquante <span data-testid="pipeline-weighted-missing-currency">{{ (int) ($pipeline['weighted_missing_currency_count'] ?? 0) }}</span></div></div>@forelse(($pipeline['amount_by_currency'] ?? []) as $currency => $value)<div class="d-flex justify-content-between py-2 border-bottom"><span>Pipeline actif · {{ $currency }}</span><strong>{{ $money($value, $currency) }}</strong></div>@empty <div class="text-muted">Aucune valeur de pipeline exploitable.</div>@endforelse @foreach(($pipeline['weighted_by_currency'] ?? []) as $currency => $value)<div class="d-flex justify-content-between py-2 border-bottom"><span>Pipeline pondéré · {{ $currency }}</span><strong>{{ $money($value, $currency) }}</strong></div>@endforeach @foreach(($outcomes['won_value_by_currency'] ?? []) as $currency => $value)<div class="d-flex justify-content-between py-2 border-bottom"><span>Gagné · {{ $currency }}</span><strong>{{ $money($value, $currency) }}</strong></div>@endforeach @foreach(($quotes['value_by_currency'] ?? []) as $currency => $value)<div class="d-flex justify-content-between py-2 border-bottom"><span>Devis · {{ $currency }}</span><strong>{{ $money($value, $currency) }}</strong></div>@endforeach</div></section></div>
-    </div>
-
-    <div class="row g-5 mb-6">
-        <div class="col-xl-7"><section class="card h-100"><div class="card-header"><h2 class="card-title fw-bolder">Performance par segment</h2></div><div class="card-body"><div class="row g-4">@foreach(['commercial' => 'Commercial', 'source' => 'Source', 'sector' => 'Secteur', 'country' => 'Pays', 'transport' => 'Transport', 'lane' => 'Ligne'] as $key => $label)<div class="col-md-6"><h3 class="fs-6 fw-bold">{{ $label }}</h3>@forelse(($dashboard['breakdowns'][$key] ?? []) as $entry => $count) @if(is_array($count))<div class="d-flex justify-content-between small border-bottom py-1"><span>{{ $count['label'] }}</span><span>{{ $count['count'] }}</span></div>@else <div class="d-flex justify-content-between small border-bottom py-1"><span>{{ $entry }}</span><span>{{ $count }}</span></div>@endif @empty <div class="text-muted small">Aucune donnée</div>@endforelse</div>@endforeach</div></div></section></div>
-        <div class="col-xl-5"><section class="card h-100"><div class="card-header"><h2 class="card-title fw-bolder">À surveiller</h2></div><div class="card-body"><ul class="list-unstyled mb-0 marketing-attention-list">@foreach(['quotes_expiring_7_days' => 'Devis expirant sous 7 jours', 'open_leads_without_activity_14_days' => 'Leads ouverts sans activité depuis 14 jours', 'open_deals_without_activity_14_days' => 'Opportunités ouvertes sans activité depuis 14 jours', 'sync_failures' => 'Anomalies de synchronisation'] as $key => $label)<li><span>{{ $label }}</span><span class="badge badge-light-warning">{{ number_format((int) ($dashboard['attention'][$key] ?? 0), 0, ',', ' ') }}</span></li>@endforeach @foreach(($dashboard['attention']['unassigned'] ?? []) as $key => $count)<li><span>{{ ucfirst($key) }} non attribués</span><span class="badge badge-light-danger">{{ number_format((int) $count, 0, ',', ' ') }}</span></li>@endforeach @foreach(($dashboard['attention']['stale_modules'] ?? []) as $module => $state)<li><span>Module {{ $module }} obsolète</span><span class="badge badge-light-danger">{{ implode(' / ', $state) }}</span></li>@endforeach</ul>@isset($drilldowns['quotes'])<a class="btn btn-sm btn-light-primary mt-5" href="{{ $drilldowns['quotes'] }}">Explorer les devis</a>@endisset</div></section></div>
-    </div>
-
-    <section class="card mb-6"><div class="card-header"><h2 class="card-title fw-bolder">Interactions Fretiq rapprochées</h2></div><div class="card-body"><p class="text-muted">{{ $dashboard['matched_touches']['label'] ?? 'Interactions observées — sans attribution causale' }}. Cette vue ne crédite jamais une campagne d’un devis, d’une affaire ou d’un revenu.</p><div class="d-flex flex-wrap gap-3"><span class="badge badge-light-primary">{{ number_format((int) ($dashboard['matched_touches']['count'] ?? 0), 0, ',', ' ') }} interactions observées</span><span class="badge badge-light-info">{{ number_format((int) ($dashboard['identity_coverage']['coverage']['matched'] ?? 0), 0, ',', ' ') }} rapprochements déterministes</span>@if(($dashboard['matched_touches']['items_truncated'] ?? false) === true)<span class="text-muted small">Liste limitée aux 100 événements les plus récents.</span>@endif</div><div class="mt-4">@forelse(($dashboard['matched_touches']['items'] ?? []) as $touch)<span class="badge badge-light me-1 mb-1">{{ $touch['event_type'] }} · {{ $touch['event_at'] }}</span>@empty <span class="text-muted">Aucune interaction déterministe sur cette période.</span>@endforelse</div></div></section>
 
     @push('styles')
         <style>
-            .marketing-hero { background: linear-gradient(125deg, #102744 0%, #175a7f 55%, #10a7a0 100%); }
-            .marketing-hero .text-white-75 { color: rgba(255,255,255,.78); }
-            .marketing-orb { position:absolute; border-radius:50%; background:rgba(255,255,255,.08); pointer-events:none; }
-            .marketing-orb-one { width:250px; height:250px; right:7%; top:-145px; } .marketing-orb-two { width:150px; height:150px; right:29%; bottom:-105px; }
-            .marketing-attribution-note { max-width:360px; } .marketing-kpi { border:1px solid var(--bs-gray-200); }
-            .marketing-icon { width:46px; height:46px; border-radius:12px; display:inline-flex; align-items:center; justify-content:center; }
-            .marketing-attention-list li { display:flex; justify-content:space-between; gap:1rem; padding:.7rem 0; border-bottom:1px dashed var(--bs-gray-300); }
-            @media (max-width: 767.98px) { .marketing-hero .card-body { min-height:240px; } .marketing-attribution-note { max-width:none; } }
+            .ceo-kpi,.ceo-decision-card{border:1px solid var(--bs-gray-200)}
+            .ceo-decision-card{background:var(--bs-body-bg)}
+            .ceo-decision-card:focus-visible{outline:3px solid var(--bs-primary);outline-offset:2px}
+            .ceo-decision-card[aria-pressed="true"]{border-color:var(--bs-primary)!important;background:var(--bs-primary-light,#eef6ff);box-shadow:0 0 0 .2rem rgba(var(--bs-primary-rgb),.15)}
+            .ceo-decision-card:disabled{cursor:not-allowed;opacity:.68}
+            .ceo-filter-scope{display:inline-flex;align-items:center;padding:.35rem .55rem;border:1px solid currentColor;border-radius:.475rem;font-size:.75rem;font-weight:700;line-height:1.2}
+            .ceo-filter-scope-danger{color:var(--bs-danger);background:var(--bs-danger-light,#fff5f8)}
+            .ceo-filter-scope-warning{color:var(--bs-warning-text-emphasis,#8a5d00);background:var(--bs-warning-light,#fff8dd)}
+            .ceo-table{overflow-x:auto}
+            .modal-dialog-end{margin-left:auto;margin-right:1rem;max-width:460px}
+            @media(max-width:767.98px){
+                .ceo-control-tower>header .text-xl-end{width:100%;min-width:0}
+                .ceo-control-tower>header .badge{max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:start}
+                .ceo-action-table-wrap{overflow:visible!important}
+                .ceo-action-table{display:block;width:100%;min-width:0!important}
+                .ceo-action-table thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+                .ceo-action-table thead tr,.ceo-action-table thead th{display:block!important;width:1px!important;min-width:0!important;max-width:1px!important;height:1px!important;padding:0!important;margin:0!important;overflow:hidden!important;border:0!important}
+                .ceo-action-table tbody{display:grid;gap:1rem;width:100%}
+                .ceo-action-table tr[data-ceo-row]{display:grid;width:100%;padding:.35rem .8rem;border:1px solid var(--bs-gray-300);border-radius:.65rem;background:var(--bs-body-bg);box-shadow:0 .15rem .5rem rgba(0,0,0,.04)}
+                .ceo-action-table tr[data-ceo-row][hidden],.ceo-action-table tr.ceo-action-empty[hidden]{display:none!important}
+                .ceo-action-table tr[data-ceo-row]>td{display:grid!important;grid-template-columns:minmax(7.5rem,38%) minmax(0,1fr);gap:.75rem;padding:.7rem 0!important;border-bottom:1px dashed var(--bs-gray-300);overflow-wrap:anywhere;white-space:normal}
+                .ceo-action-table tr[data-ceo-row]>td::before{content:attr(data-label);color:var(--bs-gray-700);font-size:.75rem;font-weight:700;line-height:1.35;text-transform:uppercase}
+                .ceo-action-table tr[data-ceo-row]>td:last-child{border-bottom:0}
+                .ceo-action-table tr[data-ceo-row] button{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+                .ceo-action-table tr.ceo-action-empty{display:block;width:100%;border:1px dashed var(--bs-gray-300);border-radius:.65rem}
+                .ceo-action-table tr.ceo-action-empty>td{display:block!important;width:100%;padding:1rem!important;border:0;text-align:start!important;white-space:normal}
+                .modal-dialog-end{margin:0;max-width:none;height:100%}
+                .modal-dialog-end .modal-content{min-height:100%;border-radius:0}
+            }
         </style>
     @endpush
+    @push('scripts')<script>
+        (() => {
+            const initialize = () => {
+                const root = document.querySelector('[data-ceo-root]');
+                if (!root || root.dataset.ceoTowerInit) return;
+                root.dataset.ceoTowerInit = '1';
+                const queue = {{ \Illuminate\Support\Js::from($queue) }};
+                const queueCompleteness = {{ \Illuminate\Support\Js::from($queueCompleteness) }};
+                const overallQueueCompleteness = {{ \Illuminate\Support\Js::from($overallQueueCompleteness) }};
+                let selection = 'all'; let filterKind = 'priority'; let opener = null;
+                const owner = root.querySelector('[data-ceo-owner]'); const emptyRow = root.querySelector('[data-ceo-empty-filter]');
+                const rows = Array.from(root.querySelectorAll('[data-ceo-row]'));
+                const filter = () => {
+                    let visible = 0;
+                    rows.forEach((row) => {
+                        const priorityMatch = selection === 'all' || (filterKind === 'signal'
+                            ? (row.dataset.signals || '').split(',').includes(selection)
+                            : row.dataset.priority === selection);
+                        const show = priorityMatch && (!owner || owner.value === 'all' || row.dataset.owner === owner.value);
+                        row.hidden = !show;
+                        if (show) visible++;
+                    });
+                    if (!emptyRow) return;
+                    const completeness = selection === 'all' ? overallQueueCompleteness : (queueCompleteness[selection] || 'unavailable');
+                    const message = completeness === 'complete'
+                        ? 'Aucun compte ne correspond aux filtres affichés.'
+                        : (completeness === 'partial'
+                            ? 'Aucune action prouvée dans le sous-ensemble connu · sources partielles.'
+                            : 'Indisponible · cette priorité ne peut pas être calculée.');
+                    const cell = emptyRow.querySelector('td');
+                    if (cell) cell.textContent = message;
+                    emptyRow.hidden = rows.length === 0 || visible !== 0;
+                };
+                const tabs = Array.from(root.querySelectorAll('[data-ceo-tab]'));
+                const activateTab = (button, focus = false) => { const today = button.dataset.ceoTab === 'today'; root.querySelector('#ceo-today').hidden = !today; root.querySelector('#ceo-pilotage').hidden = today; tabs.forEach((item) => { const active = item === button; item.setAttribute('aria-selected', active ? 'true' : 'false'); item.setAttribute('tabindex', active ? '0' : '-1'); item.className = 'btn btn-sm ' + (active ? 'btn-primary' : 'btn-light'); }); if (focus) button.focus(); };
+                tabs.forEach((button, index) => { button.addEventListener('click', () => activateTab(button)); button.addEventListener('keydown', (event) => { let next = null; if (event.key === 'ArrowRight') next = (index + 1) % tabs.length; if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length; if (event.key === 'Home') next = 0; if (event.key === 'End') next = tabs.length - 1; if (next === null) return; event.preventDefault(); activateTab(tabs[next], true); }); });
+                root.querySelectorAll('[data-ceo-priority], [data-ceo-decision]').forEach((button) => button.addEventListener('click', () => { if (button.disabled || button.getAttribute('aria-disabled') === 'true') return; filterKind = button.dataset.ceoDecision ? 'signal' : 'priority'; selection = button.dataset.ceoDecision || button.dataset.ceoPriority || 'all'; root.querySelectorAll('[data-ceo-priority], [data-ceo-decision]').forEach((item) => { const active = item === button; item.setAttribute('aria-pressed', active ? 'true' : 'false'); if (item.dataset.ceoPriority) item.className = 'btn btn-sm ' + (active ? 'btn-primary' : 'btn-light'); }); filter(); root.querySelector('#ceo-today').scrollIntoView({ block: 'start', behavior: 'smooth' }); }));
+                owner?.addEventListener('change', filter);
+                const modal = document.getElementById('ceo-drawer'); const simulate = document.getElementById('ceo-simulate');
+                root.addEventListener('click', (event) => { const button = event.target.closest('[data-ceo-open]'); if (!button) return; const item = queue[Number(button.dataset.ceoOpen)]; if (!item) return; opener = button; document.getElementById('ceo-drawer-title').textContent = item.account || 'Compte non nommé'; const body = document.getElementById('ceo-drawer-body'); body.replaceChildren(); const signals = Array.isArray(item.signals) && item.signals.length > 0 ? item.signals.join(' · ') : 'Indisponible'; [['Contact masqué', item.contact || 'Indisponible'], ['Pourquoi maintenant', (item.reasons || []).join(' · ') || 'Indisponible'], ['Contexte', item.quote_context || 'Indisponible'], ['Dernière action humaine prouvée', item.last_proven_action || 'Indisponible'], ['Canal', item.channel || 'Indisponible'], ['Propriétaire', item.owner || 'Propriétaire Zoho indisponible'], ['Échéance', item.deadline || 'Indisponible'], ['Confiance', item.confidence || 'Indisponible'], ['Signaux', signals], ['Recommandation', item.recommended_action || 'Indisponible']].forEach(([heading, value]) => { const p = document.createElement('p'); const strong = document.createElement('strong'); strong.textContent = heading; p.append(strong, document.createElement('br'), document.createTextNode(String(value))); body.append(p); }); const note = document.createElement('p'); note.className = 'text-muted small'; note.textContent = 'Simulation uniquement : aucune action Zoho ne sera effectuée.'; body.append(note); simulate.textContent = 'Préparer l’action'; window.bootstrap?.Modal.getOrCreateInstance(modal).show(); });
+                modal?.addEventListener('hidden.bs.modal', () => opener?.focus()); simulate?.addEventListener('click', () => { simulate.textContent = 'Simulation uniquement'; });
+            };
+            if (!window.__ceoTowerNavigationBound) { window.__ceoTowerNavigationBound = true; document.addEventListener('livewire:navigated', initialize); document.addEventListener('DOMContentLoaded', initialize, { once: true }); }
+            initialize();
+        })();
+    </script>@endpush
 </x-default-layout>

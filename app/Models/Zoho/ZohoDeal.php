@@ -11,7 +11,7 @@ class ZohoDeal extends ZohoMirror
 
     protected function casts(): array
     {
-        return parent::casts() + ['amount' => 'decimal:2', 'probability' => 'decimal:4', 'weighted_amount' => 'decimal:2', 'closing_date' => 'date'];
+        return parent::casts() + ['amount' => 'decimal:2', 'probability' => 'decimal:4', 'weighted_amount' => 'decimal:2', 'closing_date' => 'date', 'exchange_rate' => 'decimal:6', 'quantity' => 'integer', 'last_activity_at' => 'datetime', 'stage_modified_at' => 'datetime', 'tags' => 'array'];
     }
 
     public function account(): BelongsTo

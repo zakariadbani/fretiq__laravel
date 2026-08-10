@@ -27,10 +27,6 @@ final class ZohoStandardRecoveryService
     /** @return array{module_jobs:int,post_jobs:int} */
     public function recover(): array
     {
-        if (! config('zoho-v2.features.sync_enabled', false)) {
-            return ['module_jobs' => 0, 'post_jobs' => 0];
-        }
-
         $moduleJobs = 0;
         // A worker can die after writing the final module log but before its
         // ordinary finalize call. Finalization is idempotent and repairs that
@@ -97,16 +93,23 @@ final class ZohoStandardRecoveryService
     private function claimModuleContinuation(int $checkpointId): ?array
     {
         return DB::transaction(function () use ($checkpointId): ?array {
-            $checkpoint = ZohoSyncCheckpoint::query()->lockForUpdate()->find($checkpointId);
-            if ($checkpoint === null || $checkpoint->sync_batch_id === null || $checkpoint->correlation_id === null
-                || ! $this->checkpointIsRecoverable($checkpoint)) {
+            // Discover ownership without a row lock, then acquire the global
+            // runtime order: authoritative batch before checkpoint.
+            $ownerBatchId = ZohoSyncCheckpoint::query()->whereKey($checkpointId)->value('sync_batch_id');
+            if ($ownerBatchId === null) {
                 return null;
             }
-            $batch = ZohoSyncBatch::query()->lockForUpdate()->find($checkpoint->sync_batch_id);
+            $batch = ZohoSyncBatch::query()->lockForUpdate()->find($ownerBatchId);
+            $checkpoint = ZohoSyncCheckpoint::query()->lockForUpdate()->find($checkpointId);
+            if ($checkpoint === null || (int) $checkpoint->sync_batch_id !== (int) $ownerBatchId
+                || $checkpoint->correlation_id === null || ! $this->checkpointIsRecoverable($checkpoint)) {
+                return null;
+            }
             $moduleKey = str_starts_with((string) $checkpoint->module, 'v2:')
                 ? substr((string) $checkpoint->module, 3)
                 : null;
             if ($moduleKey === null || $moduleKey === '' || $batch === null || $batch->completed_at !== null
+                || ! in_array($batch->status, ['queued', 'running'], true)
                 || ! hash_equals((string) $batch->correlation_id, (string) $checkpoint->correlation_id)
                 || ! in_array($moduleKey, (array) $batch->modules, true)) {
                 return null;
@@ -219,7 +222,9 @@ final class ZohoStandardRecoveryService
         return DB::transaction(function () use ($batch, $moduleKey): bool {
             $definition = $this->registry->get($moduleKey);
             $fresh = ZohoSyncBatch::query()->lockForUpdate()->find($batch->id);
-            if ($fresh === null || $fresh->completed_at !== null || ! in_array($moduleKey, (array) $fresh->modules, true)) {
+            if ($fresh === null || $fresh->completed_at !== null
+                || ! in_array($fresh->status, ['queued', 'running'], true)
+                || ! in_array($moduleKey, (array) $fresh->modules, true)) {
                 return false;
             }
             // A Bulk root is the durable hand-off marker. Check it before the
@@ -240,8 +245,12 @@ final class ZohoStandardRecoveryService
             $submodule = $definition->submodule ?? '';
             $checkpoint = ZohoSyncCheckpoint::query()->where('module', 'v2:'.$moduleKey)->where('submodule', $submodule)->lockForUpdate()->first();
             if ($checkpoint !== null) {
-                $priorBatch = $checkpoint->sync_batch_id === null ? null : ZohoSyncBatch::query()->lockForUpdate()->find($checkpoint->sync_batch_id);
-                if ($priorBatch !== null && $priorBatch->completed_at === null) {
+                $priorBatchIsUnfinished = $checkpoint->sync_batch_id !== null
+                    && ZohoSyncBatch::query()
+                        ->whereKey($checkpoint->sync_batch_id)
+                        ->whereNull('completed_at')
+                        ->exists();
+                if ($priorBatchIsUnfinished) {
                     return false;
                 }
                 // Keep the module cursor/counters: this is a new batch delivery,

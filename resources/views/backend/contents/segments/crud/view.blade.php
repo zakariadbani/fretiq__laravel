@@ -58,8 +58,6 @@
             if (is_array($funnel)) {
                 if (!empty($funnel['matched']))             { $funnelParts[] = ['label' => (string)$funnel['matched'] . ' correspondants',   'class' => '']; }
                 if (!empty($funnel['suppressed']))          { $funnelParts[] = ['label' => '− ' . $funnel['suppressed'] . ' suppression',     'class' => '']; }
-                if (!empty($funnel['cold_excluded']))       { $funnelParts[] = ['label' => $funnel['cold_excluded'] . ' en attente (envoi à froid)', 'class' => 'text-warning']; }
-                if (!empty($funnel['personal_excluded']))   { $funnelParts[] = ['label' => '− ' . $funnel['personal_excluded'] . ' personnels', 'class' => '']; }
                 if (!empty($funnel['duplicates_excluded'])) { $funnelParts[] = ['label' => '− ' . $funnel['duplicates_excluded'] . ' doublons', 'class' => '']; }
                 if (isset($funnel['final']))                { $funnelParts[] = ['label' => '= ' . $funnel['final'] . ' destinataires éligibles',          'class' => 'fw-semibold']; }
             }
@@ -141,13 +139,6 @@
                                         <span class="text-secondary">−{{ $pinnedOut }} exclu{{ $pinnedOut > 1 ? 's' : '' }}</span>
                                     @endif
                                 </p>
-                            </div>
-                        @endif
-
-                        @if(!empty($stats['funnel']['cold_excluded']) && ! config('prospecting.cold_send_enabled', false))
-                            <div class="alert alert-warning d-flex align-items-center py-3 fs-7 mt-3 mb-0" role="alert">
-                                <i class="bi bi-exclamation-triangle-fill me-2"></i>
-                                <span>{{ $stats['funnel']['cold_excluded'] }} prospect(s) en attente — l'envoi à froid est désactivé. Les clients reçoivent l'email ; les prospects seront contactés dès son activation.</span>
                             </div>
                         @endif
 

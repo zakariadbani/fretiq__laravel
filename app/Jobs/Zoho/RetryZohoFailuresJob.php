@@ -56,10 +56,6 @@ final class RetryZohoFailuresJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(): void
     {
-        if (! config('zoho-v2.features.sync_enabled', false)) {
-            return;
-        }
-
         app(ZohoFailureRetryService::class)->retry($this->module, $this->limit);
     }
 

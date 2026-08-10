@@ -300,6 +300,92 @@
                 </div>
             </div>
         </div>
+
+        <div class="tab-pane fade" id="sender_smtp" role="tabpanel">
+            <div class="card mb-5">
+                <div class="card-header border-0 pt-5">
+                    <h3 class="card-title fw-bolder m-0">
+                        <i class="bi bi-send-fill text-primary fs-3 me-2"></i>
+                        Envoi SMTP direct
+                    </h3>
+                </div>
+                <div class="card-body border-top p-9">
+                    @if((string) config('app.env') !== 'production' || config('prospecting.smtp.mode', 'mailpit') !== 'sender_identity')
+                        <div class="alert alert-info d-flex align-items-center mb-7">
+                            <i class="bi bi-inbox fs-2 text-info me-3"></i>
+                            <strong>Mode local — email capturé par Mailpit.</strong>
+                        </div>
+                    @endif
+
+                    <div class="form-check form-switch form-check-custom form-check-solid mb-7">
+                        <input type="hidden" name="smtp_enabled" value="0">
+                        <input class="form-check-input" type="checkbox" name="smtp_enabled" id="smtp_enabled" value="1"
+                               {{ old('smtp_enabled', $model->smtp_enabled ?? false) ? 'checked' : '' }}>
+                        <label class="form-check-label fw-semibold ms-3" for="smtp_enabled">Activer SMTP pour cette identité</label>
+                    </div>
+
+                    <div class="row g-5">
+                        <div class="col-md-8 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">Hôte SMTP</label>
+                            <input type="text" name="smtp_host" class="form-control form-control-solid"
+                                   placeholder="smtp.example.com" value="{{ old('smtp_host', $model->smtp_host ?? '') }}">
+                        </div>
+                        <div class="col-md-4 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">Port</label>
+                            <input type="number" min="1" max="65535" name="smtp_port" class="form-control form-control-solid"
+                                   value="{{ old('smtp_port', $model->smtp_port ?? 587) }}">
+                        </div>
+                        <div class="col-md-6 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">Utilisateur</label>
+                            <input type="text" name="smtp_username" autocomplete="username" class="form-control form-control-solid"
+                                   value="{{ old('smtp_username', $model->smtp_username ?? '') }}">
+                        </div>
+                        <div class="col-md-6 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">Mot de passe</label>
+                            <div class="input-group">
+                                <input type="password" id="smtp_password" name="smtp_password" autocomplete="new-password"
+                                       class="form-control form-control-solid" value="" placeholder="Laisser vide pour conserver le mot de passe">
+                                <button class="btn btn-light" type="button" id="toggle_smtp_password" aria-label="Afficher le mot de passe">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="col-md-4 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">Chiffrement</label>
+                            <select name="smtp_encryption" class="form-select form-select-solid">
+                                @foreach(['tls' => 'TLS (STARTTLS obligatoire)', 'ssl' => 'SSL/TLS implicite'] as $value => $label)
+                                    <option value="{{ $value }}" @selected(old('smtp_encryption', $model->smtp_encryption ?? 'tls') === $value)>{{ $label }}</option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="col-md-4 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">Plafond par heure</label>
+                            <input type="number" min="1" max="100" name="smtp_hourly_limit" class="form-control form-control-solid"
+                                   value="{{ old('smtp_hourly_limit', $model->smtp_hourly_limit ?? 10) }}">
+                        </div>
+                        <div class="col-md-4 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">Plafond par jour</label>
+                            <input type="number" min="1" max="500" name="smtp_daily_limit" class="form-control form-control-solid"
+                                   value="{{ old('smtp_daily_limit', $model->smtp_daily_limit ?? 50) }}">
+                        </div>
+                    </div>
+
+                    <div class="border-top mt-8 pt-7">
+                        <label class="fw-semibold fs-6 mb-2" for="smtp_test_recipient">Destinataire du test</label>
+                        <div class="input-group">
+                            <input type="email" id="smtp_test_recipient" class="form-control form-control-solid"
+                                   placeholder="vous@example.com" autocomplete="off">
+                            <button type="button" id="test_smtp_connection" class="btn btn-light-primary"
+                                    data-url="{{ route('admin.sender_identities.testSmtp', $model->id) }}" data-kt-indicator="off">
+                                <span class="indicator-label"><i class="bi bi-send me-2"></i>Envoyer le test</span>
+                                <span class="indicator-progress">Envoi… <span class="spinner-border spinner-border-sm ms-2"></span></span>
+                            </button>
+                        </div>
+                        <div class="form-text">Un succès confirme l’acceptation par SMTP, pas le placement en boîte principale.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
         @endif
     </div>
     {{-- end tab-content --}}
@@ -357,6 +443,59 @@
                     });
                 } catch (error) {
                     await Swal.fire({ text: 'Connexion IMAP impossible.', icon: 'error', confirmButtonText: 'Fermer' });
+                } finally {
+                    button.setAttribute('data-kt-indicator', 'off');
+                    button.disabled = false;
+                }
+            });
+        }());
+
+        (function () {
+            var password = document.getElementById('smtp_password');
+            var toggle = document.getElementById('toggle_smtp_password');
+            if (password && toggle) {
+                toggle.addEventListener('click', function () {
+                    password.type = password.type === 'password' ? 'text' : 'password';
+                    toggle.querySelector('i').className = password.type === 'password' ? 'bi bi-eye' : 'bi bi-eye-slash';
+                });
+            }
+
+            var button = document.getElementById('test_smtp_connection');
+            if (!button) return;
+            button.addEventListener('click', async function () {
+                button.setAttribute('data-kt-indicator', 'on');
+                button.disabled = true;
+                try {
+                    var payload = {
+                        receiver_email: document.getElementById('smtp_test_recipient').value,
+                        smtp_enabled: document.getElementById('smtp_enabled').checked ? 1 : 0,
+                        smtp_host: document.querySelector('[name="smtp_host"]').value,
+                        smtp_port: document.querySelector('[name="smtp_port"]').value,
+                        smtp_username: document.querySelector('[name="smtp_username"]').value,
+                        smtp_password: password.value,
+                        smtp_encryption: document.querySelector('[name="smtp_encryption"]').value,
+                        smtp_hourly_limit: document.querySelector('[name="smtp_hourly_limit"]').value,
+                        smtp_daily_limit: document.querySelector('[name="smtp_daily_limit"]').value
+                    };
+                    var response = await fetch(button.dataset.url, {
+                        method: 'POST',
+                        headers: {
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                    var data = await response.json();
+                    await Swal.fire({
+                        text: data.message || (response.ok ? 'Message accepté.' : 'Connexion impossible.'),
+                        icon: response.ok ? 'success' : 'error',
+                        buttonsStyling: false,
+                        confirmButtonText: 'Fermer',
+                        customClass: { confirmButton: 'btn btn-primary' }
+                    });
+                } catch (error) {
+                    await Swal.fire({ text: 'Connexion SMTP impossible.', icon: 'error', confirmButtonText: 'Fermer' });
                 } finally {
                     button.setAttribute('data-kt-indicator', 'off');
                     button.disabled = false;
