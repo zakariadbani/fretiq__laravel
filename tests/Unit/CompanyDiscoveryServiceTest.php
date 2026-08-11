@@ -4,6 +4,7 @@ namespace Tests\Unit;
 
 use App\Models\Company;
 use App\Models\DiscoveryRun;
+use App\Models\ProviderCall;
 use App\Models\ProspectCriteria;
 use App\Models\Setting;
 use App\Services\Discovery\CompanyDiscoveryService;
@@ -670,6 +671,34 @@ class CompanyDiscoveryServiceTest extends TestCase
         $this->assertSame(10, (int) data_get($criteria->refresh()->discovery_cursors, md5('budget query').'.start'));
     }
 
+    public function test_live_run_settles_provider_audit_without_double_debiting_legacy_quota(): void
+    {
+        config([
+            'services.serpapi.driver' => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+        ]);
+
+        Http::fake(['*' => Http::response([
+            'organic_results' => [$this->serpResult('ledgered.test')],
+        ], 200)]);
+
+        $criteria = $this->makePersistedCriteria([
+            'ai_queries' => [['q' => 'ledger query', 'enabled' => true]],
+        ]);
+        $run = $this->makeRun($criteria);
+        $run->update(['searches_reserved' => 1]);
+
+        $this->service->discoverForRun($criteria, $run, 1);
+
+        $this->assertSame(1, $run->fresh()->searches_consumed);
+        $call = ProviderCall::query()->sole();
+        $this->assertSame('succeeded', $call->status);
+        $this->assertSame('google', $call->engine);
+        $this->assertSame(1, $call->result_count);
+        $this->assertSame(0.0, (float) $call->reserved_units);
+        $this->assertSame(0.0, (float) $call->consumed_units);
+    }
+
     public function test_live_discovery_call_budget_two_searches_can_append_two_pages(): void
     {
         config([
@@ -1004,6 +1033,9 @@ class CompanyDiscoveryServiceTest extends TestCase
         $this->assertSame([], $snapshot);
         $this->assertNull($run->refresh()->candidates_snapshot);
         $this->assertSame(10, (int) data_get($criteria->refresh()->discovery_cursors, "{$key}.start"));
+        $call = ProviderCall::query()->sole();
+        $this->assertSame('succeeded', $call->status);
+        $this->assertSame('cursor_mismatch', $call->metadata['reason']);
     }
 
     public function test_live_discovery_rotates_to_next_query_each_run(): void

@@ -168,6 +168,11 @@ class ZohoCampaignsDriver implements CampaignsClient
         return 'zoho';
     }
 
+    public function supportsBounceFeedback(Campaign $campaign): bool
+    {
+        return false;
+    }
+
     /**
      * NOT VALID for the Zoho driver — Zoho is list/campaign-based, not per-recipient.
      *

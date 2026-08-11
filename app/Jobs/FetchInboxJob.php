@@ -3,7 +3,11 @@
 namespace App\Jobs;
 
 use App\Models\SenderIdentity;
+use App\Models\CampaignRecipient;
+use App\Models\SequenceStepSend;
 use App\Models\Setting;
+use App\Services\Campaign\CampaignFeedbackService;
+use App\Services\Inbox\DeliveryStatusNotificationParser;
 use App\Services\Inbox\InboxImapService;
 use App\Services\Inbox\ReplyMatchingService;
 use Illuminate\Bus\Queueable;
@@ -45,7 +49,12 @@ class FetchInboxJob implements ShouldQueue, ShouldBeUnique
         ];
     }
 
-    public function handle(InboxImapService $imap, ReplyMatchingService $matcher): void
+    public function handle(
+        InboxImapService $imap,
+        ReplyMatchingService $matcher,
+        ?DeliveryStatusNotificationParser $dsnParser = null,
+        ?CampaignFeedbackService $feedback = null,
+    ): void
     {
         $identity = SenderIdentity::find($this->senderIdentityId);
         if ($identity === null
@@ -60,10 +69,23 @@ class FetchInboxJob implements ShouldQueue, ShouldBeUnique
             $days = Setting::get('inbox.refresh_days', 7);
             $days = is_numeric($days) ? max(1, min(90, (int) $days)) : 7;
             $messageFailure = null;
+            $dsnParser ??= app(DeliveryStatusNotificationParser::class);
+            $feedback ??= app(CampaignFeedbackService::class);
 
             foreach ($imap->streamAll($identity, now()->subDays($days)) as $message) {
                 try {
-                    DB::transaction(function () use ($identity, $message, $imap, $matcher): void {
+                    DB::transaction(function () use ($identity, $message, $imap, $matcher, $dsnParser, $feedback): void {
+                        $dsn = $dsnParser->parse($imap->rawMessage($message));
+                        if ($dsn !== null) {
+                            $delivery = $dsn['target_type'] === 'campaign_recipient'
+                                ? CampaignRecipient::find($dsn['target_id'])
+                                : SequenceStepSend::find($dsn['target_id']);
+                            if ($delivery !== null) {
+                                $feedback->apply($delivery, $dsn['outcome'], now(), $dsn['detail'], 'dsn');
+
+                                return;
+                            }
+                        }
                         $email = $imap->storeMessage($identity, $message);
                         if ($email !== null) {
                             $matcher->match($email, $imap->threadReferences($message));

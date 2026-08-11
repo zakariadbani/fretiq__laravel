@@ -1,0 +1,63 @@
+<x-default-layout>
+
+@section('title', 'Lots de prospection')
+
+@section('breadcrumbs')
+    <x-crud.breadcrumb :items="[['label' => 'Prospection'], ['label' => 'Lots']]" />
+@endsection
+
+<div class="card">
+    <div class="card-header border-0 pt-6">
+        <div class="card-title">
+            <div class="d-flex align-items-center position-relative my-1">
+                {!! getIcon('magnifier', 'fs-3 position-absolute ms-5') !!}
+                <input type="text" data-kt-table-filter="search" id="mySearchInput"
+                       class="form-control form-control-solid w-250px ps-13"
+                       placeholder="Rechercher un lot" aria-label="Rechercher un lot">
+            </div>
+        </div>
+        <div class="card-toolbar">
+            <div class="d-flex justify-content-end" data-kt-table-toolbar="base">
+                <button type="button" class="btn btn-light-primary me-3"
+                        data-kt-menu-trigger="click" data-kt-menu-placement="bottom-end">
+                    {!! getIcon('filter', 'fs-2', '', 'i') !!} Filtrer
+                </button>
+                <div class="menu menu-sub menu-sub-dropdown w-300px w-md-325px" data-kt-menu="true">
+                    <div class="px-7 py-5"><div class="fs-5 text-gray-900 fw-bold">Options de filtrage</div></div>
+                    <div class="separator border-gray-200"></div>
+                    <div class="px-7 py-5" data-kt-table-filter="form">
+                        <div id="filters-container"></div>
+                        <div class="d-flex justify-content-end">
+                            <button type="reset" class="btn btn-light me-2" data-kt-menu-dismiss="true" data-kt-table-filter="reset">Réinitialiser</button>
+                            <button type="submit" class="btn btn-primary" data-kt-menu-dismiss="true" data-kt-table-filter="filter">Appliquer</button>
+                        </div>
+                    </div>
+                </div>
+                @can('create prospect_batches')
+                    <a href="{{ route('admin.prospect_batches.create') }}" class="btn btn-primary">
+                        <i class="bi bi-plus-lg fs-2"></i> Importer des entreprises
+                    </a>
+                @endcan
+            </div>
+        </div>
+    </div>
+    <div id="active-filters-bar" class="d-none px-9 pt-3">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <span class="fw-semibold text-gray-700">Filtres actifs :</span>
+            <div id="active-filters-badges" class="d-flex flex-wrap gap-2" aria-live="polite"></div>
+            <button type="button" id="clear-all-filters" class="btn btn-sm btn-light-primary d-none">Tout effacer</button>
+        </div>
+    </div>
+    <div class="card-body py-4">
+        <div class="table-responsive">
+            {{ $dataTable->table(['class' => 'table align-middle table-row-dashed fs-6 gy-5']) }}
+        </div>
+        <div class="d-md-none text-center text-muted py-4">
+            Touchez le nom d’un lot pour ouvrir son détail.
+        </div>
+    </div>
+</div>
+
+<x-crud.datatable-init :data-table="$dataTable" :data-table-config="$dataTableConfig" />
+
+</x-default-layout>

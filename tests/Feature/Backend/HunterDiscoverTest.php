@@ -67,86 +67,109 @@ class HunterDiscoverTest extends TestCase
         $response->assertOk();
         $response->assertSee('Target &lt;script&gt;', false);
         $response->assertSee('Exclude &amp; rivals', false);
+        $response->assertSee('Vérifier la cible');
+        $response->assertSee('Continuer vers la confirmation');
+        $response->assertSee('ne consomme aucun crédit');
+        $response->assertDontSee('Entreprises proposées');
     }
 
-    public function test_import_lock_prevents_duplicate_entry(): void
+    public function test_draft_lock_prevents_duplicate_batch_creation(): void
     {
         $criteria = $this->criteria();
-        $previewId = $this->preview($criteria, [[
-            'domain' => 'locked.test',
-            'organization' => 'Locked',
-            'emails_count' => ['personal' => 0, 'generic' => 0, 'total' => 0],
-        ]]);
-        $lock = Cache::lock('hunter-discover-import:'.$previewId, 30);
+        $payload = ['target' => 'transport', 'exclude' => ''];
+        $lock = Cache::lock('hunter-discover-draft:'.sha1(
+            $this->user->id.':'.$criteria->id.':transport:',
+        ), 30);
         $this->assertTrue($lock->get());
 
         try {
             $this->actingAs($this->user)
-                ->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), ['preview_id' => $previewId, 'domains' => ['locked.test']])
+                ->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), $payload)
                 ->assertStatus(423);
-            $this->assertDatabaseMissing('companies', ['domain' => 'locked.test']);
+            $this->assertDatabaseCount('prospect_batches', 0);
         } finally {
             $lock->release();
         }
 
         $this->actingAs($this->user)
-            ->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), ['preview_id' => $previewId, 'domains' => ['locked.test']])
-            ->assertOk()
-            ->assertJson(['imported' => 1]);
-        $this->assertSame(1, Company::withRejected()->where('domain', 'locked.test')->count());
+            ->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), $payload)
+            ->assertCreated()
+            ->assertJsonPath('status', 'draft');
+        $this->assertDatabaseCount('prospect_batches', 1);
+        $this->assertDatabaseCount('companies', 0);
     }
-    public function test_preview_annotates_new_current_rejected_and_other_companies(): void
+
+    public function test_preview_is_local_and_does_not_annotate_or_mutate_existing_companies(): void
     {
         $criteria = $this->criteria();
         $other = $this->criteria();
         Company::create(['criteria_id' => $criteria->id, 'domain' => 'geodis.com', 'name' => 'Keep', 'qualification_status' => 'qualified']);
         Company::create(['criteria_id' => $criteria->id, 'domain' => 'clasquin.com', 'name' => 'Rejected', 'qualification_status' => 'rejected']);
         Company::create(['criteria_id' => $other->id, 'domain' => 'bolloretransport.com', 'name' => 'Other']);
+        config(['services.hunter.driver' => 'hunter', 'services.hunter.api_key' => 'test-key']);
+        Http::preventStrayRequests();
 
-        $companies = $this->actingAs($this->user)->postJson(route('admin.prospect_criteria.hunter_discover_preview', $criteria), ['target' => 'transport'])->assertOk()->json('companies');
-        $statuses = collect($companies)->pluck('status', 'domain');
+        $response = $this->actingAs($this->user)
+            ->postJson(route('admin.prospect_criteria.hunter_discover_preview', $criteria), ['target' => 'transport'])
+            ->assertOk()
+            ->assertJsonMissingPath('companies')
+            ->assertJsonPath('draft.source_type', 'discover');
 
-        $this->assertSame('existing_current', $statuses['geodis.com']);
-        $this->assertSame('rejected_current', $statuses['clasquin.com']);
-        $this->assertSame('existing_other', $statuses['bolloretransport.com']);
+        $this->assertStringContainsString('Cible: transport.', $response->json('prompt'));
+        $this->assertDatabaseCount('companies', 3);
+        $this->assertDatabaseCount('prospect_batches', 0);
+        Http::assertNothingSent();
     }
 
-    public function test_import_creates_reactivates_skips_and_preserves_existing_profiles(): void
+    public function test_import_creates_only_a_draft_and_preserves_existing_company_profiles(): void
     {
         $criteria = $this->criteria();
         $other = $this->criteria();
         $rejected = Company::create(['criteria_id' => $criteria->id, 'domain' => 'rejected.test', 'name' => 'Preserve', 'sector' => 'Special', 'qualification_status' => 'rejected']);
-        Company::create(['criteria_id' => $other->id, 'domain' => 'other.test', 'name' => 'Other']);
-        $previewId = $this->preview($criteria, [
-            ['domain' => 'new.test', 'organization' => 'New Co', 'emails_count' => ['personal' => 1, 'generic' => 0, 'total' => 1]],
-            ['domain' => 'rejected.test', 'organization' => 'Overwrite', 'emails_count' => ['personal' => 0, 'generic' => 0, 'total' => 0]],
-            ['domain' => 'other.test', 'organization' => 'Other overwrite', 'emails_count' => ['personal' => 0, 'generic' => 0, 'total' => 0]],
+        $existingOther = Company::create(['criteria_id' => $other->id, 'domain' => 'other.test', 'name' => 'Other']);
+
+        $response = $this->actingAs($this->user)->postJson(
+            route('admin.prospect_criteria.hunter_discover_import', $criteria),
+            ['target' => 'Exportateurs', 'exclude' => 'Concurrents', 'quality_preset' => 'balanced'],
+        );
+
+        $response->assertCreated()->assertJsonPath('status', 'draft');
+        $this->assertDatabaseHas('prospect_batches', [
+            'id' => $response->json('batch_id'),
+            'source_type' => 'discover',
+            'status' => 'draft',
+            'created_by' => $this->user->id,
+            'prospect_criteria_id' => $criteria->id,
         ]);
-
-        $response = $this->actingAs($this->user)->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), ['preview_id' => $previewId, 'domains' => ['new.test', 'rejected.test', 'other.test']]);
-
-        $response->assertOk()->assertJson(['imported' => 1, 'reactivated' => 1, 'skipped' => 1]);
-        $this->assertStringEndsWith('#criteria_resultats', $response->json('redirect_url'));
-        $this->assertDatabaseHas('companies', ['domain' => 'new.test', 'criteria_id' => $criteria->id, 'name' => 'New Co', 'relationship' => 'prospect', 'source' => 'discovered', 'qualification_status' => 'pending', 'is_active' => 1, 'discovery_query' => 'Prompt provenance']);
+        $this->assertDatabaseCount('companies', 2);
         $this->assertSame('Preserve', $rejected->fresh()->name);
         $this->assertSame('Special', $rejected->fresh()->sector);
-        $this->assertSame('pending', $rejected->fresh()->qualification_status);
-        $this->assertNull(Cache::get('hunter-discover-preview:'.$previewId));
-        $this->actingAs($this->user)->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), ['preview_id' => $previewId, 'domains' => ['new.test']])->assertStatus(410);
+        $this->assertSame('rejected', $rejected->fresh()->qualification_status);
+        $this->assertSame('Other', $existingOther->fresh()->name);
     }
 
-    public function test_import_rejects_expired_wrong_owner_criteria_and_non_preview_subset(): void
+    public function test_import_requires_permission_active_criteria_and_scalar_targeting(): void
     {
         $criteria = $this->criteria();
-        $other = $this->criteria();
-        $missing = (string) Str::uuid();
-        $this->actingAs($this->user)->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), ['preview_id' => $missing, 'domains' => ['x.test']])->assertStatus(410);
+        $withoutPermission = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
+        $withoutPermission->givePermissionTo(['backend.access', 'view prospect_criteria']);
 
-        $id = $this->preview($criteria, [['domain' => 'x.test', 'organization' => null, 'emails_count' => ['personal' => 0, 'generic' => 0, 'total' => 0]]]);
-        $second = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]); $second->assignRole('superadmin');
-        $this->actingAs($second)->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), ['preview_id' => $id, 'domains' => ['x.test']])->assertForbidden();
-        $this->actingAs($this->user)->postJson(route('admin.prospect_criteria.hunter_discover_import', $other), ['preview_id' => $id, 'domains' => ['x.test']])->assertForbidden();
-        $this->actingAs($this->user)->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), ['preview_id' => $id, 'domains' => ['not-preview.test']])->assertStatus(422);
+        $this->actingAs($withoutPermission)
+            ->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), ['target' => 'Transport'])
+            ->assertForbidden();
+        $this->actingAs($this->user)
+            ->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), ['target' => ['invalid']])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('target');
+        $this->actingAs($this->user)
+            ->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), ['target' => ' ', 'exclude' => ' '])
+            ->assertStatus(422);
+
+        $criteria->update(['is_active' => false]);
+        $this->actingAs($this->user)
+            ->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), ['target' => 'Transport'])
+            ->assertStatus(422);
+        $this->assertDatabaseCount('prospect_batches', 0);
     }
 
     private function criteria(array $overrides = []): ProspectCriteria
@@ -154,10 +177,4 @@ class HunterDiscoverTest extends TestCase
         return ProspectCriteria::create(array_merge(['name' => 'Hunter '.Str::random(8), 'sectors' => ['Transport'], 'countries' => ['FR'], 'company_sizes' => ['11-50'], 'daily_limit' => 10, 'is_active' => true], $overrides));
     }
 
-    private function preview(ProspectCriteria $criteria, array $companies): string
-    {
-        $id = (string) Str::uuid();
-        Cache::put('hunter-discover-preview:'.$id, ['user_id' => $this->user->id, 'criteria_id' => $criteria->id, 'prompt' => 'Prompt provenance', 'companies' => $companies], now()->addMinutes(15));
-        return $id;
-    }
 }

@@ -4,12 +4,57 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Domain canonicalization
+    |--------------------------------------------------------------------------
+    | The local PSL snapshot keeps normalization deterministic and avoids a
+    | network dependency during batch processing. Platform hosts are staged for
+    | review instead of being treated as a company's own website.
+    */
+    'public_suffix_list_path' => resource_path('data/public_suffix_list.dat'),
+
+    'platform_domains' => array_values(array_unique(array_merge([
+        'linkedin.com', 'facebook.com', 'instagram.com',
+        'google.com', 'googleusercontent.com',
+        'sharepoint.com', 'github.io', 'wixsite.com', 'wix.com',
+        'myshopify.com', 'shopify.com', 'wordpress.com', 'blogspot.com',
+        'pages.dev', 'herokuapp.com', 'netlify.app', 'vercel.app',
+    ], \App\Support\DomainBlocklist::DEFAULT_DOMAINS))),
+
+    /*
+    |--------------------------------------------------------------------------
     | Cold-send gate
     |--------------------------------------------------------------------------
     | Keep false in local/staging. Production may enable it only after the
     | compliance and deliverability prerequisites have been approved.
     */
     'cold_send_enabled' => env('PROSPECTING_COLD_SEND_ENABLED', false),
+
+    'email_verification_ttl_days' => 90,
+
+    'bounce' => [
+        'soft_limit' => 2,
+        'window_days' => 30,
+        'pause_min_recipients' => 20,
+        'pause_rate_percent' => 10,
+        'feedback_health_minutes' => 15,
+    ],
+
+    'provider_units' => [
+        'hunter' => [
+            // Discover and Domain Finder are free, but still appear in the
+            // provider-call ledger so their rate/allocation usage is visible.
+            'discover' => 0.0,
+            'domain_finder' => 0.0,
+            'domain_search' => 1.0,
+            'company_enrichment' => 0.2,
+            'email_finder' => 1.0,
+            'email_verifier' => 0.5,
+        ],
+        'serpapi' => [
+            'search' => 1.0,
+            'account' => 0.0,
+        ],
+    ],
 
     'smtp' => [
         'mode' => env('PROSPECTING_SMTP_MODE', 'mailpit'),

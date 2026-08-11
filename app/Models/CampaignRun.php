@@ -28,6 +28,7 @@ class CampaignRun extends Model
      */
     protected $fillable = [
         'campaign_id',
+        'source_run_id',
         'sequence_step_id',
         'occurrence_key',
         'run_at',
@@ -70,6 +71,18 @@ class CampaignRun extends Model
     public function campaign(): BelongsTo
     {
         return $this->belongsTo(Campaign::class);
+    }
+
+    /** The completed run this resend was created from. */
+    public function sourceRun(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'source_run_id');
+    }
+
+    /** Resend runs created from this completed source run. */
+    public function resends(): HasMany
+    {
+        return $this->hasMany(self::class, 'source_run_id');
     }
 
     public function sequenceStep(): BelongsTo

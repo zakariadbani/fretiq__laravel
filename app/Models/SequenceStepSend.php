@@ -29,6 +29,9 @@ class SequenceStepSend extends Model
         'step_no',
         'provider_message_id',
         'status',
+        'bounce_type',
+        'bounce_reason',
+        'bounced_at',
         'sent_at',
         'opened_at',
     ];
@@ -41,6 +44,7 @@ class SequenceStepSend extends Model
     protected $casts = [
         'sent_at'   => 'datetime',
         'opened_at' => 'datetime',
+        'bounced_at' => 'datetime',
     ];
 
     // ── Relationships ──────────────────────────────────────────────────────────
@@ -72,6 +76,9 @@ class SequenceStepSend extends Model
             'step_no'             => 'required|integer|min:1',
             'provider_message_id' => 'nullable|string|max:191',
             'status'              => 'nullable|' . ConfigEnum::in('sequence_step_statuses'),
+            'bounce_type'         => 'nullable|string|max:16',
+            'bounce_reason'       => 'nullable|string|max:500',
+            'bounced_at'          => 'nullable|date',
             'sent_at'             => 'nullable|date',
             'opened_at'           => 'nullable|date',
         ];

@@ -9,6 +9,7 @@ use App\Models\Contact;
 use App\Models\Setting;
 use App\Models\Zoho\ZohoLead;
 use App\Models\Zoho\ZohoMarketingLink;
+use App\Models\Zoho\ZohoStandardSyncRun;
 use App\Models\Zoho\ZohoSyncBatch;
 use App\Models\ZohoSyncCheckpoint;
 use App\Models\ZohoSyncLog;
@@ -289,6 +290,103 @@ class ZohoV2OrchestrationTest extends TestCase
 
         $this->assertNull($batch->fresh()->completed_at);
         $this->assertSame('running', $batch->fresh()->status);
+    }
+
+    public function test_finalize_batch_ignores_preserved_error_logs_while_current_standard_work_is_unfinished(): void
+    {
+        Queue::fake();
+        $batch = ZohoSyncBatch::query()->create([
+            'correlation_id' => 'recovered-current-work-fence',
+            'mode' => 'delta',
+            'trigger' => 'manual',
+            'status' => 'running',
+            'modules' => ['contacts', 'quotes'],
+            'requested_at' => now(),
+        ]);
+        foreach ([['contacts', 'success'], ['quotes', 'error']] as [$module, $status]) {
+            ZohoSyncLog::query()->create([
+                'module' => $module,
+                'submodule' => '',
+                'mode' => 'delta',
+                'sync_batch_id' => $batch->id,
+                'correlation_id' => $batch->correlation_id,
+                'synced_at' => now(),
+                'status' => $status,
+                'telemetry' => [],
+            ]);
+        }
+        ZohoSyncCheckpoint::query()->create([
+            'module' => 'v2:contacts',
+            'submodule' => '',
+            'sync_mode' => 'delta',
+            'status' => 'completed',
+            'sync_batch_id' => $batch->id,
+            'correlation_id' => $batch->correlation_id,
+            'completed_at' => now(),
+        ]);
+        ZohoSyncCheckpoint::query()->create([
+            'module' => 'v2:quotes',
+            'submodule' => '',
+            'sync_mode' => 'delta',
+            'status' => 'queued',
+            'sync_batch_id' => $batch->id,
+            'correlation_id' => $batch->correlation_id,
+        ]);
+        ZohoStandardSyncRun::query()->create([
+            'sync_batch_id' => $batch->id,
+            'module' => 'quotes',
+            'submodule' => '',
+            'correlation_id' => $batch->correlation_id,
+            'mode' => 'delta',
+            'query_fingerprint' => hash('sha256', 'quotes-resume'),
+            'query_params' => ['fields' => 'id'],
+            'watermark_at' => $batch->requested_at,
+            'status' => 'enumerating',
+            'counters' => [],
+        ]);
+
+        app(ZohoSyncOrchestrator::class)->finalizeBatch($batch->id);
+
+        $this->assertSame('running', $batch->fresh()->status);
+        $this->assertNull($batch->fresh()->completed_at);
+        Queue::assertNotPushed(RunZohoPostReconciliationJob::class);
+    }
+
+    public function test_finalize_batch_ignores_a_wrong_mode_checkpoint_as_stale_ownership(): void
+    {
+        Queue::fake();
+        $batch = ZohoSyncBatch::query()->create([
+            'correlation_id' => 'wrong-mode-checkpoint',
+            'mode' => 'delta',
+            'trigger' => 'manual',
+            'status' => 'running',
+            'modules' => ['accounts'],
+            'requested_at' => now(),
+        ]);
+        ZohoSyncLog::query()->create([
+            'module' => 'accounts',
+            'submodule' => '',
+            'mode' => 'delta',
+            'sync_batch_id' => $batch->id,
+            'correlation_id' => $batch->correlation_id,
+            'synced_at' => now(),
+            'status' => 'success',
+            'telemetry' => [],
+        ]);
+        ZohoSyncCheckpoint::query()->create([
+            'module' => 'v2:accounts',
+            'submodule' => '',
+            'sync_mode' => 'reconcile',
+            'status' => 'queued',
+            'sync_batch_id' => $batch->id,
+            'correlation_id' => $batch->correlation_id,
+        ]);
+
+        app(ZohoSyncOrchestrator::class)->finalizeBatch($batch->id);
+
+        $this->assertSame('success', $batch->fresh()->status);
+        $this->assertNotNull($batch->fresh()->completed_at);
+        Queue::assertPushed(RunZohoPostReconciliationJob::class, 1);
     }
 
     public function test_sibling_success_cannot_seal_a_batch_while_reconciliation_has_no_terminal_log(): void

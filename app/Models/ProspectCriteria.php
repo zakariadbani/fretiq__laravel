@@ -36,6 +36,10 @@ class ProspectCriteria extends Model
         'ai_exclude',
         'ai_queries',
         'discovery_cursors',
+        'hunter_discover_filters',
+        'hunter_discover_prompt_hash',
+        'hunter_discover_offset',
+        'hunter_discover_exhausted',
         'sectors',
         'countries',
         'company_sizes',
@@ -57,6 +61,9 @@ class ProspectCriteria extends Model
     protected $casts = [
         'ai_queries' => 'array',
         'discovery_cursors' => 'array',
+        'hunter_discover_filters' => 'array',
+        'hunter_discover_offset' => 'integer',
+        'hunter_discover_exhausted' => 'boolean',
         'sectors' => 'array',
         'countries' => 'array',
         'company_sizes' => 'array',
@@ -114,6 +121,13 @@ class ProspectCriteria extends Model
             if (($m->isDirty('ai_target') || $m->isDirty('ai_exclude')) && ! $m->isDirty('ai_queries')) {
                 $m->ai_queries = null;
             }
+
+            if ($m->discoverTargetingChanged()) {
+                $m->hunter_discover_filters = null;
+                $m->hunter_discover_prompt_hash = null;
+                $m->hunter_discover_offset = 0;
+                $m->hunter_discover_exhausted = false;
+            }
         });
 
         static::updated(function (self $m): void {
@@ -124,6 +138,107 @@ class ProspectCriteria extends Model
                     ->update(['qualification_status' => 'pending']);
             }
         });
+    }
+
+    /**
+     * Canonical input used by Hunter Discover prompts and invalidation. Ordering
+     * and insignificant whitespace do not alter the resulting JSON/hash.
+     *
+     * @return array{target:string,exclude:?string,sectors:list<string>,countries:list<string>,sizes:list<string>}
+     */
+    public static function canonicalDiscoverTargeting(
+        mixed $target,
+        mixed $exclude,
+        mixed $sectors,
+        mixed $countries,
+        mixed $sizes,
+    ): array {
+        $target = self::normalizeDiscoverText($target);
+        $exclude = self::normalizeDiscoverText($exclude);
+
+        return [
+            'target' => $target,
+            'exclude' => $exclude === '' ? null : $exclude,
+            'sectors' => self::normalizeDiscoverSet($sectors),
+            'countries' => self::normalizeDiscoverSet($countries),
+            'sizes' => self::normalizeDiscoverSet($sizes),
+        ];
+    }
+
+    private function discoverTargetingChanged(): bool
+    {
+        if (! $this->isDirty(['ai_target', 'ai_exclude', 'sectors', 'countries', 'company_sizes'])) {
+            return false;
+        }
+
+        $before = self::canonicalDiscoverTargeting(
+            $this->getRawOriginal('ai_target'),
+            $this->getRawOriginal('ai_exclude'),
+            self::decodeDiscoverArray($this->getRawOriginal('sectors')),
+            self::decodeDiscoverArray($this->getRawOriginal('countries')),
+            self::decodeDiscoverArray($this->getRawOriginal('company_sizes')),
+        );
+        $after = self::canonicalDiscoverTargeting(
+            $this->ai_target,
+            $this->ai_exclude,
+            $this->sectors,
+            $this->countries,
+            $this->company_sizes,
+        );
+
+        return self::canonicalDiscoverJson($before) !== self::canonicalDiscoverJson($after);
+    }
+
+    private static function normalizeDiscoverText(mixed $value): string
+    {
+        if (! is_scalar($value)) {
+            return '';
+        }
+
+        return trim((string) preg_replace('/\s+/u', ' ', trim((string) $value)));
+    }
+
+    /** @return list<string> */
+    private static function normalizeDiscoverSet(mixed $values): array
+    {
+        if (! is_array($values)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($values as $value) {
+            $value = self::normalizeDiscoverText($value);
+            if ($value !== '') {
+                $normalized[$value] = $value;
+            }
+        }
+        $normalized = array_values($normalized);
+        sort($normalized, SORT_STRING);
+
+        return $normalized;
+    }
+
+    /** @return list<mixed> */
+    private static function decodeDiscoverArray(mixed $value): array
+    {
+        if (is_array($value)) {
+            return array_values($value);
+        }
+        if (! is_string($value) || trim($value) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($value, true);
+
+        return is_array($decoded) ? array_values($decoded) : [];
+    }
+
+    /** @param array<string, mixed> $value */
+    private static function canonicalDiscoverJson(array $value): string
+    {
+        ksort($value, SORT_STRING);
+
+        return json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 
     // ── Relationships ──────────────────────────────────────────────────────────
@@ -151,6 +266,14 @@ class ProspectCriteria extends Model
     public function discoveryRuns(): HasMany
     {
         return $this->hasMany(DiscoveryRun::class, 'prospect_criteria_id');
+    }
+
+    /**
+     * Prospecting-center batches created from this criteria set.
+     */
+    public function prospectBatches(): HasMany
+    {
+        return $this->hasMany(ProspectBatch::class, 'prospect_criteria_id');
     }
 
     /**
@@ -183,6 +306,10 @@ class ProspectCriteria extends Model
             'ai_queries' => 'nullable|array',
             'ai_queries.*.q' => 'required|string|max:500',
             'ai_queries.*.enabled' => 'boolean',
+            'hunter_discover_filters' => 'nullable|array',
+            'hunter_discover_prompt_hash' => 'nullable|string|size:64',
+            'hunter_discover_offset' => 'nullable|integer|min:0',
+            'hunter_discover_exhausted' => 'nullable|boolean',
             'sectors' => 'nullable|array|max:50',
             'sectors.*' => 'string|max:100',
             'countries' => 'nullable|array|max:50',

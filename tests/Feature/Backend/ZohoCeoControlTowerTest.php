@@ -146,6 +146,50 @@ class ZohoCeoControlTowerTest extends TestCase
         }
     }
 
+    public function test_watchlist_reasons_are_neutral_observations_for_due_and_unreachable_accounts(): void
+    {
+        CarbonImmutable::setTestNow('2026-08-10 09:00:00 Europe/Paris');
+
+        try {
+            $this->account('account-due-reachable', [
+                'name' => 'Compte joignable',
+                'phone' => '0102030405',
+            ]);
+            $this->account('account-due-unreachable', [
+                'name' => 'Compte sans canal',
+            ]);
+            foreach (['reachable', 'unreachable'] as $suffix) {
+                $this->quote('quote-due-'.$suffix, [
+                    'quote_date' => '2026-08-09',
+                    'valid_till' => '2026-08-12',
+                    'account_zoho_id' => 'account-due-'.$suffix,
+                ]);
+            }
+
+            $queue = collect($this->analyse()['queue']['items'])->keyBy('account');
+            $allReasons = $queue->flatMap(
+                static fn (array $row): array => $row['reasons'],
+            )->implode(' · ');
+
+            $this->assertContains(
+                'Devis arrivant à échéance sans décision renseignée',
+                $queue['Compte joignable']['reasons'],
+            );
+            $this->assertStringContainsString(
+                'Aucun canal autorisé observé',
+                implode(' · ', $queue['Compte sans canal']['reasons']),
+            );
+            $this->assertStringNotContainsString('Décision à obtenir avant expiration', $allReasons);
+            $this->assertStringNotContainsString('canal autorisé à enrichir', mb_strtolower($allReasons));
+            $this->assertDoesNotMatchRegularExpression(
+                '/\b(obtenir|relancer|compléter|vérifier|attendre|enrichir)\b/iu',
+                $allReasons,
+            );
+        } finally {
+            CarbonImmutable::setTestNow();
+        }
+    }
+
     public function test_repeated_quote_requires_no_deal_decision_or_proven_follow_up(): void
     {
         CarbonImmutable::setTestNow('2026-08-10 09:00:00 Europe/Paris');
@@ -318,6 +362,43 @@ class ZohoCeoControlTowerTest extends TestCase
             $replied = $this->analyse();
             $this->assertSame(0, $replied['decision_cards']['P3']['value']);
             $this->assertSame(0, $replied['queue']['total_by_priority']['P3']);
+        } finally {
+            CarbonImmutable::setTestNow();
+        }
+    }
+
+    public function test_queue_total_by_signal_deduplicates_p3_contacts_on_the_same_account(): void
+    {
+        CarbonImmutable::setTestNow('2026-08-10 09:00:00 Europe/Paris');
+
+        try {
+            $this->account('account-p3-deduplicated', [
+                'name' => 'Compte P3 dédupliqué',
+                'phone' => '0102030405',
+            ]);
+            foreach (['a', 'b'] as $suffix) {
+                $this->campaignSignal('p3-deduplicated-'.$suffix, [
+                    'account_zoho_id' => 'account-p3-deduplicated',
+                    'full_name' => 'Contact P3 '.$suffix,
+                    'email' => 'p3-deduplicated-'.$suffix.'@example.test',
+                    'opened_at' => $suffix === 'a' ? '2026-08-09 10:00:00' : '2026-08-09 11:00:00',
+                ]);
+            }
+
+            $payload = $this->analyse();
+            $p3Rows = collect($payload['queue']['items'])->filter(
+                fn (array $row): bool => in_array('P3', $row['signals'], true),
+            );
+
+            $this->assertSame(2, $payload['decision_cards']['P3']['value']);
+            $this->assertSame(1, $p3Rows->count());
+            $this->assertSame(1, $payload['queue']['total_by_priority']['P3']);
+            $this->assertSame([
+                'P1' => 0,
+                'P2' => 0,
+                'P3' => 1,
+                'enrichment' => 0,
+            ], $payload['queue']['total_by_signal']);
         } finally {
             CarbonImmutable::setTestNow();
         }
@@ -1507,6 +1588,9 @@ class ZohoCeoControlTowerTest extends TestCase
         $this->assertSame([], $payload['queue']['items']);
         $this->assertSame(['P1', 'P2', 'P3', 'enrichment'], array_keys($payload['decision_cards']));
         $this->assertSame(['P1', 'P2', 'P3', 'enrichment'], array_keys($payload['queue']['total_by_priority']));
+        $this->assertSame([
+            'P1' => null, 'P2' => null, 'P3' => null, 'enrichment' => null,
+        ], $payload['queue']['total_by_signal']);
         $this->assertSame([
             'expired_missing_decision', 'due_7_days', 'due_30_days', 'unreachable', 'future_date_anomalies',
         ], array_keys($payload['quote_risks']));

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Traits\Validator;
 use App\Support\ConfigEnum;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -11,7 +12,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Contact extends Model
 {
-    use HasFactory, Validator, SoftDeletes;
+    use HasFactory, SoftDeletes, Validator;
 
     /**
      * The table associated with the model.
@@ -41,6 +42,8 @@ class Contact extends Model
         'source_url',
         'source_captured_at',
         'email_verification_status',
+        'email_verification_checked_at',
+        'email_verification_source',
     ];
 
     /**
@@ -49,8 +52,9 @@ class Contact extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'consent_at'         => 'datetime',
+        'consent_at' => 'datetime',
         'source_captured_at' => 'datetime',
+        'email_verification_checked_at' => 'datetime',
     ];
 
     // ── Relationships ──────────────────────────────────────────────────────────
@@ -71,6 +75,16 @@ class Contact extends Model
         return $this->belongsTo(User::class, 'assigned_to');
     }
 
+    /**
+     * Global normalized-email lookup, including GDPR tombstones. Promotion
+     * uses this scope so a soft-deleted address can never be reassigned.
+     */
+    public function scopeWithNormalizedEmail(Builder $query, string $email): Builder
+    {
+        return $query->withTrashed()
+            ->whereRaw('LOWER(email) = ?', [strtolower(trim($email))]);
+    }
+
     // ── Lifecycle hooks ────────────────────────────────────────────────────────
 
     /**
@@ -84,10 +98,10 @@ class Contact extends Model
     {
         static::saving(function (Contact $contact) {
             $defaults = [
-                'status'      => 'new',
-                'source'      => 'manual',
+                'status' => 'new',
+                'source' => 'manual',
                 'legal_basis' => 'unknown',
-                'email_kind'  => 'role',
+                'email_kind' => 'role',
             ];
             foreach ($defaults as $col => $default) {
                 $val = $contact->getAttribute($col);
@@ -109,21 +123,23 @@ class Contact extends Model
     public function rules(): array
     {
         return [
-            'company_id'               => 'required|integer|exists:companies,id',
-            'assigned_to'              => 'nullable|integer|exists:users,id',
-            'email'                    => 'required|email|max:191|unique:contacts,email,' . $this->id,
-            'name'                     => 'required|string|max:255',
-            'position'                 => 'nullable|string|max:120',
-            'phone'                    => 'nullable|string|max:50',
-            'source'                   => 'nullable|' . ConfigEnum::in('contact_sources'),
-            'status'                   => 'nullable|' . ConfigEnum::in('contact_statuses'),
-            'legal_basis'              => 'nullable|' . ConfigEnum::in('contact_legal_bases'),
-            'email_kind'               => 'nullable|' . ConfigEnum::in('contact_email_kinds'),
-            'consent_at'               => 'nullable|date',
-            'source_url'               => 'nullable|string|max:500',
-            'source_captured_at'       => 'nullable|date',
-            'email_verification_status'=> 'nullable|string|max:16',
-            'zoho_contact_id'          => 'nullable|string|max:100',
+            'company_id' => 'required|integer|exists:companies,id',
+            'assigned_to' => 'nullable|integer|exists:users,id',
+            'email' => 'required|email|max:191|unique:contacts,email,'.$this->id,
+            'name' => 'required|string|max:255',
+            'position' => 'nullable|string|max:120',
+            'phone' => 'nullable|string|max:50',
+            'source' => 'nullable|'.ConfigEnum::in('contact_sources'),
+            'status' => 'nullable|'.ConfigEnum::in('contact_statuses'),
+            'legal_basis' => 'nullable|'.ConfigEnum::in('contact_legal_bases'),
+            'email_kind' => 'nullable|'.ConfigEnum::in('contact_email_kinds'),
+            'consent_at' => 'nullable|date',
+            'source_url' => 'nullable|string|max:500',
+            'source_captured_at' => 'nullable|date',
+            'email_verification_status' => 'nullable|string|max:16',
+            'email_verification_checked_at' => 'nullable|date',
+            'email_verification_source' => 'nullable|string|max:32',
+            'zoho_contact_id' => 'nullable|string|max:100',
         ];
     }
 
@@ -135,8 +151,8 @@ class Contact extends Model
      */
     public function statusBadgeClass(): string
     {
-        $color = config('global.data.contact_statuses.' . $this->status . '.color', 'secondary');
+        $color = config('global.data.contact_statuses.'.$this->status.'.color', 'secondary');
 
-        return 'badge-light-' . $color;
+        return 'badge-light-'.$color;
     }
 }

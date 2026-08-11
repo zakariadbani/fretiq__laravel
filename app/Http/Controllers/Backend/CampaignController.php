@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Backend;
 
 use App\Crud\ViewConfigs\CampaignViewConfig;
 use App\DataTables\Backend\CampaignsDataTable;
+use App\Exceptions\PacedCampaignBatchAlreadyExistsException;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
 use App\Jobs\SendCampaignJob;
@@ -22,8 +23,11 @@ use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SenderIdentity;
 use App\Models\Setting;
+use App\Models\SmtpSendReservation;
 use App\Services\Campaign\CampaignService;
 use App\Services\Campaign\CampaignTestMailService;
+use App\Services\Campaign\CampaignRunTimelineService;
+use App\Services\Campaign\CampaignRunResendService;
 use App\Services\Campaign\CampaignWaveZohoListSyncService;
 use App\Services\Campaign\CampaignZohoListSyncService;
 use App\Services\Campaign\PacedCampaignBatchService;
@@ -64,9 +68,9 @@ class CampaignController extends BackendController
 
         $this->middleware('permission:view campaigns')->only(['index', 'view', 'segmentCount', 'nextWavePreview']);
         $this->middleware('permission:create campaigns')->only(['create', 'store']);
-        $this->middleware('permission:edit campaigns')->only(['edit', 'update', 'executeSwitch']);
+        $this->middleware('permission:edit campaigns')->only(['edit', 'update', 'cancelRun']);
         $this->middleware('permission:delete campaigns')->only(['delete']);
-        $this->middleware('permission:send campaigns')->only(['dispatchPreview', 'schedule', 'sendNow', 'testSend', 'sequenceAutoEnroll', 'syncZohoList', 'syncStats', 'retryZohoWave']);
+        $this->middleware('permission:send campaigns')->only(['dispatchPreview', 'schedule', 'sendNow', 'testSend', 'sequenceAutoEnroll', 'syncZohoList', 'syncStats', 'retryZohoWave', 'startRunNow', 'resendRun']);
         $this->middleware('permission:create demandes')->only(['markReplied']);
 
         $this->listTitle = 'Campagnes';
@@ -279,7 +283,7 @@ class CampaignController extends BackendController
             'senderIdentity',
             'sequence.steps.template',
             'runs' => function ($q) {
-                $q->with('sequenceStep.template')->withCount('companyDispatches')->orderByDesc('run_at');
+                $q->with(['sequenceStep.template', 'sourceRun'])->withCount('companyDispatches')->orderByDesc('run_at');
             },
         ])->find((int) $id);
 
@@ -325,7 +329,7 @@ class CampaignController extends BackendController
         }
 
         // Rollup / run-scope recipients — see recipientFilters() + recipientScopeQuery().
-        $recipientFilters = $this->recipientFilters($executedRuns);
+        $recipientFilters = $this->recipientFilters($campaign->runs, $executedRuns);
         $isRunScope       = $recipientFilters['run'] !== null;
 
         $scopeQuery = $this->recipientScopeQuery($executedRunIds, $recipientFilters);
@@ -351,7 +355,12 @@ class CampaignController extends BackendController
         $recipientsTotal = CampaignRecipient::whereIn('campaign_run_id', $executedRunIds)
             ->distinct()->count('contact_id');
 
-        $viewConfig    = CampaignViewConfig::make($campaign, $stats, $recipientsTotal, $currentAudience->count(), $executedRuns->count());
+        $viewConfig    = CampaignViewConfig::make($campaign, $stats, $recipientsTotal, $currentAudience->count(), $campaign->runs->count());
+        $timelineRunStates = $this->timelineRunStates($campaign, $campaign->runs);
+        $managedTimelineRun = $campaign->schedule_type === 'sequence'
+            ? null
+            : $campaign->runs->filter(fn (CampaignRun $run) => in_array($run->status, ['prepared', 'scheduled', 'sending'], true))
+                ->sortBy('run_at')->first();
         $waveData      = $this->campaignWaveData($campaign);
         $enrolledCount = SequenceEnrollment::where('campaign_id', $campaign->id)->count();
         $enrolledCompanyCount = SequenceEnrollment::query()
@@ -407,7 +416,7 @@ class CampaignController extends BackendController
         return $this->getView('backend.contents.campaigns.crud.view')
             ->with('model', $campaign)
             ->with('latestRun', $latestRun)
-            ->with('runs', $executedRuns)
+            ->with('runs', $campaign->runs)
             ->with('stats', $stats)
             ->with('currentAudience', $currentAudience)
             ->with('recipients', $recipients)
@@ -426,7 +435,9 @@ class CampaignController extends BackendController
             ->with('waveEnrollments', $waveData['enrollments'])
             ->with('legacyWaves', $waveData['legacy'])
             ->with('campaignReadiness', $campaignReadiness)
-            ->with('schedulerHealth', $schedulerHealth);
+            ->with('schedulerHealth', $schedulerHealth)
+            ->with('timelineRunStates', $timelineRunStates)
+            ->with('managedTimelineRun', $managedTimelineRun);
     }
 
     /** Campaign-specific paced-sequence wave summaries and selected membership. */
@@ -552,6 +563,104 @@ class CampaignController extends BackendController
             'commands' => $commands,
         ];
     }
+
+    /**
+     * Server-derived display/action facts for the history table.  This keeps the
+     * Blade template descriptive only and avoids per-run queries.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function timelineRunStates(Campaign $campaign, Collection $runs): array
+    {
+        $runIds = $runs->pluck('id')->map(fn ($id) => (int) $id)->all();
+        if ($runIds === []) {
+            return [];
+        }
+
+        $recipientFacts = CampaignRecipient::query()
+            ->whereIn('campaign_run_id', $runIds)
+            ->selectRaw('campaign_run_id, COUNT(*) AS total, SUM(status = "queued") AS queued, SUM(provider_message_id IS NOT NULL OR sent_at IS NOT NULL OR opened_at IS NOT NULL OR clicked_at IS NOT NULL) AS evidence')
+            ->groupBy('campaign_run_id')->get()->keyBy('campaign_run_id');
+        $recipientIds = CampaignRecipient::query()->whereIn('campaign_run_id', $runIds)->pluck('id');
+        $reservations = $recipientIds->isEmpty() ? collect() : SmtpSendReservation::query()
+            ->where('campaign_id', $campaign->id)
+            ->where('source_type', SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT)
+            ->whereIn('source_id', $recipientIds)
+            ->get()->groupBy('source_id');
+        $reservationByRun = [];
+        if ($recipientIds->isNotEmpty()) {
+            $recipientRunIds = CampaignRecipient::query()->whereIn('id', $recipientIds)->pluck('campaign_run_id', 'id');
+            foreach ($reservations as $recipientId => $rows) {
+                $runId = (int) ($recipientRunIds[$recipientId] ?? 0);
+                if ($runId) $reservationByRun[$runId] = ($reservationByRun[$runId] ?? collect())->concat($rows);
+            }
+        }
+
+        return $runs->mapWithKeys(function (CampaignRun $run) use ($campaign, $recipientFacts, $reservationByRun): array {
+            $facts = $recipientFacts->get($run->id);
+            $rows = $reservationByRun[$run->id] ?? collect();
+            $isPending = in_array($run->status, ['prepared', 'scheduled', 'sending'], true);
+            $smtpDriver = $run->driver_ref === 'smtp';
+            $scheduledSmtp = blank($run->driver_ref) && $campaign->effectiveDeliveryChannel() === 'smtp';
+            $driverIsSafe = $smtpDriver || $scheduledSmtp;
+            $cancelUnsafeReservation = $rows->contains(fn (SmtpSendReservation $row) => ! in_array($row->status, ['reserved', 'released', 'failed'], true)
+                || $row->hasProviderTransportEvidence()
+                || $row->attempted_at !== null
+                || (int) $row->attempt_count > 0);
+            $recipientTotal = (int) ($facts?->total ?? 0);
+            $runEvidence = (filled($run->driver_ref) && $run->driver_ref !== 'smtp')
+                || ! blank($run->zoho_list_key)
+                || ! blank($run->zoho_campaign_key)
+                || collect([
+                    $run->stats_sent,
+                    $run->stats_delivered,
+                    $run->stats_opened,
+                    $run->stats_clicked,
+                    $run->stats_bounced,
+                    $run->stats_unsubscribed,
+                    $run->stats_replied,
+                    $run->conversion_count,
+                ])->contains(fn ($value) => (int) $value > 0);
+            $hasOnlyReusableReservations = $rows->every(
+                fn (SmtpSendReservation $row) => $row->isReusableBeforeTransport(),
+            );
+            $safeUnreserved = $run->status === 'scheduled'
+                && $hasOnlyReusableReservations
+                && $driverIsSafe
+                && (int) ($facts?->queued ?? 0) === $recipientTotal
+                && (int) ($facts?->evidence ?? 0) === 0;
+            $safeReservation = in_array($run->status, ['scheduled', 'sending'], true)
+                && $recipientTotal > 0
+                && (int) ($facts?->queued ?? 0) === $recipientTotal
+                && (int) ($facts?->evidence ?? 0) === 0
+                && $rows->count() === 1 && $rows->every(fn (SmtpSendReservation $row) => $row->status === 'reserved'
+                    && ! $row->hasProviderTransportEvidence());
+            $safe = $isPending && $campaign->schedule_type !== 'sequence' && $driverIsSafe && ! $runEvidence
+                && ($safeUnreserved || $safeReservation);
+            $canCancel = $campaign->schedule_type !== 'sequence'
+                && ! $runEvidence
+                && ! $cancelUnsafeReservation
+                && (in_array($run->status, ['prepared', 'scheduled'], true)
+                    || ($run->status === 'sending' && $smtpDriver && $safeReservation));
+            $reservedFor = $rows->where('status', 'reserved')->sortBy('reserved_for')->first()?->reserved_for;
+            if ($safeUnreserved) $reservedFor = $run->run_at;
+            $status = $safe && $reservedFor ? 'scheduled' : $run->status;
+            $config = config('global.data.campaign_run_statuses.' . $status, []);
+            $reason = $run->failure_reason;
+            if ($isPending && ! $safe) $reason = $reason ?: 'Lot en cours de traitement ou déjà remis au fournisseur : actions conservées à titre d’audit.';
+
+            return [(int) $run->id => [
+                'label' => $safe ? 'Programmé' : ($config['label'] ?? '—'),
+                'color' => $safe ? 'info' : ($config['color'] ?? 'secondary'),
+                'reserved_for' => $reservedFor?->copy()->setTimezone($campaign->scheduleTimezone()),
+                'can_start' => $campaign->is_active && $safe,
+                'can_cancel' => $canCancel,
+                'can_resend' => $campaign->is_active && $campaign->schedule_type !== 'sequence' && $run->status === 'sent',
+                'reason' => $reason,
+                'source' => $run->sourceRun ? 'Renvoi du lot #' . $run->sourceRun->id : null,
+            ]];
+        })->all();
+    }
     /**
      * Compute aggregate KPI stats from executed runs.
      * Uses only run-level stats columns — no recipient rows needed.
@@ -646,10 +755,12 @@ class CampaignController extends BackendController
      * @param  \Illuminate\Support\Collection<int, CampaignRun> $executedRuns
      * @return array{run: \App\Models\CampaignRun|null, q: string, statut: string|null}
      */
-    private function recipientFilters($executedRuns): array
+    private function recipientFilters(Collection $historyRuns, Collection $executedRuns): array
     {
         $runId = (int) request()->query('run_id', 0);
-        $run   = $runId > 0 ? $executedRuns->firstWhere('id', $runId) : null;
+        // Any historical run can be inspected directly. The default rollup stays
+        // intentionally limited to executed runs below.
+        $run   = $runId > 0 ? $historyRuns->firstWhere('id', $runId) : null;
 
         $q = mb_substr(trim((string) request()->query('q', '')), 0, 100);
 
@@ -829,6 +940,9 @@ class CampaignController extends BackendController
         $selectedTemplate = $this->resolveSourceModel('template_id', CampaignTemplate::class, 'view campaign_templates');
         $selectedSender = $this->resolveSourceModel('sender_identity_id', SenderIdentity::class, 'view sender_identities');
         $campaignId = request()->route('id');
+        $editingCampaign = is_numeric($campaignId)
+            ? Campaign::with(['segment', 'template', 'senderIdentity'])->find((int) $campaignId)
+            : null;
         $syncableZohoRuns = is_numeric($campaignId)
             ? CampaignRun::query()
                 ->where('campaign_id', (int) $campaignId)
@@ -867,6 +981,12 @@ class CampaignController extends BackendController
             'selectedCompany'       => $selectedCompany,
             'latestSyncableZohoRun' => $syncableZohoRuns->first(),
             'syncableZohoRunCount'  => $syncableZohoRuns->count(),
+            'campaignReadiness'     => $editingCampaign ? app(CampaignService::class)->dispatchPreflight($editingCampaign) : ['ok' => false, 'messages' => []],
+            'schedulerHealth'       => $editingCampaign ? $this->schedulerHealth() : ['status' => 'missing'],
+            'managedTimelineRun'    => $editingCampaign && $editingCampaign->schedule_type !== 'sequence'
+                ? CampaignRun::query()->where('campaign_id', $editingCampaign->id)
+                    ->whereIn('status', ['prepared', 'scheduled', 'sending'])->orderBy('run_at')->first()
+                : null,
         ];
     }
 
@@ -1236,10 +1356,17 @@ class CampaignController extends BackendController
      */
     public function executeSwitch(Request $httpRequest, $id)
     {
-        $request = $httpRequest->all();
-        $field   = $request['field'] ?? '';
+        $request = $httpRequest->validate([
+            'field' => ['required', 'string'],
+            'state' => ['required', 'integer', 'in:0,1'],
+        ]);
+        $field = $request['field'];
 
         if ($field === 'is_active') {
+            $state = (int) ($request['state'] ?? 0);
+            if ($state === 0 && ! $httpRequest->user()?->can('edit campaigns')) {
+                abort(403);
+            }
             $campaign = $this->currentModel->find($id);
 
             if (
@@ -1251,6 +1378,18 @@ class CampaignController extends BackendController
                 return response()->json([
                     'success' => false,
                     'msg' => 'L’autorisation d’envoi de campagnes est obligatoire pour activer une campagne progressive.',
+                ], 403);
+            }
+
+            if (
+                $campaign !== null
+                && $campaign->schedule_type !== 'sequence'
+                && (int) ($request['state'] ?? 0) === 1
+                && ! $httpRequest->user()?->can('send campaigns')
+            ) {
+                return response()->json([
+                    'success' => false,
+                    'msg' => 'L’autorisation d’envoi de campagnes est obligatoire pour activer une campagne.',
                 ], 403);
             }
 
@@ -1287,6 +1426,24 @@ class CampaignController extends BackendController
                     'msg' => 'Renseignez le premier envoi et un nombre de sociétés par jour valide avant d’activer cette campagne progressive.',
                 ], 422);
             }
+            if ($campaign !== null && (int) ($request['state'] ?? 0) === 0) {
+                app(CampaignRunTimelineService::class)->pause($campaign);
+
+                return response()->json(['success' => true]);
+            }
+
+            if ($campaign !== null && (int) ($request['state'] ?? 0) === 1) {
+                try {
+                    app(CampaignRunTimelineService::class)->resume($campaign, now());
+                } catch (\InvalidArgumentException $exception) {
+                    return response()->json([
+                        'success' => false,
+                        'msg' => $exception->getMessage(),
+                    ], 422);
+                }
+
+                return response()->json(['success' => true]);
+            }
         }
 
         // Delegate to Datatableable trait logic (trait methods cannot use parent::).
@@ -1306,6 +1463,76 @@ class CampaignController extends BackendController
         return response()->json(['success' => true]);
     }
 
+    public function cancelRun(Request $request, $id, $runId)
+    {
+        $campaign = Campaign::findOrFail((int) $id);
+        $run = $campaign->runs()->findOrFail((int) $runId);
+
+        try {
+            app(CampaignRunTimelineService::class)->cancel($campaign, $run);
+        } catch (\InvalidArgumentException $exception) {
+            return response()->json([
+                'success' => false,
+                'msg' => $exception->getMessage(),
+            ], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Le lot a été annulé.',
+            'text' => 'Le lot a été annulé.',
+            'redirect-to-view' => route('admin.campaigns.view', $campaign) . '#campaign_historique',
+        ]);
+    }
+
+    public function startRunNow(Request $request, $id, $runId)
+    {
+        abort_unless($request->user()?->can('send campaigns'), 403);
+
+        $campaign = Campaign::findOrFail((int) $id);
+        $run = $campaign->runs()->findOrFail((int) $runId);
+
+        try {
+            $scheduledFor = app(CampaignRunTimelineService::class)->startNow($campaign, $run, now());
+        } catch (\InvalidArgumentException $exception) {
+            return response()->json([
+                'success' => false,
+                'msg' => $exception->getMessage(),
+            ], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'scheduled_for' => $scheduledFor->toIso8601String(),
+            'message' => 'Le lot a été placé sur le premier créneau sûr.',
+            'text' => 'Le lot a été placé sur le premier créneau sûr.',
+        ]);
+    }
+
+    public function resendRun(Request $request, $id, $runId)
+    {
+        abort_unless($request->user()?->can('send campaigns'), 403);
+
+        $campaign = Campaign::findOrFail((int) $id);
+        $sourceRun = $campaign->runs()->findOrFail((int) $runId);
+
+        try {
+            $resendRun = app(CampaignRunResendService::class)->create($campaign, $sourceRun, now());
+        } catch (\InvalidArgumentException $exception) {
+            return response()->json([
+                'success' => false,
+                'msg' => $exception->getMessage(),
+            ], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'run_id' => $resendRun->id,
+            'message' => 'Le nouveau lot de renvoi a été préparé.',
+            'text' => 'Le nouveau lot de renvoi a été préparé.',
+            'redirect-to-view' => route('admin.campaigns.view', $campaign) . '#campaign_historique',
+        ]);
+    }
 
     public function dispatchPreview(Request $request, $id)
     {
@@ -1595,6 +1822,14 @@ class CampaignController extends BackendController
 
             try {
                 $run = app(PacedCampaignBatchService::class)->prepareManualBatch($campaign, now());
+            } catch (PacedCampaignBatchAlreadyExistsException $e) {
+                $warningText = $e->getMessage();
+                session()->flash('warning', $warningText);
+
+                return response()->json([
+                    'message' => 'warning', 'text' => $warningText,
+                    'redirect' => route('admin.campaigns.view', $id),
+                ]);
             } catch (\InvalidArgumentException $e) {
                 return response()->json([
                     'message' => 'error', 'text' => $e->getMessage(),

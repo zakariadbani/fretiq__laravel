@@ -20,15 +20,15 @@ class SmtpDispatchReservations extends Command
         SmtpSendReservation::query()->where('status', 'sending')->where('lease_expires_at', '<', now())
             ->update(['status' => 'uncertain', 'lease_expires_at' => null]);
 
-        $ids = SmtpSendReservation::query()
+        $reservations = SmtpSendReservation::query()
             ->whereIn('status', ['reserved', 'accepted'])
             ->where('reserved_for', '<=', now())
             ->orderBy('reserved_for')
             ->limit($limit)
-            ->pluck('id');
+            ->get(['id', 'reserved_for']);
 
-        foreach ($ids as $id) {
-            SendSmtpReservationJob::dispatch((int) $id);
+        foreach ($reservations as $reservation) {
+            SendSmtpReservationJob::dispatch($reservation->id, $reservation->reserved_for);
         }
 
         // A campaign initially paused at zero has no reservation to recover.
@@ -37,7 +37,7 @@ class SmtpDispatchReservations extends Command
                 app(CampaignService::class)->continueSmtpRun($run);
             });
 
-        $this->info($ids->count() . ' réservation(s) SMTP remise(s) en file.');
+        $this->info($reservations->count() . ' réservation(s) SMTP remise(s) en file.');
 
         return self::SUCCESS;
     }

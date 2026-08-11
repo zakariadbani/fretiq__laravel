@@ -4,6 +4,7 @@ namespace App\Services\Discovery;
 
 use App\Models\Company;
 use App\Models\Contact;
+use App\Services\Prospecting\HunterVerificationStatusNormalizer;
 
 /**
  * ContactUpsertService — upserts contacts discovered via Hunter enrichment.
@@ -19,6 +20,14 @@ use App\Models\Contact;
  */
 class ContactUpsertService
 {
+    private readonly HunterVerificationStatusNormalizer $verification;
+
+    public function __construct(
+        ?HunterVerificationStatusNormalizer $verification = null,
+    ) {
+        $this->verification = $verification ?? new HunterVerificationStatusNormalizer;
+    }
+
     /**
      * Upsert contacts for a company from Hunter enrichment data.
      *
@@ -50,9 +59,17 @@ class ContactUpsertService
 
             $emailKind = \App\Support\EmailKind::classify($emailAddress);
 
-            $verificationResult = data_get($emailData, 'verification.result');
-
             $capturedAt = now();
+            $verificationAttributes = [];
+
+            if (($verificationStatus = $this->verification->normalize($emailData)) !== null) {
+                $verificationAttributes = [
+                    'email_verification_status' => $verificationStatus,
+                    'email_verification_source' => 'hunter',
+                    'email_verification_checked_at' => $this->verification->checkedAt($emailData) ?? $capturedAt,
+                ];
+            }
+
             $shared = [
                 'company_id' => $company->id,
                 'name' => $name,
@@ -62,7 +79,7 @@ class ContactUpsertService
                 'email_kind' => $emailKind,
                 'source_url' => $domain,
                 'source_captured_at' => $capturedAt,
-                'email_verification_status' => $verificationResult,
+                ...$verificationAttributes,
                 'updated_at' => $capturedAt,
             ];
 

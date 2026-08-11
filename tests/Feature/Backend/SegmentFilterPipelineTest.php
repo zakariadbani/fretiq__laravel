@@ -11,6 +11,7 @@ use App\Services\Campaign\SegmentService;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
@@ -78,6 +79,9 @@ class SegmentFilterPipelineTest extends TestCase
             'source'      => 'manual',
             'legal_basis' => $co->relationship === 'client' ? 'relationship' : 'legitimate_interest',
             'email_kind'  => 'role',
+            'email_verification_status' => 'valid',
+            'email_verification_source' => 'hunter',
+            'email_verification_checked_at' => now(),
         ], $extra));
     }
 
@@ -380,6 +384,9 @@ class SegmentFilterPipelineTest extends TestCase
                 'source'      => 'manual',
                 'legal_basis' => 'relationship',
                 'email_kind'  => 'role',
+                'email_verification_status' => 'valid',
+                'email_verification_source' => 'hunter',
+                'email_verification_checked_at' => now(),
                 'created_at'  => now(),
                 'updated_at'  => now(),
             ],
@@ -391,6 +398,9 @@ class SegmentFilterPipelineTest extends TestCase
                 'source'      => 'manual',
                 'legal_basis' => 'relationship',
                 'email_kind'  => 'role',
+                'email_verification_status' => 'valid',
+                'email_verification_source' => 'hunter',
+                'email_verification_checked_at' => now(),
                 'created_at'  => now(),
                 'updated_at'  => now(),
             ],
@@ -417,6 +427,9 @@ class SegmentFilterPipelineTest extends TestCase
                 'source'      => 'manual',
                 'legal_basis' => 'relationship',
                 'email_kind'  => 'role',
+                'email_verification_status' => 'valid',
+                'email_verification_source' => 'hunter',
+                'email_verification_checked_at' => now(),
                 'created_at'  => now(),
                 'updated_at'  => now(),
             ],
@@ -428,6 +441,9 @@ class SegmentFilterPipelineTest extends TestCase
                 'source'      => 'manual',
                 'legal_basis' => 'relationship',
                 'email_kind'  => 'role',
+                'email_verification_status' => 'valid',
+                'email_verification_source' => 'hunter',
+                'email_verification_checked_at' => now(),
                 'created_at'  => now(),
                 'updated_at'  => now(),
             ],
@@ -460,13 +476,14 @@ class SegmentFilterPipelineTest extends TestCase
 
     // ── Prospect contact eligibility ───────────────────────────────────────────
 
-    public function test_personal_email_prospect_remains_eligible(): void
+    public function test_personal_email_prospect_is_excluded_by_quality_policy(): void
     {
         $this->makeContact($this->companyB, 'personal@prospect.test', ['email_kind' => 'personal']);
 
         $stats = $this->service->resolveWithStats('prospect', []);
 
-        $this->assertSame(1, $stats['final']);
+        $this->assertSame(1, $stats['verification_excluded']);
+        $this->assertSame(0, $stats['final']);
     }
 
     public function test_personal_email_client_remains_eligible(): void
@@ -476,6 +493,91 @@ class SegmentFilterPipelineTest extends TestCase
         $stats = $this->service->resolveWithStats('client', []);
 
         $this->assertSame(1, $stats['final']);
+    }
+
+    public function test_verification_status_is_applied_after_suppression_and_before_manual_excludes(): void
+    {
+        $keep = $this->makeContact($this->companyA, 'keep-policy@acme.test');
+        $invalid = $this->makeContact($this->companyA, 'invalid-policy@acme.test', [
+            'email_verification_status' => 'invalid',
+        ]);
+        $suppressed = $this->makeContact($this->companyA, 'suppressed-policy@acme.test');
+        $excluded = $this->makeContact($this->companyA, 'excluded-policy@acme.test');
+
+        Suppression::create([
+            'email' => $suppressed->email,
+            'reason' => 'manual',
+            'source' => 'manual',
+        ]);
+
+        $stats = $this->service->resolveWithStats(
+            'client',
+            [],
+            false,
+            [],
+            [$excluded->id],
+        );
+
+        $this->assertSame(4, $stats['matched']);
+        $this->assertSame(1, $stats['suppressed']);
+        $this->assertSame(1, $stats['verification_excluded']);
+        $this->assertSame(1, $stats['manually_excluded']);
+        $this->assertSame(1, $stats['final']);
+        $this->assertSame($keep->id, $this->service->resolveAudience('client', [], [], [$excluded->id])->sole()->id);
+        $this->assertSame(
+            $stats['final'],
+            $stats['matched']
+                - $stats['suppressed']
+                - $stats['duplicates_excluded']
+                - $stats['verification_excluded']
+                - $stats['manually_excluded'],
+        );
+        $this->assertNotSame($invalid->id, $keep->id);
+    }
+
+    public function test_cold_send_flag_does_not_empty_segment_preview(): void
+    {
+        config(['prospecting.cold_send_enabled' => false]);
+        $this->makeContact($this->companyB, 'verified-prospect@example.test');
+
+        $stats = $this->service->resolveWithStats('prospect', []);
+
+        $this->assertSame(1, $stats['final']);
+        $this->assertSame(0, $stats['verification_excluded']);
+    }
+
+    public function test_quality_filter_query_count_is_constant_for_one_thousand_contacts(): void
+    {
+        $now = now();
+        $rows = [];
+        for ($i = 0; $i < 1000; $i++) {
+            $rows[] = [
+                'company_id' => $this->companyA->id,
+                'email' => "quality-{$i}@example.test",
+                'name' => "Quality {$i}",
+                'status' => 'new',
+                'source' => 'manual',
+                'legal_basis' => 'relationship',
+                'email_kind' => 'role',
+                'email_verification_status' => $i === 999 ? 'invalid' : 'valid',
+                'email_verification_source' => 'hunter',
+                'email_verification_checked_at' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+        Contact::query()->insert($rows);
+
+        $queries = [];
+        DB::listen(static function ($query) use (&$queries): void {
+            $queries[] = $query->sql;
+        });
+
+        $stats = $this->service->resolveWithStats('client', []);
+
+        $this->assertSame(999, $stats['final']);
+        $this->assertSame(1, $stats['verification_excluded']);
+        $this->assertLessThanOrEqual(5, count($queries));
     }
 
     // ── Pin funnel keys on no-pin path ────────────────────────────────────────
@@ -627,7 +729,7 @@ class SegmentFilterPipelineTest extends TestCase
         }
     }
 
-    public function test_send_parity_keeps_prospect_contacts_eligible(): void
+    public function test_send_parity_keeps_only_quality_eligible_prospect_contacts(): void
     {
         $this->makeContact($this->companyA, 'client@acme.test');
         $this->makeContact($this->companyB, 'role@prospect.test', ['email_kind' => 'role']);
@@ -636,6 +738,7 @@ class SegmentFilterPipelineTest extends TestCase
         $segment  = Segment::create(['name' => 'Parity Mixed', 'scope' => 'mixed']);
         $resolved = $this->service->resolve($segment);
 
-        $this->assertCount(3, $resolved);
+        $this->assertCount(2, $resolved);
+        $this->assertFalse($resolved->contains(fn (Contact $contact): bool => $contact->email_kind === 'personal'));
     }
 }

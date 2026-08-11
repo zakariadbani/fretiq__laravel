@@ -11,7 +11,6 @@ use App\Models\EmailTrackingEvent;
 use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStepSend;
-use App\Models\Suppression;
 use App\Services\Scheduling\BusinessCalendarService;
 use App\Services\Mail\SenderIdentitySmtpMailer;
 use App\Support\TrackingToken;
@@ -43,6 +42,7 @@ class SequenceService
     public function __construct(
         private readonly BusinessCalendarService $calendar,
         private readonly SmtpSendReservationService $smtpReservations,
+        private readonly ContactEligibilityService $contactEligibility,
     )
     {
     }
@@ -204,16 +204,24 @@ class SequenceService
         }
 
         // ── 3. Send-time suppression check ────────────────────────────────────
-        if (Suppression::isSuppressed($contact->email)) {
+        // SMTP accept-all is decided again by the reservation job with the
+        // selected sender identity's real feedback health. Other quality rules
+        // can be rejected before reserving a slot.
+        $preReservationSupportsFeedback = $e->campaign?->delivery_channel === 'smtp';
+        $ineligibleReason = $this->contactEligibility->sendIneligibilityReasonForSingle(
+            $contact,
+            $preReservationSupportsFeedback,
+        );
+        if ($e->campaign?->delivery_channel !== 'smtp' && $ineligibleReason !== null) {
             $e->update([
                 'status'         => 'stopped',
-                'stopped_reason' => 'suppressed',
+                'stopped_reason' => $ineligibleReason,
                 'next_send_at'   => null,
             ]);
 
             Log::info('[SequenceService] Enrollment stopped — contact suppressed.', [
                 'enrollment_id' => $e->id,
-                'contact_email' => $contact->email,
+                'reason' => $ineligibleReason,
             ]);
 
             return;
@@ -255,8 +263,20 @@ class SequenceService
                 $stepSend->id,
             );
             if ($result['ok']) {
-                SendSmtpReservationJob::dispatch($result['reservation']->id)->delay($result['send_at']);
+                SendSmtpReservationJob::dispatch($result['reservation']->id, $result['send_at'])->delay($result['send_at']);
             }
+
+            return;
+        }
+
+        $finalReason = $this->contactEligibility->sendIneligibilityReasonForSingle($contact, false);
+        if ($finalReason !== null) {
+            $stepSend->update(['status' => 'skipped']);
+            $e->update([
+                'status' => 'stopped',
+                'stopped_reason' => $finalReason,
+                'next_send_at' => null,
+            ]);
 
             return;
         }
@@ -345,14 +365,20 @@ class SequenceService
 
         $enrollment = $stepSend->enrollment;
         $campaign = $enrollment->campaign;
-        if ($campaign === null || $campaign->delivery_channel !== 'smtp'
-            || (int) $campaign->sender_identity_id !== (int) $reservation->sender_identity_id) {
-            $reservations->release($reservation);
+
+        // SMTP acceptance is durable and must be reconciled before consulting
+        // mutable campaign routing settings. Otherwise a sender/channel edit
+        // can strand accepted sequence work indefinitely.
+        if ($reservation->status === 'accepted') {
+            if ($campaign !== null) {
+                $this->finalizeAcceptedReservedStep($reservation, $stepSend, $campaign);
+            }
             return;
         }
 
-        if ($reservation->status === 'accepted') {
-            $this->finalizeAcceptedReservedStep($reservation, $stepSend, $campaign);
+        if ($campaign === null || $campaign->delivery_channel !== 'smtp'
+            || (int) $campaign->sender_identity_id !== (int) $reservation->sender_identity_id) {
+            $reservations->release($reservation);
             return;
         }
 
@@ -390,15 +416,13 @@ class SequenceService
         }
 
         $contact = $enrollment->contact;
-        $ineligibleReason = null;
-        if (Suppression::isSuppressed($contact->email)) {
-            $ineligibleReason = 'suppressed';
-        } elseif ($contact->company?->relationship === 'prospect'
-            && ! config('prospecting.cold_send_enabled', false)) {
-            $ineligibleReason = 'cold_send_disabled';
-        } elseif ($contact->company?->relationship === 'prospect'
-            && $contact->email_kind === 'personal') {
-            $ineligibleReason = 'personal_email';
+        $supportsBounceFeedback = $driver->supportsBounceFeedback($campaign);
+        $ineligibleReason = $this->contactEligibility->sendIneligibilityReasonForSingle(
+            $contact,
+            $supportsBounceFeedback,
+        );
+        if ($ineligibleReason === 'accept_all_feedback_required' && ! $supportsBounceFeedback) {
+            $ineligibleReason = 'bounce_feedback_unhealthy';
         }
 
         if ($ineligibleReason !== null) {

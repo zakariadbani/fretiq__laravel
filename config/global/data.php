@@ -91,6 +91,28 @@ return [
     ],
 
     //---------------------------------------------------------------------------
+    // Contacts — qualité de l'adresse e-mail
+    //---------------------------------------------------------------------------
+    'contact_email_verification_statuses' => [
+        'valid' => ['label' => 'Valide', 'color' => 'success', 'risk' => false],
+        'accept_all' => ['label' => 'Accept-all', 'color' => 'warning', 'risk' => true],
+        'pending' => ['label' => 'Vérification en cours', 'color' => 'secondary', 'risk' => true],
+        'unknown' => ['label' => 'Résultat inconnu', 'color' => 'secondary', 'risk' => true],
+        'missing' => ['label' => 'Non vérifié', 'color' => 'secondary', 'risk' => true],
+        'webmail' => ['label' => 'Adresse personnelle', 'color' => 'warning', 'risk' => true],
+        'invalid' => ['label' => 'Invalide', 'color' => 'danger', 'risk' => true],
+        'disposable' => ['label' => 'Jetable', 'color' => 'danger', 'risk' => true],
+        'manual' => ['label' => 'Approuvé manuellement', 'color' => 'info', 'risk' => false],
+    ],
+
+    'contact_email_verification_sources' => [
+        'hunter' => 'Hunter Verifier',
+        'manual' => 'Approuvé manuellement',
+        'bounce' => 'Retour de livraison',
+        'recovery' => 'Historique récupéré',
+    ],
+
+    //---------------------------------------------------------------------------
     // Contacts — source d'origine
     //---------------------------------------------------------------------------
     'contact_sources' => [
@@ -161,8 +183,13 @@ return [
         'personal_email' => 'Adresse e-mail personnelle',
         'enrollment_ineligible' => 'Étape de séquence non éligible',
         'invalid_email' => 'Adresse e-mail invalide',
+        'disposable_email' => 'Adresse e-mail jetable',
+        'verification_required' => 'Vérification de l’adresse e-mail requise',
+        'accept_all_feedback_required' => 'Retour de rebond requis pour cette adresse',
+        'bounce_feedback_unhealthy' => 'Retour de rebond indisponible',
         'zoho_rejected' => 'Refus Zoho (code non vérifié)',
         'zoho_unsent' => "Non envoy\u{00E9} par Zoho \u{2014} adresse invalide",
+        'run_canceled' => 'Lot annulé par l’opérateur',
     ],
 
     //---------------------------------------------------------------------------
@@ -175,6 +202,8 @@ return [
         'spam' => ['label' => 'Spam',             'color' => 'danger'],
         'complaint' => ['label' => 'Plainte',          'color' => 'danger'],
         'invalid_email' => ['label' => 'Adresse e-mail invalide', 'color' => 'danger'],
+        'soft_bounce' => ['label' => 'Rebonds temporaires répétés', 'color' => 'danger'],
+        'claimed' => ['label' => 'Adresse revendiquée', 'color' => 'danger'],
     ],
 
     //---------------------------------------------------------------------------
@@ -186,6 +215,8 @@ return [
         'import' => ['label' => 'Import',   'color' => 'secondary'],
         'manual' => ['label' => 'Manuel',   'color' => 'secondary'],
         'zoho' => ['label' => 'Zoho Campaigns', 'color' => 'info'],
+        'dsn' => ['label' => 'Notification DSN', 'color' => 'info'],
+        'hunter' => ['label' => 'Hunter', 'color' => 'info'],
     ],
 
     //---------------------------------------------------------------------------
@@ -215,6 +246,7 @@ return [
         'queued' => ['label' => 'En file',  'color' => 'secondary'],
         'sent' => ['label' => 'Envoyé',   'color' => 'info'],
         'opened' => ['label' => 'Ouvert',   'color' => 'success'],
+        'bounced' => ['label' => 'Rejeté',   'color' => 'danger'],
         'skipped' => ['label' => 'Ignoré',   'color' => 'dark'],
     ],
 
@@ -536,6 +568,39 @@ return [
         '51-200' => '51–200',
         '201-500' => '201–500',
         '500+' => '500+',
+    ],
+
+    'prospect_batch_sources' => [
+        'company_list' => ['label' => 'Liste', 'color' => 'primary'],
+        'discover' => ['label' => 'Discover IA', 'color' => 'info'],
+        'recovery' => ['label' => 'Récupération', 'color' => 'warning'],
+    ],
+
+    'prospect_batch_statuses' => [
+        'draft' => ['label' => 'Brouillon', 'color' => 'secondary'],
+        'queued' => ['label' => 'En attente', 'color' => 'info'],
+        'running' => ['label' => 'En cours', 'color' => 'primary'],
+        'review' => ['label' => 'À revoir', 'color' => 'warning'],
+        'completed' => ['label' => 'Terminé', 'color' => 'success'],
+        'failed' => ['label' => 'Échec', 'color' => 'danger'],
+        'cancelled' => ['label' => 'Annulé', 'color' => 'secondary'],
+    ],
+
+    'prospect_review_reasons' => [
+        'ambiguous_domain' => ['label' => 'Plusieurs domaines', 'color' => 'warning'],
+        'platform_domain' => ['label' => 'Domaine de plateforme', 'color' => 'danger'],
+        'registrable_domain_collision' => ['label' => 'Domaine déjà utilisé', 'color' => 'warning'],
+        'missing_domain' => ['label' => 'Domaine introuvable', 'color' => 'secondary'],
+        'provider_outcome_uncertain' => ['label' => 'Résultat fournisseur incertain', 'color' => 'danger'],
+    ],
+
+    'provider_call_statuses' => [
+        'reserved' => ['label' => 'Réservé', 'color' => 'secondary'],
+        'running' => ['label' => 'En cours', 'color' => 'primary'],
+        'pending' => ['label' => 'En attente', 'color' => 'warning'],
+        'retryable' => ['label' => 'À réessayer', 'color' => 'warning'],
+        'succeeded' => ['label' => 'Réussi', 'color' => 'success'],
+        'failed' => ['label' => 'Échec', 'color' => 'danger'],
     ],
 
     //---------------------------------------------------------------------------

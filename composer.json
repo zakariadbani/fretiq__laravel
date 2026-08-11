@@ -12,6 +12,7 @@
 		"diglactic/laravel-breadcrumbs": "^9.0",
 		"ezyang/htmlpurifier": "^4.19",
 		"guzzlehttp/guzzle": "^7.2",
+		"jeremykendall/php-domain-parser": "^6.4",
 		"laravel/framework": "^11.0",
 		"laravel/sanctum": "^4.0",
 		"laravel/socialite": "^5.6",

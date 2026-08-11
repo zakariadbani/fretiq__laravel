@@ -14,6 +14,7 @@
             class="{{ $dropdown ? 'dropdown-item rounded py-2' : 'btn btn-sm fw-bold btn-light-primary' }}"
             id="btn-sync-campaign-stats"
             data-campaign-stats-sync
+            data-guard-unsaved="true"
             data-url="{{ route('admin.campaigns.syncStats', $model->id) }}"
             aria-disabled="{{ $canSyncCampaignStats ? 'false' : 'true' }}"
             @disabled(! $canSyncCampaignStats)>

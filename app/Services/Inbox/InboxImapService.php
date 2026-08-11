@@ -94,6 +94,16 @@ class InboxImapService
         return $this->nullableLimit($this->attribute($message, 'references'), 4000);
     }
 
+    /** Return the raw source only for strict machine DSN parsing. */
+    public function rawMessage(mixed $message): string
+    {
+        try {
+            return (string) $message->getRawBody();
+        } catch (\Throwable) {
+            return '';
+        }
+    }
+
     public function redact(SenderIdentity $identity, string $message): string
     {
         try {

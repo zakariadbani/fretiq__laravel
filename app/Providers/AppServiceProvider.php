@@ -61,6 +61,11 @@ class AppServiceProvider extends ServiceProvider
             \App\Services\Zoho\LiveZohoRecipientListGateway::class,
         );
 
+        $this->app->singleton(
+            \Pdp\Rules::class,
+            fn () => \Pdp\Rules::fromPath(config('prospecting.public_suffix_list_path')),
+        );
+
         // ── Sprint-3b: Automation engine bindings ─────────────────────────────
         // All Sprint-3b services are concrete classes with concrete constructor deps.
         // Laravel's reflection-based auto-wiring handles them, but we register them
@@ -79,7 +84,11 @@ class AppServiceProvider extends ServiceProvider
 
         $this->app->singleton(
             \App\Services\Campaign\SequenceService::class,
-            \App\Services\Campaign\SequenceService::class,
+            fn ($app) => new \App\Services\Campaign\SequenceService(
+                calendar: $app->make(\App\Services\Scheduling\BusinessCalendarService::class),
+                smtpReservations: $app->make(\App\Services\Campaign\SmtpSendReservationService::class),
+                contactEligibility: $app->make(\App\Services\Campaign\ContactEligibilityService::class),
+            ),
         );
 
         // BusinessCalendarService — global "is this day allowed to send" source
@@ -102,6 +111,7 @@ class AppServiceProvider extends ServiceProvider
                 deliveryResolver: $app->make(\App\Services\Campaign\CampaignDeliveryResolver::class),
                 smtpReservations: $app->make(\App\Services\Campaign\SmtpSendReservationService::class),
                 deliveryFence: $app->make(\App\Services\Campaign\CampaignDeliveryFence::class),
+                contactEligibility: $app->make(\App\Services\Campaign\ContactEligibilityService::class),
             ),
         );
 

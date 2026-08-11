@@ -19,13 +19,13 @@ use App\Services\Discovery\CriteriaContactEnrichmentService;
 use App\Services\Discovery\DiscoveryEngineRegistry;
 use App\Services\Discovery\DiscoveryProgressPresenter;
 use App\Services\Discovery\IntentQueryService;
-use App\Services\Discovery\HunterDiscoverService;
+use App\Services\Prospecting\ProspectBatchService;
 use App\Services\Quota\DiscoveryQuotaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 
 class ProspectCriteriaController extends BackendController
@@ -109,8 +109,7 @@ class ProspectCriteriaController extends BackendController
         $id,
         DiscoveryQuotaService $quotaService,
         CriteriaContactEnrichmentService $contactEnrichmentService,
-    )
-    {
+    ) {
         // Resolve the model via parent Crudable logic.
         $model = $this->currentModel->find((int) $id);
 
@@ -569,8 +568,11 @@ class ProspectCriteriaController extends BackendController
         return response()->json(['queries' => $queries, 'notice' => $notice]);
     }
 
-    public function hunterDiscoverPreview(Request $request, $id, HunterDiscoverService $service)
-    {
+    public function hunterDiscoverPreview(
+        Request $request,
+        $id,
+        ProspectBatchService $batches,
+    ) {
         $this->authorize('run discovery');
         $criteria = ProspectCriteria::findOrFail((int) $id);
         if (! $criteria->is_active) {
@@ -593,45 +595,29 @@ class ProspectCriteriaController extends BackendController
         }
 
         try {
-            $result = $service->preview($criteria, $target ?: null, $exclude ?: null);
+            $preview = $batches->previewDiscover(
+                $criteria,
+                $target,
+                $exclude === '' ? null : $exclude,
+            );
         } finally {
             $lock->release();
         }
 
-        if (! $result['ok']) {
-            return response()->json(['message' => $result['error']], $result['status']);
-        }
-
-        $companies = $result['companies'];
-        $cachedCompanies = $companies;
-        $existing = Company::withRejected()->whereIn('domain', array_column($companies, 'domain'))->get()->keyBy('domain');
-        foreach ($companies as &$company) {
-            $current = $existing->get($company['domain']);
-            if (! $current) {
-                [$status, $label, $eligible] = ['new', 'Nouvelle', true];
-            } elseif ((int) $current->criteria_id !== (int) $criteria->id) {
-                [$status, $label, $eligible] = ['existing_other', 'Autre critère', false];
-            } elseif ($current->qualification_status === 'rejected') {
-                [$status, $label, $eligible] = ['rejected_current', 'Rejetée ici — réimportable', true];
-            } else {
-                [$status, $label, $eligible] = ['existing_current', 'Déjà importée', false];
-            }
-            $company += ['status' => $status, 'status_label' => $label, 'eligible' => $eligible, 'checked' => $eligible && $status === 'new'];
-        }
-        unset($company);
-
-        $previewId = (string) Str::uuid();
-        Cache::put('hunter-discover-preview:'.$previewId, [
-            'user_id' => (int) $request->user()->id,
-            'criteria_id' => (int) $criteria->id,
-            'prompt' => Str::limit($result['prompt'], 2000, ''),
-            'companies' => $cachedCompanies,
-        ], now()->addMinutes(15));
-
-        return response()->json(['preview_id' => $previewId, 'companies' => $companies]);
+        return response()->json([
+            'prompt' => $preview['prompt'],
+            'prompt_hash' => $preview['prompt_hash'],
+            'estimate' => $preview['estimate'],
+            'draft' => [
+                'source_type' => 'discover',
+                'target' => $preview['targeting']['target'],
+                'exclude' => $preview['targeting']['exclude'],
+                'quality_preset' => 'balanced',
+            ],
+        ])->header('Cache-Control', 'no-store');
     }
 
-    public function hunterDiscoverImport(Request $request, $id)
+    public function hunterDiscoverImport(Request $request, $id, ProspectBatchService $batches)
     {
         $this->authorize('run discovery');
         $criteria = ProspectCriteria::findOrFail((int) $id);
@@ -640,72 +626,53 @@ class ProspectCriteriaController extends BackendController
         }
 
         $validated = $request->validate([
-            'preview_id' => 'required|uuid',
-            'domains' => 'required|array|min:1|max:100',
-            'domains.*' => 'required|string|max:191|distinct',
+            'target' => 'nullable|string|max:2000',
+            'exclude' => 'nullable|string|max:2000',
+            'name' => 'nullable|string|max:255',
+            'quality_preset' => 'nullable|string|in:lean,balanced,deep',
+            'limit' => 'nullable|integer|min:1|max:100',
         ]);
-        $cacheKey = 'hunter-discover-preview:'.$validated['preview_id'];
-        $lock = Cache::lock('hunter-discover-import:'.$validated['preview_id'], 30);
+        $target = trim((string) ($validated['target'] ?? ''));
+        $exclude = trim((string) ($validated['exclude'] ?? ''));
+        if ($target === '' && $exclude === '') {
+            return response()->json(['message' => 'Renseignez une cible ou une exclusion.'], 422);
+        }
+
+        $lock = Cache::lock('hunter-discover-draft:'.sha1(
+            $request->user()->id.':'.$criteria->id.':'.$target.':'.$exclude,
+        ), 30);
         if (! $lock->get()) {
-            return response()->json(['message' => 'Cet import est déjà en cours.'], 423);
+            return response()->json(['message' => 'Ce lot est déjà en cours de création.'], 423);
         }
 
         try {
-            $preview = Cache::get($cacheKey);
-            if (! is_array($preview)) {
-                return response()->json(['message' => 'Cet aperçu a expiré. Relancez la recherche.'], 410);
-            }
-            if ((int) ($preview['user_id'] ?? 0) !== (int) $request->user()->id || (int) ($preview['criteria_id'] ?? 0) !== (int) $criteria->id) {
-                return response()->json(['message' => 'Cet aperçu ne vous appartient pas.'], 403);
-            }
+            $batch = $batches->createDiscoverBatch(
+                $request->user(),
+                $criteria,
+                $target,
+                $exclude === '' ? null : $exclude,
+                array_filter([
+                    'name' => $validated['name'] ?? null,
+                    'quality_preset' => $validated['quality_preset'] ?? 'balanced',
+                    'limit' => $validated['limit'] ?? 100,
+                ], static fn (mixed $value): bool => $value !== null),
+            );
 
-            $previewCompanies = collect($preview['companies'] ?? [])->keyBy('domain');
-            $domains = array_values(array_unique($validated['domains']));
-            if (array_diff($domains, $previewCompanies->keys()->all())) {
-                return response()->json(['message' => 'La sélection ne correspond pas à cet aperçu.'], 422);
-            }
+            $redirectUrl = Route::has('admin.prospect_batches.edit')
+                ? route('admin.prospect_batches.edit', ['id' => $batch->getKey(), 'step' => 3])
+                : route('admin.prospect_criteria.view', $criteria).'#hunter_discover';
 
-            $counts = DB::transaction(function () use ($criteria, $domains, $previewCompanies, $preview) {
-                $counts = ['imported' => 0, 'reactivated' => 0, 'skipped' => 0];
-                foreach ($domains as $domain) {
-                    $existing = Company::withRejected()->where('domain', $domain)->lockForUpdate()->first();
-                    if ($existing) {
-                        if ((int) $existing->criteria_id === (int) $criteria->id && $existing->qualification_status === 'rejected') {
-                            $existing->forceFill(['qualification_status' => 'pending'])->save();
-                            $counts['reactivated']++;
-                        } else {
-                            $counts['skipped']++;
-                        }
-                        continue;
-                    }
-
-                    $candidate = $previewCompanies->get($domain);
-                    $now = now();
-                    $inserted = DB::table('companies')->insertOrIgnore([
-                        'criteria_id' => $criteria->id,
-                        'domain' => $domain,
-                        'name' => $candidate['organization'] ?: $domain,
-                        'relationship' => 'prospect',
-                        'source' => 'discovered',
-                        'qualification_status' => 'pending',
-                        'is_active' => true,
-                        'discovery_query' => Str::limit((string) ($preview['prompt'] ?? ''), 2000, ''),
-                        'created_at' => $now,
-                        'updated_at' => $now,
-                    ]);
-                    $inserted ? $counts['imported']++ : $counts['skipped']++;
-                }
-
-                return $counts;
-            }, 3);
-
-            Cache::forget($cacheKey);
-
-            return response()->json($counts + ['redirect_url' => route('admin.prospect_criteria.view', $criteria->id).'#criteria_resultats']);
+            return response()->json([
+                'batch_id' => $batch->getKey(),
+                'status' => $batch->status,
+                'estimate' => $batch->estimate,
+                'redirect_url' => $redirectUrl,
+            ], 201);
         } finally {
             $lock->release();
         }
     }
+
     /**
      * Dispatch the discovery pipeline job for the given criteria.
      *

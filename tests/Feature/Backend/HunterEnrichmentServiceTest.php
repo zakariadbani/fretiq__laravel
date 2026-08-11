@@ -3,8 +3,8 @@
 namespace Tests\Feature\Backend;
 
 use App\Services\Discovery\HunterEnrichmentService;
-use GuzzleHttp\Promise\PromiseInterface;
 use GuzzleHttp\Psr7\Response as PsrResponse;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\Response;
@@ -16,6 +16,8 @@ use Tests\TestCase;
 
 class HunterEnrichmentServiceTest extends TestCase
 {
+    use RefreshDatabase;
+
     private const API_KEY = 'hunter-test-key';
 
     protected function setUp(): void
@@ -75,7 +77,7 @@ class HunterEnrichmentServiceTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_live_bundle_combines_company_metadata_with_domain_search_emails(): void
+    public function test_live_domain_search_maps_hunter_response(): void
     {
         $domainData = $this->domainSearchData();
         $companyData = $this->companyData();
@@ -96,62 +98,46 @@ class HunterEnrichmentServiceTest extends TestCase
         $this->assertExactLiveRequests('acme.test', 7);
     }
 
-    public function test_live_bundle_starts_both_twenty_second_requests_before_waiting(): void
+    public function test_live_bundle_sends_both_requests_through_the_central_client(): void
     {
-        $started = [];
-        $domainResponse = new Response(
-            new PsrResponse(200, [], json_encode(['data' => $this->domainSearchData()]))
-        );
-        $companyResponse = new Response(
-            new PsrResponse(200, [], json_encode(['data' => $this->companyData()]))
-        );
+        $this->fakeResponses(200, 200, $this->domainSearchData(), $this->companyData());
 
-        $domainPromise = Mockery::mock(PromiseInterface::class);
-        $domainPromise->shouldReceive('wait')->once()->andReturnUsing(
-            function () use (&$started, $domainResponse): Response {
-                $this->assertSame(['domain', 'company'], $started);
+        $this->assertNotNull($this->service()->domainSearch('acme.test'));
+        Http::assertSentCount(2);
+        Http::assertSent(fn (Request $request): bool => $request->hasHeader('Authorization', 'Bearer '.self::API_KEY));
+    }
 
-                return $domainResponse;
-            }
-        );
-
-        $companyPromise = Mockery::mock(PromiseInterface::class);
-        $companyPromise->shouldReceive('wait')->once()->andReturnUsing(
-            function () use (&$started, $companyResponse): Response {
-                $this->assertSame(['domain', 'company'], $started);
-
-                return $companyResponse;
-            }
-        );
+    public function test_live_bundle_forwards_the_seven_second_timeout_to_both_client_calls(): void
+    {
+        $domainResponse = new Response(new PsrResponse(200, [], json_encode([
+            'data' => $this->domainSearchData(),
+        ], JSON_THROW_ON_ERROR)));
+        $companyResponse = new Response(new PsrResponse(200, [], json_encode([
+            'data' => $this->companyData(),
+        ], JSON_THROW_ON_ERROR)));
 
         $domainRequest = Mockery::mock(PendingRequest::class);
         $domainRequest->shouldReceive('acceptJson')->once()->andReturnSelf();
-        $domainRequest->shouldReceive('async')->once()->andReturnSelf();
-        $domainRequest->shouldReceive('get')->once()->andReturnUsing(
-            function () use (&$started, $domainPromise): PromiseInterface {
-                $started[] = 'domain';
-
-                return $domainPromise;
-            }
-        );
+        $domainRequest->shouldReceive('timeout')->once()->with(7)->andReturnSelf();
+        $domainRequest->shouldReceive('get')->once()->with(
+            'https://api.hunter.io/v2/domain-search',
+            ['domain' => 'acme.test', 'limit' => 10, 'offset' => 0],
+        )->andReturn($domainResponse);
 
         $companyRequest = Mockery::mock(PendingRequest::class);
         $companyRequest->shouldReceive('acceptJson')->once()->andReturnSelf();
-        $companyRequest->shouldReceive('async')->once()->andReturnSelf();
-        $companyRequest->shouldReceive('get')->once()->andReturnUsing(
-            function () use (&$started, $companyPromise): PromiseInterface {
-                $started[] = 'company';
+        $companyRequest->shouldReceive('timeout')->once()->with(7)->andReturnSelf();
+        $companyRequest->shouldReceive('get')->once()->with(
+            'https://api.hunter.io/v2/companies/find',
+            ['domain' => 'acme.test'],
+        )->andReturn($companyResponse);
 
-                return $companyPromise;
-            }
-        );
-
-        Http::shouldReceive('timeout')
+        Http::shouldReceive('withToken')
             ->twice()
-            ->with(20)
+            ->with(self::API_KEY)
             ->andReturn($domainRequest, $companyRequest);
 
-        $this->assertNotNull($this->service()->domainSearch('acme.test'));
+        $this->assertNotNull($this->service()->domainSearch('acme.test', 10, 7));
     }
 
     public function test_company_failure_falls_back_to_domain_organization_and_emails(): void
@@ -364,12 +350,13 @@ class HunterEnrichmentServiceTest extends TestCase
         Http::assertSent(function (Request $request) use ($domain, $limit): bool {
             return $request->method() === 'GET'
                 && $request->url() === 'https://api.hunter.io/v2/domain-search?domain='.urlencode($domain)
-                    .'&api_key='.urlencode(self::API_KEY).'&limit='.$limit;
+                    .'&limit='.$limit.'&offset=0'
+                && $request->hasHeader('Authorization', 'Bearer '.self::API_KEY);
         });
         Http::assertSent(function (Request $request) use ($domain): bool {
             return $request->method() === 'GET'
                 && $request->url() === 'https://api.hunter.io/v2/companies/find?domain='.urlencode($domain)
-                    .'&api_key='.urlencode(self::API_KEY);
+                && $request->hasHeader('Authorization', 'Bearer '.self::API_KEY);
         });
     }
 

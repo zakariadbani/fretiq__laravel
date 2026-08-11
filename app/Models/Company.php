@@ -61,6 +61,7 @@ class Company extends Model
     protected $fillable = [
         'criteria_id',
         'domain',
+        'registrable_domain',
         'name',
         'sector',
         'country',
@@ -150,6 +151,22 @@ class Company extends Model
     }
 
     /**
+     * Staged prospecting rows resolved to this company.
+     */
+    public function prospectBatchItems(): HasMany
+    {
+        return $this->hasMany(ProspectBatchItem::class);
+    }
+
+    /**
+     * Staged contact candidates associated with this company.
+     */
+    public function prospectContactCandidates(): HasMany
+    {
+        return $this->hasMany(ProspectContactCandidate::class);
+    }
+
+    /**
      * The discovery/manual run currently admitted to call Hunter for this company.
      */
     public function enrichmentClaimRun(): BelongsTo
@@ -172,6 +189,7 @@ class Company extends Model
         return [
             'name' => 'required|string|max:255',
             'domain' => 'nullable|string|max:191|unique:companies,domain,'.$this->id,
+            'registrable_domain' => 'nullable|string|max:191',
             'sector' => 'nullable|string|max:100',
             'country' => 'nullable|string|size:2',
             'estimated_size' => 'nullable|string|max:20',

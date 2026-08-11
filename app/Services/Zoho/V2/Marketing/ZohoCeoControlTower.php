@@ -209,7 +209,7 @@ final class ZohoCeoControlTower
             $now,
         );
         $totalByPriority = $this->priorityCounts(collect($queueAll)->countBy('priority')->all());
-        $decisionSignalCounts = collect(['P1', 'P2'])->mapWithKeys(
+        $totalBySignal = collect(self::PRIORITIES)->mapWithKeys(
             fn (string $signal): array => [$signal => collect($queueAll)->filter(
                 fn (array $row): bool => in_array($signal, $row['signals'], true),
             )->count()],
@@ -300,10 +300,12 @@ final class ZohoCeoControlTower
         )->all();
         $queueCompleteness = $this->combineCompleteness(array_values($ruleCompleteness));
         $queueTotals = $totalByPriority;
+        $queueSignalTotals = $totalBySignal;
         $displayedQueueTotals = $displayedByPriority;
         foreach (self::PRIORITIES as $priority) {
             if (! $priorityAvailability[$priority]) {
                 $queueTotals[$priority] = 'Indisponible';
+                $queueSignalTotals[$priority] = null;
                 $displayedQueueTotals[$priority] = 'Indisponible';
             }
         }
@@ -410,8 +412,8 @@ final class ZohoCeoControlTower
                 ],
             ],
             'decision_cards' => [
-                'P1' => $this->card($priorityAvailability['P1'] ? $decisionSignalCounts['P1'] : 'Indisponible', 'Décision urgente', 'Comptes dédupliqués avec devis expiré ou à échéance sous 7 jours et canal autorisé.', $confidence['decision_cards']['P1']),
-                'P2' => $this->card($priorityAvailability['P2'] ? $decisionSignalCounts['P2'] : 'Indisponible', 'Progression à obtenir', 'Comptes dédupliqués avec devis répétés sans progrès ou deal joignable inactif.'.$this->partialSubsetNote($priorityCompleteness['P2']), $confidence['decision_cards']['P2']),
+                'P1' => $this->card($priorityAvailability['P1'] ? $totalBySignal['P1'] : 'Indisponible', 'Décision urgente', 'Comptes dédupliqués avec devis expiré ou à échéance sous 7 jours et canal autorisé.', $confidence['decision_cards']['P1']),
+                'P2' => $this->card($priorityAvailability['P2'] ? $totalBySignal['P2'] : 'Indisponible', 'Progression à obtenir', 'Comptes dédupliqués avec devis répétés sans progrès ou deal joignable inactif.'.$this->partialSubsetNote($priorityCompleteness['P2']), $confidence['decision_cards']['P2']),
                 'P3' => $this->card($priorityAvailability['P3'] ? $p3Value : 'Indisponible', 'Signal campagne doux', $campaignSignals['note'].' La carte compte les contacts distincts ; la file reste dédupliquée par compte.', $confidence['decision_cards']['P3']),
                 'enrichment' => $this->card($priorityAvailability['enrichment'] ? $totalByPriority['enrichment'] : 'Indisponible', 'Canal à enrichir', 'Urgence ou dossier sans téléphone ni email autorisé.'.$this->partialSubsetNote($priorityCompleteness['enrichment']), $confidence['decision_cards']['enrichment']),
             ],
@@ -419,6 +421,7 @@ final class ZohoCeoControlTower
                 'items' => $queue,
                 'truncated' => count($queueAll) > count($queue),
                 'total_by_priority' => $queueTotals,
+                'total_by_signal' => $queueSignalTotals,
                 'displayed_by_priority' => $displayedQueueTotals,
                 'availability_by_priority' => $priorityAvailability,
                 'completeness_by_priority' => $priorityCompleteness,
@@ -885,13 +888,13 @@ final class ZohoCeoControlTower
                 $validTill = CarbonImmutable::parse($quote->valid_till, $now->timezone)->startOfDay();
                 $reason = $validTill->lt($now->startOfDay())
                     ? 'Devis expiré sans décision'
-                    : 'Décision à obtenir avant expiration';
+                    : 'Devis arrivant à échéance sans décision renseignée';
                 $priority = $contactability['reachable'] ? 'P1' : 'enrichment';
                 $action = $contactability['reachable']
                     ? $this->contactAction($contactability['kind'], 'obtenir une décision et une prochaine étape datée')
                     : 'Compléter un téléphone ou un email autorisé avant toute relance.';
                 if (! $contactability['reachable']) {
-                    $reason .= ' · canal autorisé à enrichir';
+                    $reason .= ' · Aucun canal autorisé observé';
                 }
                 $this->appendQueueReason($rows, (string) $key, $this->queueRow(
                     priority: $priority,
@@ -922,7 +925,7 @@ final class ZohoCeoControlTower
                 $priority = $contactability['reachable'] ? 'P2' : 'enrichment';
                 $reason = 'Au moins deux devis sur la période, sans deal, décision ni suivi humain prouvé';
                 if (! $contactability['reachable']) {
-                    $reason .= ' · canal autorisé à enrichir';
+                    $reason .= ' · Aucun canal autorisé observé';
                 }
                 $this->appendQueueReason($rows, (string) $key, $this->queueRow(
                     priority: $priority,
@@ -1002,7 +1005,7 @@ final class ZohoCeoControlTower
             }
             $priority = $contactability['reachable'] ? 'P2' : 'enrichment';
             if (! $contactability['reachable']) {
-                $reason .= ' · canal autorisé à enrichir';
+                $reason .= ' · Aucun canal autorisé observé';
             }
 
             $this->appendQueueReason($rows, $key, $this->queueRow(
@@ -1058,7 +1061,7 @@ final class ZohoCeoControlTower
             if ($channelUnknown) {
                 $reason .= ' · joignabilité du compte non évaluée';
             } elseif (! $contactability['reachable']) {
-                $reason .= ' · canal autorisé à enrichir';
+                $reason .= ' · Aucun canal autorisé observé';
             }
             $this->appendQueueReason($rows, (string) $key, $this->queueRow(
                 priority: $priority,
@@ -2034,6 +2037,7 @@ final class ZohoCeoControlTower
                 'items' => [],
                 'truncated' => false,
                 'total_by_priority' => $unavailableTotals,
+                'total_by_signal' => array_fill_keys(self::PRIORITIES, null),
                 'displayed_by_priority' => $unavailableTotals,
                 'availability_by_priority' => $unavailableByPriority,
                 'completeness_by_priority' => $unavailableCompleteness,

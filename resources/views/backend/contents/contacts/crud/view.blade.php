@@ -56,12 +56,39 @@
                             </div>
                         </div>
 
-                        <div class="row mb-0">
+                        @php
+                            $verificationBadge = app(\App\Services\Campaign\ContactEligibilityService::class)->badge($model);
+                            $verificationSource = config(
+                                'global.data.contact_email_verification_sources.'.$model->email_verification_source
+                            );
+                        @endphp
+
+                        <div class="row mb-7">
                             <label class="col-lg-5 fw-bold text-muted">Vérification email</label>
                             <div class="col-lg-7">
-                                <span class="fw-semibold">{{ $model->email_verification_status ?: '—' }}</span>
+                                <span class="badge badge-light-{{ $verificationBadge['color'] }}">
+                                    {{ $verificationBadge['label'] }}
+                                </span>
                             </div>
                         </div>
+
+                        <div class="row mb-7">
+                            <label class="col-lg-5 fw-bold text-muted">Vérifié le</label>
+                            <div class="col-lg-7 fw-semibold">
+                                {{ $model->email_verification_checked_at?->format('d/m/Y H:i') ?? '—' }}
+                            </div>
+                        </div>
+
+                        <div class="row mb-0">
+                            <label class="col-lg-5 fw-bold text-muted">Preuve</label>
+                            <div class="col-lg-7 fw-semibold">{{ $verificationSource ?: '—' }}</div>
+                        </div>
+
+                        @if($model->email_verification_status === 'accept_all')
+                            <div class="alert alert-warning mt-7 mb-0" role="status">
+                                Adresse accept-all : envoi autorisé uniquement si le retour de livraison est opérationnel.
+                            </div>
+                        @endif
 
                     </div>
                 </div>

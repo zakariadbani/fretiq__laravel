@@ -2,41 +2,42 @@
 
 namespace App\Services\Discovery;
 
+use App\Services\Providers\Hunter\HunterClient;
+use App\Services\Providers\ProviderCallContext;
+use App\Services\Providers\ProviderCallLedger;
+use App\Services\Providers\ProviderExecution;
+use App\Services\Providers\ProviderRequestException;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use Throwable;
 
 /**
- * HunterEnrichmentService — Hunter.io domain and company enrichment.
+ * Compatibility facade for the discovery pipeline.
  *
- * Driver selection:  config('services.hunter.driver', 'local')
- *   'local'  → loads database/fixtures/discovery/hunter.json — NO HTTP
- *   anything else  → calls live Hunter API
- *
- * A live enrichment bundle makes two provider requests (and can therefore use
- * two Hunter API units): Domain Search for emails and Company Enrichment for
- * authoritative organization metadata.
- *
- * Returns ['organization', 'industry', 'country', 'emails' => [...], 'raw' => data]
- * or null when the domain cannot be enriched.
- *
- * email_kind mapping (applied upstream in DiscoveryPipelineService):
- *   type = 'generic'  →  email_kind = 'role'
- *   type = 'personal' →  email_kind = 'personal'
+ * Hunter transport, authentication and provider accounting live exclusively in
+ * HunterClient. This service only combines normalized business results and
+ * preserves the pipeline's partial-success behavior.
  */
 class HunterEnrichmentService
 {
     private bool $lastSearchSystemicFailure = false;
 
+    private readonly HunterClient $client;
+
+    public function __construct(?HunterClient $client = null)
+    {
+        $this->client = $client ?? app(HunterClient::class);
+    }
+
     /**
-     * Fetch domain-level data including contact emails.
-     *
      * @return array{organization: ?string, industry: ?string, country: ?string, emails: list<mixed>, raw: array}|null
      */
     public function domainSearch(string $domain, int $limit = 10, ?int $timeoutSeconds = null): ?array
     {
         if ($this->isLocal()) {
-            return $this->domainSearchFromFixtures($domain);
+            return $this->domainSearchFromClientFixture($domain, $limit);
         }
 
         return $this->domainSearchFromHunter($domain, $limit, $timeoutSeconds);
@@ -46,238 +47,136 @@ class HunterEnrichmentService
     public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null): array
     {
         $this->lastSearchSystemicFailure = false;
-
-        if ($this->isLocal()) {
-            $path = base_path('database/fixtures/discovery/hunter.json');
-            if (! file_exists($path) || ! is_array(json_decode(file_get_contents($path), true))) {
-                return ['status' => 'provider_failed', 'data' => null];
-            }
-        } elseif (! config('services.hunter.api_key')) {
-            return ['status' => 'provider_failed', 'data' => null];
-        }
-
         $data = $this->domainSearch($domain, $limit, $timeoutSeconds);
 
-        // A systemic failure on either half of the bundle must trip the caller's
-        // circuit breaker even if the other endpoint returned partial metadata.
         if ($this->lastSearchSystemicFailure) {
             return ['status' => 'provider_failed', 'data' => $data];
         }
-
         if ($data !== null) {
             return ['status' => 'ok', 'data' => $data];
         }
 
-        return [
-            'status' => 'empty',
-            'data' => null,
-        ];
+        return ['status' => 'empty', 'data' => null];
     }
 
     /**
-     * Fetch live Hunter.io account balance/usage for the superadmin quota page.
-     *
-     * Verified live 2026-07-04 (STATUS 200): Hunter /account data.* returns requests.searches.{used,available}, requests.verifications.{used,available}, plan_name, reset_date.
+     * Fetch the free Hunter usage endpoint and retain the legacy quota-view shape.
      *
      * @return array{searches_used: ?int, searches_available: ?int, verifications_used: ?int, verifications_available: ?int, plan_name: ?string, reset_date: ?string}|null
      */
     public function accountUsage(): ?array
     {
         if ($this->isLocal()) {
-            return null;
-        }
-
-        $apiKey = config('services.hunter.api_key');
-
-        if (! $apiKey) {
-            return null;
-        }
-
-        // ponytail: cached null-on-failure for 10 min is acceptable here — same rationale as
-        // CompanyDiscoveryService::accountUsage().
-        return Cache::remember('provider.hunter.account', now()->addMinutes(10), function () use ($apiKey) {
             try {
-                $response = Http::timeout(15)->acceptJson()->get('https://api.hunter.io/v2/account', [
-                    'api_key' => $apiKey,
-                ]);
+                $execution = $this->client->accountUsage($this->legacyContext('account_usage', 0));
+                $this->settle($execution, 1, 0);
+            } catch (Throwable) {
+                // The local quota page remains unavailable by design.
+            }
 
-                if ($response->failed()) {
-                    Log::warning('[HunterEnrichmentService] Hunter account request failed', [
-                        'status' => $response->status(),
-                    ]);
+            return null;
+        }
 
-                    return null;
-                }
+        return Cache::remember('provider.hunter.account', now()->addMinutes(10), function (): ?array {
+            try {
+                $execution = $this->client->accountUsage($this->legacyContext('account_usage', 0));
+                $data = $execution->response?->data ?? [];
+                $this->settle($execution, $data === [] ? 0 : 1, 0);
 
-                $data = $response->json('data', []);
+                $credits = data_get($data, 'requests.credits');
+                $searches = data_get($data, 'requests.searches', is_array($credits) ? $credits : []);
+                $verifications = data_get($data, 'requests.verifications', []);
 
                 return [
-                    'searches_used' => data_get($data, 'requests.searches.used'),
-                    'searches_available' => data_get($data, 'requests.searches.available'),
-                    'verifications_used' => data_get($data, 'requests.verifications.used'),
-                    'verifications_available' => data_get($data, 'requests.verifications.available'),
-                    'plan_name' => $data['plan_name'] ?? null,
-                    'reset_date' => $data['reset_date'] ?? null,
+                    'searches_used' => $this->nullableInt(data_get($searches, 'used')),
+                    'searches_available' => $this->nullableInt(data_get($searches, 'remaining', data_get($searches, 'available'))),
+                    'verifications_used' => $this->nullableInt(data_get($verifications, 'used')),
+                    'verifications_available' => $this->nullableInt(data_get($verifications, 'remaining', data_get($verifications, 'available'))),
+                    'plan_name' => is_string($data['plan_name'] ?? null) ? $data['plan_name'] : null,
+                    'reset_date' => isset($data['reset_date']) ? (string) $data['reset_date'] : null,
                 ];
-            } catch (\Throwable $e) {
-                Log::warning('[HunterEnrichmentService] Hunter account call threw an exception', [
-                    'error' => $e->getMessage(),
+            } catch (ProviderRequestException $exception) {
+                Log::warning('[HunterEnrichmentService] Hunter usage request failed', [
+                    'status' => $exception->httpStatus,
+                    'error_code' => $exception->safeCode,
+                ]);
+
+                return null;
+            } catch (Throwable $exception) {
+                Log::warning('[HunterEnrichmentService] Hunter usage request failed', [
+                    'exception' => $exception::class,
                 ]);
 
                 return null;
             }
         });
     }
-    // ── Local fixture driver ──────────────────────────────────────────────────
 
-    private function domainSearchFromFixtures(string $domain): ?array
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return array{data: list<mixed>, meta: array<string, mixed>}|null
+     */
+    public function usageHistory(array $filters = []): ?array
     {
-        $path = base_path('database/fixtures/discovery/hunter.json');
+        try {
+            $execution = $this->client->usageHistory($this->legacyContext('usage_history', 0), $filters);
+            $data = $execution->response?->data ?? [];
+            $meta = $execution->response?->meta ?? [];
+            $this->settle($execution, count($data), 0);
 
-        if (! file_exists($path)) {
-            Log::warning('[HunterEnrichmentService] Local fixture missing', ['path' => $path]);
-
-            return null;
+            return ['data' => array_values($data), 'meta' => $meta];
+        } catch (ProviderRequestException $exception) {
+            Log::warning('[HunterEnrichmentService] Hunter usage history request failed', [
+                'status' => $exception->httpStatus,
+                'error_code' => $exception->safeCode,
+            ]);
+        } catch (Throwable $exception) {
+            Log::warning('[HunterEnrichmentService] Hunter usage history request failed', [
+                'exception' => $exception::class,
+            ]);
         }
 
-        $fixtures = json_decode(file_get_contents($path), true);
-
-        if (! is_array($fixtures)) {
-            Log::warning('[HunterEnrichmentService] Local fixture is not a valid JSON object.');
-
-            return null;
-        }
-
-        // Exact match first; fall back to a domain-scoped generic fixture. The
-        // fallback addresses must be unique to the requested company or local
-        // multi-company runs would manufacture cross-company email collisions.
-        $exact = array_key_exists($domain, $fixtures);
-        $data = $exact ? $fixtures[$domain] : ($fixtures['__default__'] ?? null);
-
-        if (! $data) {
-            return null;
-        }
-
-        if (! $exact && isset($data['emails']) && is_array($data['emails'])) {
-            $data['emails'] = array_map(function (mixed $email) use ($domain): mixed {
-                if (! is_array($email) || ! is_string($email['value'] ?? null)) {
-                    return $email;
-                }
-
-                $localPart = strstr($email['value'], '@', true);
-                if ($localPart !== false && $localPart !== '') {
-                    $email['value'] = $localPart.'@'.$domain;
-                }
-
-                return $email;
-            }, $data['emails']);
-        }
-
-        return $this->normalizeHunterData($data);
+        return null;
     }
 
-    // ── Real Hunter driver ────────────────────────────────────────────────────
+    private function domainSearchFromClientFixture(string $domain, int $limit): ?array
+    {
+        try {
+            $execution = $this->client->domainSearch(
+                $this->legacyContext('domain_search', 1),
+                $domain,
+                limit: $limit,
+            );
+            $data = $execution->response?->data ?? [];
+            $this->settle($execution, count((array) ($data['emails'] ?? [])), 0);
+
+            if (($data['domain'] ?? null) === null && ($data['emails'] ?? []) === []) {
+                return null;
+            }
+
+            // The old local facade exposed the fixture verbatim as raw data.
+            unset($data['domain']);
+
+            return $this->normalizeHunterData($data);
+        } catch (ProviderRequestException $exception) {
+            $this->lastSearchSystemicFailure = true;
+            Log::error('[HunterEnrichmentService] Local Hunter fixture failed', [
+                'error_code' => $exception->safeCode,
+            ]);
+        } catch (Throwable $exception) {
+            $this->lastSearchSystemicFailure = true;
+            Log::error('[HunterEnrichmentService] Local Hunter fixture failed', [
+                'exception' => $exception::class,
+            ]);
+        }
+
+        return null;
+    }
 
     private function domainSearchFromHunter(string $domain, int $limit, ?int $timeoutSeconds = null): ?array
     {
-        $apiKey = config('services.hunter.api_key');
-
-        if (! $apiKey) {
-            $this->lastSearchSystemicFailure = true;
-            Log::warning('[HunterEnrichmentService] Hunter API key not configured — skipping enrichment.', [
-                'domain' => $domain,
-            ]);
-
-            return null;
-        }
-
-        $domainSearchData = null;
-        $companyData = null;
-        $domainPromise = null;
-        $companyPromise = null;
-
-        $timeout = max(1, $timeoutSeconds ?? 20);
-
-        try {
-            $domainPromise = Http::timeout($timeout)
-                ->acceptJson()
-                ->async()
-                ->get('https://api.hunter.io/v2/domain-search', [
-                    'domain' => $domain,
-                    'api_key' => $apiKey,
-                    'limit' => $limit,
-                ]);
-        } catch (\Throwable $e) {
-            $this->lastSearchSystemicFailure = true;
-            Log::error('[HunterEnrichmentService] Hunter domain-search threw an exception', [
-                'domain' => $domain,
-                'exception' => $e::class,
-            ]);
-        }
-
-        try {
-            $companyPromise = Http::timeout($timeout)
-                ->acceptJson()
-                ->async()
-                ->get('https://api.hunter.io/v2/companies/find', [
-                    'domain' => $domain,
-                    'api_key' => $apiKey,
-                ]);
-        } catch (\Throwable $e) {
-            $this->lastSearchSystemicFailure = true;
-            Log::error('[HunterEnrichmentService] Hunter company enrichment threw an exception', [
-                'domain' => $domain,
-                'exception' => $e::class,
-            ]);
-        }
-
-        if ($domainPromise !== null) {
-            try {
-                $domainResponse = $domainPromise->wait();
-
-                if ($domainResponse->failed()) {
-                    if ($this->isSystemicStatus($domainResponse->status())) {
-                        $this->lastSearchSystemicFailure = true;
-                    }
-                    Log::warning('[HunterEnrichmentService] Hunter domain-search failed', [
-                        'domain' => $domain,
-                        'status' => $domainResponse->status(),
-                    ]);
-                } else {
-                    $domainSearchData = $domainResponse->json('data', []);
-                }
-            } catch (\Throwable $e) {
-                $this->lastSearchSystemicFailure = true;
-                Log::error('[HunterEnrichmentService] Hunter domain-search threw an exception', [
-                    'domain' => $domain,
-                    'exception' => $e::class,
-                ]);
-            }
-        }
-
-        if ($companyPromise !== null) {
-            try {
-                $companyResponse = $companyPromise->wait();
-
-                if ($companyResponse->failed()) {
-                    if ($this->isSystemicStatus($companyResponse->status())) {
-                        $this->lastSearchSystemicFailure = true;
-                    }
-                    Log::warning('[HunterEnrichmentService] Hunter company enrichment failed', [
-                        'domain' => $domain,
-                        'status' => $companyResponse->status(),
-                    ]);
-                } else {
-                    $companyData = $companyResponse->json('data', []);
-                }
-            } catch (\Throwable $e) {
-                $this->lastSearchSystemicFailure = true;
-                Log::error('[HunterEnrichmentService] Hunter company enrichment threw an exception', [
-                    'domain' => $domain,
-                    'exception' => $e::class,
-                ]);
-            }
-        }
+        $domainSearchData = $this->attemptDomainSearch($domain, $limit, $timeoutSeconds);
+        $companyData = $this->attemptCompanyEnrichment($domain, $timeoutSeconds);
 
         if ($domainSearchData === null && $companyData === null) {
             return null;
@@ -296,8 +195,88 @@ class HunterEnrichmentService
         ];
     }
 
-    // ── Shared normalizer ─────────────────────────────────────────────────────
+    /** @return array<string, mixed>|null */
+    private function attemptDomainSearch(string $domain, int $limit, ?int $timeoutSeconds = null): ?array
+    {
+        try {
+            $execution = $this->client->domainSearch(
+                $this->legacyContext('domain_search', 1),
+                $domain,
+                limit: $limit,
+                timeoutSeconds: $timeoutSeconds,
+            );
+            $data = $execution->response?->data ?? [];
+            $emails = (array) ($data['emails'] ?? []);
+            $this->settle($execution, count($emails), $emails === [] ? 0 : 1);
 
+            return $data === [] || (($data['domain'] ?? null) === null && $emails === []) ? null : $data;
+        } catch (ProviderRequestException $exception) {
+            $this->recordFailure('domain-search', $exception);
+        } catch (Throwable $exception) {
+            $this->lastSearchSystemicFailure = true;
+            Log::error('[HunterEnrichmentService] Hunter domain-search failed', [
+                'exception' => $exception::class,
+            ]);
+        }
+
+        return null;
+    }
+
+    /** @return array<string, mixed>|null */
+    private function attemptCompanyEnrichment(string $domain, ?int $timeoutSeconds = null): ?array
+    {
+        try {
+            $execution = $this->client->companyEnrichment(
+                $this->legacyContext('company_enrichment', 1),
+                $domain,
+                $timeoutSeconds,
+            );
+            $data = $execution->response?->data ?? [];
+            $this->settle($execution, $data === [] ? 0 : 1, $data === [] ? 0 : 1);
+
+            return $data === [] ? null : $data;
+        } catch (ProviderRequestException $exception) {
+            $this->recordFailure('company-enrichment', $exception);
+        } catch (Throwable $exception) {
+            $this->lastSearchSystemicFailure = true;
+            Log::error('[HunterEnrichmentService] Hunter company enrichment failed', [
+                'exception' => $exception::class,
+            ]);
+        }
+
+        return null;
+    }
+
+    private function recordFailure(string $operation, ProviderRequestException $exception): void
+    {
+        if ($this->isSystemicStatus($exception->httpStatus) || $exception->safeCode === 'hunter_not_configured') {
+            $this->lastSearchSystemicFailure = true;
+        }
+        Log::error('[HunterEnrichmentService] Hunter '.$operation.' failed', [
+            'status' => $exception->httpStatus,
+            'error_code' => $exception->safeCode,
+        ]);
+    }
+
+    private function settle(ProviderExecution $execution, int $resultCount, float $consumedUnits): void
+    {
+        DB::transaction(fn () => app(ProviderCallLedger::class)->settle(
+            $execution,
+            max(0, $resultCount),
+            $this->isLocal() ? 0 : $consumedUnits,
+        ));
+    }
+
+    private function legacyContext(string $operation, float $reservedUnits): ProviderCallContext
+    {
+        return new ProviderCallContext(
+            hash('sha256', 'hunter-legacy:'.$operation.':'.Str::uuid()),
+            $this->isLocal() ? 0 : $reservedUnits,
+            engine: $operation,
+        );
+    }
+
+    /** @param array<string, mixed> $data */
     private function normalizeHunterData(array $data): array
     {
         return [
@@ -309,13 +288,18 @@ class HunterEnrichmentService
         ];
     }
 
+    private function nullableInt(mixed $value): ?int
+    {
+        return is_numeric($value) ? (int) $value : null;
+    }
+
     private function isLocal(): bool
     {
         return config('services.hunter.driver', 'local') === 'local';
     }
 
-    private function isSystemicStatus(int $status): bool
+    private function isSystemicStatus(?int $status): bool
     {
-        return in_array($status, [401, 403, 408, 425, 429], true) || $status >= 500;
+        return $status !== null && (in_array($status, [401, 403, 408, 425, 429], true) || $status >= 500);
     }
 }

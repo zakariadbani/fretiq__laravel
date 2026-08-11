@@ -3,6 +3,8 @@
 namespace App\Services\Campaign;
 
 use App\Models\Campaign;
+use App\Models\CampaignRecipient;
+use App\Models\CampaignRun;
 use App\Models\SenderIdentity;
 use App\Models\SmtpSendReservation;
 use Carbon\Carbon;
@@ -19,33 +21,77 @@ class SmtpSendReservationService
         int $sourceId,
         ?CarbonInterface $now = null,
     ): array {
-        $existing = SmtpSendReservation::query()
+        $existingSnapshot = SmtpSendReservation::query()
             ->where('source_type', $sourceType)
             ->where('source_id', $sourceId)
             ->first();
-
-        if ($existing !== null && ! in_array($existing->status, ['released', 'failed'], true)) {
-            return $this->result($existing);
-        }
 
         if ($campaign->smtpDailyEmailLimit() === 0) {
             return ['ok' => false, 'reservation' => null, 'send_at' => null, 'reason' => 'campaign_paused'];
         }
 
-        return DB::transaction(function () use ($identity, $campaign, $sourceType, $sourceId, $now): array {
-            $lockedIdentity = SenderIdentity::query()->lockForUpdate()->findOrFail($identity->id);
-            $lockedCampaign = Campaign::query()->findOrFail($campaign->id);
+        return DB::transaction(function () use ($identity, $campaign, $sourceType, $sourceId, $now, $existingSnapshot): array {
+            // A legacy reservation can point at an older sender. Lock all known
+            // identities first, deterministically, before touching its row.
+            $identityIds = collect([$identity->id, $existingSnapshot?->sender_identity_id])
+                ->filter()
+                ->map(fn ($id): int => (int) $id)
+                ->unique()
+                ->sort();
+            foreach ($identityIds as $identityId) {
+                SenderIdentity::query()->lockForUpdate()->findOrFail($identityId);
+            }
+            $lockedIdentity = SenderIdentity::query()->findOrFail($identity->id);
+
+            $recipientSnapshot = $sourceType === SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT
+                ? CampaignRecipient::query()->find($sourceId)
+                : null;
 
             $existing = SmtpSendReservation::query()
                 ->where('source_type', $sourceType)
                 ->where('source_id', $sourceId)
+                ->lockForUpdate()
                 ->first();
-            if ($existing !== null && ! in_array($existing->status, ['released', 'failed'], true)) {
-                return $this->result($existing);
+            $lockedCampaign = Campaign::query()->lockForUpdate()->findOrFail($campaign->id);
+
+            if (! $lockedCampaign->is_active || $lockedCampaign->smtpDailyEmailLimit() === 0) {
+                return ['ok' => false, 'reservation' => $existing, 'send_at' => null, 'reason' => 'campaign_paused'];
             }
 
-            if ($lockedCampaign->smtpDailyEmailLimit() === 0) {
-                return ['ok' => false, 'reservation' => null, 'send_at' => null, 'reason' => 'campaign_paused'];
+            if ($sourceType === SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT) {
+                if ($recipientSnapshot === null) {
+                    return ['ok' => false, 'reservation' => $existing, 'send_at' => null, 'reason' => 'source_unavailable'];
+                }
+
+                $lockedRun = CampaignRun::query()->lockForUpdate()->find($recipientSnapshot->campaign_run_id);
+                $lockedRecipient = CampaignRecipient::query()->lockForUpdate()->find($sourceId);
+                if ($lockedRun === null || $lockedRecipient === null
+                    || (int) $lockedRun->campaign_id !== (int) $lockedCampaign->id
+                    || (int) $lockedRecipient->campaign_run_id !== (int) $lockedRun->id
+                    || ($existing !== null && (int) $existing->campaign_id !== (int) $lockedCampaign->id)) {
+                    return ['ok' => false, 'reservation' => $existing, 'send_at' => null, 'reason' => 'source_unavailable'];
+                }
+                if ($lockedRun->status === 'canceled') {
+                    return ['ok' => false, 'reservation' => $existing, 'send_at' => null, 'reason' => 'run_canceled'];
+                }
+                if (! in_array($lockedRun->status, ['scheduled', 'sending'], true)
+                    || $lockedRecipient->status !== 'queued'
+                    || filled($lockedRecipient->provider_message_id)
+                    || $lockedRecipient->sent_at !== null) {
+                    return ['ok' => false, 'reservation' => $existing, 'send_at' => null, 'reason' => 'source_unavailable'];
+                }
+            }
+
+            // Even an existing active row is returned only after the campaign
+            // recipient source has been revalidated under the lifecycle locks.
+            if ($existing !== null
+                && in_array($existing->status, ['released', 'failed'], true)
+                && ! $existing->isReusableBeforeTransport()) {
+                return ['ok' => false, 'reservation' => $existing, 'send_at' => null, 'reason' => 'transport_evidence'];
+            }
+
+            if ($existing !== null && ! $existing->isReusableBeforeTransport()) {
+                return $this->result($existing);
             }
 
             $candidate = $this->nextSlot($lockedIdentity, $lockedCampaign, $now);
@@ -163,6 +209,53 @@ class SmtpSendReservationService
         ]);
     }
 
+    /**
+     * Compute, but do not reserve, the earliest currently safe SMTP slot.
+     * Lifecycle callers should hold the sender identity and campaign locks in
+     * that order. The send worker will revalidate all limits when it eventually
+     * materializes and claims a reservation.
+     */
+    public function earliestSafeSlot(
+        SenderIdentity $identity,
+        Campaign $campaign,
+        ?CarbonInterface $notBefore = null,
+    ): Carbon {
+        if ($campaign->smtpDailyEmailLimit() === 0) {
+            throw new \InvalidArgumentException('La campagne est en pause pour les envois SMTP.');
+        }
+
+        // Timeline timestamps are persisted and exposed in UTC. nextSlot()
+        // calculates in the campaign wall-clock timezone, so normalize at this
+        // public boundary before callers update a run or build an API response.
+        return $this->nextSlot($identity, $campaign, $notBefore, null, null, false, true)->utc();
+    }
+
+    /**
+     * Move one still-unattempted campaign reservation into the earliest safe
+     * gap. Callers that coordinate a campaign run must already hold the
+     * identity, reservation and campaign locks in that order.
+     *
+     * @return array{ok:bool,reservation:SmtpSendReservation,send_at:Carbon,reason:null}
+     */
+    public function moveToEarliestSafeSlot(
+        SmtpSendReservation $reservation,
+        SenderIdentity $identity,
+        Campaign $campaign,
+        ?CarbonInterface $now = null,
+    ): array {
+        if ($reservation->status !== 'reserved') {
+            throw new \InvalidArgumentException('La réservation SMTP n’est plus disponible.');
+        }
+
+        $candidate = $this->nextSlot($identity, $campaign, $now, null, $reservation->id, false, true);
+        $reservation->update([
+            'reserved_for' => $candidate->copy()->utc(),
+            'lease_expires_at' => null,
+        ]);
+
+        return $this->result($reservation->fresh());
+    }
+
     public function markSent(SmtpSendReservation $reservation): void
     {
         SmtpSendReservation::query()->whereKey($reservation->id)->update([
@@ -186,7 +279,13 @@ class SmtpSendReservationService
 
     public function release(SmtpSendReservation $reservation): void
     {
-        SmtpSendReservation::query()->whereKey($reservation->id)->update(['status' => 'released', 'lease_expires_at' => null]);
+        SmtpSendReservation::query()
+            ->whereKey($reservation->id)
+            ->whereIn('status', ['reserved', 'sending'])
+            ->whereNull('provider_message_id')
+            ->whereNull('accepted_at')
+            ->whereNull('sent_at')
+            ->update(['status' => 'released', 'lease_expires_at' => null]);
     }
 
     private function nextSlot(
@@ -196,13 +295,14 @@ class SmtpSendReservationService
         $activeOverride = null,
         ?int $excludeId = null,
         bool $execution = false,
+        bool $findEarliest = false,
     ): Carbon
     {
         $quotaTz = (string) config('prospecting.smtp.quota_timezone', 'Europe/Paris');
         $campaignTz = $campaign->scheduleTimezone();
         $base = Carbon::instance(($now ?? now())->toDateTime())->setTimezone($campaignTz);
         $candidate = $this->withinBusinessWindow($base, $campaign);
-        $active = $activeOverride ?: SmtpSendReservation::query()
+        $active = $activeOverride ?? SmtpSendReservation::query()
             ->where('sender_identity_id', $identity->id)
             ->where(function ($statuses): void {
                 $statuses->whereIn('status', ['sending', 'accepted', 'sent', 'uncertain'])
@@ -218,6 +318,9 @@ class SmtpSendReservationService
                             });
                     });
             });
+        if ($excludeId !== null && $activeOverride === null) {
+            $active->where('id', '!=', $excludeId);
+        }
 
         $window = $this->window($campaign);
         $windowSeconds = max(60, ($window['end_minutes'] - $window['start_minutes']) * 60);
@@ -226,7 +329,7 @@ class SmtpSendReservationService
         $dailySpacing = (int) ceil($windowSeconds / max(1, $dailyLimit));
         $spacing = max($hourlySpacing, $dailySpacing);
 
-        $latestReservedFor = (clone $active)->max('reserved_for');
+        $latestReservedFor = ! $findEarliest ? (clone $active)->max('reserved_for') : null;
         if ($latestReservedFor !== null) {
             $latest = Carbon::parse((string) $latestReservedFor, 'UTC')->setTimezone($campaignTz);
             $candidate = $candidate->max($latest->addSeconds($spacing));
@@ -257,6 +360,43 @@ class SmtpSendReservationService
             if ($identityHour >= (int) $identity->smtp_hourly_limit) {
                 $candidate = $this->withinBusinessWindow($candidate->copy()->addHour()->startOfHour(), $campaign);
                 continue;
+            }
+
+            if ($findEarliest) {
+                $previous = (clone $active)
+                    ->where('reserved_for', '<=', $candidate->copy()->utc())
+                    ->orderByDesc('reserved_for')
+                    ->orderByDesc('id')
+                    ->first(['reserved_for']);
+                if ($previous !== null) {
+                    $afterPrevious = Carbon::parse((string) $previous->reserved_for, 'UTC')
+                        ->setTimezone($campaignTz)
+                        ->addSeconds($spacing);
+                    if ($afterPrevious->gt($candidate)) {
+                        $candidate = $this->withinBusinessWindow($afterPrevious, $campaign);
+                        continue;
+                    }
+                }
+
+                $following = (clone $active)
+                    ->where('reserved_for', '>', $candidate->copy()->utc())
+                    ->orderBy('reserved_for')
+                    ->orderBy('id')
+                    ->first(['reserved_for']);
+                if ($following !== null) {
+                    $beforeFollowing = Carbon::parse((string) $following->reserved_for, 'UTC')
+                        ->setTimezone($campaignTz)
+                        ->subSeconds($spacing);
+                    if ($candidate->gt($beforeFollowing)) {
+                        $candidate = $this->withinBusinessWindow(
+                            Carbon::parse((string) $following->reserved_for, 'UTC')
+                                ->setTimezone($campaignTz)
+                                ->addSeconds($spacing),
+                            $campaign,
+                        );
+                        continue;
+                    }
+                }
             }
 
             $collision = (clone $active)

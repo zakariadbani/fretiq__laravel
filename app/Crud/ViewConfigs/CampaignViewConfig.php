@@ -26,9 +26,9 @@ class CampaignViewConfig
      * @param  array|null     $stats            Optional pre-computed stats from CampaignController::campaignStats().
      * @param  int|null       $recipientsTotal       Distinct contacts across all runs (null = unknown, badge omitted).
      * @param  int|null       $currentAudienceTotal  Live segment audience count (null = unknown, badge omitted).
-     * @param  int|null       $executedRunsTotal     Executed history count (null = derive from loaded runs).
+     * @param  int|null       $historyRunsTotal      Full history count (null = derive from loaded runs).
      */
-    public static function make(?Campaign $model, ?array $stats = null, ?int $recipientsTotal = null, ?int $currentAudienceTotal = null, ?int $executedRunsTotal = null): array
+    public static function make(?Campaign $model, ?array $stats = null, ?int $recipientsTotal = null, ?int $currentAudienceTotal = null, ?int $historyRunsTotal = null): array
     {
         $hasId = $model && $model->id;
 
@@ -111,26 +111,13 @@ class CampaignViewConfig
                     'error'       => 'Échec de la mise à jour',
                     'icon'        => 'bi-person-plus-fill',
                 ];
-            } else {
-                $toggle = [
-                    'field'       => 'is_active',
-                    'route'       => route('admin.campaigns.executeSwitch', $model->id),
-                    'permission'  => $model->schedule_type === 'paced' && ! $model->is_active
-                        ? 'send campaigns'
-                        : 'edit campaigns',
-                    'title'       => 'Campagne active',
-                    'description' => 'Active signifie que l’automatisation peut examiner la campagne. L’envoi reste bloqué tant que les vérifications ne sont pas toutes validées.',
-                    'success'     => 'Campagne mise à jour',
-                    'error'       => 'Échec de la mise à jour',
-                    'icon'        => 'bi-check-circle-fill',
-                ];
             }
         }
 
         // ── Tabs ──────────────────────────────────────────────────────────────
         // $runsCount is null when runs relation is not loaded (edit/create) — badge omitted.
-        $runsCount = $executedRunsTotal ?? ($model && $model->relationLoaded('runs')
-            ? $model->runs->filter(fn (CampaignRun $run) => $run->isExecuted())->count()
+        $runsCount = $historyRunsTotal ?? ($model && $model->relationLoaded('runs')
+            ? $model->runs->count()
             : null);
 
         $tabs = [

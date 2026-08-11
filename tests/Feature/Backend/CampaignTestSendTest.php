@@ -69,6 +69,11 @@ class CampaignTestSendTest extends TestCase
             {
                 return 'zoho';
             }
+
+            public function supportsBounceFeedback(Campaign $campaign): bool
+            {
+                return false;
+            }
         });
 
         $this->actingAs($this->superadmin)

@@ -4,6 +4,7 @@ namespace Tests\Unit;
 
 use App\Exceptions\DiscoveryConfigurationException;
 use App\Models\DiscoveryRun;
+use App\Models\ProviderCall;
 use App\Models\ProspectCriteria;
 use App\Models\Setting;
 use App\Services\Discovery\CompanyDiscoveryService;
@@ -376,7 +377,7 @@ class CompanyDiscoveryCollectionLifecycleTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_invocation_cap_is_nonterminal_while_reservation_and_stream_work_remain(): void
+    public function test_retryable_failure_backoff_is_nonterminal_while_reservation_and_stream_work_remain(): void
     {
         $this->useLiveDriver('test-key');
         $criteria = $this->makeCriteria();
@@ -389,12 +390,16 @@ class CompanyDiscoveryCollectionLifecycleTest extends TestCase
         $result = $this->service->discoverForRun($criteria, $run, 20);
 
         $this->assertSame([], $result->candidates);
-        $this->assertSame(15, $run->fresh()->searches_consumed);
-        Http::assertSentCount(15);
+        $this->assertSame(1, $run->fresh()->searches_consumed);
+        Http::assertSentCount(1);
+        $call = ProviderCall::query()->sole();
+        $this->assertSame('retryable', $call->status);
+        $this->assertTrue((bool) data_get($call->metadata, 'retryable'));
+        $this->assertNotNull($call->retry_at);
         $this->assertFalse($result->terminal);
     }
 
-    public function test_smaller_invocation_budget_does_not_replace_the_durable_reservation_terminal_rule(): void
+    public function test_smaller_invocation_budget_does_not_bypass_the_provider_retry_window(): void
     {
         $this->useLiveDriver('test-key');
         $criteria = $this->makeCriteria();
@@ -406,9 +411,28 @@ class CompanyDiscoveryCollectionLifecycleTest extends TestCase
 
         $result = $this->service->discoverForRun($criteria, $run, 2);
 
-        $this->assertSame(2, $run->fresh()->searches_consumed);
-        Http::assertSentCount(2);
+        $this->assertSame(1, $run->fresh()->searches_consumed);
+        Http::assertSentCount(1);
+        $this->assertSame(1, ProviderCall::query()->count());
         $this->assertFalse($result->terminal);
+    }
+
+    public function test_retryable_failure_is_terminal_when_it_consumes_the_final_legacy_reservation(): void
+    {
+        $this->useLiveDriver('test-key');
+        $criteria = $this->makeCriteria();
+        $run = $this->makeRun($criteria, searchesReserved: 1);
+
+        Http::fake([
+            '*' => Http::response(['error' => 'temporary provider failure'], 500),
+        ]);
+
+        $result = $this->service->discoverForRun($criteria, $run, 2);
+
+        $this->assertSame(1, $run->fresh()->searches_consumed);
+        Http::assertSentCount(1);
+        $this->assertSame(1, ProviderCall::query()->count());
+        $this->assertTrue($result->terminal);
     }
 
     public function test_all_429_responses_with_an_empty_snapshot_signals_search_provider_down_and_stops_after_one_call(): void
@@ -507,6 +531,9 @@ class CompanyDiscoveryCollectionLifecycleTest extends TestCase
         ));
         Http::assertSentCount(1);
         $this->assertFalse($result->terminal);
+        $call = ProviderCall::query()->sole();
+        $this->assertSame('succeeded', $call->status);
+        $this->assertSame('business_state_changed', $call->metadata['reason']);
     }
 
     private function useLiveDriver(?string $apiKey): void
@@ -593,5 +620,62 @@ class CompanyDiscoveryCollectionLifecycleTest extends TestCase
             $table->unsignedBigInteger('criteria_id')->nullable();
             $table->string('qualification_status')->nullable();
         });
+
+        Schema::create('provider_calls', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('prospect_batch_id')->nullable();
+            $table->unsignedBigInteger('prospect_batch_item_id')->nullable();
+            $table->string('provider', 24);
+            $table->string('operation', 48);
+            $table->string('engine', 32)->nullable();
+            $table->char('idempotency_key', 64);
+            $table->string('status', 16)->default('reserved');
+            $table->unsignedSmallInteger('http_status')->nullable();
+            $table->unsignedInteger('duration_ms')->nullable();
+            $table->unsignedInteger('result_count')->default(0);
+            $table->decimal('reserved_units', 12, 2)->default(0);
+            $table->decimal('consumed_units', 12, 2)->default(0);
+            $table->string('provider_request_id', 191)->nullable();
+            $table->unsignedTinyInteger('attempt_count')->default(0);
+            $table->text('metadata')->nullable();
+            $table->timestamp('retry_at')->nullable();
+            $table->timestamp('started_at')->nullable();
+            $table->timestamp('finished_at')->nullable();
+            $table->timestamps();
+            $table->unique(['provider', 'operation', 'idempotency_key']);
+        });
+    }
+
+    public function test_replayed_provider_page_does_not_consume_another_discovery_attempt(): void
+    {
+        $this->useLiveDriver('test-key');
+        $criteria = $this->makeCriteria();
+        $run = $this->makeRun($criteria, searchesReserved: 2);
+        $queryKey = md5('transitaire France');
+
+        Http::fake(['*' => Http::response([
+            'organic_results' => [[
+                'title' => 'Durable provider page',
+                'link' => 'https://durable-provider-page.test/',
+                'snippet' => 'Persisted once',
+            ]],
+            'serpapi_pagination' => ['next' => 'https://serpapi.test/next?start=10'],
+        ], 200)]);
+
+        $first = $this->service->discoverForRun($criteria, $run, 1);
+        $this->assertSame(1, $run->fresh()->searches_consumed);
+        $this->assertSame(1, ProviderCall::query()->count());
+
+        $run->forceFill(['consumed' => count($first->candidates)])->save();
+        $cursors = $criteria->fresh()->discovery_cursors;
+        $cursors[$queryKey]['start'] = 0;
+        $cursors[$queryKey]['exhausted'] = false;
+        $criteria->forceFill(['discovery_cursors' => $cursors])->save();
+
+        $this->service->discoverForRun($criteria->fresh(), $run->fresh(), 1);
+
+        $this->assertSame(1, $run->fresh()->searches_consumed);
+        $this->assertSame(1, ProviderCall::query()->count());
+        Http::assertSentCount(1);
     }
 }

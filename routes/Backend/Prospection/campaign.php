@@ -19,6 +19,9 @@ Route::controller(CampaignController::class)->prefix('admin')->name('admin.')->g
     Route::put('/campaigns/{id}/sequence-auto-enroll', 'sequenceAutoEnroll')->name('campaigns.sequenceAutoEnroll');
     Route::post('/campaigns/{id}/sync-zoho-list', 'syncZohoList')->name('campaigns.syncZohoList');
     Route::post('/campaigns/{id}/sync-stats', 'syncStats')->name('campaigns.syncStats');
+    Route::post('/campaigns/{id}/runs/{runId}/start-now', 'startRunNow')->name('campaigns.runs.startNow');
+    Route::post('/campaigns/{id}/runs/{runId}/cancel', 'cancelRun')->name('campaigns.runs.cancel');
+    Route::post('/campaigns/{id}/runs/{runId}/resend', 'resendRun')->name('campaigns.runs.resend');
     Route::post('/campaigns/{id}/waves/{runId}/retry-zoho', 'retryZohoWave')->name('campaigns.retryZohoWave');
     Route::post('/campaigns/{id}/recipients/{recipientId}/replied', 'markReplied')->name('campaigns.markReplied');
 

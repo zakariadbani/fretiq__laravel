@@ -3,6 +3,7 @@
 namespace Tests\Feature\Backend;
 
 use App\Jobs\SendSmtpReservationJob;
+use App\Mail\CampaignMailable;
 use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
@@ -12,6 +13,7 @@ use App\Models\Contact;
 use App\Models\EmailTrackingEvent;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
+use App\Models\Setting;
 use App\Models\SmtpSendReservation;
 use App\Services\Campaign\CampaignDeliveryResolver;
 use App\Services\Campaign\CampaignService;
@@ -195,6 +197,7 @@ class SmtpCampaignPacingTest extends TestCase
             ->once()
             ->andThrow(new \RuntimeException('uncertainty persistence unavailable'));
         $driver = \Mockery::mock(SmtpCampaignsDriver::class);
+        $driver->shouldReceive('supportsBounceFeedback')->once()->andReturn(false);
         $driver->shouldReceive('send')->once()->andThrow(new \RuntimeException('transport failed after DATA'));
 
         try {
@@ -257,6 +260,88 @@ class SmtpCampaignPacingTest extends TestCase
         $this->assertSame(0, EmailTrackingEvent::count());
     }
 
+    public function test_accept_all_requires_feedback_capable_driver(): void
+    {
+        [$campaign, $run] = $this->campaignRun(1);
+        $campaign->senderIdentity->update([
+            'imap_enabled' => true,
+            'imap_host' => 'imap.example.test',
+            'imap_port' => 993,
+            'imap_username' => 'bounce@example.test',
+            'imap_password' => 'test-password',
+            'imap_encryption' => 'ssl',
+        ]);
+        SenderIdentity::query()->whereKey($campaign->sender_identity_id)->update([
+            'last_polled_at' => now()->subMinutes(16),
+            'last_poll_error' => null,
+            'consecutive_poll_failures' => 0,
+        ]);
+        Setting::set('automatisation.cron_enabled', true);
+        Setting::set('automatisation.inbox_poll', true);
+
+        app(CampaignService::class)->sendRun($run);
+        $recipient = CampaignRecipient::where('campaign_run_id', $run->id)->firstOrFail();
+        $recipient->contact->update([
+            'email_verification_status' => 'accept_all',
+            'email_verification_source' => 'hunter',
+            'email_verification_checked_at' => now(),
+        ]);
+        $reservation = SmtpSendReservation::where('source_id', $recipient->id)->firstOrFail();
+        $reservation->update(['reserved_for' => now()->subSecond()]);
+
+        (new SendSmtpReservationJob($reservation->id))->handle(
+            app(SmtpSendReservationService::class),
+            app(SmtpCampaignsDriver::class),
+            app(CampaignService::class),
+            app(SequenceService::class),
+        );
+
+        Mail::assertNothingSent();
+        $this->assertSame('skipped', $recipient->fresh()->status);
+        $this->assertSame('bounce_feedback_unhealthy', $recipient->fresh()->skip_reason);
+        $this->assertSame(0, EmailTrackingEvent::count());
+    }
+
+    public function test_accept_all_is_sent_when_smtp_feedback_is_healthy(): void
+    {
+        [$campaign, $run] = $this->campaignRun(1);
+        $campaign->senderIdentity->update([
+            'imap_enabled' => true,
+            'imap_host' => 'imap.example.test',
+            'imap_port' => 993,
+            'imap_username' => 'bounce@example.test',
+            'imap_password' => 'test-password',
+            'imap_encryption' => 'ssl',
+        ]);
+        SenderIdentity::query()->whereKey($campaign->sender_identity_id)->update([
+            'last_polled_at' => now(),
+            'last_poll_error' => null,
+            'consecutive_poll_failures' => 0,
+        ]);
+        Setting::set('automatisation.cron_enabled', true);
+        Setting::set('automatisation.inbox_poll', true);
+
+        app(CampaignService::class)->sendRun($run);
+        $recipient = CampaignRecipient::where('campaign_run_id', $run->id)->firstOrFail();
+        $recipient->contact->update([
+            'email_verification_status' => 'accept_all',
+            'email_verification_source' => 'hunter',
+            'email_verification_checked_at' => now(),
+        ]);
+        $reservation = SmtpSendReservation::where('source_id', $recipient->id)->firstOrFail();
+        $reservation->update(['reserved_for' => now()->subSecond()]);
+
+        (new SendSmtpReservationJob($reservation->id))->handle(
+            app(SmtpSendReservationService::class),
+            app(SmtpCampaignsDriver::class),
+            app(CampaignService::class),
+            app(SequenceService::class),
+        );
+
+        $this->assertSame('sent', $recipient->fresh()->status);
+        Mail::assertSent(CampaignMailable::class);
+    }
+
     private function campaignRun(int $contacts, array $campaignAttributes = []): array
     {
         $segment = Segment::create(['name' => 'Clients ' . uniqid(), 'scope' => 'client']);
@@ -275,6 +360,9 @@ class SmtpCampaignPacingTest extends TestCase
                 'source' => 'manual',
                 'legal_basis' => 'relationship',
                 'email_kind' => 'role',
+                'email_verification_status' => 'valid',
+                'email_verification_source' => 'hunter',
+                'email_verification_checked_at' => now(),
             ]);
         }
         $template = CampaignTemplate::create(['name' => 'Template', 'subject' => 'Subject', 'html_content' => '<p>Hello</p>']);

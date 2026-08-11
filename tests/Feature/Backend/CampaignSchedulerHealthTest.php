@@ -273,7 +273,7 @@ class CampaignSchedulerHealthTest extends TestCase
             ->assertSee('data-campaign-actions-enabled="true"', false)
             ->assertSee('Prochain envoi prévu', false)
             ->assertSee('13/07/2026 12:00 Europe/Paris', false)
-            ->assertSee('Actions', false)
+            ->assertSee('Outils', false)
             ->assertSee('Préparer la liste d’envoi', false)
             ->assertDontSee('Ajouter et vérifier la liste Zoho', false);
 
@@ -284,12 +284,49 @@ class CampaignSchedulerHealthTest extends TestCase
         $this->actingAs($this->superadmin)
             ->get("/admin/campaigns/{$campaign->id}/edit")
             ->assertOk()
-            ->assertDontSee('id="btn-test-send"', false)
-            ->assertDontSee('id="btn-sync-campaign-stats"', false)
-            ->assertDontSee('id="btn-sync-zoho-list"', false)
-            ->assertDontSee('id="btn-schedule"', false)
-            ->assertDontSee('id="btn-send-now"', false);
+            ->assertSee('id="btn-test-send"', false)
+            ->assertSee('id="btn-sync-campaign-stats"', false)
+            ->assertSee('id="btn-sync-zoho-list"', false)
+            ->assertSee('id="btn-schedule"', false)
+            ->assertSee('id="btn-send-now"', false);
     }
+
+    public function test_stale_scheduler_health_disables_scheduling_but_not_manual_send_for_a_ready_non_sequence_campaign(): void
+    {
+        $campaign = $this->makeCampaign(['schedule_type' => 'one_shot']);
+        $company = Company::create([
+            'name' => 'Manual send ready client',
+            'relationship' => 'client',
+            'source' => 'manual',
+            'qualification_status' => 'pending',
+        ]);
+        Contact::create([
+            'company_id' => $company->id,
+            'email' => 'manual-send-ready@example.test',
+            'name' => 'Manual send ready contact',
+            'status' => 'new',
+            'source' => 'manual',
+            'legal_basis' => 'relationship',
+            'email_kind' => 'role',
+            'email_verification_status' => 'valid',
+            'email_verification_checked_at' => now(),
+            'email_verification_source' => 'manual',
+        ]);
+
+        Setting::set('observability.scheduler.last_tick_at', now()->utc()->toIso8601String());
+        Setting::set('campaign_scheduler.commands.generate_runs.last_success_at', now()->subMinutes(3)->utc()->toIso8601String());
+        Setting::set('campaign_scheduler.commands.dispatch_due.last_success_at', now()->utc()->toIso8601String());
+
+        $response = $this->actingAs($this->superadmin)
+            ->get("/admin/campaigns/{$campaign->id}")
+            ->assertOk()
+            ->assertSee('data-campaign-readiness="ready"', false)
+            ->assertSee('data-campaign-commands-status="stale"', false);
+
+        $this->assertMatchesRegularExpression('/<button(?=[^>]*id="btn-schedule")(?=[^>]*\sdisabled(?:\s|>|=))[^>]*>/s', $response->getContent());
+        $this->assertDoesNotMatchRegularExpression('/<button(?=[^>]*id="btn-send-now")(?=[^>]*\sdisabled(?:\s|>|=))[^>]*>/s', $response->getContent());
+    }
+
     public function test_datatable_marks_due_campaign_as_overdue(): void
     {
         $campaign = $this->makeCampaign([

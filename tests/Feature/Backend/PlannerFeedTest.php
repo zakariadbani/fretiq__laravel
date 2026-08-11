@@ -224,7 +224,7 @@ class PlannerFeedTest extends TestCase
             'event url must not be empty for a run with a campaign');
     }
 
-    public function test_materialized_prepared_and_canceled_runs_use_distinct_colors(): void
+    public function test_materialized_prepared_run_stays_in_feed_while_canceled_run_is_excluded(): void
     {
         $this->run->update(['status' => 'prepared']);
         $canceledRun = CampaignRun::create([
@@ -238,10 +238,35 @@ class PlannerFeedTest extends TestCase
         $prepared = $events->firstWhere('id', (string) $this->run->id);
         $canceled = $events->firstWhere('id', (string) $canceledRun->id);
 
+        $this->assertNotNull($prepared);
         $this->assertSame('warning', $prepared['extendedProps']['statusColor']);
         $this->assertSame('#f6c000', $prepared['color']);
-        $this->assertSame('secondary', $canceled['extendedProps']['statusColor']);
-        $this->assertSame('#a1a5b7', $canceled['color']);
+        $this->assertNull($canceled, 'A canceled occurrence belongs to Historique, not Planning.');
+    }
+
+    public function test_future_materialized_run_is_hidden_while_its_non_sequence_campaign_is_inactive_and_returns_when_reactivated(): void
+    {
+        $this->campaign->update(['is_active' => false]);
+        $this->run->update([
+            'run_at' => now()->addDay(),
+            'status' => 'scheduled',
+        ]);
+
+        $inactiveEvents = collect(app(PlannerService::class)->runsFeed());
+
+        $this->assertNull(
+            $inactiveEvents->firstWhere('id', (string) $this->run->id),
+            'A future pending occurrence must be removed from Planning while its campaign is paused.',
+        );
+
+        $this->campaign->update(['is_active' => true]);
+
+        $reactivatedEvents = collect(app(PlannerService::class)->runsFeed());
+
+        $this->assertNotNull(
+            $reactivatedEvents->firstWhere('id', (string) $this->run->id),
+            'Reactivating the campaign must restore its future pending occurrence to Planning.',
+        );
     }
 
     /**

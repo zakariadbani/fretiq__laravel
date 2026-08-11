@@ -110,4 +110,29 @@ class SenderIdentity extends Model
             && (int) $this->smtp_hourly_limit > 0
             && (int) $this->smtp_daily_limit > 0;
     }
+
+    /**
+     * A risky accept-all address is sendable only when inbox feedback is both
+     * configured and recently proven by a successful poll.
+     */
+    public function hasHealthyBounceFeedback(): bool
+    {
+        $freshAfter = now()->subMinutes(
+            max(1, (int) config('prospecting.bounce.feedback_health_minutes', 15)),
+        );
+
+        return $this->is_active
+            && $this->imap_enabled
+            && filled($this->imap_host)
+            && (int) $this->imap_port > 0
+            && filled($this->imap_username)
+            && filled($this->imap_password)
+            && filled($this->imap_encryption)
+            && (bool) Setting::get('automatisation.cron_enabled', true)
+            && (bool) Setting::get('automatisation.inbox_poll', true)
+            && (int) $this->consecutive_poll_failures === 0
+            && blank($this->last_poll_error)
+            && $this->last_polled_at !== null
+            && $this->last_polled_at->gte($freshAfter);
+    }
 }

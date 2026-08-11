@@ -312,9 +312,10 @@ class ZohoV2OperationsDashboardTest extends TestCase
 
     public function test_busy_module_sync_buttons_are_disabled(): void
     {
-        ZohoSyncCheckpoint::create(['module' => 'v2:accounts', 'submodule' => '', 'sync_mode' => 'delta', 'status' => 'queued']);
-        ZohoSyncCheckpoint::create(['module' => 'v2:leads', 'submodule' => '', 'sync_mode' => 'delta', 'status' => 'running']);
-        ZohoSyncCheckpoint::create(['module' => 'v2:tasks', 'submodule' => 'Tasks', 'sync_mode' => 'delta', 'status' => 'retrying']);
+        $batch = $this->syncAllBatch('running');
+        $this->ownedCheckpoint($batch, 'accounts', 'queued');
+        $this->ownedCheckpoint($batch, 'leads', 'running');
+        $this->ownedCheckpoint($batch, 'tasks', 'retrying');
 
         $response = $this->actingAs($this->admin)->get('/admin/zoho')->assertOk();
         $xpath = $this->htmlXPath($response->getContent());
@@ -333,6 +334,87 @@ class ZohoV2OperationsDashboardTest extends TestCase
         $this->assertSame('ready', $availableButton->getAttribute('data-sync-state'));
         $this->assertFalse($availableButton->hasAttribute('disabled'));
         $this->assertStringContainsString('Synchroniser', trim($availableButton->textContent));
+    }
+
+    public function test_unfinished_sync_all_owner_keeps_terminal_module_checkpoints_unavailable(): void
+    {
+        $batch = $this->syncAllBatch('running');
+        $this->ownedCheckpoint($batch, 'accounts', 'completed', ['completed_at' => now()]);
+        $this->ownedCheckpoint($batch, 'leads', 'partial');
+        $this->ownedCheckpoint($batch, 'tasks', 'failed');
+
+        $dashboard = app(ZohoOperationsDashboard::class)->data();
+        foreach (['accounts', 'leads', 'tasks'] as $key) {
+            $this->assertSame('busy', $dashboard['modules'][$key]['sync_state']);
+            $this->assertTrue($dashboard['modules'][$key]['busy']);
+        }
+
+        $response = $this->actingAs($this->admin)->get('/admin/zoho')->assertOk();
+        $xpath = $this->htmlXPath($response->getContent());
+        foreach (['accounts', 'leads', 'tasks'] as $key) {
+            $button = $xpath->query("//button[@data-zoho-sync-button='{$key}']")->item(0);
+            $this->assertInstanceOf(DOMElement::class, $button);
+            $this->assertSame('busy', $button->getAttribute('data-sync-state'));
+            $this->assertTrue($button->hasAttribute('disabled'));
+        }
+    }
+
+    public function test_running_module_state_requires_the_complete_checkpoint_ownership_fence(): void
+    {
+        $batch = ZohoSyncBatch::query()->create([
+            'correlation_id' => 'ownership-'.str()->uuid(),
+            'mode' => 'delta',
+            'trigger' => 'manual',
+            'status' => 'running',
+            'modules' => ['accounts', 'contacts', 'leads', 'quotes'],
+            'requested_at' => now(),
+        ]);
+        $this->ownedCheckpoint($batch, 'accounts', 'queued', ['correlation_id' => 'stale-correlation']);
+        $this->ownedCheckpoint($batch, 'contacts', 'queued', ['sync_mode' => 'backfill']);
+        $this->ownedCheckpoint($batch, 'tasks', 'queued');
+        $this->ownedCheckpoint($batch, 'quotes', 'queued', ['sync_batch_id' => null]);
+        $this->ownedCheckpoint($batch, 'leads', 'queued');
+
+        $dashboard = app(ZohoOperationsDashboard::class)->data();
+
+        foreach (['accounts', 'contacts', 'tasks', 'quotes'] as $key) {
+            $this->assertSame('interrupted', $dashboard['modules'][$key]['sync_state'], $key);
+            $this->assertFalse($dashboard['modules'][$key]['busy'], $key);
+        }
+        $this->assertSame('busy', $dashboard['modules']['leads']['sync_state']);
+        $this->assertTrue($dashboard['modules']['leads']['busy']);
+    }
+
+    public function test_terminal_batch_cannot_leave_its_queued_checkpoint_rendered_as_busy(): void
+    {
+        $batch = $this->syncAllBatch('error');
+        $batch->update(['completed_at' => now()]);
+        ZohoSyncCheckpoint::query()->create([
+            'module' => 'v2:quotes',
+            'submodule' => '',
+            'sync_mode' => 'delta',
+            'status' => 'queued',
+            'sync_batch_id' => $batch->id,
+        ]);
+
+        $dashboard = app(ZohoOperationsDashboard::class)->data();
+
+        $this->assertSame('interrupted', $dashboard['modules']['quotes']['sync_state']);
+        $this->assertFalse($dashboard['modules']['quotes']['busy']);
+        $this->assertFalse($dashboard['modules']['quotes']['paused_owner']);
+
+        $response = $this->actingAs($this->admin)->get('/admin/zoho')->assertOk();
+        $xpath = $this->htmlXPath($response->getContent());
+        $button = $xpath->query("//button[@data-zoho-sync-button='quotes']")->item(0);
+        $state = $xpath->query("//*[@data-zoho-module-state='quotes']")->item(0);
+
+        $this->assertInstanceOf(DOMElement::class, $button);
+        $this->assertSame('interrupted', $button->getAttribute('data-sync-state'));
+        $this->assertFalse($button->hasAttribute('disabled'));
+        $this->assertSame('false', $button->getAttribute('aria-disabled'));
+        $this->assertStringContainsString('Synchroniser', trim($button->textContent));
+        $this->assertInstanceOf(DOMElement::class, $state);
+        $this->assertStringContainsString('Interrompue', trim($state->textContent));
     }
 
     public function test_running_sync_all_batch_disables_restart_and_exposes_pause_without_changing_maintenance_routes(): void
@@ -356,6 +438,9 @@ class ZohoV2OperationsDashboardTest extends TestCase
     public function test_paused_sync_all_batch_renders_resume_and_disables_its_per_module_controls(): void
     {
         $batch = $this->syncAllBatch('paused');
+        foreach ((array) $batch->modules as $key) {
+            $this->ownedCheckpoint($batch, $key, 'queued');
+        }
 
         $data = app(ZohoOperationsDashboard::class)->data();
         $this->assertSame($batch->id, $data['batch']?->id);
@@ -378,6 +463,18 @@ class ZohoV2OperationsDashboardTest extends TestCase
             $this->assertSame('paused', $button->getAttribute('data-sync-state'));
             $this->assertTrue($button->hasAttribute('disabled'));
         }
+    }
+
+    public function test_paused_module_state_requires_the_complete_checkpoint_ownership_fence(): void
+    {
+        $batch = $this->syncAllBatch('paused');
+        $this->ownedCheckpoint($batch, 'quotes', 'queued', ['correlation_id' => 'stale-correlation']);
+
+        $dashboard = app(ZohoOperationsDashboard::class)->data();
+
+        $this->assertSame('interrupted', $dashboard['modules']['quotes']['sync_state']);
+        $this->assertFalse($dashboard['modules']['quotes']['busy']);
+        $this->assertFalse($dashboard['modules']['quotes']['paused_owner']);
     }
 
     public function test_advanced_maintenance_controls_keep_their_existing_routes(): void
@@ -720,6 +817,21 @@ class ZohoV2OperationsDashboardTest extends TestCase
             'watermark_at' => now(),
             'enumerated_at' => $enumeratedAt,
         ]);
+    }
+
+    /** @param array<string,mixed> $overrides */
+    private function ownedCheckpoint(ZohoSyncBatch $batch, string $module, string $status, array $overrides = []): ZohoSyncCheckpoint
+    {
+        $definition = app(ZohoModuleRegistry::class)->get($module);
+
+        return ZohoSyncCheckpoint::query()->create(array_merge([
+            'module' => 'v2:'.$module,
+            'submodule' => $definition->submodule ?? '',
+            'sync_mode' => $batch->mode,
+            'status' => $status,
+            'sync_batch_id' => $batch->id,
+            'correlation_id' => $batch->correlation_id,
+        ], $overrides));
     }
 
     /** @param list<string> $statuses */

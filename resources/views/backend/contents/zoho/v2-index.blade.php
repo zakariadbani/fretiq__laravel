@@ -20,7 +20,6 @@
         'healthy' => 'Saine', 'degraded' => 'Dégradée', 'success' => 'Réussie',
         'partial' => 'Partielle', 'error' => 'En erreur', 'non disponible' => 'Non disponible',
     ];
-    $busyCheckpointStatuses = ['queued', 'running', 'retrying'];
     $syncAllBatch = $dashboard['syncAllBatch'] ?? null;
     $syncAllState = $dashboard['syncAllState'] ?? 'idle';
     $syncAllActive = $syncAllState === 'active';
@@ -86,9 +85,12 @@
                 @foreach($actionModules as $key => $module)
                     @php
                         $checkpointStatus = (string) ($module['checkpoint']?->status ?? 'idle');
-                        $isBusy = in_array($checkpointStatus, $busyCheckpointStatuses, true);
+                        $syncState = (string) ($module['sync_state'] ?? 'idle');
+                        $isBusy = (bool) ($module['busy'] ?? false);
                         $isPausedOwner = (bool) ($module['paused_owner'] ?? false);
+                        $isInterrupted = $syncState === 'interrupted';
                         $isUnavailable = $isBusy || $isPausedOwner;
+                        $buttonSyncState = $isPausedOwner ? 'paused' : ($isBusy ? 'busy' : ($isInterrupted ? 'interrupted' : 'ready'));
                         $counts = $dashboard['counts'][$key];
                     @endphp
                     <div class="col-12 col-md-6 col-xl-4 col-xxl-3">
@@ -100,15 +102,19 @@
                                         <span class="badge badge-light-{{ $module['freshness']['color'] }}">{{ $module['freshness']['label'] }}</span>
                                     </div>
                                     @if($isPausedOwner)
-                                        <span class="badge badge-light-warning text-nowrap">
+                                        <span class="badge badge-light-warning text-nowrap" data-zoho-module-state="{{ $key }}">
                                             <i class="bi bi-pause-fill" aria-hidden="true"></i> Lot en pause
                                         </span>
                                     @elseif($isBusy)
-                                        <span class="badge badge-light-primary text-nowrap">
+                                        <span class="badge badge-light-primary text-nowrap" data-zoho-module-state="{{ $key }}">
                                             <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span> En cours
                                         </span>
+                                    @elseif($isInterrupted)
+                                        <span class="badge badge-light-danger text-nowrap" data-zoho-module-state="{{ $key }}">
+                                            <i class="bi bi-exclamation-triangle" aria-hidden="true"></i> Interrompue
+                                        </span>
                                     @else
-                                        <span class="badge badge-light-secondary text-nowrap">{{ $checkpointStatus === 'idle' ? 'Disponible' : ucfirst($checkpointStatus) }}</span>
+                                        <span class="badge badge-light-secondary text-nowrap" data-zoho-module-state="{{ $key }}">{{ $checkpointStatus === 'idle' ? 'Disponible' : ucfirst($checkpointStatus) }}</span>
                                     @endif
                                 </div>
 
@@ -130,8 +136,8 @@
                                         type="submit"
                                         class="btn {{ $isUnavailable ? 'btn-light-primary' : 'btn-primary' }}"
                                         data-zoho-sync-button="{{ $key }}"
-                                        data-sync-state="{{ $isPausedOwner ? 'paused' : ($isBusy ? 'busy' : 'ready') }}"
-                                        aria-label="{{ $isPausedOwner ? 'Module '.$module['label'].' détenu par le lot complet en pause' : ($isBusy ? 'Synchronisation du module '.$module['label'].' en cours' : 'Synchroniser le module '.$module['label']) }}"
+                                        data-sync-state="{{ $buttonSyncState }}"
+                                        aria-label="{{ $isPausedOwner ? 'Module '.$module['label'].' détenu par le lot complet en pause' : ($isBusy ? 'Synchronisation du module '.$module['label'].' en cours' : ($isInterrupted ? 'Relancer la synchronisation interrompue du module '.$module['label'] : 'Synchroniser le module '.$module['label'])) }}"
                                         aria-disabled="{{ $isUnavailable ? 'true' : 'false' }}"
                                         @disabled($isUnavailable)
                                     >

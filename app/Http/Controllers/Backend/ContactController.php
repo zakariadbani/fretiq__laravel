@@ -10,6 +10,7 @@ use App\Models\Company;
 use App\Models\Contact;
 use App\Models\Demande;
 use App\Models\Suppression;
+use App\Services\Discovery\ContactVerificationService;
 use Illuminate\Http\Request;
 
 class ContactController extends BackendController
@@ -27,17 +28,18 @@ class ContactController extends BackendController
         $this->middleware('permission:create contacts')->only(['create', 'store']);
         $this->middleware('permission:edit contacts')->only(['edit', 'update', 'executeSwitch']);
         $this->middleware('permission:delete contacts')->only(['delete']);
+        $this->middleware('permission:verify contacts')->only(['verifyEmail', 'approveEmail']);
 
         $this->listTitle = 'Contacts';
-        $this->title     = 'name';
+        $this->title = 'name';
 
         $this->bootResource(new BackendResource(
-            modelClass:       Contact::class,
-            modelName:        'contacts',
-            dataTableClass:   ContactsDataTable::class,
+            modelClass: Contact::class,
+            modelName: 'contacts',
+            dataTableClass: ContactsDataTable::class,
             permissionEntity: 'contacts',
-            prefixName:       'admin',
-            titleField:       'name',
+            prefixName: 'admin',
+            titleField: 'name',
         ));
     }
 
@@ -50,6 +52,7 @@ class ContactController extends BackendController
 
         if ($model === null) {
             session()->flash('error', trans('app.not_found'));
+
             return redirect(route('admin.contacts.index'));
         }
 
@@ -80,10 +83,10 @@ class ContactController extends BackendController
             ')
             ->first();
 
-        $emailsSent      = (int) $counts->emails_sent;
-        $emailsOpened    = (int) $counts->emails_opened;
-        $emailsClicked   = (int) $counts->emails_clicked;
-        $emailsReplied   = (int) $counts->emails_replied;
+        $emailsSent = (int) $counts->emails_sent;
+        $emailsOpened = (int) $counts->emails_opened;
+        $emailsClicked = (int) $counts->emails_clicked;
+        $emailsReplied = (int) $counts->emails_replied;
 
         // Délivrés — status-based fallback (no delivered_at column)
         $emailsDelivered = (int) $counts->emails_delivered;
@@ -106,13 +109,13 @@ class ContactController extends BackendController
         ];
 
         return [
-            'emails_sent'    => $emailsSent,
-            'emails_opened'  => $emailsOpened,
+            'emails_sent' => $emailsSent,
+            'emails_opened' => $emailsOpened,
             'emails_clicked' => $emailsClicked,
             'emails_replied' => $emailsReplied,
             'demandes_total' => $demandesTotal,
-            'suppressed'     => $suppressed,
-            'funnel'         => [
+            'suppressed' => $suppressed,
+            'funnel' => [
                 'labels' => ['Envoyés', 'Délivrés', 'Ouverts', 'Cliqués', 'Répondus'],
                 'series' => $funnelSeries,
             ],
@@ -127,10 +130,31 @@ class ContactController extends BackendController
         return $this->currentDataTable->render(
             'backend.contents.contacts.crud.index',
             [
-                'listTitle'       => $this->listTitle,
+                'listTitle' => $this->listTitle,
                 'dataTableConfig' => $this->currentDataTable->getIndexConfig(),
             ]
         );
+    }
+
+    public function verifyEmail(Request $request, ContactVerificationService $verification, int $id)
+    {
+        $validated = $request->validate([
+            'confirm_provider_cost' => ['accepted'],
+            'force' => ['nullable', 'boolean'],
+            'client_token' => ['nullable', 'required_if:force,1', 'uuid'],
+        ]);
+        $contact = Contact::query()->findOrFail($id);
+        $force = (bool) ($validated['force'] ?? false);
+        $verification->verify($contact, $force, $validated['client_token'] ?? null);
+
+        return redirect()->route('admin.contacts.view', $contact)->with('success', 'Vérification demandée.');
+    }
+
+    public function approveEmail(ContactVerificationService $verification, int $id)
+    {
+        $contact = $verification->approveManually(Contact::query()->findOrFail($id));
+
+        return redirect()->route('admin.contacts.view', $contact)->with('success', 'Adresse approuvée manuellement.');
     }
 
     /**
@@ -139,12 +163,25 @@ class ContactController extends BackendController
     protected function getViewVars(): array
     {
         return [
-            'companies'  => Company::orderBy('name')->get(['id', 'name']),
-            'statuses'   => config('global.data.contact_statuses', []),
+            'companies' => Company::orderBy('name')->get(['id', 'name']),
+            'statuses' => config('global.data.contact_statuses', []),
             'legalBases' => config('global.data.contact_legal_bases', []),
             'emailKinds' => config('global.data.contact_email_kinds', []),
-            'sources'    => config('global.data.contact_sources', []),
+            'sources' => config('global.data.contact_sources', []),
         ];
+    }
+
+    /**
+     * Verification evidence is controlled by ContactVerificationService and
+     * delivery feedback. Generic contact CRUD must never accept these fields.
+     */
+    protected function beforeSave($id = null)
+    {
+        return $this->currentRequest->except([
+            'email_verification_status',
+            'email_verification_checked_at',
+            'email_verification_source',
+        ]);
     }
 
     /**
@@ -156,8 +193,7 @@ class ContactController extends BackendController
      * and Crudable::update() forward directly to the caller (the modal AJAX
      * fetch). Falls through to default Crudable behaviour when absent.
      *
-     * @param array $attributes
-     * @param \App\Models\Contact $model
+     * @param  \App\Models\Contact  $model
      * @return \Illuminate\Http\JsonResponse|void
      */
     protected function afterSave(array $attributes, $model)
@@ -166,8 +202,8 @@ class ContactController extends BackendController
 
         if ($returnUrl) {
             return response()->json([
-                'message'  => 'success',
-                'model'    => $model,
+                'message' => 'success',
+                'model' => $model,
                 'redirect' => $returnUrl,
             ], 200);
         }

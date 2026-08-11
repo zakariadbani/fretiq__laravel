@@ -6,11 +6,17 @@ use App\Exceptions\DiscoveryConfigurationException;
 use App\Models\Company;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
+use App\Services\Providers\ProviderCallContext;
+use App\Services\Providers\ProviderCallLedger;
+use App\Services\Providers\ProviderExecution;
+use App\Services\Providers\ProviderRequestException;
+use App\Services\Providers\SerpApi\SerpApiClient;
 use App\Support\DomainBlocklist;
+use Closure;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 /**
  * CompanyDiscoveryService — SerpAPI-backed company domain discovery.
@@ -56,11 +62,20 @@ class CompanyDiscoveryService
 
     private const MAX_SEARCHES_PER_RUN = 15;
 
+    private readonly SerpApiClient $serpApi;
+
+    private readonly ProviderCallLedger $providerCalls;
+
     public function __construct(
         private readonly IntentQueryService $intentQuery = new IntentQueryService,
         private readonly DomainBlocklist $blocklist = new DomainBlocklist,
         private readonly DiscoveryEngineRegistry $engines = new DiscoveryEngineRegistry,
-    ) {}
+        ?SerpApiClient $serpApi = null,
+        ?ProviderCallLedger $providerCalls = null,
+    ) {
+        $this->providerCalls = $providerCalls ?? new ProviderCallLedger;
+        $this->serpApi = $serpApi ?? new SerpApiClient($this->providerCalls);
+    }
 
     /**
      * Discover companies matching the given criteria.
@@ -153,7 +168,6 @@ class CompanyDiscoveryService
             $criteria,
             $run,
             $searchBudget,
-            $apiKey,
             $queries,
             $workDeadlineAt,
         );
@@ -243,7 +257,7 @@ class CompanyDiscoveryService
      *
      * Verified live 2026-07-04 (STATUS 200): SerpAPI /account returns plan_searches_left, total_searches_left, this_month_usage, searches_per_month, plan_name, account_email.
      *
-     * @return array{plan_searches_left: ?int, total_searches_left: ?int, this_month_usage: ?int, searches_per_month: ?int, plan_name: ?string, account_email: ?string}|null
+     * @return array{plan_searches_left: ?int, total_searches_left: ?int, this_month_usage: ?int, searches_per_month: ?int, plan_name: ?string, account_email: null}|null
      */
     public function accountUsage(): ?array
     {
@@ -259,21 +273,20 @@ class CompanyDiscoveryService
 
         // ponytail: cached null-on-failure for 10 min is acceptable here — this is a
         // low-traffic admin page, not a hot path; a stuck failure self-heals in 10 min.
-        return Cache::remember('provider.serpapi.account', now()->addMinutes(10), function () use ($apiKey) {
+        return Cache::remember('provider.serpapi.account', now()->addMinutes(10), function () {
             try {
-                $response = Http::timeout(15)->acceptJson()->get('https://serpapi.com/account', [
-                    'api_key' => $apiKey,
-                ]);
+                $execution = $this->serpApi->account(new ProviderCallContext(
+                    hash('sha256', 'serpapi:legacy:account:'.Str::uuid()),
+                    0,
+                    engine: 'account',
+                ));
+                $json = $execution->response?->data ?? [];
 
-                if ($response->failed()) {
-                    Log::warning('[CompanyDiscoveryService] SerpAPI account request failed', [
-                        'status' => $response->status(),
-                    ]);
-
-                    return null;
-                }
-
-                $json = $response->json();
+                DB::transaction(fn () => $this->providerCalls->settle(
+                    $execution,
+                    $json === [] ? 0 : 1,
+                    0,
+                ));
 
                 return [
                     'plan_searches_left' => $json['plan_searches_left'] ?? null,
@@ -281,8 +294,17 @@ class CompanyDiscoveryService
                     'this_month_usage' => $json['this_month_usage'] ?? null,
                     'searches_per_month' => $json['searches_per_month'] ?? null,
                     'plan_name' => $json['plan_name'] ?? null,
-                    'account_email' => $json['account_email'] ?? null,
+                    // Account identity is deliberately not returned by the
+                    // centralized provider transport.
+                    'account_email' => null,
                 ];
+            } catch (ProviderRequestException $exception) {
+                Log::warning('[CompanyDiscoveryService] SerpAPI account request failed', [
+                    'status' => $exception->httpStatus,
+                    'error_code' => $exception->safeCode,
+                ]);
+
+                return null;
             } catch (\Throwable $e) {
                 Log::warning('[CompanyDiscoveryService] SerpAPI account call threw an exception', [
                     'exception_class' => $e::class,
@@ -434,7 +456,7 @@ class CompanyDiscoveryService
         }
 
         if ($run === null) {
-            return $this->discoverFromSerpApiWithoutCursor($criteria, $apiKey, $queries, $need);
+            return $this->discoverFromSerpApiWithoutCursor($criteria, $queries, $need);
         }
 
         $snapshot = $this->snapshot($run);
@@ -463,11 +485,26 @@ class CompanyDiscoveryService
 
                 $start = max(0, (int) ($cursor['start'] ?? 0));
                 $providerParams = is_array($cursor['provider_params'] ?? null) ? $cursor['provider_params'] : [];
-                $response = null;
                 $this->recordAttemptRotation($criteria, $queries, $query);
 
                 try {
-                    $response = $this->fetchPage($apiKey, $query, $start, $providerParams);
+                    $execution = $this->fetchPage(
+                        $this->searchContext($run, $query, $start, $providerParams),
+                        $query,
+                        $start,
+                        $providerParams,
+                    );
+                } catch (ProviderRequestException $exception) {
+                    Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
+                        'criteria_id' => $criteria->id,
+                        'query' => $query['q'],
+                        'engine' => $query['engine'],
+                        'start' => $start,
+                        'status' => $exception->httpStatus,
+                        'error_code' => $exception->safeCode,
+                    ]);
+
+                    return $snapshot;
                 } catch (\Throwable $e) {
                     Log::warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
                         'criteria_id' => $criteria->id,
@@ -482,21 +519,30 @@ class CompanyDiscoveryService
 
                 $searches++;
 
-                if ($response->failed()) {
-                    Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
-                        'criteria_id' => $criteria->id,
-                        'query' => $query['q'],
-                        'engine' => $query['engine'],
-                        'start' => $start,
-                        'status' => $response->status(),
-                    ]);
-
-                    return $snapshot;
+                if ($execution->replayed || $execution->response === null) {
+                    return $this->snapshot($run->fresh());
                 }
 
-                [$pageCandidates, $exhausted, $nextStart, $nextParams] = $this->parsePage($criteria, $query, $response, $snapshot);
+                [$pageCandidates, $exhausted, $nextStart, $nextParams, $resultCount] = $this->parsePage(
+                    $criteria,
+                    $query,
+                    $execution,
+                    $snapshot,
+                );
 
-                $committed = $this->appendPage($criteria, $run, $queries, $query, $start, $pageCandidates, $exhausted, $nextStart, $nextParams);
+                $committed = $this->appendPage(
+                    $criteria,
+                    $run,
+                    $queries,
+                    $query,
+                    $start,
+                    $pageCandidates,
+                    $exhausted,
+                    $nextStart,
+                    $nextParams,
+                    $execution,
+                    $resultCount,
+                );
                 if (! $committed) {
                     return $this->snapshot($run->fresh());
                 }
@@ -531,7 +577,6 @@ class CompanyDiscoveryService
         ProspectCriteria $criteria,
         DiscoveryRun $run,
         int $searchBudget,
-        string $apiKey,
         array $queries,
         ?float $workDeadlineAt,
     ): array {
@@ -567,19 +612,56 @@ class CompanyDiscoveryService
                     return [$snapshot, false];
                 }
 
-                // Debit durably before network I/O. HTTP errors and exceptions still
-                // consume a SerpAPI attempt and retries can never exceed the reservation.
-                if (! $this->reserveSerpApiAttempt($run)) {
-                    return [$this->snapshot($run->fresh()), false];
-                }
+                $transportReserved = false;
+                $reserve = function () use (&$transportReserved, $run, $criteria, $queries, $query): bool {
+                    if (! $this->reserveSerpApiAttempt($run)) {
+                        return false;
+                    }
 
-                $attempts++;
-                $attemptedThisRound = true;
-                $this->recordAttemptRotation($criteria, $queries, $query);
+                    $transportReserved = true;
+                    // Rotate after the durable debit and immediately before I/O.
+                    $this->recordAttemptRotation($criteria, $queries, $query);
+
+                    return true;
+                };
 
                 try {
-                    $response = $this->fetchPage($apiKey, $query, $start, $providerParams, $timeoutSeconds);
+                    $execution = $this->fetchPage(
+                        $this->searchContext($run, $query, $start, $providerParams),
+                        $query,
+                        $start,
+                        $providerParams,
+                        $reserve,
+                        $timeoutSeconds,
+                    );
+                } catch (ProviderRequestException $exception) {
+                    if ($transportReserved) {
+                        $attempts++;
+                        $attemptedThisRound = true;
+                    }
+                    if ($exception->safeCode === 'serpapi_budget_unavailable') {
+                        return [$this->snapshot($run->fresh()), false];
+                    }
+
+                    Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
+                        'criteria_id' => $criteria->id,
+                        'query' => $query['q'],
+                        'engine' => $query['engine'],
+                        'start' => $start,
+                        'status' => $exception->httpStatus,
+                        'error_code' => $exception->safeCode,
+                    ]);
+
+                    if ($exception->httpStatus === 429 || $exception->safeCode === 'rate_limit') {
+                        return [$snapshot, true];
+                    }
+
+                    continue;
                 } catch (\Throwable $e) {
+                    if ($transportReserved) {
+                        $attempts++;
+                        $attemptedThisRound = true;
+                    }
                     Log::warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
                         'criteria_id' => $criteria->id,
                         'query' => $query['q'],
@@ -591,32 +673,36 @@ class CompanyDiscoveryService
                     continue;
                 }
 
-                if ($response->failed()) {
-                    Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
-                        'criteria_id' => $criteria->id,
-                        'query' => $query['q'],
-                        'engine' => $query['engine'],
-                        'start' => $start,
-                        'status' => $response->status(),
-                    ]);
+                if ($transportReserved) {
+                    $attempts++;
+                    $attemptedThisRound = true;
+                }
 
-                    // A 429 means the provider's quota is exhausted for every
-                    // stream — grinding through the remaining streams would just
-                    // burn the rest of the reservation on guaranteed failures.
-                    // Stop this invocation cold (not a bare `break`, which would
-                    // only exit this foreach and let the outer while re-enter).
-                    // A one-off 5xx on a single stream is NOT scoped here — it
-                    // `continue`s so the other streams still get their turn.
-                    if ($response->status() === 429) {
-                        return [$snapshot, true];
-                    }
-
+                if ($execution->replayed || $execution->response === null) {
+                    $snapshot = $this->snapshot($run->fresh());
                     continue;
                 }
 
-                [$pageCandidates, $exhausted, $nextStart, $nextParams] = $this->parsePage($criteria, $query, $response, $snapshot);
+                [$pageCandidates, $exhausted, $nextStart, $nextParams, $resultCount] = $this->parsePage(
+                    $criteria,
+                    $query,
+                    $execution,
+                    $snapshot,
+                );
 
-                $committed = $this->appendPage($criteria, $run, $queries, $query, $start, $pageCandidates, $exhausted, $nextStart, $nextParams);
+                $committed = $this->appendPage(
+                    $criteria,
+                    $run,
+                    $queries,
+                    $query,
+                    $start,
+                    $pageCandidates,
+                    $exhausted,
+                    $nextStart,
+                    $nextParams,
+                    $execution,
+                    $resultCount,
+                );
                 if (! $committed) {
                     return [$this->snapshot($run->fresh()), false];
                 }
@@ -698,7 +784,7 @@ class CompanyDiscoveryService
     /**
      * @param  list<array{q: string, engine: string}>  $queries
      */
-    private function discoverFromSerpApiWithoutCursor(ProspectCriteria $criteria, string $apiKey, array $queries, int $max): array
+    private function discoverFromSerpApiWithoutCursor(ProspectCriteria $criteria, array $queries, int $max): array
     {
         $results = [];
         $seen = [];
@@ -709,20 +795,23 @@ class CompanyDiscoveryService
             }
 
             try {
-                $response = $this->fetchPage($apiKey, $query, 0);
-
-                if ($response->failed()) {
-                    Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
-                        'criteria_id' => $criteria->id,
-                        'query' => $query['q'],
-                        'engine' => $query['engine'],
-                        'status' => $response->status(),
-                    ]);
-
+                $execution = $this->fetchPage(
+                    $this->searchContext(null, $query, 0, []),
+                    $query,
+                    0,
+                );
+                if ($execution->replayed || $execution->response === null) {
                     continue;
                 }
 
-                foreach ($this->rawPageCandidates($query, $response) as $candidate) {
+                $page = $this->rawPageCandidates($query, $execution);
+                DB::transaction(fn () => $this->providerCalls->settle(
+                    $execution,
+                    $this->normalizedResultCount($query, $execution),
+                    1,
+                ));
+
+                foreach ($page as $candidate) {
                     if (count($results) >= $max) {
                         break;
                     }
@@ -734,6 +823,14 @@ class CompanyDiscoveryService
                     $seen[$candidate['domain']] = true;
                     $results[] = $candidate;
                 }
+            } catch (ProviderRequestException $exception) {
+                Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
+                    'criteria_id' => $criteria->id,
+                    'query' => $query['q'],
+                    'engine' => $query['engine'],
+                    'status' => $exception->httpStatus,
+                    'error_code' => $exception->safeCode,
+                ]);
             } catch (\Throwable $e) {
                 Log::warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
                     'criteria_id' => $criteria->id,
@@ -906,35 +1003,112 @@ class CompanyDiscoveryService
      * @param  array{q: string, engine: string}  $query
      */
     private function fetchPage(
-        string $apiKey,
+        ProviderCallContext $context,
         array $query,
         int $start,
         array $providerParams = [],
+        ?Closure $reserve = null,
         int $timeoutSeconds = 20,
-    ) {
+    ): ProviderExecution {
         $engine = $this->normaliseEngine($query['engine'] ?? null);
-        $params = ['api_key' => $apiKey] + $this->engines->get($engine)->params($query['q'], $start, $providerParams);
+        $parameters = $this->searchParameters($engine, $query['q'], $start, $providerParams);
 
-        return Http::timeout(max(1, min(20, $timeoutSeconds)))
-            ->acceptJson()
-            ->get('https://serpapi.com/search.json', $params);
+        if ($reserve !== null) {
+            return $this->serpApi->searchWithReservation(
+                $context,
+                $engine,
+                $query['q'],
+                $start,
+                $parameters,
+                $reserve,
+                $timeoutSeconds,
+            );
+        }
+
+        return $this->serpApi->search(
+            $context,
+            $engine,
+            $query['q'],
+            $start,
+            $parameters,
+        );
+    }
+
+    /** @return array<string, int|string> */
+    private function searchParameters(
+        string $engine,
+        string $query,
+        int $start,
+        array $providerParams,
+    ): array {
+        $parameters = $this->engines->get($engine)->params($query, $start, $providerParams);
+        unset(
+            $parameters['engine'],
+            $parameters['q'],
+            $parameters['start'],
+            $parameters['first'],
+            $parameters['api_key'],
+            $parameters['async'],
+            $parameters['no_cache'],
+        );
+        ksort($parameters);
+
+        return $parameters;
+    }
+
+    /** @param array{q: string, engine: string} $query */
+    private function searchContext(
+        ?DiscoveryRun $run,
+        array $query,
+        int $start,
+        array $providerParams,
+    ): ProviderCallContext {
+        $engine = $this->normaliseEngine($query['engine'] ?? null);
+        $canonical = [
+            'provider' => 'serpapi',
+            'operation' => $engine,
+            'run_id' => $run?->getKey(),
+            'query' => $query['q'],
+            'start' => $start,
+            'parameters' => $this->searchParameters($engine, $query['q'], $start, $providerParams),
+        ];
+
+        // Cursorless legacy discovery has no durable business row to replay;
+        // give each invocation its own audit call. Run-backed calls remain stable.
+        if ($run === null) {
+            $canonical['invocation'] = (string) Str::uuid();
+        }
+
+        return new ProviderCallContext(
+            hash('sha256', json_encode($canonical, JSON_THROW_ON_ERROR)),
+            // DiscoveryRun already owns the live quota reservation/consumption.
+            // A zero-unit provider call audits transport without charging twice.
+            $run === null && ! $this->isLocal() ? 1 : 0,
+            engine: $engine,
+        );
     }
 
     /**
      * Turn a fetched page into filtered candidates + the exhausted flag.
      *
      * @param  array{q: string, engine: string}  $query
-     * @return array{0: list<array<string, mixed>>, 1: bool, 2: ?int, 3: array<string, string>}
+     * @return array{0: list<array<string, mixed>>, 1: bool, 2: ?int, 3: array<string, string>, 4: int}
      */
-    private function parsePage(ProspectCriteria $criteria, array $query, $response, array $snapshot): array
+    private function parsePage(ProspectCriteria $criteria, array $query, ProviderExecution $execution, array $snapshot): array
     {
         $engine = $this->normaliseEngine($query['engine'] ?? null);
-        $payload = $response->json();
+        $payload = $execution->response?->data ?? [];
         $pageResult = $this->engines->get($engine)->parse(is_array($payload) ? $payload : [], $query['q']);
 
-        $page = $this->dedupeAgainstSnapshot($this->rawPageCandidates($query, $response), $snapshot);
+        $page = $this->dedupeAgainstSnapshot($this->rawPageCandidates($query, $execution), $snapshot);
 
-        return [$this->rejectKnownDomains($criteria, $page), $pageResult->exhausted, $pageResult->nextStart, $pageResult->nextParams];
+        return [
+            $this->rejectKnownDomains($criteria, $page),
+            $pageResult->exhausted,
+            $pageResult->nextStart,
+            $pageResult->nextParams,
+            count($pageResult->candidates),
+        ];
     }
 
     /**
@@ -943,10 +1117,10 @@ class CompanyDiscoveryService
      * @param  array{q: string, engine: string}  $query
      * @return list<array<string, mixed>>
      */
-    private function rawPageCandidates(array $query, $response): array
+    private function rawPageCandidates(array $query, ProviderExecution $execution): array
     {
         $engine = $this->normaliseEngine($query['engine'] ?? null);
-        $payload = $response->json();
+        $payload = $execution->response?->data ?? [];
         $parsed = $this->engines->get($engine)->parse(is_array($payload) ? $payload : [], $query['q']);
         $page = [];
 
@@ -956,11 +1130,38 @@ class CompanyDiscoveryService
             if ($domain === null) {
                 continue;
             }
-            $candidate['domain'] = $domain;
-            $page[] = $candidate;
+
+            // The adapter's staging contract is richer and intentionally keeps
+            // rows without domains. This legacy pipeline remains domain-only,
+            // so trim staging-only keys only after the complete page was parsed.
+            $legacy = [
+                'domain' => $domain,
+                'title' => $candidate['title'] ?? null,
+                'snippet' => $candidate['snippet'] ?? null,
+                'url' => $url,
+                'discovery_query' => $candidate['discovery_query'] ?? $query['q'],
+            ];
+            foreach (['phone', 'country', 'sector_hint'] as $optional) {
+                if (isset($candidate[$optional]) && $candidate[$optional] !== '') {
+                    $legacy[$optional] = $candidate[$optional];
+                }
+            }
+            $page[] = $legacy;
         }
 
         return $page;
+    }
+
+    /** @param array{q: string, engine: string} $query */
+    private function normalizedResultCount(array $query, ProviderExecution $execution): int
+    {
+        $engine = $this->normaliseEngine($query['engine'] ?? null);
+        $payload = $execution->response?->data ?? [];
+
+        return count($this->engines->get($engine)->parse(
+            is_array($payload) ? $payload : [],
+            $query['q'],
+        )->candidates);
     }
 
     /**
@@ -975,71 +1176,36 @@ class CompanyDiscoveryService
      */
     private function mapMapsResults(array $localResults, ?string $query): array
     {
+        $normalized = $this->engines->get(self::ENGINE_GOOGLE_MAPS)->parse(
+            ['local_results' => $localResults],
+            $query ?? '',
+        )->candidates;
         $page = [];
 
-        foreach ($localResults as $item) {
-            if (! is_array($item)) {
+        foreach ($normalized as $candidate) {
+            $url = $candidate['url'] ?? null;
+            $domain = is_string($url) ? $this->extractDomain($url) : null;
+            if ($domain === null) {
                 continue;
             }
 
-            $website = $item['website'] ?? null;
-
-            if (! is_string($website) || trim($website) === '') {
-                continue;
-            }
-
-            $website = trim($website);
-            $domain = $this->extractDomain($website);
-
-            if (! $domain) {
-                continue;
-            }
-
-            $type = is_string($item['type'] ?? null) ? trim($item['type']) : '';
-            $address = is_string($item['address'] ?? null) ? trim($item['address']) : '';
-            $snippet = trim(implode(' — ', array_filter([$type, $address], fn ($v) => $v !== '')));
-
-            $candidate = [
+            $legacy = [
                 'domain' => $domain,
-                'title' => is_string($item['title'] ?? null) ? $item['title'] : null,
-                'snippet' => $snippet !== '' ? $snippet : null,
-                'url' => $website,
+                'title' => $candidate['title'] ?? null,
+                'snippet' => $candidate['snippet'] ?? null,
+                'url' => $url,
                 'discovery_query' => $query,
             ];
-
-            $phone = is_string($item['phone'] ?? null) ? trim($item['phone']) : '';
-            if ($phone !== '') {
-                $candidate['phone'] = $phone;
+            foreach (['phone', 'country', 'sector_hint'] as $optional) {
+                if (isset($candidate[$optional]) && $candidate[$optional] !== '') {
+                    $legacy[$optional] = $candidate[$optional];
+                }
             }
 
-            $country = $this->normaliseCountry($item['country'] ?? null);
-            if ($country !== null) {
-                $candidate['country'] = $country;
-            }
-
-            if ($type !== '') {
-                $candidate['sector_hint'] = $type;
-            }
-
-            $page[] = $candidate;
+            $page[] = $legacy;
         }
 
         return $page;
-    }
-
-    /**
-     * Maps' `country` is an ISO-2 code ("MA"). Uppercase it and drop anything that is
-     * not a plain 2-letter code so a surprise long-form value never lands in a country column.
-     */
-    private function normaliseCountry(mixed $country): ?string
-    {
-        if (! is_string($country)) {
-            return null;
-        }
-
-        $country = strtoupper(trim($country));
-
-        return preg_match('/^[A-Z]{2}$/', $country) === 1 ? $country : null;
     }
 
     /**
@@ -1124,14 +1290,22 @@ class CompanyDiscoveryService
         bool $exhausted,
         ?int $nextStart,
         array $nextParams,
+        ProviderExecution $execution,
+        int $resultCount,
     ): bool {
-        return DB::transaction(function () use ($criteria, $run, $queries, $query, $expectedStart, $pageCandidates, $exhausted, $nextStart, $nextParams) {
+        return DB::transaction(function () use ($criteria, $run, $queries, $query, $expectedStart, $pageCandidates, $exhausted, $nextStart, $nextParams, $execution, $resultCount) {
             /** @var ProspectCriteria|null $lockedCriteria */
             $lockedCriteria = ProspectCriteria::whereKey($criteria->id)->lockForUpdate()->first();
             /** @var DiscoveryRun|null $lockedRun */
             $lockedRun = DiscoveryRun::whereKey($run->id)->lockForUpdate()->first();
 
             if (! $lockedCriteria || ! $lockedRun || $lockedRun->status !== 'running') {
+                $this->providerCalls->settle($execution, max(0, $resultCount), 0, [
+                    'reason' => 'business_state_changed',
+                    'offset' => $expectedStart,
+                    'query_hash' => hash('sha256', $query['q']),
+                ]);
+
                 return false;
             }
 
@@ -1140,6 +1314,12 @@ class CompanyDiscoveryService
             $storedStart = (int) ($cursors[$key]['start'] ?? 0);
 
             if ($storedStart !== $expectedStart) {
+                $this->providerCalls->settle($execution, max(0, $resultCount), 0, [
+                    'reason' => 'cursor_mismatch',
+                    'offset' => $expectedStart,
+                    'query_hash' => hash('sha256', $query['q']),
+                ]);
+
                 return false;
             }
 
@@ -1174,6 +1354,17 @@ class CompanyDiscoveryService
 
             $lockedRun->forceFill(['candidates_snapshot' => array_values($snapshot)])->save();
             $lockedCriteria->forceFill(['discovery_cursors' => $cursors])->save();
+            $this->providerCalls->settle(
+                $execution,
+                max(0, $resultCount),
+                // The legacy DiscoveryRun counter above remains the sole quota
+                // debit. The provider ledger is an idempotent transport audit.
+                0,
+                [
+                    'offset' => $expectedStart,
+                    'query_hash' => hash('sha256', $query['q']),
+                ],
+            );
 
             return true;
         });

@@ -19,17 +19,16 @@ class ContactViewConfig
      * Build the full config array for $model.
      * Pass null (or a model without ->id) for create mode.
      *
-     * @param  Contact|null  $model
-     * @param  array|null    $stats  Optional pre-computed stats from ContactController::contactStats().
-     *                               When provided, real KPI values are injected into stat_cards and charts.
-     *                               When null, stat_cards show honest empty-state hints.
+     * @param  array|null  $stats  Optional pre-computed stats from ContactController::contactStats().
+     *                             When provided, real KPI values are injected into stat_cards and charts.
+     *                             When null, stat_cards show honest empty-state hints.
      */
     public static function make(?Contact $model, ?array $stats = null): array
     {
         $hasId = $model && $model->id;
 
         // ── Status badge ──────────────────────────────────────────────────────
-        $statusCfg   = $hasId ? config('global.data.contact_statuses.' . $model->status, []) : [];
+        $statusCfg = $hasId ? config('global.data.contact_statuses.'.$model->status, []) : [];
         $statusLabel = $statusCfg['label'] ?? null;
         $statusColor = $statusCfg['color'] ?? 'secondary';
 
@@ -41,17 +40,21 @@ class ContactViewConfig
         if ($hasId && ($stats['suppressed'] ?? false)) {
             $badges[] = ['label' => 'Supprimé', 'color' => 'danger'];
         }
+        if ($hasId) {
+            $qualityBadge = app(\App\Services\Campaign\ContactEligibilityService::class)->badge($model);
+            $badges[] = ['label' => $qualityBadge['label'], 'color' => $qualityBadge['color']];
+        }
 
         // ── Hero tiles ────────────────────────────────────────────────────────
-        $lbCfg  = $hasId ? config('global.data.contact_legal_bases.' . $model->legal_basis, []) : [];
-        $ekCfg  = $hasId ? config('global.data.contact_email_kinds.' . $model->email_kind, []) : [];
-        $srcCfg = $hasId ? config('global.data.contact_sources.' . $model->source, []) : [];
+        $lbCfg = $hasId ? config('global.data.contact_legal_bases.'.$model->legal_basis, []) : [];
+        $ekCfg = $hasId ? config('global.data.contact_email_kinds.'.$model->email_kind, []) : [];
+        $srcCfg = $hasId ? config('global.data.contact_sources.'.$model->source, []) : [];
 
         // ── Subtitle items ────────────────────────────────────────────────────
         $subtitle = [];
         if ($hasId) {
             if ($model->email) {
-                $subtitle[] = ['icon' => 'bi-envelope', 'text' => $model->email, 'href' => 'mailto:' . $model->email];
+                $subtitle[] = ['icon' => 'bi-envelope', 'text' => $model->email, 'href' => 'mailto:'.$model->email];
             }
             if ($model->position) {
                 $subtitle[] = ['icon' => 'bi-briefcase', 'text' => $model->position];
@@ -85,8 +88,8 @@ class ContactViewConfig
                 [
                     'label' => 'Entreprise',
                     'value' => $model->company ? $model->company->name : null,
-                    'type'  => 'link',
-                    'href'  => ($model->company && Route::has('admin.companies.view'))
+                    'type' => 'link',
+                    'href' => ($model->company && Route::has('admin.companies.view'))
                         ? route('admin.companies.view', $model->company_id)
                         : null,
                 ],
@@ -94,6 +97,9 @@ class ContactViewConfig
                 ['label' => 'Base légale', 'value' => $model->legal_basis, 'type' => 'enum', 'configKey' => 'contact_legal_bases'],
                 ['label' => 'Type email',  'value' => $model->email_kind,  'type' => 'enum', 'configKey' => 'contact_email_kinds'],
                 ['label' => 'Source',      'value' => $model->source,      'type' => 'enum', 'configKey' => 'contact_sources'],
+                ['label' => 'Qualité email', 'value' => app(\App\Services\Campaign\ContactEligibilityService::class)->badge($model)['label'], 'type' => 'text'],
+                ['label' => 'Vérifié le', 'value' => $model->email_verification_checked_at, 'type' => 'date'],
+                ['label' => 'Preuve', 'value' => config('global.data.contact_email_verification_sources.'.$model->email_verification_source, $model->email_verification_source), 'type' => 'text'],
                 ['label' => 'Créé le',     'value' => $model->created_at,  'type' => 'date'],
             ];
         }
@@ -101,32 +107,32 @@ class ContactViewConfig
         // ── Stat cards ────────────────────────────────────────────────────────
         $statCards = [
             [
-                'icon'  => 'bi-envelope-check',
+                'icon' => 'bi-envelope-check',
                 'color' => 'primary',
                 'label' => 'Emails envoyés',
                 'value' => $stats ? $stats['emails_sent'] : null,
-                'hint'  => $stats ? null : 'Disponible après le lancement des campagnes',
+                'hint' => $stats ? null : 'Disponible après le lancement des campagnes',
             ],
             [
-                'icon'  => 'bi-eye',
+                'icon' => 'bi-eye',
                 'color' => 'info',
                 'label' => 'Ouvertures',
                 'value' => $stats ? $stats['emails_opened'] : null,
-                'hint'  => $stats ? null : 'Disponible après le lancement des campagnes',
+                'hint' => $stats ? null : 'Disponible après le lancement des campagnes',
             ],
             [
-                'icon'  => 'bi-cursor',
+                'icon' => 'bi-cursor',
                 'color' => 'success',
                 'label' => 'Clics',
                 'value' => $stats ? $stats['emails_clicked'] : null,
-                'hint'  => $stats ? null : 'Disponible après le lancement des campagnes',
+                'hint' => $stats ? null : 'Disponible après le lancement des campagnes',
             ],
             [
-                'icon'  => 'bi-inbox',
+                'icon' => 'bi-inbox',
                 'color' => 'warning',
                 'label' => 'Demandes',
                 'value' => $stats ? $stats['demandes_total'] : null,
-                'hint'  => $stats ? null : 'Disponible après le lancement des campagnes',
+                'hint' => $stats ? null : 'Disponible après le lancement des campagnes',
             ],
         ];
 
@@ -137,46 +143,46 @@ class ContactViewConfig
         $quickActions = [];
         if ($hasId && $model->company_id && Route::has('admin.companies.view')) {
             $quickActions[] = [
-                'label'      => 'Voir l\'entreprise',
-                'icon'       => 'bi-building',
-                'color'      => 'light-primary',
+                'label' => 'Voir l\'entreprise',
+                'icon' => 'bi-building',
+                'color' => 'light-primary',
                 'permission' => 'view companies',
-                'href'       => route('admin.companies.view', $model->company_id),
+                'href' => route('admin.companies.view', $model->company_id),
             ];
         }
         if ($hasId && Route::has('admin.demandes.create')) {
             $quickActions[] = [
-                'label'      => 'Créer une demande',
-                'icon'       => 'bi-plus-circle',
-                'color'      => 'light-success',
+                'label' => 'Créer une demande',
+                'icon' => 'bi-plus-circle',
+                'color' => 'light-success',
                 'permission' => 'create demandes',
-                'href'       => route('admin.demandes.create', ['contact_id' => $model->id]),
+                'href' => route('admin.demandes.create', ['contact_id' => $model->id]),
             ];
         }
 
         return [
-            'route_base'    => 'admin.contacts',
+            'route_base' => 'admin.contacts',
             'route_base_id' => 'contact',
-            'permission'    => 'contacts',
-            'title'         => $hasId ? $model->name : '',
-            'avatar'        => [
-                'type'  => 'initials',
+            'permission' => 'contacts',
+            'title' => $hasId ? $model->name : '',
+            'avatar' => [
+                'type' => 'initials',
                 'value' => $hasId ? $model->name : '',
                 'color' => 'info',
             ],
-            'badges'        => $badges,
-            'subtitle'      => $subtitle,
-            'tiles'         => $hasId ? [
+            'badges' => $badges,
+            'subtitle' => $subtitle,
+            'tiles' => $hasId ? [
                 ['icon' => 'bi-patch-check',    'color' => $statusColor,                    'value' => $statusLabel ?? '—',         'caption' => 'Statut'],
-                ['icon' => 'bi-shield-check',   'color' => $lbCfg['color']  ?? 'secondary', 'value' => $lbCfg['label']  ?? '—',    'caption' => 'Base légale'],
-                ['icon' => 'bi-envelope-at',    'color' => $ekCfg['color']  ?? 'secondary', 'value' => $ekCfg['label']  ?? '—',    'caption' => 'Type email'],
+                ['icon' => 'bi-shield-check',   'color' => $lbCfg['color'] ?? 'secondary', 'value' => $lbCfg['label'] ?? '—',    'caption' => 'Base légale'],
+                ['icon' => 'bi-envelope-at',    'color' => $ekCfg['color'] ?? 'secondary', 'value' => $ekCfg['label'] ?? '—',    'caption' => 'Type email'],
                 ['icon' => 'bi-search',         'color' => $srcCfg['color'] ?? 'secondary', 'value' => $srcCfg['label'] ?? '—',    'caption' => 'Source'],
             ] : [],
-            'toggle'        => $toggle,
-            'tabs'          => $tabs,
-            'detail_rows'   => $detailRows,
-            'stat_cards'    => $statCards,
-            'charts'        => $charts,
+            'toggle' => $toggle,
+            'tabs' => $tabs,
+            'detail_rows' => $detailRows,
+            'stat_cards' => $statCards,
+            'charts' => $charts,
             'quick_actions' => $quickActions,
         ];
     }
@@ -194,34 +200,34 @@ class ContactViewConfig
         // ── Bar (horizontal distributed) — Engagement e-mail funnel ──────────
         $funnel = $stats['funnel'] ?? ['series' => [], 'labels' => []];
         $charts[] = [
-            'id'         => 'contact_funnel',
-            'title'      => 'Engagement e-mail',
-            'type'       => 'bar',
-            'series'     => [['name' => 'Emails', 'data' => $funnel['series'] ?? []]],
+            'id' => 'contact_funnel',
+            'title' => 'Engagement e-mail',
+            'type' => 'bar',
+            'series' => [['name' => 'Emails', 'data' => $funnel['series'] ?? []]],
             'categories' => $funnel['labels'] ?? [],
-            'labels'     => [],
-            'colors'     => ['#009EF7', '#50CD89', '#FFC700', '#7239EA', '#F1416C'],
-            'options'    => [
+            'labels' => [],
+            'colors' => ['#009EF7', '#50CD89', '#FFC700', '#7239EA', '#F1416C'],
+            'options' => [
                 'plotOptions' => [
                     'bar' => [
-                        'horizontal'   => true,
-                        'distributed'  => true,
+                        'horizontal' => true,
+                        'distributed' => true,
                         'borderRadius' => 4,
                     ],
                 ],
                 'dataLabels' => [
-                    'enabled'    => true,
+                    'enabled' => true,
                     'textAnchor' => 'start',
-                    'offsetX'    => 0,
+                    'offsetX' => 0,
                 ],
                 'legend' => ['show' => false],
             ],
-            'height'     => 300,
-            'color'      => 'primary',
-            'showTotal'  => false,
+            'height' => 300,
+            'color' => 'primary',
+            'showTotal' => false,
             'hollowSize' => '60%',
-            'empty'      => 'Disponible après le lancement des campagnes',
-            'emptyIcon'  => 'bi-bar-chart',
+            'empty' => 'Disponible après le lancement des campagnes',
+            'emptyIcon' => 'bi-bar-chart',
         ];
 
         return $charts;

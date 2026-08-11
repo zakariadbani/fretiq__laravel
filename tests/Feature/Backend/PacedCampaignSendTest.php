@@ -78,7 +78,7 @@ class PacedCampaignSendTest extends TestCase
         $this->assertSame('sent', $run->fresh()->status);
     }
 
-    public function test_paced_send_keeps_prospect_eligible_after_snapshot(): void
+    public function test_paced_send_rechecks_the_cold_send_gate_after_snapshot(): void
     {
         $campaign = $this->makeCampaign();
         $campaign->segment->update(['scope' => 'mixed']);
@@ -86,6 +86,9 @@ class PacedCampaignSendTest extends TestCase
         $contact = Contact::factory()->create([
             'company_id' => $company->id,
             'email_kind' => 'role',
+            'email_verification_status' => 'valid',
+            'email_verification_checked_at' => now(),
+            'email_verification_source' => 'manual',
         ]);
         $run = $this->prepareRun($campaign);
         $sendCalls = 0;
@@ -97,16 +100,16 @@ class PacedCampaignSendTest extends TestCase
         $this->app->forgetInstance(CampaignService::class);
         app(CampaignService::class)->sendRun($run);
 
-        $this->assertSame(1, $sendCalls);
+        $this->assertSame(0, $sendCalls);
         $this->assertDatabaseHas('campaign_recipients', [
             'contact_id' => $contact->id,
-            'status' => 'sent',
-            'skip_reason' => null,
+            'status' => 'skipped',
+            'skip_reason' => 'cold_send_disabled',
         ]);
         $this->assertSame('processed', $run->companyDispatches()->firstOrFail()->fresh()->status);
     }
 
-    public function test_paced_send_keeps_personal_prospect_eligible(): void
+    public function test_paced_send_rechecks_relationship_and_cold_send_gate_after_snapshot(): void
     {
         $campaign = $this->makeCampaign();
         $company = $this->makeCompanyWithContacts(1);
@@ -123,11 +126,11 @@ class PacedCampaignSendTest extends TestCase
         $this->app->forgetInstance(CampaignService::class);
         app(CampaignService::class)->sendRun($run);
 
-        $this->assertSame(1, $sendCalls);
+        $this->assertSame(0, $sendCalls);
         $this->assertDatabaseHas('campaign_recipients', [
             'contact_id' => $contact->id,
-            'status' => 'sent',
-            'skip_reason' => null,
+            'status' => 'skipped',
+            'skip_reason' => 'cold_send_disabled',
         ]);
     }
 
@@ -375,7 +378,12 @@ class PacedCampaignSendTest extends TestCase
     private function makeCompanyWithContacts(int $count): Company
     {
         $company = Company::factory()->client()->create();
-        Contact::factory()->count($count)->create(['company_id' => $company->id]);
+        Contact::factory()->count($count)->create([
+            'company_id' => $company->id,
+            'email_verification_status' => 'valid',
+            'email_verification_checked_at' => now(),
+            'email_verification_source' => 'manual',
+        ]);
 
         return $company;
     }
@@ -406,6 +414,11 @@ class PacedCampaignSendTest extends TestCase
             public function driverName(): string
             {
                 return 'local';
+            }
+
+            public function supportsBounceFeedback(Campaign $campaign): bool
+            {
+                return false;
             }
         });
     }

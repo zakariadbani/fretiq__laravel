@@ -109,6 +109,10 @@ final class ZohoOperationsDashboard
         $remainingMinutes = $expiry ? (int) now()->diffInMinutes($expiry, false) : null;
         $oauth = ! $tokenPresent ? 'absent' : ($remainingMinutes === null ? 'unknown' : ($remainingMinutes <= 0 ? 'expired' : ($remainingMinutes < 15 ? 'soon' : 'ready')));
         $checkpoints = ZohoSyncCheckpoint::query()->get()->keyBy(fn (ZohoSyncCheckpoint $checkpoint): string => $checkpoint->module.'|'.($checkpoint->submodule ?? ''));
+        $checkpointOwnerIds = $checkpoints->pluck('sync_batch_id')->filter(fn ($id): bool => $id !== null)->unique()->values();
+        $checkpointOwners = $checkpointOwnerIds->isEmpty()
+            ? collect()
+            : ZohoSyncBatch::query()->whereKey($checkpointOwnerIds)->get()->keyBy('id');
         $attempts = $this->latestLogs();
         $successes = $this->latestLogs(status: 'success');
         $reconciliations = $this->latestLogs(mode: 'reconcile');
@@ -145,7 +149,6 @@ final class ZohoOperationsDashboard
             && $this->sameModuleSet((array) $activeManualDelta->modules, $syncAllModuleKeys);
         $syncAllBatch = $activeManualDelta ?? $pausedSyncAllBatch;
         $syncAllState = $activeManualDelta !== null ? 'active' : ($pausedSyncAllBatch !== null ? 'paused' : 'idle');
-        $pausedOwnerModules = $pausedSyncAllBatch === null ? [] : (array) $pausedSyncAllBatch->modules;
         $modules = [];
 
         foreach ($this->registry->all() as $key => $definition) {
@@ -155,6 +158,9 @@ final class ZohoOperationsDashboard
             $reconciliation = $this->reconciliationEvidence($reconcile, $reconcile ? $reconciliationFailures->get($key.'|'.$reconcile->correlation_id) : null);
             $manifest = $manifestsByModule->get($definition->apiName) ?? $manifestsByModule->get($key);
             $freshness = $this->freshness($success?->synced_at, false);
+            $checkpoint = $checkpoints->get('v2:'.$key.'|'.($definition->submodule ?? ''));
+            $checkpointOwner = $checkpoint?->sync_batch_id === null ? null : $checkpointOwners->get((int) $checkpoint->sync_batch_id);
+            $syncState = $this->moduleSyncState($key, $checkpoint, $checkpointOwner);
             $modules[$key] = [
                 'label' => $definition->apiName,
                 'attempt' => $attempt,
@@ -162,12 +168,14 @@ final class ZohoOperationsDashboard
                 'freshness' => $freshness,
                 'reconciliation_freshness' => $this->freshness($reconcile?->synced_at, true),
                 'quality' => $this->quality->forModule($key),
-                'checkpoint' => $checkpoints->get('v2:'.$key.'|'.($definition->submodule ?? '')),
+                'checkpoint' => $checkpoint,
                 'reconciliation' => $reconciliation,
                 'manifest' => $manifest,
                 'active' => ! $definition->activationGated,
                 'note' => $definition->activationNote,
-                'paused_owner' => in_array($key, $pausedOwnerModules, true),
+                'sync_state' => $syncState,
+                'busy' => in_array($syncState, ['busy', 'retrying'], true),
+                'paused_owner' => $syncState === 'paused',
             ];
         }
 
@@ -205,6 +213,50 @@ final class ZohoOperationsDashboard
             'trend' => ZohoSyncLog::query()->whereNotNull('sync_batch_id')->latest('synced_at')->limit(30)
                 ->get(['module', 'status', 'duration_ms', 'records_seen', 'records_synced', 'api_requests', 'synced_at']),
         ];
+    }
+
+    private function moduleSyncState(string $module, ?ZohoSyncCheckpoint $checkpoint, ?ZohoSyncBatch $owner): string
+    {
+        if ($checkpoint === null) {
+            return 'idle';
+        }
+
+        $checkpointStatus = (string) $checkpoint->status;
+        $hasOwnerReference = $checkpoint->sync_batch_id !== null;
+        if (($hasOwnerReference && $owner === null) || ($owner !== null && ! $this->checkpointOwnershipMatches($module, $checkpoint, $owner))) {
+            return 'interrupted';
+        }
+
+        $ownerIsLive = $owner !== null
+            && $owner->completed_at === null
+            && in_array($owner->status, ['queued', 'running', 'paused'], true);
+        if ($ownerIsLive) {
+            if ($owner->status === 'paused' || $checkpointStatus === 'paused') {
+                return 'paused';
+            }
+
+            return $checkpointStatus === 'retrying' ? 'retrying' : 'busy';
+        }
+
+        if (in_array($checkpointStatus, ['queued', 'running', 'retrying', 'paused'], true)) {
+            return 'interrupted';
+        }
+
+        return match ($checkpointStatus) {
+            'partial', 'failed', 'error' => 'error',
+            'completed', 'success' => 'completed',
+            '', 'idle' => 'idle',
+            default => $checkpointStatus,
+        };
+    }
+
+    private function checkpointOwnershipMatches(string $module, ZohoSyncCheckpoint $checkpoint, ZohoSyncBatch $owner): bool
+    {
+        return (int) $checkpoint->sync_batch_id === (int) $owner->id
+            && trim((string) $checkpoint->correlation_id) !== ''
+            && (string) $checkpoint->correlation_id === (string) $owner->correlation_id
+            && (string) $checkpoint->sync_mode === (string) $owner->mode
+            && in_array($module, (array) $owner->modules, true);
     }
 
     /**

@@ -353,11 +353,21 @@ class Menu
      */
     private function _matchItemByPath($item)
     {
+        $currentPath = trim(request()->path(), '/');
+
         if (isset($item['path'])) {
-            $currentPath = trim(request()->path(), '/');
             $itemPath = trim($item['path'], '/');
 
-            return $currentPath === $itemPath;
+            if ($currentPath === $itemPath) {
+                return true;
+            }
+        }
+
+        if (isset($item['active_prefix']) && is_string($item['active_prefix'])) {
+            $activePrefix = trim($item['active_prefix'], '/');
+
+            return $activePrefix !== ''
+                && ($currentPath === $activePrefix || str_starts_with($currentPath, $activePrefix.'/'));
         }
 
         return false;

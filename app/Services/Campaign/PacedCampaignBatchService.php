@@ -2,6 +2,7 @@
 
 namespace App\Services\Campaign;
 
+use App\Exceptions\PacedCampaignBatchAlreadyExistsException;
 use App\Models\Campaign;
 use App\Models\CampaignCompanyDispatch;
 use App\Models\CampaignRecipient;
@@ -46,7 +47,7 @@ class PacedCampaignBatchService
 
     /**
      * Atomically create today's manual occurrence and advance the cursor.
-     * Throws for user-correctable conditions so the controller can return a clear 422.
+     * Throws typed validation/no-op exceptions so the controller can distinguish errors from an already-created warning.
      */
     public function prepareManualBatch(Campaign $campaign, Carbon $now): CampaignRun
     {
@@ -66,7 +67,7 @@ class PacedCampaignBatchService
 
             $occurrenceKey = 'paced-' . $localNow->format('Ymd');
             if ($lockedCampaign->runs()->where('occurrence_key', $occurrenceKey)->exists()) {
-                throw new \InvalidArgumentException('Le lot du jour a déjà été créé pour cette campagne.');
+                throw new PacedCampaignBatchAlreadyExistsException('Le lot du jour a déjà été créé pour cette campagne.');
             }
 
             $lockedCampaign->update(['is_active' => true]);

@@ -87,4 +87,11 @@ class SmtpCampaignsDriver implements CampaignsClient
     {
         return 'smtp';
     }
+
+    public function supportsBounceFeedback(Campaign $campaign): bool
+    {
+        $campaign->loadMissing('senderIdentity');
+
+        return $campaign->senderIdentity?->hasHealthyBounceFeedback() ?? false;
+    }
 }

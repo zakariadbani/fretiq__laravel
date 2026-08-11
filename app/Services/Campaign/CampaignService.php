@@ -47,6 +47,7 @@ class CampaignService
         private readonly CampaignDeliveryResolver $deliveryResolver,
         private readonly SmtpSendReservationService $smtpReservations,
         private readonly CampaignDeliveryFence $deliveryFence,
+        private readonly ContactEligibilityService $contactEligibility,
     ) {}
 
     // ── Scheduling ─────────────────────────────────────────────────────────────
@@ -131,15 +132,31 @@ class CampaignService
         $contacts = collect();
         if ($campaign->segment !== null) {
             try {
-                $contacts = $campaign->schedule_type === 'paced' && $run !== null
-                    ? CampaignRecipient::query()
-                        ->where('campaign_run_id', $run->id)
+                $frozenContacts = fn (CampaignRun $frozenRun): Collection => CampaignRecipient::query()
+                        ->where('campaign_run_id', $frozenRun->id)
                         ->with('contact.company')
                         ->get()
                         ->pluck('contact')
                         ->filter()
-                        ->values()
-                    : $this->segmentService->resolve($campaign->segment);
+                        ->values();
+
+                if ($run?->source_run_id !== null) {
+                    // A resend stays bounded by its audited recipient snapshot,
+                    // but queued work must still fail closed if eligibility or a
+                    // suppression changes after the operator confirmed it.
+                    $eligibleContactIds = $this->segmentService
+                        ->resolve($campaign->segment)
+                        ->pluck('id');
+                    $contacts = $frozenContacts($run)
+                        ->whereIn('id', $eligibleContactIds)
+                        ->values();
+                } elseif ($campaign->schedule_type === 'paced' && $run !== null) {
+                    // Normal paced lots intentionally keep their materialized
+                    // audience stable across later segment drift.
+                    $contacts = $frozenContacts($run);
+                } else {
+                    $contacts = $this->segmentService->resolve($campaign->segment);
+                }
 
                 if ($contacts->isEmpty() && ! $allowEmptyAudience) {
                     $messages[] = 'Aucun destinataire éligible après exclusions, suppressions et règles de conformité.';
@@ -454,7 +471,7 @@ class CampaignService
         $contacts = $preflight['contacts'];
 
         // ── Step 3: Insert recipient rows (idempotent via unique key) ─────────
-        if ($run->campaign->schedule_type !== 'paced') {
+        if ($run->campaign->schedule_type !== 'paced' && $run->source_run_id === null) {
             foreach ($contacts as $contact) {
                 CampaignRecipient::firstOrCreate(
                     [
@@ -528,6 +545,44 @@ class CampaignService
             return;
         }
         $contacts = $preflight['contacts'];
+
+        $suppressed = Suppression::query()
+            ->pluck('email')
+            ->map(fn ($email) => strtolower(trim((string) $email)))
+            ->flip();
+        $supportsBounceFeedback = $driver->supportsBounceFeedback($run->campaign);
+
+        $contacts = $contacts
+            ->filter(function ($contact) use ($run, $suppressed, $supportsBounceFeedback): bool {
+                $reason = $this->contactEligibility->sendIneligibilityReason(
+                    $contact,
+                    $supportsBounceFeedback,
+                    isset($suppressed[strtolower(trim((string) $contact->email))]),
+                );
+
+                if ($reason === null) {
+                    return true;
+                }
+
+                CampaignRecipient::query()
+                    ->where('campaign_run_id', $run->id)
+                    ->where('contact_id', $contact->id)
+                    ->where('status', 'queued')
+                    ->update(['status' => 'skipped', 'skip_reason' => $reason]);
+
+                return false;
+            })
+            ->values();
+
+        if ($contacts->isEmpty()) {
+            $run->update([
+                'stats_sent' => 0,
+                'status' => 'sent',
+                'finished_at' => now(),
+            ]);
+
+            return;
+        }
 
         Log::info('[CampaignService] Driver zoho détecté — envoi via dispatchRun().', [
             'run_id'   => $run->id,
@@ -606,34 +661,12 @@ class CampaignService
                 ->get()
                 ->keyBy('trackable_id');
 
-            $now = now();
-            $missingRows = $recipients
-                ->reject(fn (CampaignRecipient $recipient): bool => $pacedTracking->has($recipient->id))
-                ->map(fn (CampaignRecipient $recipient): array => [
-                    'trackable_type' => CampaignRecipient::class,
-                    'trackable_id' => $recipient->id,
-                    'token' => TrackingToken::generate($run->id, $recipient->contact_id),
-                    'event' => 'pending',
-                    'human_open_count' => 0,
-                    'machine_open_count' => 0,
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ])
-                ->all();
-
-            if ($missingRows !== []) {
-                EmailTrackingEvent::query()->insert($missingRows);
-                $pacedTracking = EmailTrackingEvent::query()
-                    ->where('trackable_type', CampaignRecipient::class)
-                    ->whereIn('trackable_id', $recipientIds)
-                    ->get()
-                    ->keyBy('trackable_id');
-            }
         }
 
         // Prefetch the suppression list once instead of one query per recipient
         // (isSuppressed() is a plain normalized-equality lookup — see Suppression::isSuppressed()).
         $suppressed = Suppression::pluck('email')->map(fn ($e) => strtolower(trim($e)))->flip();
+        $supportsBounceFeedback = $driver->supportsBounceFeedback($run->campaign);
 
         // Count real send ATTEMPTS (recipients that pass the suppression re-check
         // and reach the try{} send below) — NOT $recipients->count(), which also
@@ -646,10 +679,16 @@ class CampaignService
             $contact = $recipient->contact;
 
             // ── 4a. Send-time suppression re-check ───────────────────────────
-            if (isset($suppressed[strtolower(trim($contact->email))])) {
+            $skipReason = $this->contactEligibility->sendIneligibilityReason(
+                $contact,
+                $supportsBounceFeedback,
+                isset($suppressed[strtolower(trim((string) $contact->email))]),
+            );
+
+            if ($skipReason !== null) {
                 $recipient->update([
                     'status'      => 'skipped',
-                    'skip_reason' => 'suppressed',
+                    'skip_reason' => $skipReason,
                 ]);
                 continue;
             }
@@ -666,7 +705,18 @@ class CampaignService
             $token = $trackingEvent?->token
                 ?? TrackingToken::generate($run->id, $contact->id);
 
-            if (! $isPaced) {
+            if ($isPaced && $trackingEvent === null) {
+                $trackingEvent = EmailTrackingEvent::firstOrCreate(
+                    ['token' => $token],
+                    [
+                        'trackable_type' => CampaignRecipient::class,
+                        'trackable_id' => $recipient->id,
+                        'event' => 'pending',
+                        'human_open_count' => 0,
+                        'machine_open_count' => 0,
+                    ],
+                );
+            } elseif (! $isPaced) {
                 // Preserve the existing non-paced pre-send reservation.
                 $trackingEvent = EmailTrackingEvent::createForSend($recipient, $token);
             }
@@ -764,6 +814,43 @@ class CampaignService
     {
         $run->refresh()->loadMissing(['campaign.senderIdentity']);
         $campaign = $run->campaign;
+
+        if ($run->status === 'canceled' || $campaign === null) {
+            return;
+        }
+
+        if (! $campaign->is_active) {
+            $hasQueuedRecipients = CampaignRecipient::query()
+                ->where('campaign_run_id', $run->id)
+                ->where('status', 'queued')
+                ->exists();
+            $hasTransportEvidence = CampaignRecipient::query()
+                ->where('campaign_run_id', $run->id)
+                ->where(function ($query): void {
+                    $query->whereNotNull('provider_message_id')->orWhereNotNull('sent_at');
+                })
+                ->exists()
+                || \App\Models\SmtpSendReservation::query()
+                    ->join('campaign_recipients', function ($join) use ($run): void {
+                        $join->on('campaign_recipients.id', '=', 'smtp_send_reservations.source_id')
+                            ->where('smtp_send_reservations.source_type', \App\Models\SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT)
+                            ->where('campaign_recipients.campaign_run_id', $run->id);
+                    })
+                    ->where(function ($query): void {
+                        $query->whereIn('smtp_send_reservations.status', ['sending', 'accepted', 'uncertain', 'sent'])
+                            ->orWhereNotNull('smtp_send_reservations.provider_message_id')
+                            ->orWhereNotNull('smtp_send_reservations.accepted_at')
+                            ->orWhereNotNull('smtp_send_reservations.sent_at');
+                    })
+                    ->exists();
+
+            if ($run->status === 'sending' && $hasQueuedRecipients && ! $hasTransportEvidence) {
+                $run->update(['status' => 'scheduled', 'started_at' => null, 'finished_at' => null]);
+            }
+
+            return;
+        }
+
         $recipient = CampaignRecipient::query()
             ->where('campaign_run_id', $run->id)
             ->where('status', 'queued')
@@ -794,7 +881,7 @@ class CampaignService
             return;
         }
 
-        SendSmtpReservationJob::dispatch($result['reservation']->id)->delay($result['send_at']);
+        SendSmtpReservationJob::dispatch($result['reservation']->id, $result['send_at'])->delay($result['send_at']);
         $run->update(['status' => 'sending', 'driver_ref' => 'smtp', 'finished_at' => null]);
     }
 

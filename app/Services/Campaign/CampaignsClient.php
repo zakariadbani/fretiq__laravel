@@ -58,4 +58,10 @@ interface CampaignsClient
      * Stored on campaign_runs.driver_ref for provenance.
      */
     public function driverName(): string;
+
+    /**
+     * Whether this concrete delivery path has a configured, recently proven
+     * bounce-feedback loop for the campaign's sender.
+     */
+    public function supportsBounceFeedback(Campaign $campaign): bool;
 }

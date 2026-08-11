@@ -5,13 +5,15 @@ namespace App\Jobs;
 use App\Models\CampaignRecipient;
 use App\Models\EmailTrackingEvent;
 use App\Models\SmtpSendReservation;
-use App\Models\Suppression;
 use App\Services\Campaign\CampaignService;
+use App\Services\Campaign\ContactEligibilityService;
 use App\Services\Campaign\SequenceService;
 use App\Services\Campaign\SmtpCampaignsDriver;
 use App\Services\Campaign\SmtpSendReservationService;
 use App\Services\Mail\SenderIdentitySmtpMailer;
 use App\Support\TrackingToken;
+use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -32,14 +34,19 @@ class SendSmtpReservationJob implements ShouldQueue, ShouldBeUnique
     public int $timeout = 90;
     private bool $transportBoundaryCrossed = false;
 
-    public function __construct(public readonly int $reservationId)
+    public readonly ?Carbon $reservedFor;
+
+    public function __construct(public readonly int $reservationId, ?CarbonInterface $reservedFor = null)
     {
+        $this->reservedFor = $reservedFor === null
+            ? null
+            : Carbon::instance($reservedFor->toDateTime())->utc();
         $this->onQueue('campaigns');
     }
 
     public function uniqueId(): string
     {
-        return (string) $this->reservationId;
+        return $this->reservationId . ':' . ($this->reservedFor?->toIso8601String() ?? 'legacy');
     }
 
     public function uniqueFor(): int
@@ -62,15 +69,31 @@ class SendSmtpReservationJob implements ShouldQueue, ShouldBeUnique
         SmtpCampaignsDriver $driver,
         CampaignService $campaigns,
         SequenceService $sequences,
+        ?ContactEligibilityService $contactEligibility = null,
     ): void {
+        $contactEligibility ??= app(ContactEligibilityService::class);
         $reservation = SmtpSendReservation::with(['campaign.senderIdentity'])->find($this->reservationId);
         if ($reservation === null || in_array($reservation->status, ['sent', 'released', 'uncertain'], true)) {
             return;
         }
 
+        // A reservation can be moved to an earlier safe slot by an operator.
+        // A delayed job for the old slot must never claim the moved row.
+        if ($reservation->status === 'reserved'
+            && $this->reservedFor !== null
+            && ! $reservation->reserved_for->equalTo($this->reservedFor)) {
+            // A pre-transport defer or an operator reschedule changes the slot
+            // version. Hand off to the current version instead of silently
+            // consuming this retry and waiting for the recovery sweep.
+            self::dispatch($reservation->id, $reservation->reserved_for)
+                ->delay($reservation->reserved_for);
+
+            return;
+        }
+
         if ($reservation->status === 'accepted') {
             if ($reservation->source_type === SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT) {
-                $this->sendCampaignRecipient($reservation, $driver, $reservations, $campaigns);
+                $this->sendCampaignRecipient($reservation, $driver, $reservations, $campaigns, $contactEligibility);
             } elseif ($reservation->source_type === SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND) {
                 $sequences->sendReservedStep(
                     $reservation,
@@ -85,7 +108,7 @@ class SendSmtpReservationJob implements ShouldQueue, ShouldBeUnique
         $check = $reservations->claimWhenDue($reservation);
         if (! $check['ok']) {
             if ($check['reason'] === 'not_due' && $check['send_at'] !== null) {
-                self::dispatch($reservation->id)->delay($check['send_at']);
+                self::dispatch($reservation->id, $check['send_at'])->delay($check['send_at']);
             }
             return;
         }
@@ -94,7 +117,7 @@ class SendSmtpReservationJob implements ShouldQueue, ShouldBeUnique
 
         try {
             if ($reservation->source_type === SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT) {
-                $this->sendCampaignRecipient($reservation, $driver, $reservations, $campaigns);
+                $this->sendCampaignRecipient($reservation, $driver, $reservations, $campaigns, $contactEligibility);
             } elseif ($reservation->source_type === SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND) {
                 $sequences->sendReservedStep(
                     $reservation,
@@ -124,6 +147,7 @@ class SendSmtpReservationJob implements ShouldQueue, ShouldBeUnique
         SmtpCampaignsDriver $driver,
         SmtpSendReservationService $reservations,
         CampaignService $campaigns,
+        ContactEligibilityService $contactEligibility,
     ): void {
         $recipient = CampaignRecipient::with(['contact.company', 'run.campaign.template.translations', 'run.campaign.senderIdentity'])
             ->find($reservation->source_id);
@@ -134,6 +158,15 @@ class SendSmtpReservationJob implements ShouldQueue, ShouldBeUnique
 
         $run = $recipient->run;
         $campaign = $run->campaign;
+
+        // Remote acceptance is durable evidence. Finalize it before consulting
+        // mutable campaign routing settings so an operator edit can never turn
+        // an accepted delivery back into retryable work.
+        if ($reservation->status === 'accepted') {
+            $this->finalizeAccepted($reservation, $recipient, $campaign, $campaigns, null, $run);
+            return;
+        }
+
         // Campaign settings may legally change before the first accepted
         // delivery. Never let a queued old reservation choose the mailbox.
         if ($campaign->delivery_channel !== 'smtp' || (int) $campaign->sender_identity_id !== (int) $reservation->sender_identity_id) {
@@ -148,10 +181,6 @@ class SendSmtpReservationJob implements ShouldQueue, ShouldBeUnique
             }
             return;
         }
-        if ($reservation->status === 'accepted') {
-            $this->finalizeAccepted($reservation, $recipient, $campaign, $campaigns, null, $run);
-            return;
-        }
         if ($recipient->provider_message_id !== null || $recipient->sent_at !== null) {
             $reservations->markSent($reservation);
             $campaigns->continueSmtpRun($run);
@@ -162,6 +191,7 @@ class SendSmtpReservationJob implements ShouldQueue, ShouldBeUnique
             // Pausing is reversible: keep this recipient queued and do not
             // consume a slot or accidentally mark the audience skipped.
             $reservations->release($reservation);
+            $campaigns->continueSmtpRun($run);
             return;
         }
 
@@ -175,15 +205,13 @@ class SendSmtpReservationJob implements ShouldQueue, ShouldBeUnique
         }
 
         $contact = $recipient->contact;
-        $skipReason = null;
-        if (Suppression::isSuppressed($contact->email)) {
-            $skipReason = 'suppressed';
-        } elseif ($contact->company?->relationship === 'prospect'
-            && ! config('prospecting.cold_send_enabled', false)) {
-            $skipReason = 'cold_send_disabled';
-        } elseif ($contact->company?->relationship === 'prospect'
-            && $contact->email_kind === 'personal') {
-            $skipReason = 'personal_email';
+        $supportsBounceFeedback = $driver->supportsBounceFeedback($campaign);
+        $skipReason = $contactEligibility->sendIneligibilityReasonForSingle(
+            $contact,
+            $supportsBounceFeedback,
+        );
+        if ($skipReason === 'accept_all_feedback_required' && ! $supportsBounceFeedback) {
+            $skipReason = 'bounce_feedback_unhealthy';
         }
 
         if ($skipReason !== null) {

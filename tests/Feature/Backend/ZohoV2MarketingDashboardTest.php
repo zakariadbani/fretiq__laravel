@@ -8,6 +8,7 @@ use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Testing\TestView;
 use Tests\TestCase;
 
 class ZohoV2MarketingDashboardTest extends TestCase
@@ -53,21 +54,153 @@ class ZohoV2MarketingDashboardTest extends TestCase
             ->assertDontSee('Jamais synchronisé');
     }
 
-    public function test_ceo_control_tower_renders_the_read_only_decision_hierarchy(): void
+    public function test_ceo_control_tower_renders_the_executive_hybrid_read_only_dashboard(): void
     {
         $this->actingAs($this->admin)->get('/admin/dashboard/marketing?period=365d')
-            ->assertOk()->assertSeeText('Tour de contrôle commerciale')->assertSeeText('Simulation uniquement')
+            ->assertOk()
+            ->assertSeeText('Vue commerciale exécutive')
+            ->assertSeeText('Comptes à surveiller')
+            ->assertSeeText('Production et activité consignée')
+            ->assertSeeText('Entonnoir de traçabilité')
+            ->assertSeeText('Mix de volume, pas de revenu')
+            ->assertSee('data-ceo-executive-hero', false)
+            ->assertSee('data-ceo-chart="traceability"', false)
+            ->assertSee('data-ceo-chart="monthly"', false)
+            ->assertSee('data-ceo-chart="transport"', false)
             ->assertSee('data-testid="period-365"', false)->assertSee('data-testid="ceo-quotes"', false)
-            ->assertSee('data-testid="ceo-queue-filters"', false)->assertSee('Filtrer par propriétaire')
-            ->assertSee('aria-disabled="true" data-ceo-priority="P1" disabled', false)
-            ->assertSee('data-ceo-root', false)->assertSeeText('Briefing du matin')
-            ->assertSeeText('À enrichir')->assertSeeText('Dernière action humaine prouvée')
-            ->assertSeeText('Tâches créées ce mois, actuellement terminées')->assertSeeText('Réunions')->assertSeeText('Appels')->assertSeeText('Notes')
-            ->assertSeeText('Preuves par propriétaire')->assertSeeText('Mix des axes')
-            ->assertSee('tabindex="-1" data-ceo-tab="pilotage"', false)
-            ->assertSee('data-ceo-owner', false)->assertSeeText('Propriétaires des lignes affichées')
+            ->assertSee('data-testid="ceo-watchlist-filters"', false)
+            ->assertSee('data-ceo-owner', false)
+            ->assertSeeText('Dernière activité humaine prouvée')
             ->assertSeeText('date de fin indisponible')
-            ->assertDontSee('Taux de gain des devis')->assertDontSee('raw_payload');
+            ->assertDontSee('Action recommandée', false)
+            ->assertDontSee('Préparer l’action', false)
+            ->assertDontSee('data-ceo-open', false)
+            ->assertDontSee('data-ceo-tab', false)
+            ->assertDontSee('id="ceo-record-modal"', false)
+            ->assertDontSeeText('Taux de gain des devis')
+            ->assertDontSee('raw_payload');
+    }
+
+    public function test_executive_hero_uses_factual_copy_when_no_quote_is_missing_a_decision(): void
+    {
+        $this->executiveView(
+            ['quotes' => 3, 'missing_status' => 0],
+            ['quotes' => 3, 'current_decisions' => 3],
+        )
+            ->assertSeeText('3 devis émis sur la période · 0 sans décision renseignée.')
+            ->assertSeeText('Part sans décision renseignée : 0,0 %.')
+            ->assertDontSeeText('La production reste soutenue');
+    }
+
+    public function test_executive_hero_uses_neutral_copy_when_quote_metrics_are_unavailable(): void
+    {
+        $this->executiveView(
+            ['quotes' => 'Indisponible', 'missing_status' => 'Indisponible'],
+            ['quotes' => 'Indisponible', 'current_decisions' => 'Indisponible'],
+        )
+            ->assertSeeText('Production et décisions : données insuffisantes pour une synthèse fiable.')
+            ->assertSeeText('Part de devis sans décision renseignée : Indisponible.')
+            ->assertDontSeeText('La production reste soutenue');
+    }
+
+    public function test_executive_ratios_preserve_one_decimal_in_french_format(): void
+    {
+        $this->executiveView(
+            ['quotes' => 3, 'missing_status' => 2],
+            ['quotes' => 3, 'current_decisions' => 1],
+        )
+            ->assertSeeText('Part sans décision renseignée : 66,7 %.')
+            ->assertSee('aria-label="33,3 % des devis ont une décision renseignée"', false)
+            ->assertSee('data-ceo-traceability-fallback', false)
+            ->assertSeeText('Décisions renseignées : 1 / 3 devis');
+    }
+
+    public function test_chart_states_distinguish_all_null_monthly_from_known_zero_transport(): void
+    {
+        $unavailable = 'Indisponible';
+        $monthly = collect(range(3, 8))->map(static fn (int $month): array => [
+            'month' => sprintf('2026-%02d', $month),
+            'quotes' => $unavailable,
+            'current_decisions' => $unavailable,
+            'tasks_created' => $unavailable,
+            'completed_tasks' => $unavailable,
+            'meetings' => $unavailable,
+            'calls' => $unavailable,
+            'notes' => $unavailable,
+            'deals' => $unavailable,
+        ])->all();
+
+        $html = (string) $this->executiveView(
+            ['quotes' => 0, 'missing_status' => 0],
+            ['quotes' => 0, 'current_decisions' => 0],
+            [
+                'monthly' => $monthly,
+                'monthly_meta' => ['current_month' => '2026-08', 'as_of' => '2026-08-10'],
+                'transport_mix' => [],
+                'confidence' => ['panels' => ['monthly' => 'Partiel', 'mix' => 'Partiel']],
+            ],
+        );
+
+        $this->assertStringContainsString(
+            'data-ceo-chart="monthly" data-ceo-chart-state="unavailable"',
+            $html,
+        );
+        $this->assertStringNotContainsString(
+            'data-ceo-chart="monthly" data-ceo-chart-state="available"',
+            $html,
+        );
+        $this->assertStringContainsString(
+            'data-ceo-chart="transport" data-ceo-chart-state="known-zero"',
+            $html,
+        );
+        $this->assertStringContainsString('Aucun résultat sur la période', $html);
+        $this->assertStringContainsString(
+            "[data-ceo-chart=\"monthly\"][data-ceo-chart-state=\"available\"]",
+            $html,
+        );
+    }
+
+    public function test_monthly_heading_discloses_fixed_six_month_cohort_independent_of_selected_period(): void
+    {
+        $monthly = collect(range(3, 8))->map(static fn (int $month): array => [
+            'month' => sprintf('2026-%02d', $month),
+            'quotes' => 0,
+            'current_decisions' => 0,
+            'tasks_created' => 0,
+            'completed_tasks' => 0,
+            'meetings' => 0,
+            'calls' => 0,
+            'notes' => 0,
+            'deals' => 0,
+        ])->all();
+
+        $this->executiveView(
+            ['quotes' => 0, 'missing_status' => 0],
+            ['quotes' => 0, 'current_decisions' => 0],
+            [
+                'monthly' => $monthly,
+                'monthly_meta' => ['current_month' => '2026-08', 'as_of' => '2026-08-10'],
+                'confidence' => ['panels' => ['monthly' => 'Fiable']],
+            ],
+            ['period' => '30d'],
+        )
+            ->assertSee('data-testid="period-30"', false)
+            ->assertSee('data-ceo-monthly-cohort', false)
+            ->assertSeeText('Fenêtre fixe de 6 mois calendaires · 2026-03 → 2026-08 · mois courant au 10/08/2026');
+    }
+
+    public function test_chart_lifecycle_is_reload_safe_and_serializes_livewire_renders(): void
+    {
+        $html = (string) $this->executiveView(
+            ['quotes' => 3, 'missing_status' => 2],
+            ['quotes' => 3, 'current_decisions' => 1],
+        );
+
+        $this->assertStringContainsString('(function () {', $html);
+        $this->assertStringContainsString("document.removeEventListener('livewire:navigated', lifecycle.handler);", $html);
+        $this->assertStringContainsString('lifecycle.queue = lifecycle.queue.then(runBoot, runBoot);', $html);
+        $this->assertStringContainsString('await Promise.allSettled(charts.map(chart => Promise.resolve().then(() => chart.destroy())));', $html);
+        $this->assertStringContainsString('await chart.render();', $html);
     }
 
     public function test_ceo_control_tower_rejects_malformed_or_unapproved_filters(): void
@@ -82,7 +215,7 @@ class ZohoV2MarketingDashboardTest extends TestCase
 
         $response->assertOk();
         $this->assertMatchesRegularExpression(
-            '/class="btn btn-sm btn-primary" href="[^"]*period=90d" data-testid="period-90"/',
+            '/class="btn btn-sm btn-primary"\s+href="[^"]*period=90d"\s+data-testid="period-90"/',
             $response->getContent(),
         );
     }
@@ -95,13 +228,13 @@ class ZohoV2MarketingDashboardTest extends TestCase
             'signals' => ['P1', 'P3'],
             'account' => 'Compte P1 partiel',
             'contact' => 'Contact nommé · identité masquée',
-            'reasons' => ['Décision à obtenir avant expiration', 'Message ouvert sans réponse'],
+            'reasons' => ['Devis arrivant à échéance sans décision renseignée', 'Message ouvert sans réponse'],
             'quote_context' => 'DEVIS-1 · Aérien',
             'last_proven_action' => $unavailable,
             'channel' => 'Téléphone compte masqué',
             'owner' => 'Commercial Test',
             'deadline' => '2026-08-11',
-            'recommended_action' => 'Appeler pour obtenir une décision.',
+            'recommended_action' => 'SENTINEL-RECOMMENDATION-MUST-NOT-RENDER',
             'confidence' => 'Partiel',
         ];
         $ceo = [
@@ -147,6 +280,7 @@ class ZohoV2MarketingDashboardTest extends TestCase
             'queue' => [
                 'items' => [$item], 'truncated' => false,
                 'total_by_priority' => ['P1' => 1, 'P2' => 0, 'P3' => 0, 'enrichment' => 0],
+                'total_by_signal' => ['P1' => 1, 'P2' => 0, 'P3' => 1, 'enrichment' => 0],
                 'displayed_by_priority' => ['P1' => 1, 'P2' => 0, 'P3' => 0, 'enrichment' => 0],
                 'availability_by_priority' => ['P1' => true, 'P2' => true, 'P3' => true, 'enrichment' => true],
                 'completeness_by_priority' => ['P1' => 'complete', 'P2' => 'partial', 'P3' => 'complete', 'enrichment' => 'partial'],
@@ -197,10 +331,17 @@ class ZohoV2MarketingDashboardTest extends TestCase
             'drilldowns' => [],
         ]);
 
-        $view->assertSee('Compte P1 partiel')
+        $view->assertSee('data-tasks-state="unavailable"', false)
+            ->assertSee('data-human-evidence-state="unavailable"', false)
+            ->assertSeeText('Valeurs exactes')
+            ->assertSeeText('Décisions actuelles')
+            ->assertSeeText('Deals')
+            ->assertDontSee('data-tasks-state="available" data-tasks-value="0"', false)
+            ->assertSee('Compte P1 partiel')
             ->assertSee('data-signals="P1,P3"', false)
             ->assertSee('d-flex flex-wrap gap-1', false)
             ->assertSeeText('P2 0 partiel')
+            ->assertSeeText('P3 1')
             ->assertSeeText('À enrichir 0 partiel')
             ->assertSeeText('Sources : comptes/échéance — Sous-ensemble connu · partiel')
             ->assertSeeText('sources sous-ensemble connu · partiel')
@@ -212,16 +353,100 @@ class ZohoV2MarketingDashboardTest extends TestCase
             ->assertSeeText('Filtre de cet indicateur : Non filtré')
             ->assertSeeText('Filtre de la file : Partiel')
             ->assertSeeText('2026-08 · en cours au 10/08/2026')
+            ->assertSeeText('Devis arrivant à échéance sans décision renseignée')
+            ->assertDontSeeText('Décision à obtenir avant expiration')
+            ->assertDontSeeText('canal autorisé à enrichir')
             ->assertSeeText('tâches créées ce mois et dont le statut actuel est terminé')
-            ->assertSee("['Contact masqué'", false)
-            ->assertSee("['Échéance'", false)
-            ->assertSee("['Confiance'", false)
-            ->assertSee("['Signaux'", false)
-            ->assertSee('.ceo-action-table tr[data-ceo-row]{display:grid', false)
-            ->assertSee('.ceo-decision-card[aria-pressed="true"]', false)
-            ->assertSee('Aucune action prouvée dans le sous-ensemble connu · sources partielles.', false)
+            ->assertDontSee('SENTINEL-RECOMMENDATION-MUST-NOT-RENDER', false)
+            ->assertDontSee('data-ceo-open', false)
             ->assertDontSee('innerHTML', false)
-            ->assertDontSee('aucun compte ne peut être proposé', false);
+            ->assertSee('data-ceo-chart-state="unavailable"', false)
+            ->assertSee('.ceo-watchlist tr[data-ceo-row]', false)
+            ->assertSee('grid-template-columns: minmax(8rem, 38%) 1fr', false)
+            ->assertSee('.ceo-filter-button[aria-pressed="true"]', false);
+    }
+
+    public function test_watchlist_empty_states_distinguish_complete_partial_and_unavailable_sources(): void
+    {
+        $priorities = ['P1', 'P2', 'P3', 'enrichment'];
+        $queue = static fn (array $availability, array $completeness): array => [
+            'items' => [],
+            'truncated' => false,
+            'total_by_priority' => array_fill_keys($priorities, 0),
+            'total_by_signal' => array_fill_keys($priorities, 0),
+            'displayed_by_priority' => array_fill_keys($priorities, 0),
+            'availability_by_priority' => $availability,
+            'completeness_by_priority' => $completeness,
+        ];
+        $render = fn (array $queueData): TestView => $this->executiveView(
+            ['quotes' => 0, 'missing_status' => 0],
+            ['quotes' => 0, 'current_decisions' => 0],
+            ['queue' => $queueData],
+        );
+
+        $complete = $render($queue(
+            array_fill_keys($priorities, true),
+            array_fill_keys($priorities, 'complete'),
+        ));
+        $complete
+            ->assertSee('data-ceo-queue-empty-state="complete-zero"', false)
+            ->assertSeeText('Aucun résultat sur la période')
+            ->assertSee('<tr data-ceo-empty-filter hidden>', false);
+
+        $partial = $render($queue(
+            array_fill_keys($priorities, true),
+            ['P1' => 'complete', 'P2' => 'partial', 'P3' => 'complete', 'enrichment' => 'partial'],
+        ));
+        $partial
+            ->assertSee('data-ceo-queue-empty-state="partial-subset"', false)
+            ->assertSeeText('Aucun compte dans le sous-ensemble connu · sources partielles.');
+        $partialHtml = (string) $partial;
+        $this->assertMatchesRegularExpression(
+            '/data-ceo-priority="all"[^>]*data-ceo-completeness="partial"/',
+            $partialHtml,
+        );
+        $this->assertMatchesRegularExpression(
+            '/data-ceo-priority="P2"[^>]*data-ceo-completeness="partial"/',
+            $partialHtml,
+        );
+        $this->assertStringContainsString(
+            "selectedCompleteness === 'partial'",
+            $partialHtml,
+        );
+        $this->assertStringContainsString(
+            'Aucun compte dans le sous-ensemble connu pour ces filtres.',
+            $partialHtml,
+        );
+        $this->assertStringContainsString('emptyFilterCell.textContent = filteredEmptyMessage;', $partialHtml);
+
+        $unavailable = $render($queue(
+            array_fill_keys($priorities, false),
+            array_fill_keys($priorities, 'unavailable'),
+        ));
+        $unavailable
+            ->assertSee('data-ceo-queue-empty-state="unavailable"><td colspan="6" class="text-muted">Indisponible</td>', false);
+
+        $html = (string) $complete;
+        $this->assertStringContainsString('if (rows.length === 0) {', $html);
+        $this->assertStringContainsString('emptyFilter.hidden = true;', $html);
+    }
+
+    public function test_readiness_keys_are_presented_with_french_labels(): void
+    {
+        $this->executiveView(
+            ['quotes' => 0, 'missing_status' => 0],
+            ['quotes' => 0, 'current_decisions' => 0],
+            ['readiness' => [
+                'quote_timestamp' => 'Date métier uniquement.',
+                'status_history' => 'État courant uniquement.',
+                'identity_links' => 'Liens déterministes uniquement.',
+                'forecast' => 'Non calculé.',
+            ]],
+        )
+            ->assertSeeText('Horodatage des devis')
+            ->assertSeeText('Historique des statuts')
+            ->assertSeeText('Liens d’identité')
+            ->assertSeeText('Prévisions');
     }
 
     public function test_explorer_drilldowns_keep_only_safe_dashboard_filters(): void
@@ -291,6 +516,42 @@ class ZohoV2MarketingDashboardTest extends TestCase
             ->assertOk()->assertSeeText('Entonnoir de traçabilité')->assertSeeText('Mix de volume, pas de revenu')
             ->assertSee('aucun forecast ni taux de gain')->assertDontSee('Taux de gain des devis')->assertDontSee('Pipeline actif');
     }
+
+    private function executiveView(
+        array $metrics,
+        array $funnel,
+        array $ceoOverrides = [],
+        array $controlOverrides = [],
+    ): TestView
+    {
+        \Illuminate\Support\Facades\View::share('errors', new \Illuminate\Support\ViewErrorBag);
+
+        $ceo = array_replace([
+            'period' => ['timezone' => 'Europe/Paris'],
+            'freshness' => [],
+            'metrics' => $metrics,
+            'briefing' => [],
+            'decision_cards' => [],
+            'queue' => ['items' => []],
+            'owners' => [],
+            'monthly' => [],
+            'funnel' => $funnel,
+            'quote_risks' => [],
+            'transport_mix' => [],
+            'lane_mix' => [],
+            'confidence' => [],
+            'readiness' => [],
+            'meta' => [],
+        ], $ceoOverrides);
+
+        return $this->actingAs($this->admin)->view('backend.contents.marketing-dashboard.index', [
+            'ceo' => $ceo,
+            'dashboard' => ['scope' => [], 'meta' => []],
+            'controls' => array_replace(['period' => '90d', 'from' => null, 'to' => null], $controlOverrides),
+            'drilldowns' => [],
+        ]);
+    }
+
     private function explorerMarkup(string $html): string
     {
         $matched = preg_match('/<nav class="mt-6" aria-label="Explorer le CRM">(?<markup>.*?)<\/nav>/s', $html, $matches);

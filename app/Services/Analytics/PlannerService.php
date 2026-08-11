@@ -106,6 +106,18 @@ class PlannerService
         // ── 1. Real runs ───────────────────────────────────────────────────────
         $query = CampaignRun::with(['campaign.sequence.steps', 'sequenceStep'])
             ->whereDoesntHave('campaign', fn ($campaign) => $campaign->where('name', 'like', 'E2E\_FIXTURE %'))
+            // Canceled occurrences belong to history, not Planning. A paused
+            // non-sequence campaign hides only work that is still safe to defer;
+            // sending, sent, and failed runs remain visible as truthful history.
+            ->where('status', '!=', 'canceled')
+            ->where(function ($runQuery) {
+                $runQuery->whereIn('status', ['sending', 'sent', 'failed'])
+                    ->orWhereDoesntHave('campaign')
+                    ->orWhereHas('campaign', function ($campaignQuery) {
+                        $campaignQuery->where('schedule_type', 'sequence')
+                            ->orWhere('is_active', true);
+                    });
+            })
             ->orderBy('run_at');
 
         if ($startUtc !== null) {

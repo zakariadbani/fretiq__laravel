@@ -4,70 +4,85 @@ namespace Tests\Unit;
 
 use App\Models\ProspectCriteria;
 use App\Services\Discovery\HunterDiscoverService;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class HunterDiscoverServiceTest extends TestCase
 {
-    public function test_live_request_contains_target_exclude_and_context_only_once(): void
+    use RefreshDatabase;
+
+    public function test_preview_builds_target_exclude_and_context_without_provider_io(): void
     {
         config(['services.hunter.driver' => 'hunter', 'services.hunter.api_key' => 'test-key']);
-        Http::fake(['api.hunter.io/*' => Http::response(['data' => [['domain' => 'Example.com', 'organization' => 'Example', 'emails_count' => ['personal' => 2, 'generic' => 1, 'total' => 3]]]])]);
+        Http::preventStrayRequests();
         $criteria = new ProspectCriteria(['sectors' => ['Logistique'], 'countries' => ['FR'], 'company_sizes' => ['11-50']]);
 
         $result = app(HunterDiscoverService::class)->preview($criteria, 'Exportateurs', 'Concurrents');
 
         $this->assertTrue($result['ok']);
-        $this->assertSame('example.com', $result['companies'][0]['domain']);
-        Http::assertSentCount(1);
-        Http::assertSent(fn ($request) => $request->url() === 'https://api.hunter.io/v2/discover'
-            && $request->hasHeader('Authorization', 'Bearer test-key')
-            && array_keys($request->data()) === ['query']
-            && str_contains($request['query'], 'Cible: Exportateurs')
-            && str_contains($request['query'], 'Exclure: Concurrents')
-            && str_contains($request['query'], 'Secteurs: Logistique')
-            && ! str_contains($request->body(), 'limit')
-            && ! str_contains($request->body(), 'offset'));
+        $this->assertSame([], $result['companies']);
+        $this->assertSame([], $result['filters']);
+        $this->assertStringContainsString('Cible: Exportateurs.', $result['prompt']);
+        $this->assertStringContainsString('Exclure: Concurrents.', $result['prompt']);
+        $this->assertStringContainsString('Secteurs: Logistique.', $result['prompt']);
+        Http::assertNothingSent();
     }
 
-    public function test_provider_failure_is_structured_and_not_retried(): void
+    public function test_filters_are_allowlisted_and_canonicalized_before_persistence(): void
     {
-        config(['services.hunter.driver' => 'hunter', 'services.hunter.api_key' => 'test-key']);
-        Http::fake(['api.hunter.io/*' => Http::response([], 503)]);
+        $filters = app(HunterDiscoverService::class)->normalizeFilters([
+            'industry' => ['include' => [' Logistics ', 'sales@example.test', 'https://example.test', 'Logistics']],
+            'headquarters_location' => ['include' => [[
+                'country' => 'FR',
+                'city' => ' Paris ',
+                'url' => 'https://example.test',
+            ]]],
+            'unknown_provider_field' => ['secret' => true],
+        ]);
 
-        $result = app(HunterDiscoverService::class)->preview(new ProspectCriteria, 'transport', null);
-
-        $this->assertFalse($result['ok']);
-        $this->assertNotEmpty($result['error']);
-        Http::assertSentCount(1);
+        $this->assertSame([
+            'headquarters_location' => ['include' => [['city' => 'Paris', 'country' => 'FR']]],
+            'industry' => ['include' => ['Logistics']],
+        ], $filters);
     }
-    public function test_provider_errors_are_mapped_to_safe_http_statuses(): void
+
+    public function test_prompt_hash_is_stable_for_equivalent_whitespace_and_set_order(): void
     {
-        config(['services.hunter.driver' => 'hunter', 'services.hunter.api_key' => 'test-key']);
+        $service = app(HunterDiscoverService::class);
+        $first = new ProspectCriteria([
+            'sectors' => ['Transport', 'Logistique'],
+            'countries' => ['FR', 'MA'],
+            'company_sizes' => ['11-50'],
+        ]);
+        $second = new ProspectCriteria([
+            'sectors' => [' Logistique ', 'Transport'],
+            'countries' => [' MA ', 'FR'],
+            'company_sizes' => [' 11-50 '],
+        ]);
 
-        Http::fakeSequence()
-            ->push([], 401)
-            ->push([], 403)
-            ->push([], 400)
-            ->push([], 422)
-            ->push([], 429)
-            ->push([], 503);
-
-        foreach ([503, 503, 422, 422, 429, 503] as $expectedStatus) {
-            $result = app(HunterDiscoverService::class)->preview(new ProspectCriteria, 'transport', null);
-            $this->assertFalse($result['ok']);
-            $this->assertSame($expectedStatus, $result['status']);
-        }
+        $this->assertSame(
+            $service->promptHash($first, ' Exportateurs   industriels ', ' Concurrents locaux '),
+            $service->promptHash($second, 'Exportateurs industriels', 'Concurrents   locaux'),
+        );
     }
-    public function test_local_fixture_excludes_default_and_counts_emails(): void
-    {
-        config(['services.hunter.driver' => 'local']);
-        $result = app(HunterDiscoverService::class)->preview(new ProspectCriteria, 'transport', null);
 
-        $this->assertTrue($result['ok']);
-        $this->assertNotContains('__default__', array_column($result['companies'], 'domain'));
-        $this->assertContains('geodis.com', array_column($result['companies'], 'domain'));
-        $this->assertSame(2, collect($result['companies'])->firstWhere('domain', 'geodis.com')['emails_count']['total']);
+    public function test_batch_normalization_keeps_company_without_domain_for_review(): void
+    {
+        $rows = app(HunterDiscoverService::class)->normalizeBatchRows([
+            [
+                'organization' => 'Entreprise sans site',
+                'country' => 'fr',
+                'city' => 'Paris',
+                'emails_count' => ['personal' => 2, 'generic' => 1, 'total' => 3],
+            ],
+        ]);
+
+        $this->assertCount(1, $rows);
+        $this->assertSame('Entreprise sans site', $rows[0]['company_name']);
+        $this->assertNull($rows[0]['provided_domain']);
+        $this->assertSame('FR', $rows[0]['country']);
+        $this->assertSame(3, $rows[0]['source_metadata']['emails_count']['total']);
     }
 
     public function test_normalization_dedupes_and_blocks_non_company_domains(): void

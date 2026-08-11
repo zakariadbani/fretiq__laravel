@@ -61,6 +61,9 @@ class CampaignSendTest extends TestCase
             'source'      => 'manual',
             'legal_basis' => 'relationship',
             'email_kind'  => 'role',
+            'email_verification_status' => 'valid',
+            'email_verification_source' => 'hunter',
+            'email_verification_checked_at' => now(),
         ]);
     }
 
@@ -158,6 +161,7 @@ class CampaignSendTest extends TestCase
 
         $this->mock(CampaignsClient::class, function ($mock) {
             $mock->shouldReceive('driverName')->andReturn('local');
+            $mock->shouldReceive('supportsBounceFeedback')->andReturn(false);
             $mock->shouldReceive('send')->andThrow(new \RuntimeException('SMTP connection refused'));
         });
 
@@ -302,6 +306,36 @@ class CampaignSendTest extends TestCase
         });
     }
 
+    public function test_send_time_verification_change_skips_local_recipient(): void
+    {
+        $invalidated = $this->makeClientContact('invalidated@acme.test');
+        $eligible = $this->makeClientContact('eligible@acme.test');
+        $segment = Segment::create(['name' => 'Send-time quality', 'scope' => 'client']);
+        $campaign = $this->makeCampaign($segment, $this->makeTemplate(), $this->makeSender());
+        $run = app(CampaignService::class)->scheduleOneShot($campaign);
+
+        $recipient = CampaignRecipient::create([
+            'campaign_run_id' => $run->id,
+            'contact_id' => $invalidated->id,
+            'status' => 'queued',
+        ]);
+        $invalidated->update([
+            'email_verification_status' => 'invalid',
+            'email_verification_checked_at' => now(),
+        ]);
+
+        app(CampaignService::class)->sendRun($run);
+
+        $this->assertSame('skipped', $recipient->fresh()->status);
+        $this->assertSame('invalid_email', $recipient->fresh()->skip_reason);
+        $this->assertDatabaseMissing('email_tracking_events', [
+            'trackable_type' => CampaignRecipient::class,
+            'trackable_id' => $recipient->id,
+        ]);
+        Mail::assertNotSent(CampaignMailable::class, fn (CampaignMailable $mail): bool => $mail->hasTo($invalidated->email));
+        Mail::assertSent(CampaignMailable::class, fn (CampaignMailable $mail): bool => $mail->hasTo($eligible->email));
+    }
+
     // ── Hybrid smart-list: pin exclude/include in send path ────────────────────
 
     /**
@@ -374,6 +408,9 @@ class CampaignSendTest extends TestCase
             'source'      => 'manual',
             'legal_basis' => 'relationship',
             'email_kind'  => 'role',
+            'email_verification_status' => 'valid',
+            'email_verification_source' => 'hunter',
+            'email_verification_checked_at' => now(),
         ]);
 
         // Contact at Finance company — does NOT match sector=Transport filter
@@ -393,6 +430,9 @@ class CampaignSendTest extends TestCase
             'source'      => 'manual',
             'legal_basis' => 'relationship',
             'email_kind'  => 'role',
+            'email_verification_status' => 'valid',
+            'email_verification_source' => 'hunter',
+            'email_verification_checked_at' => now(),
         ]);
 
         // Segment filters to 'Transport' sector — pinInclude's sector=Finance won't match filter

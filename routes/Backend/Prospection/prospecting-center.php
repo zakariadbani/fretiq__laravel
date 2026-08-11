@@ -1,0 +1,32 @@
+<?php
+
+use App\Http\Controllers\Backend\ProspectBatchController;
+use App\Http\Controllers\Backend\ProspectingDashboardController;
+use App\Http\Controllers\Backend\ProspectReviewController;
+use App\Http\Controllers\Backend\ProviderActivityController;
+use Illuminate\Support\Facades\Route;
+
+Route::controller(ProspectBatchController::class)->prefix('admin')->name('admin.')->group(function (): void {
+    Route::get('/prospect_batches', 'index')->name('prospect_batches.index');
+    Route::get('/prospect_batches/create', 'create')->name('prospect_batches.create');
+    Route::post('/prospect_batches', 'store')->name('prospect_batches.store');
+    Route::post('/prospect_batches/{id}/estimate', 'estimate')->name('prospect_batches.estimate');
+    Route::post('/prospect_batches/{id}/confirm', 'confirm')->name('prospect_batches.confirm');
+    Route::get('/prospect_batches/{id}/status', 'status')->name('prospect_batches.status');
+    Route::get('/prospect_batches/{id}', 'view')->name('prospect_batches.view');
+    Route::get('/prospect_batches/{id}/edit', 'edit')->name('prospect_batches.edit');
+    Route::put('/prospect_batches/{id}', 'update')->name('prospect_batches.update');
+    Route::delete('/prospect_batches/{id}', 'delete')->name('prospect_batches.delete');
+});
+
+Route::get('/admin/prospecting', [ProspectingDashboardController::class, 'index'])->name('admin.prospecting.index');
+
+Route::controller(ProspectReviewController::class)->prefix('admin')->name('admin.prospect_review.')->group(function (): void {
+    Route::get('/prospect-review', 'index')->name('index');
+    Route::post('/prospect-review/items/{item}/decide', 'decideItem')->name('items.decide');
+    Route::post('/prospect-review/candidates/{candidate}/decide', 'decideCandidate')->name('candidates.decide');
+});
+
+Route::controller(ProviderActivityController::class)->prefix('admin')->name('admin.provider_activity.')->group(function (): void {
+    Route::get('/provider-activity', 'index')->name('index');
+});

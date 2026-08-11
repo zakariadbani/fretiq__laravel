@@ -152,7 +152,7 @@ class CampaignPacedControllerTest extends TestCase
         $this->assertSame(0, $campaign->runs()->count());
     }
 
-    public function test_send_now_rejects_second_same_day_batch(): void
+    public function test_send_now_warns_when_second_same_day_batch_already_exists_without_duplicate_run_or_job(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-07-20 08:00:00', 'UTC'));
         Bus::fake();
@@ -161,8 +161,13 @@ class CampaignPacedControllerTest extends TestCase
 
         $this->actingAs($this->admin)->postJson("/admin/campaigns/{$campaign->id}/send")->assertOk();
         $this->actingAs($this->admin)->postJson("/admin/campaigns/{$campaign->id}/send")
-            ->assertStatus(422)->assertJsonFragment(['message' => 'error']);
+            ->assertOk()
+            ->assertJsonPath('message', 'warning')
+            ->assertJsonPath('text', 'Le lot du jour a déjà été créé pour cette campagne.')
+            ->assertJsonPath('redirect', route('admin.campaigns.view', $campaign->id))
+            ->assertSessionHas('warning', 'Le lot du jour a déjà été créé pour cette campagne.');
         $this->assertSame(1, $campaign->runs()->count());
+        Bus::assertDispatchedTimes(SendCampaignJob::class, 1);
     }
 
     public function test_send_now_rejects_weekend(): void
@@ -206,22 +211,18 @@ class CampaignPacedControllerTest extends TestCase
         $this->assertFalse($campaign->fresh()->is_active);
 
         $campaign->update(['is_active' => true]);
-        $activeConfig = CampaignViewConfig::make($campaign->fresh());
-        $this->assertSame('edit campaigns', $activeConfig['toggle']['permission']);
         $this->actingAs($user)->get("/admin/campaigns/{$campaign->id}")
             ->assertOk()
-            ->assertSee('toggle_is_active_' . $campaign->id, false);
+            ->assertSee('Mettre en pause', false);
 
         $this->actingAs($user)->putJson("/admin/campaigns/executeSwitch/{$campaign->id}", [
             'field' => 'is_active', 'state' => 0,
         ])->assertOk();
         $this->assertFalse($campaign->fresh()->is_active);
 
-        $config = CampaignViewConfig::make($campaign->fresh());
-        $this->assertSame('send campaigns', $config['toggle']['permission']);
         $this->actingAs($user)->get("/admin/campaigns/{$campaign->id}")
             ->assertOk()
-            ->assertDontSee('toggle_is_active_' . $campaign->id, false);
+            ->assertDontSee('data-state="1"', false);
     }
 
     public function test_detail_shows_paced_company_progress_and_backlog(): void
@@ -285,11 +286,11 @@ class CampaignPacedControllerTest extends TestCase
             ->assertSee('preview.company_count', false)
             ->assertSee('preview.contact_count', false)
             ->assertSee('action=schedule', false)
-            ->assertSee('campaignActionErrorMessage', false)
+            ->assertSee('const errorMessage', false)
             ->assertSee('data.text', false)
             ->assertSee('data.messages', false)
             ->assertSee('error.message', false)
-            ->assertSee('.catch(function (error) { showBlocked(campaignActionErrorMessage(error)); })', false);
+            ->assertSee("title:'Envoi bloqué'", false);
     }
 
     private function campaign(array $overrides = []): Campaign
@@ -329,6 +330,9 @@ class CampaignPacedControllerTest extends TestCase
                     'company_id' => $company->id, 'email' => uniqid('contact_') . '@client.test',
                     'name' => 'Contact', 'status' => 'new', 'source' => 'manual',
                     'legal_basis' => 'relationship', 'email_kind' => 'role',
+                    'email_verification_status' => 'valid',
+                    'email_verification_checked_at' => now(),
+                    'email_verification_source' => 'manual',
                 ]);
             }
         }

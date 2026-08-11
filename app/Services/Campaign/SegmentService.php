@@ -45,6 +45,11 @@ use Illuminate\Support\Facades\DB;
  */
 class SegmentService
 {
+    public function __construct(
+        private readonly ContactEligibilityService $contactEligibility,
+    ) {
+    }
+
     /**
      * Resolve the audience for a segment, with all compliance filters applied.
      * This is the single entry point for the send-path and the contacts table.
@@ -70,8 +75,11 @@ class SegmentService
      */
     public function resolveAudience(string $scope, array $filter, array $includeIds = [], array $excludeIds = [], bool $manualOnly = false): Collection
     {
-        $postDedup = $this->buildEligibleCollection($scope, $filter, $includeIds, $manualOnly);
-        return $postDedup
+        $qualityEligible = $this->filterByQuality(
+            $this->buildPostDedupCollection($scope, $filter, $includeIds, $manualOnly),
+        );
+
+        return $qualityEligible
             ->reject(fn (Contact $c) => in_array($c->id, $excludeIds, true))
             ->values();
     }
@@ -147,12 +155,14 @@ class SegmentService
         // (an exclude that lands on a duplicate would be double-counted otherwise).
         // For back-compat callers with no includeIds/excludeIds this path is cheap
         // (empty ids → resolveCollection result already correct).
-        $postDedup = $this->buildEligibleCollection($scope, $filter, $includeIds, $manualOnly);
+        $postDedup = $this->buildPostDedupCollection($scope, $filter, $includeIds, $manualOnly);
+        $qualityEligible = $this->filterByQuality($postDedup);
+        $verification_excluded = $postDedup->count() - $qualityEligible->count();
 
         // Apply excludes: reject any contact whose id is in excludeIds.
-        $preExclude = $postDedup->reject(fn (Contact $c) => in_array($c->id, $excludeIds, true));
+        $preExclude = $qualityEligible->reject(fn (Contact $c) => in_array($c->id, $excludeIds, true));
 
-        $manually_excluded = $postDedup->count() - $preExclude->count();
+        $manually_excluded = $qualityEligible->count() - $preExclude->count();
         $final             = $preExclude->count();
         $company_count     = $preExclude->pluck('company_id')->filter()->unique()->count();
 
@@ -181,6 +191,7 @@ class SegmentService
             'matched',
             'suppressed',
             'duplicates_excluded',
+            'verification_excluded',
             'manually_excluded',
             'manually_included',
             'final',
@@ -219,7 +230,7 @@ class SegmentService
      * @param  array   $includeIds
      * @return Collection<int, Contact>
      */
-    private function buildEligibleCollection(string $scope, array $filter, array $includeIds, bool $manualOnly = false): Collection
+    private function buildPostDedupCollection(string $scope, array $filter, array $includeIds, bool $manualOnly = false): Collection
     {
         $query = $this->buildBaseQuery($scope, $filter, hydrating: true, includeIds: $includeIds, manualOnly: $manualOnly);
         $this->applySuppressionStage($query);
@@ -229,6 +240,20 @@ class SegmentService
         // Stage 4: dedup by email (case-insensitive, application-level safety net).
         return $contacts
             ->unique(fn (Contact $c) => mb_strtolower(trim($c->email)))
+            ->values();
+    }
+
+    /**
+     * Apply only email-quality rules. The cold-send environment gate belongs
+     * to the final send-time check and must never empty a segment preview.
+     *
+     * @param  Collection<int, Contact>  $contacts
+     * @return Collection<int, Contact>
+     */
+    private function filterByQuality(Collection $contacts): Collection
+    {
+        return $contacts
+            ->reject(fn (Contact $contact): bool => $this->contactEligibility->qualityReason($contact) !== null)
             ->values();
     }
 

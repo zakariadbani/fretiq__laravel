@@ -83,7 +83,7 @@ fretiq is a single-tenant prospection SaaS built for TCL France. It automates th
 php artisan serve
 
 # Queue worker — required for campaign sends and sync jobs
-php artisan queue:work --sleep=3 --tries=3
+php artisan queue:work zoho --queue=campaigns,default,discovery,zoho --sleep=3 --tries=5 --timeout=1200
 
 # Scheduler — run manually in dev
 php artisan schedule:run
@@ -95,6 +95,14 @@ php artisan test
 # Run Mailpit (or equivalent) to preview outgoing emails.
 ```
 
+The combined queue worker is intended for local development. It listens to all
+project queues in the listed priority order. It uses the `zoho` connection
+because its 1260-second `retry_after` safely exceeds the longest 1200-second
+Zoho job. Because it is a single process, one long-running job blocks the other
+queues. Starting it also processes every job already waiting on those queues,
+including pending campaign sends. Production should use separate supervised
+workers for campaign, discovery, default, and Zoho workloads.
+
 ## Campaign driver pattern
 
 Campaign sending goes through a `CampaignsClient` driver interface. The `local` driver (default) simulates sends via Mailpit and a tracking-pixel stub — safe for development. The `zoho` driver (Zoho Campaigns API) exists but is **UNVERIFIED** and must not be enabled in production until live OAuth credentials, empirical API verification, SPF/DKIM/DMARC, bounce handling, and legal sign-off are all in place. Switch via the `ZOHO_CAMPAIGNS_DRIVER` environment variable.
@@ -104,7 +112,7 @@ Campaign sending goes through a `CampaignsClient` driver interface. The `local` 
 Zoho V2 uses its own database-queue connection and queue. The reviewed worker command is:
 
 ```bash
-php artisan queue:work zoho --queue=zoho --sleep=3 --tries=5 --timeout=900 --max-time=3600
+php artisan queue:work zoho --queue=zoho --sleep=3 --tries=5 --timeout=1200 --max-time=3600
 ```
 
 An example Supervisor program is provided at `deploy/supervisor/fretiq-zoho-worker.conf.example`. It is a template, not proof that Supervisor is installed or provisioned. Review its PHP binary, application directory and operating-system user before copying it into Supervisor. Its safety envelope requires `numprocs=1`, `stopwaitsecs=1500`, `ZOHO_V2_QUEUE_RETRY_AFTER=1260`, and `ZOHO_V2_BULK_LEASE_SECONDS=1500`.

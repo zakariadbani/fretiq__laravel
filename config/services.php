@@ -99,8 +99,10 @@ return [
 
     'hunter' => [
         'api_key' => env('HUNTER_API_KEY'),
-        'driver'  => env('DISCOVERY_DRIVER', 'local'),
-        'discover_timeout' => 20,
+        'driver' => env('DISCOVERY_DRIVER', 'local'),
+        'base_url' => env('HUNTER_API_BASE_URL', 'https://api.hunter.io/v2'),
+        'timeout' => (int) env('HUNTER_TIMEOUT', 20),
+        'discover_timeout' => (int) env('HUNTER_DISCOVER_TIMEOUT', 20),
     ],
 
     'gemini' => [

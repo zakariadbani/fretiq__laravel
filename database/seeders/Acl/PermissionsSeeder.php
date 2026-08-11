@@ -37,6 +37,7 @@ class PermissionsSeeder extends Seeder
         $entities = [
             'companies', 'contacts', 'segments', 'campaigns', 'campaign_templates',
             'sequences', 'demandes', 'users', 'prospect_criteria', 'sender_identities', 'suppressions',
+            'prospect_batches',
         ];
         $actions = ['view', 'create', 'edit', 'delete'];
 
@@ -71,8 +72,12 @@ class PermissionsSeeder extends Seeder
             'enrich companies',  // commercial can trigger Hunter enrichment manually
             'view consumption',  // client-facing "Ma consommation" page — commercial + admin
             'view provider quota', // superadmin only — real vendor-account balances, NOT for admin/commercial
+            'view provider activity',
             'view inbox',
             'edit inbox',
+            'verify contacts',
+            'run prospect resolution',
+            'review prospect matches',
         ];
 
         foreach ($keywordPermissions as $perm) {
@@ -117,6 +122,7 @@ class PermissionsSeeder extends Seeder
         $commercialEntities = [
             'companies', 'contacts', 'segments', 'campaigns', 'sequences', 'demandes',
             'prospect_criteria', 'campaign_templates', 'sender_identities',
+            'prospect_batches',
         ];
         $commercialActions = ['view', 'create', 'edit'];
 
@@ -137,6 +143,9 @@ class PermissionsSeeder extends Seeder
         $commercialPermissions[] = 'view consumption';
         $commercialPermissions[] = 'view inbox';
         $commercialPermissions[] = 'edit inbox';
+        $commercialPermissions[] = 'verify contacts';
+        $commercialPermissions[] = 'run prospect resolution';
+        $commercialPermissions[] = 'review prospect matches';
         // V2 CRM records remain portfolio-scoped in the controller/query layer.
         // Commercials never receive sync, backfill, mapping, payload, export, or ops rights.
         $commercialPermissions[] = 'view marketing dashboard';

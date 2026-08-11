@@ -47,4 +47,17 @@ class SmtpSendReservation extends Model
     {
         return $this->belongsTo(Campaign::class);
     }
+
+    public function hasProviderTransportEvidence(): bool
+    {
+        return filled($this->provider_message_id)
+            || $this->accepted_at !== null
+            || $this->sent_at !== null;
+    }
+
+    public function isReusableBeforeTransport(): bool
+    {
+        return in_array($this->status, ['released', 'failed'], true)
+            && ! $this->hasProviderTransportEvidence();
+    }
 }

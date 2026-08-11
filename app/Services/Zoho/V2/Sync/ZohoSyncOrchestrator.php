@@ -33,6 +33,8 @@ class ZohoSyncOrchestrator
 {
     private const MODES = ['delta', 'backfill', 'reconcile'];
 
+    private const TERMINAL_CHECKPOINT_STATUSES = ['completed', 'partial', 'failed'];
+
     public function __construct(
         private readonly ZohoTransport $transport,
         private readonly ZohoModuleRegistry $registry,
@@ -350,6 +352,23 @@ class ZohoSyncOrchestrator
 
                 return $definition->key.'|'.($definition->submodule ?? '');
             })->values();
+            $expectedCheckpointKeys = $expected->map(
+                static fn (string $key): string => 'v2:'.$key,
+            );
+            $unfinishedCheckpointExists = ZohoSyncCheckpoint::query()
+                ->where('sync_batch_id', $batchId)
+                ->where('correlation_id', $batch->correlation_id)
+                ->where('sync_mode', $batch->mode)
+                ->get(['module', 'submodule', 'status'])
+                ->contains(function (ZohoSyncCheckpoint $checkpoint) use ($expectedCheckpointKeys): bool {
+                    $key = $checkpoint->module.'|'.$checkpoint->submodule;
+
+                    return $expectedCheckpointKeys->contains($key)
+                        && ! in_array($checkpoint->status, self::TERMINAL_CHECKPOINT_STATUSES, true);
+                });
+            if ($unfinishedCheckpointExists) {
+                return;
+            }
             $logs = ZohoSyncLog::query()->where('sync_batch_id', $batchId)->orderByDesc('id')->get()
                 ->unique(fn (ZohoSyncLog $log) => $log->module.'|'.$log->submodule)->values();
             $actual = $logs->map(fn (ZohoSyncLog $log) => $log->module.'|'.$log->submodule);

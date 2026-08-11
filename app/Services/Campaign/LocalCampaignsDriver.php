@@ -76,4 +76,9 @@ class LocalCampaignsDriver implements CampaignsClient
     {
         return 'local';
     }
+
+    public function supportsBounceFeedback(Campaign $campaign): bool
+    {
+        return false;
+    }
 }

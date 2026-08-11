@@ -6,18 +6,19 @@ use App\Jobs\SendSequenceStepJob;
 use App\Jobs\SendSmtpReservationJob;
 use App\Mail\SequenceStepMailable;
 use App\Models\Campaign;
+use App\Models\CampaignRecipient;
+use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\EmailTrackingEvent;
-use App\Models\Sequence;
-use App\Models\SequenceEnrollment;
-use App\Models\SequenceStep;
-use App\Models\SequenceStepSend;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
-use App\Models\SmtpSendReservation;
+use App\Models\Sequence;
+use App\Models\SequenceStep;
+use App\Models\SequenceStepSend;
 use App\Models\Setting;
+use App\Models\SmtpSendReservation;
 use App\Services\Campaign\SequenceService;
 use App\Services\Campaign\SmtpSendReservationService;
 use Carbon\Carbon;
@@ -61,28 +62,31 @@ class SequenceProcessTest extends TestCase
     private function makeContact(string $email = 'j@acme.test'): Contact
     {
         $co = Company::create([
-            'name'                 => 'Acme',
-            'relationship'         => 'client',
-            'source'               => 'manual',
+            'name' => 'Acme',
+            'relationship' => 'client',
+            'source' => 'manual',
             'qualification_status' => 'pending',
         ]);
 
         return Contact::create([
-            'company_id'  => $co->id,
-            'email'       => $email,
-            'name'        => 'J',
-            'status'      => 'new',
-            'source'      => 'manual',
+            'company_id' => $co->id,
+            'email' => $email,
+            'name' => 'J',
+            'status' => 'new',
+            'source' => 'manual',
             'legal_basis' => 'relationship',
-            'email_kind'  => 'role',
+            'email_kind' => 'role',
+            'email_verification_status' => 'valid',
+            'email_verification_source' => 'hunter',
+            'email_verification_checked_at' => now(),
         ]);
     }
 
     private function makeTemplate(string $name = 'Template Seq'): CampaignTemplate
     {
         return CampaignTemplate::create([
-            'name'         => $name,
-            'subject'      => 'Sujet séquence',
+            'name' => $name,
+            'subject' => 'Sujet séquence',
             'html_content' => '<p>Bonjour {{contact.name}}</p>',
         ]);
     }
@@ -95,27 +99,27 @@ class SequenceProcessTest extends TestCase
     private function makeTwoStepSequence(bool $stopOnReply = false): Sequence
     {
         $seq = Sequence::create([
-            'name'          => 'Seq 2 étapes',
-            'is_active'     => true,
+            'name' => 'Seq 2 étapes',
+            'is_active' => true,
             'stop_on_reply' => $stopOnReply,
         ]);
 
         $tpl = $this->makeTemplate('Step1 Tpl');
         SequenceStep::create([
             'sequence_id' => $seq->id,
-            'step_no'     => 1,
-            'delay_days'  => 0,
+            'step_no' => 1,
+            'delay_days' => 0,
             'template_id' => $tpl->id,
-            'subject'     => 'Étape 1',
+            'subject' => 'Étape 1',
         ]);
 
         $tpl2 = $this->makeTemplate('Step2 Tpl');
         SequenceStep::create([
             'sequence_id' => $seq->id,
-            'step_no'     => 2,
-            'delay_days'  => 3,
+            'step_no' => 2,
+            'delay_days' => 3,
             'template_id' => $tpl2->id,
-            'subject'     => 'Étape 2',
+            'subject' => 'Étape 2',
         ]);
 
         return $seq;
@@ -146,7 +150,7 @@ class SequenceProcessTest extends TestCase
         // timezone and corrupting comparisons by the UTC offset.
         Carbon::setTestNow(Carbon::parse('2026-08-03 09:00:00', 'UTC'));
 
-        $seq     = $this->makeTwoStepSequence();
+        $seq = $this->makeTwoStepSequence();
         $contact = $this->makeContact();
         $service = app(SequenceService::class);
 
@@ -161,7 +165,7 @@ class SequenceProcessTest extends TestCase
         // SequenceStepSend for step 1 must exist
         $this->assertDatabaseHas('sequence_step_sends', [
             'enrollment_id' => $enrollment->id,
-            'step_no'       => 1,
+            'step_no' => 1,
         ]);
 
         $enrollment->refresh();
@@ -171,7 +175,7 @@ class SequenceProcessTest extends TestCase
         // next_send_at should be roughly 3 days from now (step 2 delay_days=3)
         $this->assertNotNull($enrollment->next_send_at);
         $expectedNextSend = now()->addDays(3);
-        $diffMinutes      = abs($enrollment->next_send_at->diffInMinutes($expectedNextSend));
+        $diffMinutes = abs($enrollment->next_send_at->diffInMinutes($expectedNextSend));
         $this->assertLessThanOrEqual(2, $diffMinutes, 'next_send_at should be ~3 days from now');
 
         Mail::assertSent(SequenceStepMailable::class);
@@ -184,39 +188,42 @@ class SequenceProcessTest extends TestCase
     public function test_step_subject_renders_contact_first_name_merge_tag(): void
     {
         $seq = Sequence::create([
-            'name'          => 'Seq merge-tag sujet',
-            'is_active'     => true,
+            'name' => 'Seq merge-tag sujet',
+            'is_active' => true,
             'stop_on_reply' => false,
         ]);
 
         $tpl = $this->makeTemplate('Merge Tag Tpl');
         SequenceStep::create([
             'sequence_id' => $seq->id,
-            'step_no'     => 1,
-            'delay_days'  => 0,
+            'step_no' => 1,
+            'delay_days' => 0,
             'template_id' => $tpl->id,
-            'subject'     => 'Bonjour {{contact.first_name}}, une question',
+            'subject' => 'Bonjour {{contact.first_name}}, une question',
         ]);
 
         // Contact name is multi-word so the first-name split is exercised.
         $co = Company::create([
-            'name'                 => 'Acme',
-            'relationship'         => 'client',
-            'source'               => 'manual',
+            'name' => 'Acme',
+            'relationship' => 'client',
+            'source' => 'manual',
             'qualification_status' => 'pending',
         ]);
 
         $contact = Contact::create([
-            'company_id'  => $co->id,
-            'email'       => 'karim@acme.test',
-            'name'        => 'Karim Bennani',
-            'status'      => 'new',
-            'source'      => 'manual',
+            'company_id' => $co->id,
+            'email' => 'karim@acme.test',
+            'name' => 'Karim Bennani',
+            'status' => 'new',
+            'source' => 'manual',
             'legal_basis' => 'relationship',
-            'email_kind'  => 'role',
+            'email_kind' => 'role',
+            'email_verification_status' => 'valid',
+            'email_verification_source' => 'hunter',
+            'email_verification_checked_at' => now(),
         ]);
 
-        $service    = app(SequenceService::class);
+        $service = app(SequenceService::class);
         $enrollment = $service->enroll($seq, $contact);
 
         $service->sendStep($enrollment);
@@ -240,7 +247,7 @@ class SequenceProcessTest extends TestCase
      */
     public function test_sequence_completes_after_last_step(): void
     {
-        $seq     = $this->makeTwoStepSequence();
+        $seq = $this->makeTwoStepSequence();
         $contact = $this->makeContact('j2@acme.test');
         $service = app(SequenceService::class);
 
@@ -272,7 +279,7 @@ class SequenceProcessTest extends TestCase
      */
     public function test_step_send_is_idempotent(): void
     {
-        $seq     = $this->makeTwoStepSequence();
+        $seq = $this->makeTwoStepSequence();
         $contact = $this->makeContact('j3@acme.test');
         $service = app(SequenceService::class);
 
@@ -304,7 +311,7 @@ class SequenceProcessTest extends TestCase
      */
     public function test_stop_for_reply(): void
     {
-        $seq     = $this->makeTwoStepSequence(stopOnReply: true);
+        $seq = $this->makeTwoStepSequence(stopOnReply: true);
         $contact = $this->makeContact('j4@acme.test');
         $service = app(SequenceService::class);
 
@@ -326,7 +333,7 @@ class SequenceProcessTest extends TestCase
      */
     public function test_stop_for_reply_respects_stop_on_reply_flag(): void
     {
-        $seq     = $this->makeTwoStepSequence(stopOnReply: false);
+        $seq = $this->makeTwoStepSequence(stopOnReply: false);
         $contact = $this->makeContact('j5@acme.test');
         $service = app(SequenceService::class);
 
@@ -354,25 +361,25 @@ class SequenceProcessTest extends TestCase
         Carbon::setTestNow(Carbon::parse('2026-07-31 09:00:00', 'UTC')); // Friday, 09:00 UTC
 
         $seq = Sequence::create([
-            'name'          => 'Seq weekend shift',
-            'is_active'     => true,
+            'name' => 'Seq weekend shift',
+            'is_active' => true,
             'stop_on_reply' => false,
         ]);
         $tpl1 = $this->makeTemplate('Weekend Step1');
         SequenceStep::create([
             'sequence_id' => $seq->id,
-            'step_no'     => 1,
-            'delay_days'  => 0,
+            'step_no' => 1,
+            'delay_days' => 0,
             'template_id' => $tpl1->id,
-            'subject'     => 'Étape 1',
+            'subject' => 'Étape 1',
         ]);
         $tpl2 = $this->makeTemplate('Weekend Step2');
         SequenceStep::create([
             'sequence_id' => $seq->id,
-            'step_no'     => 2,
-            'delay_days'  => 1, // Friday + 1 day = Saturday
+            'step_no' => 2,
+            'delay_days' => 1, // Friday + 1 day = Saturday
             'template_id' => $tpl2->id,
-            'subject'     => 'Étape 2',
+            'subject' => 'Étape 2',
         ]);
 
         $contact = $this->makeContact('saturday-landing@acme.test');
@@ -411,25 +418,25 @@ class SequenceProcessTest extends TestCase
         Carbon::setTestNow(Carbon::parse('2026-08-01 02:00:00', 'UTC'));
 
         $seq = Sequence::create([
-            'name'          => 'Seq null campaign fallback',
-            'is_active'     => true,
+            'name' => 'Seq null campaign fallback',
+            'is_active' => true,
             'stop_on_reply' => false,
         ]);
         $tpl1 = $this->makeTemplate('Fallback Step1');
         SequenceStep::create([
             'sequence_id' => $seq->id,
-            'step_no'     => 1,
-            'delay_days'  => 0,
+            'step_no' => 1,
+            'delay_days' => 0,
             'template_id' => $tpl1->id,
-            'subject'     => 'Étape 1',
+            'subject' => 'Étape 1',
         ]);
         $tpl2 = $this->makeTemplate('Fallback Step2');
         SequenceStep::create([
             'sequence_id' => $seq->id,
-            'step_no'     => 2,
-            'delay_days'  => 0,
+            'step_no' => 2,
+            'delay_days' => 0,
             'template_id' => $tpl2->id,
-            'subject'     => 'Étape 2',
+            'subject' => 'Étape 2',
         ]);
 
         $contact = $this->makeContact('null-campaign@acme.test');
@@ -458,7 +465,7 @@ class SequenceProcessTest extends TestCase
     {
         Carbon::setTestNow(Carbon::parse('2026-08-01 09:00:00', 'UTC')); // Saturday
 
-        $seq     = $this->makeTwoStepSequence();
+        $seq = $this->makeTwoStepSequence();
         $contact = $this->makeContact('saturday-enroll@acme.test');
         $service = app(SequenceService::class);
 
@@ -484,7 +491,7 @@ class SequenceProcessTest extends TestCase
         // be set to a Saturday instant (simulating a pre-existing, un-migrated row).
         Carbon::setTestNow(Carbon::parse('2026-07-30 09:00:00', 'UTC')); // Thursday
 
-        $seq     = $this->makeTwoStepSequence();
+        $seq = $this->makeTwoStepSequence();
         $contact = $this->makeContact('held-row@acme.test');
         $service = app(SequenceService::class);
 
@@ -547,10 +554,26 @@ class SequenceProcessTest extends TestCase
         $identity = $campaign->senderIdentity;
         $identity->update(['smtp_hourly_limit' => 1]);
         $regularCampaign = $campaign->replicate();
-        $regularCampaign->name = 'SMTP regular campaign ' . uniqid();
+        $regularCampaign->name = 'SMTP regular campaign '.uniqid();
         $regularCampaign->save();
+        $regularRun = CampaignRun::create([
+            'campaign_id' => $regularCampaign->id,
+            'occurrence_key' => 'quota-'.uniqid(),
+            'run_at' => now(),
+            'status' => 'scheduled',
+        ]);
+        $regularRecipient = CampaignRecipient::create([
+            'campaign_run_id' => $regularRun->id,
+            'contact_id' => $this->makeContact('quota-regular@example.test')->id,
+            'status' => 'queued',
+        ]);
         $service = app(SmtpSendReservationService::class);
-        $regular = $service->reserve($identity, $regularCampaign, SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT, 9001);
+        $regular = $service->reserve(
+            $identity,
+            $regularCampaign,
+            SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT,
+            $regularRecipient->id,
+        );
         $step = $service->reserve($identity, $campaign, SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND, 9002);
 
         $this->assertNotSame($regularCampaign->id, $campaign->id);
@@ -619,6 +642,16 @@ class SequenceProcessTest extends TestCase
         $this->assertNotNull($campaign->fresh()->delivery_started_at);
     }
 
+    public function test_accepted_smtp_sequence_reservation_reconciles_after_sender_change_without_sending_again(): void
+    {
+        $this->assertAcceptedSequenceReservationFinalizesAfterCampaignMutation('sender');
+    }
+
+    public function test_accepted_smtp_sequence_reservation_reconciles_after_channel_change_without_sending_again(): void
+    {
+        $this->assertAcceptedSequenceReservationFinalizesAfterCampaignMutation('channel');
+    }
+
     public function test_stopped_enrollment_releases_delayed_smtp_reservation_without_sending(): void
     {
         Queue::fake();
@@ -670,6 +703,37 @@ class SequenceProcessTest extends TestCase
         $this->assertSame('skipped', SequenceStepSend::firstOrFail()->status);
         $this->assertSame('stopped', $enrollment->fresh()->status);
         $this->assertSame('cold_send_disabled', $enrollment->fresh()->stopped_reason);
+        $this->assertSame(0, EmailTrackingEvent::count());
+    }
+
+    public function test_reserved_sequence_rechecks_contact_eligibility(): void
+    {
+        Queue::fake();
+        Carbon::setTestNow(Carbon::parse('2026-08-10 09:00:00', 'Europe/Paris'));
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence);
+        $contact = $this->makeContact('sequence-invalidated@example.test');
+        $enrollment = app(SequenceService::class)->enroll($sequence, $contact, $campaign);
+        (new SendSequenceStepJob($enrollment->id))->handle();
+        $reservation = SmtpSendReservation::firstOrFail();
+        $reservation->update(['reserved_for' => now()->subSecond()]);
+        $contact->update([
+            'email_verification_status' => 'invalid',
+            'email_verification_checked_at' => now(),
+        ]);
+
+        (new SendSmtpReservationJob($reservation->id))->handle(
+            app(SmtpSendReservationService::class),
+            app(\App\Services\Campaign\SmtpCampaignsDriver::class),
+            app(\App\Services\Campaign\CampaignService::class),
+            app(SequenceService::class),
+        );
+
+        Mail::assertNothingSent();
+        $this->assertSame('released', $reservation->fresh()->status);
+        $this->assertSame('skipped', SequenceStepSend::firstOrFail()->status);
+        $this->assertSame('stopped', $enrollment->fresh()->status);
+        $this->assertSame('invalid_email', $enrollment->fresh()->stopped_reason);
         $this->assertSame(0, EmailTrackingEvent::count());
     }
 
@@ -802,17 +866,17 @@ class SequenceProcessTest extends TestCase
 
     private function makeSmtpSequenceCampaign(Sequence $sequence, array $attributes = []): Campaign
     {
-        $segment = Segment::create(['name' => 'Sequence audience ' . uniqid(), 'scope' => 'client']);
+        $segment = Segment::create(['name' => 'Sequence audience '.uniqid(), 'scope' => 'client']);
         $sender = SenderIdentity::create([
-            'name' => 'Sequence sender ' . uniqid(),
-            'email' => uniqid('sequence-sender') . '@example.test',
+            'name' => 'Sequence sender '.uniqid(),
+            'email' => uniqid('sequence-sender').'@example.test',
             'is_active' => true,
             'smtp_hourly_limit' => 10,
             'smtp_daily_limit' => 50,
         ]);
 
         return Campaign::create(array_merge([
-            'name' => 'SMTP sequence ' . uniqid(),
+            'name' => 'SMTP sequence '.uniqid(),
             'segment_id' => $segment->id,
             'template_id' => null,
             'sender_identity_id' => $sender->id,
@@ -824,5 +888,53 @@ class SequenceProcessTest extends TestCase
             'timezone' => 'Europe/Paris',
             'is_active' => true,
         ], $attributes));
+    }
+
+    private function assertAcceptedSequenceReservationFinalizesAfterCampaignMutation(string $mutation): void
+    {
+        Queue::fake();
+        Carbon::setTestNow(Carbon::parse('2026-08-10 09:00:00', 'Europe/Paris'));
+        $driver = $this->mock(\App\Services\Campaign\SmtpCampaignsDriver::class);
+        $driver->shouldNotReceive('send');
+
+        $sequence = $this->makeTwoStepSequence();
+        $campaign = $this->makeSmtpSequenceCampaign($sequence);
+        $enrollment = app(SequenceService::class)->enroll(
+            $sequence,
+            $this->makeContact('sequence-accepted-'.$mutation.'@example.test'),
+            $campaign,
+        );
+        (new SendSequenceStepJob($enrollment->id))->handle();
+        $reservation = SmtpSendReservation::firstOrFail();
+        $reservation->update([
+            'status' => 'accepted',
+            'accepted_at' => now(),
+            'provider_message_id' => 'sequence-accepted-before-'.$mutation,
+        ]);
+
+        if ($mutation === 'sender') {
+            $replacement = SenderIdentity::create([
+                'name' => 'Sequence replacement sender '.uniqid(),
+                'email' => uniqid('sequence-replacement').'@example.test',
+                'is_active' => true,
+            ]);
+            $campaign->update(['sender_identity_id' => $replacement->id]);
+        } else {
+            $campaign->update(['delivery_channel' => 'zoho']);
+        }
+
+        (new SendSmtpReservationJob($reservation->id))->handle(
+            app(SmtpSendReservationService::class),
+            $driver,
+            app(\App\Services\Campaign\CampaignService::class),
+            app(SequenceService::class),
+        );
+
+        Mail::assertNothingSent();
+        $this->assertSame('sent', $reservation->fresh()->status);
+        $this->assertSame('sent', SequenceStepSend::firstOrFail()->status);
+        $this->assertSame('sequence-accepted-before-'.$mutation, SequenceStepSend::firstOrFail()->provider_message_id);
+        $this->assertSame(1, $enrollment->fresh()->current_step);
+        $this->assertNotNull($campaign->fresh()->delivery_started_at);
     }
 }
