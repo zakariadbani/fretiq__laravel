@@ -5,11 +5,12 @@ namespace Tests\Unit;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Services\Discovery\CompanyDiscoveryService;
-use App\Services\Discovery\ContactUpsertService;
+use App\Services\Discovery\DiscoveredContactImportService;
 use App\Services\Discovery\DiscoveryCollectionResult;
 use App\Services\Discovery\DiscoveryPipelineService;
 use App\Services\Discovery\HomepageSnapshotService;
 use App\Services\Discovery\HunterEnrichmentService;
+use App\Services\Prospecting\HunterVerificationStatusNormalizer;
 use App\Services\Scoring\LeadScoringService;
 use App\Services\Settings\SettingService;
 use Illuminate\Support\Facades\Cache;
@@ -138,7 +139,7 @@ class DiscoveryPipelineInterruptionTest extends TestCase
             $discovery,
             Mockery::mock(HunterEnrichmentService::class),
             $scoring,
-            Mockery::mock(ContactUpsertService::class),
+            new DiscoveredContactImportService(new HunterVerificationStatusNormalizer),
             $homepage,
         );
     }

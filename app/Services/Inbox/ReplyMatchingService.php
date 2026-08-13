@@ -11,6 +11,7 @@ use App\Models\SequenceStepSend;
 
 class ReplyMatchingService
 {
+    public function __construct(private readonly ReplyRecordingService $replies) {}
     public function match(InboxEmail $email, ?string $references = null): void
     {
         $thread = trim(($email->in_reply_to ?? '') . ' ' . ($references ?? ''));
@@ -24,6 +25,7 @@ class ReplyMatchingService
                         'campaign_recipient_id' => $recipient->id,
                         'contact_id' => $recipient->contact_id,
                     ]);
+                    $this->replies->record($email->fresh(['campaignRecipient', 'sequenceStepSend']));
                     return;
                 }
             } else {
@@ -34,6 +36,7 @@ class ReplyMatchingService
                         'contact_id' => $send->enrollment->contact_id,
                         'sequence_step_send_id' => $send->id,
                     ]);
+                    $this->replies->record($email->fresh(['campaignRecipient', 'sequenceStepSend']));
                     return;
                 }
             }
@@ -42,6 +45,7 @@ class ReplyMatchingService
         $contact = Contact::whereRaw('LOWER(email) = ?', [mb_strtolower($email->from_email)])->first();
         if ($contact !== null) {
             $email->update(['contact_id' => $contact->id]);
+            $this->replies->record($email->fresh(['campaignRecipient', 'sequenceStepSend']));
         }
     }
 

@@ -25,7 +25,6 @@ class Sequence extends Model
     protected $fillable = [
         'name',
         'is_active',
-        'stop_on_reply',
     ];
 
     /**
@@ -35,7 +34,6 @@ class Sequence extends Model
      */
     protected $casts = [
         'is_active'     => 'boolean',
-        'stop_on_reply' => 'boolean',
     ];
 
     // ── Relationships ──────────────────────────────────────────────────────────
@@ -68,7 +66,6 @@ class Sequence extends Model
         return [
             'name'          => 'required|string|max:255',
             'is_active'     => 'nullable|boolean',
-            'stop_on_reply' => 'nullable|boolean',
         ];
     }
 }

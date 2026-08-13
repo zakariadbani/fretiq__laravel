@@ -14,7 +14,9 @@ class ActivityMapper extends AbstractZohoMapper
             'meeting' => $payload['Event_Title'] ?? $payload['Subject'] ?? null, 'note' => $payload['Note_Title'] ?? $payload['Subject'] ?? null, default => $payload['Subject'] ?? null
         };
         $status = match ($type) {
-            'call' => $payload['Outgoing_Call_Status'] ?? $payload['Call_Status'] ?? $payload['Status'] ?? null, default => $payload['Status'] ?? null
+            'meeting' => $payload['Status'] ?? $payload['Check_In_Status'] ?? $payload['Record_Status__s'] ?? null,
+            'call' => $payload['Outgoing_Call_Status'] ?? $payload['Call_Status'] ?? $payload['Status'] ?? null,
+            default => $payload['Status'] ?? null,
         };
         $activityAt = match ($type) {
             'meeting' => $payload['Start_DateTime'] ?? $payload['Activity_DateTime'] ?? $payload['Created_Time'] ?? null, 'call' => $payload['Call_Start_Time'] ?? $payload['Activity_DateTime'] ?? $payload['Created_Time'] ?? null, 'note' => $payload['Created_Time'] ?? null, default => $payload['Activity_DateTime'] ?? $payload['Due_Date'] ?? $payload['Created_Time'] ?? null

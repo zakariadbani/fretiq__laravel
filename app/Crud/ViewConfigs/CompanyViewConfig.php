@@ -128,8 +128,8 @@ class CompanyViewConfig
             [
                 'icon'  => 'bi-patch-check',
                 'color' => 'success',
-                'label' => 'Qualifiés',
-                'value' => $stats ? $stats['contacts_qualified'] : null,
+                'label' => 'Répondus',
+                'value' => $stats ? $stats['contacts_replied'] : null,
                 'hint'  => $stats ? null : null,
             ],
             [
@@ -205,7 +205,7 @@ class CompanyViewConfig
      * JSON and rendered by crud-charts.js.
      *
      * Chart layout (3 charts):
-     *   1. Donut  — Contacts par statut       (col-md-6)
+     *   1. Donut  — Contacts par état         (col-md-6)
      *   2. Bar    — Engagement e-mail funnel  (col-12, horizontal distributed)
      *   3. Area   — Contacts sur 12 mois      (col-12)
      */
@@ -213,11 +213,11 @@ class CompanyViewConfig
     {
         $charts = [];
 
-        // ── 1. Donut — Contacts par statut ────────────────────────────────────
+        // ── 1. Donut — Contacts par état ─────────────────────────────────────
         $donut = $stats['contacts_donut'] ?? ['series' => [], 'labels' => [], 'colors' => []];
         $charts[] = [
             'id'         => 'company_contacts_donut',
-            'title'      => 'Contacts par statut',
+            'title'      => 'Contacts par état',
             'type'       => 'donut',
             'series'     => $donut['series']  ?? [],
             'categories' => [],

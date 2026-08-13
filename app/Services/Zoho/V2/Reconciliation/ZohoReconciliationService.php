@@ -6,8 +6,12 @@ namespace App\Services\Zoho\V2\Reconciliation;
 
 use App\Models\Zoho\ZohoSyncFailure;
 use App\Services\Zoho\V2\Contracts\ZohoTransport;
+use App\Services\Zoho\V2\DTO\TransportResult;
 use App\Services\Zoho\V2\Registry\ModuleDefinition;
 use App\Services\Zoho\V2\Registry\ZohoModuleRegistry;
+use App\Services\Zoho\V2\Transport\NativeSleeper;
+use App\Services\Zoho\V2\Transport\Sleeper;
+use App\Services\Zoho\V2\Transport\ZohoThrottleUnavailableException;
 use Illuminate\Support\Facades\DB;
 
 final class ZohoReconciliationService
@@ -17,6 +21,8 @@ final class ZohoReconciliationService
         private readonly ZohoTransport $transport,
         private readonly ZohoModuleRegistry $registry,
         private readonly ZohoDataQualityMetrics $metrics,
+        private readonly ZohoQuotePagedVerifier $quoteVerifier,
+        private readonly ?Sleeper $sleeper = null,
     ) {}
 
     /**
@@ -58,6 +64,25 @@ final class ZohoReconciliationService
             );
         }
 
+        if ($moduleKey === 'quotes'
+            && $hydrateRecord !== null
+            && (bool) config('zoho-v2.reconciliation.quote_paged_verification', true)) {
+            return $this->quoteVerifier->verify(
+                batchId: $batchId,
+                correlationId: $correlationId,
+                get: fn (string $path, array $query): ?TransportResult => $this->getWithCapacityWait(
+                    $path,
+                    $query,
+                    $correlationId,
+                    $heartbeat,
+                ),
+                hydrateRecord: $hydrateRecord,
+                heartbeat: $heartbeat,
+                mutationFence: $mutationFence,
+                deleted: $deleted,
+            );
+        }
+
         $remote = [];
         $token = null;
         $status = 204;
@@ -73,7 +98,10 @@ final class ZohoReconciliationService
                 $query['page_token'] = $token;
             }
 
-            $response = $this->transport->get('/'.$definition->apiName, $query, $correlationId);
+            $response = $this->getWithCapacityWait('/'.$definition->apiName, $query, $correlationId, $heartbeat);
+            if ($response === null) {
+                return $this->incompleteResult($moduleKey, $deleted, 0, $pages, $apiRequests);
+            }
             $status = $response->status;
             $apiRequests += $response->apiRequestCount();
 
@@ -92,7 +120,11 @@ final class ZohoReconciliationService
 
             [$ids, $token] = $parsed;
             foreach ($ids as $id) {
-                $remote[$id] = true;
+                // Zoho IDs are digit-only strings. PHP coerces numeric string
+                // array keys to integers, which violates the strict string
+                // hydration boundary after array_keys(). Preserve the exact
+                // provider value as the map value instead.
+                $remote[$id] = $id;
             }
             $pages++;
         } while ($token !== null);
@@ -101,7 +133,7 @@ final class ZohoReconciliationService
             return $this->incompleteResult($moduleKey, $deleted, $status, $pages, $apiRequests);
         }
 
-        $remoteIds = array_keys($remote);
+        $remoteIds = array_values($remote);
         sort($remoteIds, SORT_STRING);
         $localIds = $this->currentIds($definition);
         $initialMissing = array_values(array_diff($remoteIds, $localIds));
@@ -137,7 +169,23 @@ final class ZohoReconciliationService
                     );
                 }
 
-                $result = $hydrateRecord($id);
+                while (true) {
+                    try {
+                        $result = $hydrateRecord($id);
+                        break;
+                    } catch (ZohoThrottleUnavailableException) {
+                        if (! $this->waitForCapacity($heartbeat)) {
+                            return $this->incompleteResult(
+                                $moduleKey,
+                                $deleted,
+                                0,
+                                $pages,
+                                $apiRequests + $hydration['api_requests'],
+                                $hydration,
+                            );
+                        }
+                    }
+                }
                 foreach (array_keys($hydration) as $counter) {
                     if ($counter === 'attempted') {
                         continue;
@@ -243,6 +291,47 @@ final class ZohoReconciliationService
             'api_requests' => $apiRequests,
             'quality' => $this->metrics->forModule($moduleKey),
         ];
+    }
+
+    private function getWithCapacityWait(
+        string $path,
+        array $query,
+        string $correlationId,
+        ?callable $heartbeat,
+    ): ?TransportResult {
+        while (true) {
+            $response = $this->transport->get($path, $query, $correlationId);
+            if ($response->errorCode !== 'throttle_unavailable') {
+                return $response;
+            }
+            if (! $this->waitForCapacity($heartbeat)) {
+                return null;
+            }
+        }
+    }
+
+    private function waitForCapacity(?callable $heartbeat): bool
+    {
+        if (! $this->heartbeat($heartbeat)) {
+            return false;
+        }
+
+        $remainingMilliseconds = ((60 - (time() % 60)) * 1000) + 250;
+        $sleeper = $this->sleeper ?? new NativeSleeper;
+        while ($remainingMilliseconds > 0) {
+            // Keep the durable lease visibly alive while the shared Zoho
+            // minute bucket resets. A single minute-long sleep leaves an
+            // avoidable recovery race and makes live progress look stalled.
+            $chunkMilliseconds = min(10_000, $remainingMilliseconds);
+            $sleeper->sleepMilliseconds($chunkMilliseconds);
+            $remainingMilliseconds -= $chunkMilliseconds;
+
+            if (! $this->heartbeat($heartbeat)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

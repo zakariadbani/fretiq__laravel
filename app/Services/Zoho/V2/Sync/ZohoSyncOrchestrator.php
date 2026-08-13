@@ -19,7 +19,9 @@ use App\Services\Zoho\V2\Registry\ZohoModuleRegistry;
 use App\Services\Zoho\V2\Transport\ZohoThrottleUnavailableException;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Throwable;
@@ -159,7 +161,9 @@ class ZohoSyncOrchestrator
                         $checkpoint,
                         $leaseOwner,
                     ),
-                    heartbeat: fn (): bool => $this->heartbeat($checkpoint, $leaseOwner, $counters),
+                    heartbeat: function () use ($checkpoint, $leaseOwner, &$counters): bool {
+                        return $this->heartbeat($checkpoint, $leaseOwner, $counters);
+                    },
                     resumeAfterZohoId: $checkpoint->reconcile_cursor_zoho_id,
                     maxHydrations: $definition->key === 'quotes'
                         ? max(1, (int) config('zoho-v2.reconciliation.quote_chunk_size', 500))
@@ -182,6 +186,7 @@ class ZohoSyncOrchestrator
                     previousDeleted: $previousDeleted,
                     mutationFence: fn (): bool => $this->holdsFence($checkpoint, $leaseOwner, $batch->id),
                 );
+                $this->mergeFastReconciliationCounters($counters, $reconciliation);
                 $reportedHydrationRequests = max(
                     0,
                     (int) data_get($reconciliation, 'hydration.api_requests', 0),
@@ -240,6 +245,14 @@ class ZohoSyncOrchestrator
                 // never a terminal module result.  Otherwise a sibling module
                 // could finalize this batch while this delivery is still
                 // recoverable.
+                Log::warning('Zoho V2 reconciliation attempt was interrupted.', [
+                    'batch_id' => $batch->id,
+                    'module' => $definition->key,
+                    'http_status' => (int) ($reconciliation['http_status'] ?? 0),
+                    'pages' => (int) ($reconciliation['pages'] ?? 0),
+                    'api_requests' => (int) ($reconciliation['api_requests'] ?? 0),
+                    'hydration_attempted' => (int) data_get($reconciliation, 'hydration.attempted', 0),
+                ]);
                 $this->updateLease($checkpoint, $leaseOwner, [
                     'status' => 'retrying',
                     'lease_owner' => null,
@@ -313,6 +326,16 @@ class ZohoSyncOrchestrator
         } catch (Throwable $e) {
             // Queue retries are non-terminal.  `failed()` is the only path
             // that turns a retryable delivery into a terminal module result.
+            Log::warning('Zoho V2 module attempt threw before completion.', [
+                'batch_id' => $batch->id,
+                'module' => $definition->key,
+                'exception' => sprintf(
+                    '%s at %s:%d',
+                    $e::class,
+                    str_replace(base_path().DIRECTORY_SEPARATOR, '', $e->getFile()),
+                    $e->getLine(),
+                ),
+            ]);
             if (! $this->holdsFence($checkpoint, $leaseOwner, $batch->id)
                 || ! $this->updateLease($checkpoint, $leaseOwner, [
                     'status' => 'retrying',
@@ -618,32 +641,65 @@ class ZohoSyncOrchestrator
             }
         }
 
+        $hydrationChunkSize = max(1, (int) config('zoho-v2.module.hydration_chunk_size', 100));
+        if ($this->supportsMultiIdHydration($definition)) {
+            $hydrationChunkSize = min(100, $hydrationChunkSize);
+        }
         $items = $this->worklist->claimQueued(
             $run,
             $checkpoint,
             (int) $checkpoint->generation,
             $leaseOwner,
-            max(1, (int) config('zoho-v2.module.hydration_chunk_size', 100)),
+            $hydrationChunkSize,
         );
+        $multiId = $this->fetchMultiIdPayloads($definition, $items, $batch);
+        if ($multiId['api_requests'] > 0) {
+            // A batched request belongs to the run, not any individual item.
+            // Persist it before the first record transaction so a hard worker
+            // exit cannot lose successful or failed transport telemetry.
+            $this->worklist->recordUnattachedApiRequests(
+                $run,
+                $checkpoint,
+                (int) $checkpoint->generation,
+                $leaseOwner,
+                $multiId['api_requests'],
+            );
+        }
+        if ($multiId['defer']) {
+            $counters = $this->worklist->durableCounters($run);
+            if (! $this->updateLease($checkpoint, $leaseOwner, [
+                'status' => 'retrying', 'lease_owner' => null, 'lease_expires_at' => null,
+                'heartbeat_at' => now(), 'counters' => $counters,
+            ])) {
+                throw new \RuntimeException('Sync lease ownership was lost.');
+            }
+
+            return new SyncResult($counters, $cursor, warnings: $warning,
+                retryAfterSeconds: $this->capacityDeferralSeconds($multiId['throttle_deferred']),
+                continuationRequired: true);
+        }
         foreach ($items as $item) {
             if (! $this->heartbeat($checkpoint, $leaseOwner, $counters)) {
                 throw new \RuntimeException('Sync lease ownership was lost.');
             }
             $recordApiRequests = 0;
             try {
-                $record = $this->transport->get(
-                    '/'.$definition->apiName.'/'.rawurlencode($item->zoho_id),
-                    $definition->recordQuery,
-                    $batch->correlation_id,
-                );
-                $recordApiRequests = $record->apiRequestCount();
-                if (! $record->successful() || $record->notModified()) {
-                    if ($record->errorCode === 'throttle_unavailable') {
-                        throw new ZohoThrottleUnavailableException;
+                $payload = $multiId['payloads'][$item->zoho_id] ?? null;
+                if ($payload === null) {
+                    $record = $this->transport->get(
+                        '/'.$definition->apiName.'/'.rawurlencode($item->zoho_id),
+                        $definition->recordQuery,
+                        $batch->correlation_id,
+                    );
+                    $recordApiRequests = $record->apiRequestCount();
+                    if (! $record->successful() || $record->notModified()) {
+                        if ($record->errorCode === 'throttle_unavailable') {
+                            throw new ZohoThrottleUnavailableException;
+                        }
+                        throw new \RuntimeException('Zoho record request failed: '.($record->errorCode ?? 'empty'));
                     }
-                    throw new \RuntimeException('Zoho record request failed: '.($record->errorCode ?? 'empty'));
+                    $payload = collect((array) $record->root('data'))->first();
                 }
-                $payload = collect((array) $record->root('data'))->first();
                 if (! is_array($payload) || ! isset($payload['id']) || ! is_scalar($payload['id'])
                     || ! hash_equals($item->zoho_id, (string) $payload['id'])) {
                     throw new \RuntimeException('Zoho record response did not contain a record payload.');
@@ -670,7 +726,7 @@ class ZohoSyncOrchestrator
                 }
 
                 return new SyncResult($counters, $cursor, warnings: $warning,
-                    retryAfterSeconds: max(1, (int) config('zoho-v2.module.capacity_deferral_seconds', 60)),
+                    retryAfterSeconds: $this->capacityDeferralSeconds(true),
                     continuationRequired: true);
             } catch (Throwable $e) {
                 $this->quarantineWorkItem($batch, $definition, $item, $e, $checkpoint, $leaseOwner, $run, $recordApiRequests);
@@ -703,6 +759,61 @@ class ZohoSyncOrchestrator
         }
 
         return null;
+    }
+
+    /**
+     * @param  Collection<int, ZohoStandardSyncWorkItem>  $items
+     * @return array{payloads:array<string,array<string,mixed>>,api_requests:int,defer:bool,throttle_deferred:bool}
+     */
+    private function fetchMultiIdPayloads(ModuleDefinition $definition, Collection $items, ZohoSyncBatch $batch): array
+    {
+        if (! $this->supportsMultiIdHydration($definition) || $items->count() < 2) {
+            return ['payloads' => [], 'api_requests' => 0, 'defer' => false, 'throttle_deferred' => false];
+        }
+
+        $ids = $items->pluck('zoho_id')->map(static fn (mixed $id): string => (string) $id)->values()->all();
+        $expected = array_fill_keys($ids, true);
+        $record = $this->transport->get(
+            '/'.$definition->apiName,
+            array_replace($definition->recordQuery, ['ids' => implode(',', $ids)]),
+            $batch->correlation_id,
+        );
+        $apiRequests = $record->apiRequestCount();
+        $throttleDeferred = $record->errorCode === 'throttle_unavailable';
+        $defer = $throttleDeferred
+            || $record->status === 0
+            || $record->status === 429
+            || $record->status >= 500;
+        if ($defer || ! $record->successful() || $record->notModified()) {
+            return [
+                'payloads' => [],
+                'api_requests' => $apiRequests,
+                'defer' => $defer,
+                'throttle_deferred' => $throttleDeferred,
+            ];
+        }
+
+        $payloads = [];
+        foreach ((array) $record->root('data') as $payload) {
+            if (! is_array($payload) || ! isset($payload['id']) || ! is_scalar($payload['id'])) {
+                return ['payloads' => [], 'api_requests' => $apiRequests, 'defer' => false, 'throttle_deferred' => false];
+            }
+            $id = (string) $payload['id'];
+            if (! isset($expected[$id]) || isset($payloads[$id])) {
+                return ['payloads' => [], 'api_requests' => $apiRequests, 'defer' => false, 'throttle_deferred' => false];
+            }
+            $payloads[$id] = $payload;
+        }
+
+        return ['payloads' => $payloads, 'api_requests' => $apiRequests, 'defer' => false, 'throttle_deferred' => false];
+    }
+
+    private function supportsMultiIdHydration(ModuleDefinition $definition): bool
+    {
+        $verified = config('zoho-v2.module.multi_id_verified_modules', []);
+
+        return is_array($verified)
+            && in_array(strtolower($definition->key), array_map('strtolower', $verified), true);
     }
 
     private function listPage(ModuleDefinition $definition, string $mode, ?CarbonImmutable $sinceAt, ?string $token, string $correlationId): mixed
@@ -816,9 +927,17 @@ class ZohoSyncOrchestrator
                     return ModuleDeliveryPreparation::conflict();
                 }
             }
-            if ($checkpoint !== null && $checkpoint->lease_expires_at?->isFuture()
-                && ($checkpoint->sync_batch_id !== $batchId || $checkpoint->correlation_id !== $correlationId)) {
-                return ModuleDeliveryPreparation::conflict();
+            // Preparation is only valid between deliveries. A duplicate or
+            // recovery dispatch for the same batch must never clear a live
+            // worker's lease and advance its generation.
+            if ($checkpoint !== null && $checkpoint->lease_expires_at?->isFuture()) {
+                $sameLiveDelivery = (int) $checkpoint->sync_batch_id === $batchId
+                    && $checkpoint->correlation_id === $correlationId
+                    && $checkpoint->sync_mode === $mode;
+
+                return $sameLiveDelivery
+                    ? ModuleDeliveryPreparation::ignored()
+                    : ModuleDeliveryPreparation::conflict();
             }
             if ($checkpoint === null) {
                 $checkpoint = ZohoSyncCheckpoint::query()->create([
@@ -826,8 +945,12 @@ class ZohoSyncOrchestrator
                     'sync_mode' => $mode, 'status' => 'idle', 'counters' => [],
                 ]);
             }
+            $sameDelivery = (int) $checkpoint->sync_batch_id === $batchId
+                && is_string($checkpoint->correlation_id)
+                && hash_equals($checkpoint->correlation_id, $correlationId)
+                && $checkpoint->sync_mode === $mode;
             $deadline = $retryDeadline
-                ?? ($checkpoint->sync_batch_id === $batchId && $checkpoint->correlation_id === $correlationId
+                ?? ($sameDelivery
                     ? $checkpoint->delivery_retry_deadline_at?->toIso8601String()
                     : null)
                 ?? now()->addHours((int) config('zoho-v2.retry.retry_window_hours', 12))->toIso8601String();
@@ -837,6 +960,14 @@ class ZohoSyncOrchestrator
                 'generation' => ((int) $checkpoint->generation) + 1,
                 'delivery_retry_deadline_at' => $deadline,
                 'completed_at' => null,
+                'retry_count' => $sameDelivery ? $checkpoint->retry_count : 0,
+                'cursor_page_token' => $sameDelivery ? $checkpoint->cursor_page_token : null,
+                'page_last_zoho_id' => $sameDelivery ? $checkpoint->page_last_zoho_id : null,
+                'page_token_expires_at' => $sameDelivery ? $checkpoint->page_token_expires_at : null,
+                'counters' => $sameDelivery ? $checkpoint->counters : [],
+                'reconcile_cursor_zoho_id' => $sameDelivery ? $checkpoint->reconcile_cursor_zoho_id : null,
+                'reconcile_correlation_id' => $sameDelivery ? $checkpoint->reconcile_correlation_id : null,
+                'reconcile_started_at' => $sameDelivery ? $checkpoint->reconcile_started_at : null,
             ]);
             $batch->update(['status' => 'running', 'started_at' => $batch->started_at ?? now()]);
 
@@ -1335,6 +1466,39 @@ class ZohoSyncOrchestrator
         return $aggregate;
     }
 
+    /** @param array<string,int> $counters @param array<string,mixed> $result */
+    private function mergeFastReconciliationCounters(array &$counters, array $result): void
+    {
+        if (($result['fast_path'] ?? false) !== true) {
+            return;
+        }
+
+        $hydration = (array) ($result['hydration'] ?? []);
+        $attempted = max(0, (int) ($hydration['attempted'] ?? 0));
+        $counters['seen'] = max((int) ($counters['seen'] ?? 0), $attempted);
+        $counters['reconciliation_attempted'] = max((int) ($counters['reconciliation_attempted'] ?? 0), $attempted);
+        $counters['reconciliation_swept'] = max(
+            (int) ($counters['reconciliation_swept'] ?? 0),
+            max(0, (int) ($result['swept_count'] ?? 0)),
+        );
+        $counters['reconciliation_failed'] = max(
+            (int) ($counters['reconciliation_failed'] ?? 0),
+            max(0, (int) ($hydration['failed'] ?? 0)),
+        );
+        foreach (['created', 'updated', 'unchanged', 'quarantined'] as $counter) {
+            $value = max(0, (int) ($hydration[$counter] ?? 0));
+            $counters[$counter] = max((int) ($counters[$counter] ?? 0), $value);
+            $special = 'reconciliation_'.$counter;
+            $counters[$special] = max((int) ($counters[$special] ?? 0), $value);
+        }
+        // Population counters overlap the prior bounded sweep, but transport
+        // requests do not: every fast-path hydration request happened in this
+        // delivery and must be added for durable API telemetry.
+        $counters['reconciliation_hydration_api_requests'] =
+            (int) ($counters['reconciliation_hydration_api_requests'] ?? 0)
+            + max(0, (int) ($hydration['api_requests'] ?? 0));
+    }
+
     /** @param array<string, mixed>|null $stored @return array<string, int> */
     private function resumeCounters(?array $stored): array
     {
@@ -1396,6 +1560,19 @@ class ZohoSyncOrchestrator
     private function leaseSeconds(): int
     {
         return max(60, (int) config('zoho-v2.module.lease_seconds', 1500));
+    }
+
+    private function capacityDeferralSeconds(bool $alignToNextMinute = false): int
+    {
+        $configured = max(1, (int) config('zoho-v2.module.capacity_deferral_seconds', 60));
+        if (! $alignToNextMinute) {
+            return $configured;
+        }
+
+        // The shared request counter is keyed to the wall-clock minute. A
+        // one-second buffer avoids immediately contending on the old bucket
+        // while preserving a smaller configured retry cap.
+        return min($configured, max(1, 61 - (int) now()->format('s')));
     }
 
     private function leaseConflictDelay(ModuleDefinition $definition): int

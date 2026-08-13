@@ -54,7 +54,6 @@ use Illuminate\Support\Facades\Log;
  *   Hunter type = 'generic'  →  email_kind = 'role'
  *   Hunter type = 'personal' →  email_kind = 'personal'
  *
- * legal_basis is set to 'legitimate_interest' on every discovered contact per
  * the compliance spec (CNIL B2B cold-discovery basis).
  */
 class DiscoveryPipelineService
@@ -133,7 +132,7 @@ class DiscoveryPipelineService
         private readonly CompanyDiscoveryService $discovery,
         private readonly HunterEnrichmentService $hunter,
         private readonly LeadScoringService $scoring,
-        private readonly ContactUpsertService $contactUpsert,
+        private readonly DiscoveredContactImportService $contacts,
         private readonly HomepageSnapshotService $homepage,
         private readonly ?DiscoveryQuotaService $quota = null,
         private readonly ?CompanyEnrichmentService $companyEnrichment = null,
@@ -550,11 +549,10 @@ class DiscoveryPipelineService
                     );
 
                     $contactCount = $enrichment !== null
-                        ? $this->contactUpsert->upsertFromHunter(
-                            $company,
-                            $domain,
+                        ? $this->contacts->import($company, array_map(
+                            static fn (array $row): array => $row + ['source_url' => $domain, 'source' => 'hunter_company_enrichment'],
                             $enrichment['emails'] ?? [],
-                        )
+                        ))->created
                         : 0;
                 }
 
@@ -934,7 +932,7 @@ class DiscoveryPipelineService
     }
 
     /**
-     * Count Hunter e-mail entries that ContactUpsertService will actually turn into
+     * Count Hunter e-mail entries that the shared discovered-contact importer can store as
      * a contact row (it skips any entry without a non-empty `value`).
      */
     private function countUsableEmails(?array $enrichment): int

@@ -1,61 +1,32 @@
-import { Page, Locator } from '@playwright/test';
+import { Locator, Page } from '@playwright/test';
 
 /**
- * ZohoPage — page object for the Zoho sync-status screen.
+ * Read-only page object for the focused Zoho synchronization screen.
  *
  * Route: GET /admin/zoho
- * Controller: ZohoController
  *
- * Key structural elements:
- *   - Drivers row (Driver CRM / Driver Campaigns cards)
- *   - Sync history table
- *   - Action buttons: "Synchroniser maintenant" (POST /admin/zoho/sync)
- *     and "Importer les modèles d'email" (POST /admin/zoho/sync_templates)
- *     — rendered only when user has the required permissions.
- *
- * IMPORTANT: never click the sync buttons in specs — they fire live Zoho calls.
+ * The spec asserts the controls' presence only. It must never submit a form,
+ * because every control here can enqueue synchronization or maintenance work.
  */
 export class ZohoPage {
   readonly page: Page;
-
-  /**
-   * "Synchroniser maintenant" submit button.
-   * Visible only when user has `sync zoho` permission.
-   * Spec must assert visible/present but NEVER click.
-   */
-  readonly syncButton: Locator;
-
-  /**
-   * "Importer les modèles d'email" submit button.
-   * Visible only when user has `create campaign_templates` permission.
-   * Spec must assert visible/present but NEVER click.
-   */
-  readonly syncTemplatesButton: Locator;
-
-  /**
-   * Compact, wrapping action bar. Buttons are asserted read-only in specs.
-   */
-  readonly actionBar: Locator;
-
-  readonly actionButtons: Locator;
-
-  /**
-   * Driver CRM badge cell — always rendered.
-   */
-  readonly crmDriverCard: Locator;
+  readonly syncCenter: Locator;
+  readonly syncAllButton: Locator;
+  readonly moduleGrid: Locator;
+  readonly moduleCards: Locator;
+  readonly moduleButtons: Locator;
+  readonly maintenanceControls: Locator;
+  readonly liveProgress: Locator;
 
   constructor(page: Page) {
     this.page = page;
-
-    // Buttons are inside <form> elements with specific actions.
-    this.syncButton = page.locator('form[action*="zoho/sync"] button[type="submit"]').first();
-    this.syncTemplatesButton = page.locator(
-      'form[action*="zoho/sync_templates"] button[type="submit"]',
-    ).first();
-    this.actionBar = page.locator('[data-zoho-action-bar]').first();
-    this.actionButtons = this.actionBar.locator('button[type="submit"]');
-
-    this.crmDriverCard = page.locator('.fw-bold.text-gray-800', { hasText: 'Driver CRM' }).first();
+    this.syncCenter = page.locator('[data-zoho-sync-center]');
+    this.syncAllButton = page.locator('[data-zoho-sync-all-button]');
+    this.moduleGrid = page.locator('[data-zoho-module-grid]');
+    this.moduleCards = page.locator('[data-zoho-module-card]');
+    this.moduleButtons = page.locator('[data-zoho-sync-button]');
+    this.maintenanceControls = page.locator('[data-zoho-maintenance-controls]');
+    this.liveProgress = page.locator('[data-zoho-live-progress]');
   }
 
   async goto() {

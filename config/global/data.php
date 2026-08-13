@@ -62,24 +62,18 @@ return [
     'company_enrichment_status_null' => ['label' => 'Recherche de contacts non effectuée', 'color' => 'secondary'],
 
     //---------------------------------------------------------------------------
-    // Contacts — statut
+    // Contacts — état calculé (ordre de priorité métier)
     //---------------------------------------------------------------------------
-    'contact_statuses' => [
-        'new' => ['label' => 'Nouveau',      'color' => 'secondary'],
-        'contacted' => ['label' => 'Contacté',     'color' => 'primary'],
-        'qualified' => ['label' => 'Qualifié',     'color' => 'success'],
-        'unqualified' => ['label' => 'Non qualifié', 'color' => 'dark'],
-        'converted' => ['label' => 'Converti',     'color' => 'success'],
-    ],
-
-    //---------------------------------------------------------------------------
-    // Contacts — base légale RGPD
-    //---------------------------------------------------------------------------
-    'contact_legal_bases' => [
-        'relationship' => ['label' => 'Relation contractuelle',   'color' => 'success'],
-        'legitimate_interest' => ['label' => 'Intérêt légitime',         'color' => 'primary'],
-        'consent' => ['label' => 'Consentement',             'color' => 'info'],
-        'unknown' => ['label' => 'Inconnu',                  'color' => 'secondary'],
+    'contact_lifecycle_states' => [
+        'unsubscribed' => ['label' => 'Désinscrit', 'color' => 'dark'],
+        'blocked' => ['label' => 'Bloqué', 'color' => 'danger'],
+        'bounced' => ['label' => 'Rebondi', 'color' => 'danger'],
+        'invalid_email' => ['label' => 'Email incorrect', 'color' => 'danger'],
+        'replied' => ['label' => 'Répondu', 'color' => 'success'],
+        'contacted' => ['label' => 'Contacté', 'color' => 'primary'],
+        'verified' => ['label' => 'Vérifié', 'color' => 'info'],
+        'verification_pending' => ['label' => 'Vérification en cours', 'color' => 'warning'],
+        'needs_verification' => ['label' => 'À vérifier', 'color' => 'secondary'],
     ],
 
     //---------------------------------------------------------------------------
@@ -102,12 +96,10 @@ return [
         'webmail' => ['label' => 'Adresse personnelle', 'color' => 'warning', 'risk' => true],
         'invalid' => ['label' => 'Invalide', 'color' => 'danger', 'risk' => true],
         'disposable' => ['label' => 'Jetable', 'color' => 'danger', 'risk' => true],
-        'manual' => ['label' => 'Approuvé manuellement', 'color' => 'info', 'risk' => false],
     ],
 
     'contact_email_verification_sources' => [
         'hunter' => 'Hunter Verifier',
-        'manual' => 'Approuvé manuellement',
         'bounce' => 'Retour de livraison',
         'recovery' => 'Historique récupéré',
     ],
@@ -129,6 +121,11 @@ return [
         'recurring' => ['label' => 'Récurrent',  'color' => 'info'],
         'paced' => ['label' => 'Envoi progressif', 'color' => 'warning'],
         'sequence' => ['label' => 'Séquence',   'color' => 'primary'],
+    ],
+
+    'campaign_email_verification_policies' => [
+        'verified_only' => ['label' => 'Adresses vérifiées uniquement', 'color' => 'success'],
+        'all_sendable' => ['label' => 'Toutes les adresses envoyables', 'color' => 'warning'],
     ],
 
     //---------------------------------------------------------------------------
@@ -246,6 +243,7 @@ return [
         'queued' => ['label' => 'En file',  'color' => 'secondary'],
         'sent' => ['label' => 'Envoyé',   'color' => 'info'],
         'opened' => ['label' => 'Ouvert',   'color' => 'success'],
+        'replied' => ['label' => 'Répondu', 'color' => 'primary'],
         'bounced' => ['label' => 'Rejeté',   'color' => 'danger'],
         'skipped' => ['label' => 'Ignoré',   'color' => 'dark'],
     ],
@@ -587,11 +585,20 @@ return [
     ],
 
     'prospect_review_reasons' => [
-        'ambiguous_domain' => ['label' => 'Plusieurs domaines', 'color' => 'warning'],
-        'platform_domain' => ['label' => 'Domaine de plateforme', 'color' => 'danger'],
-        'registrable_domain_collision' => ['label' => 'Domaine déjà utilisé', 'color' => 'warning'],
-        'missing_domain' => ['label' => 'Domaine introuvable', 'color' => 'secondary'],
-        'provider_outcome_uncertain' => ['label' => 'Résultat fournisseur incertain', 'color' => 'danger'],
+        'ambiguous_domain' => ['label' => 'Plusieurs domaines possibles', 'description' => 'Plusieurs sites peuvent correspondre à cette entreprise. Choisissez seulement celui dont l’identité est certaine.', 'color' => 'warning'],
+        'domain_identity_conflict' => ['label' => 'Identité du domaine à confirmer', 'description' => 'Le domaine trouvé peut appartenir à une autre entreprise portant un nom proche.', 'color' => 'warning'],
+        'platform_domain' => ['label' => 'Site de plateforme détecté', 'description' => 'Le résultat pointe vers un réseau social, un annuaire ou une plateforme et non vers le site officiel.', 'color' => 'danger'],
+        'registrable_domain_collision' => ['label' => 'Domaine déjà associé', 'description' => 'Ce domaine ou un domaine parent est déjà rattaché à une autre entreprise dans Fretiq.', 'color' => 'warning'],
+        'missing_domain' => ['label' => 'Aucun domaine fiable', 'description' => 'L’analyse automatique n’a pas trouvé de site officiel suffisamment fiable.', 'color' => 'secondary'],
+        'provider_outcome_uncertain' => ['label' => 'Résultat fournisseur incertain', 'description' => 'Le fournisseur a peut-être traité la demande sans confirmer le résultat. Une relance exige votre confirmation.', 'color' => 'danger'],
+        'rate_limit' => ['label' => 'Fournisseur temporairement limité', 'description' => 'Le fournisseur a demandé de ralentir. Vous pouvez relancer uniquement cette entreprise.', 'color' => 'warning'],
+        'usage_limit' => ['label' => 'Limite d’utilisation du fournisseur atteinte', 'description' => 'Vérifiez le quota avant de relancer manuellement cette entreprise.', 'color' => 'warning'],
+        'pagination_error' => ['label' => 'Recherche de contacts interrompue', 'description' => 'Le domaine a bien été enregistré, mais la recherche de contacts s’est arrêtée avant la fin. Vous pouvez relancer uniquement cette entreprise.', 'color' => 'warning'],
+        'provider_call_not_replayable' => ['label' => 'Recherche de contacts à relancer', 'description' => 'La réponse précédente ne peut pas être reprise automatiquement. Une relance recommencera uniquement cette entreprise.', 'color' => 'warning'],
+        'hunter_perfect_match' => ['label' => 'Domaine trouvé, traitement interrompu', 'description' => 'Le domaine semble cohérent, mais une étape suivante n’a pas pu se terminer.', 'color' => 'info'],
+        'recovered_failed_snapshot' => ['label' => 'Domaine récupéré à confirmer', 'description' => 'Ce domaine provient d’un ancien traitement interrompu et doit être confirmé avant promotion.', 'color' => 'warning'],
+        'recovered_registrable_collision' => ['label' => 'Collision récupérée à vérifier', 'description' => 'Une donnée locale récupérée partage un domaine avec une autre entreprise.', 'color' => 'warning'],
+        'recovered_local_payload' => ['label' => 'Donnée locale récupérée', 'description' => 'Cette proposition vient des données locales existantes et nécessite une confirmation.', 'color' => 'info'],
     ],
 
     'provider_call_statuses' => [

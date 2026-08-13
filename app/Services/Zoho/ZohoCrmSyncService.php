@@ -323,7 +323,6 @@ class ZohoCrmSyncService
 
         if ($contact === null) {
             $contact = new Contact();
-            $contact->status = 'new';
         }
 
         $contact->email           = $email;
@@ -332,7 +331,6 @@ class ZohoCrmSyncService
         $contact->phone           = $record['Phone'] ?? null;
         $contact->company_id      = $companyId;
         $contact->source          = 'zoho';
-        $contact->legal_basis     = 'relationship';
         $contact->email_kind      = 'role';
         $contact->zoho_contact_id = $zohoId;
 

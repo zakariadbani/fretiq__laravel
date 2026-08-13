@@ -29,7 +29,7 @@ final class ProspectBatchViewConfig
                 ['icon' => 'bi-building', 'color' => 'primary', 'value' => (string) $model->total_items, 'caption' => 'Entreprises'],
                 ['icon' => 'bi-check2-circle', 'color' => 'success', 'value' => (string) $model->processed_items, 'caption' => 'Traitées'],
                 ['icon' => 'bi-exclamation-diamond', 'color' => 'warning', 'value' => (string) $model->review_items, 'caption' => 'À revoir'],
-                ['icon' => 'bi-person-lines-fill', 'color' => 'info', 'value' => (string) $model->candidate_contacts, 'caption' => 'Contacts'],
+                ['icon' => 'bi-person-lines-fill', 'color' => 'info', 'value' => (string) $model->imported_contacts, 'caption' => 'Contacts importés'],
             ] : [],
             'toggle' => null,
             'tabs' => [

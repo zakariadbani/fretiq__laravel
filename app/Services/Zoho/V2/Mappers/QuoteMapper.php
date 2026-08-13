@@ -16,7 +16,7 @@ class QuoteMapper extends AbstractZohoMapper
             'deal_zoho_id' => $this->lookupId($payload['Deal_Name'] ?? null), 'account_zoho_id' => $this->lookupId($payload['Account_Name'] ?? null),
             'contact_zoho_id' => $this->lookupId($payload['Contact_Name'] ?? null), 'origin' => $this->value($payload['Origine'] ?? null), 'destination' => $this->value($payload['Destination'] ?? null),
             'transport_type' => $this->stringList($payload['Type_de_Transport'] ?? null), 'quote_date' => $this->value($payload['Date_de_Cotation'] ?? null), 'country' => $this->value($payload['Pays'] ?? null),
-            'incoterms' => $this->stringList($payload['Incoterm1'] ?? null), 'gross_weight' => $this->value($payload['P_Brut'] ?? null), 'volume' => $this->value($payload['Volume'] ?? null), 'quantity_text' => $this->value($payload['Quantit'] ?? null), 'package_type' => $this->value($payload['Type_de_Colis'] ?? null), 'transit_time_days' => $this->integer($payload['Transit_Time_J'] ?? null), 'equipment_type' => $this->value($payload['Type_d_quipement'] ?? null), 'free_time' => $this->value($payload['Franchise'] ?? null), 'stackability' => $this->stringList($payload['G_rbable'] ?? null), 'dangerous_goods_status' => $this->value($payload['Marchandise_dangereuse'] ?? null), 'un_number' => $this->value($payload['UN'] ?? null), 'dangerous_goods_class' => $this->value($payload['La_classe'] ?? null), 'dimensions' => $this->value($payload['Dimensions_CM'] ?? null), 'loading_meters' => $this->value($payload['Metre_de_Planche'] ?? null), 'last_activity_at' => $this->timestamp($payload['Last_Activity_Time'] ?? null), 'tags' => $this->stringList($payload['Tag'] ?? null),
+            'incoterms' => $this->stringList($payload['Incoterm1'] ?? null), 'gross_weight' => $this->value($payload['P_Brut'] ?? null), 'volume' => $this->value($payload['Volume'] ?? null), 'quantity_text' => $this->value($payload['Quantit'] ?? null), 'package_type' => $this->boundedString($payload['Type_de_Colis'] ?? null), 'transit_time_days' => $this->integer($payload['Transit_Time_J'] ?? null), 'equipment_type' => $this->value($payload['Type_d_quipement'] ?? null), 'free_time' => $this->value($payload['Franchise'] ?? null), 'stackability' => $this->stringList($payload['G_rbable'] ?? null), 'dangerous_goods_status' => $this->value($payload['Marchandise_dangereuse'] ?? null), 'un_number' => $this->value($payload['UN'] ?? null), 'dangerous_goods_class' => $this->value($payload['La_classe'] ?? null), 'dimensions' => $this->value($payload['Dimensions_CM'] ?? null), 'loading_meters' => $this->value($payload['Metre_de_Planche'] ?? null), 'last_activity_at' => $this->timestamp($payload['Last_Activity_Time'] ?? null), 'tags' => $this->stringList($payload['Tag'] ?? null),
         ]);
     }
 
@@ -98,5 +98,12 @@ class QuoteMapper extends AbstractZohoMapper
         }
 
         return ltrim($result, '0') ?: '0';
+    }
+
+    private function boundedString(mixed $value, int $maxLength = 191): mixed
+    {
+        $value = $this->value($value);
+
+        return is_string($value) ? mb_substr($value, 0, $maxLength) : $value;
     }
 }

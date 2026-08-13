@@ -15,6 +15,14 @@ return [
         'lease_seconds' => (int) env('ZOHO_V2_MODULE_LEASE_SECONDS', 1500),
         'continuation_delay_seconds' => (int) env('ZOHO_V2_MODULE_CONTINUATION_DELAY_SECONDS', 5),
         'hydration_chunk_size' => (int) env('ZOHO_V2_MODULE_HYDRATION_CHUNK_SIZE', 100),
+        // Live 2026-08-12: Tasks and Events returned the exact requested set
+        // for 100-ID requests with payload-shape parity. Quotes returned exact
+        // IDs but inconsistently omitted its Quoted_Items subform, so it
+        // deliberately remains on authoritative single-record hydration.
+        'multi_id_verified_modules' => array_values(array_filter(array_map(
+            static fn (string $module): string => strtolower(trim($module)),
+            explode(',', (string) env('ZOHO_V2_MULTI_ID_VERIFIED_MODULES', 'tasks,events')),
+        ))),
         'capacity_deferral_seconds' => (int) env('ZOHO_V2_MODULE_CAPACITY_DEFERRAL_SECONDS', 60),
         'lease_conflict_max_delay_seconds' => (int) env('ZOHO_V2_MODULE_LEASE_CONFLICT_MAX_DELAY_SECONDS', 3600),
         // Standard outbox recovery may reclaim a lost running delivery quickly,
@@ -23,7 +31,18 @@ return [
         'retrying_recovery_stale_seconds' => (int) env('ZOHO_V2_MODULE_RETRYING_RECOVERY_STALE_SECONDS', 1860),
     ],
     'reconciliation' => [
-        'quote_chunk_size' => (int) env('ZOHO_V2_QUOTE_RECONCILIATION_CHUNK_SIZE', 500),
+        // Live 2026-08-12: paged Quotes and /Quoted_Items returned equivalent
+        // normalized business fields (with authoritative Parent_Id rows).
+        // Specific reads are therefore reserved for actual business drift.
+        'quote_paged_verification' => (bool) env('ZOHO_V2_QUOTE_PAGED_VERIFICATION', true),
+        // Zoho Get Records caps one page-token direction at 100,000 rows.
+        // The verifier covers larger subform modules from both ID directions
+        // and stops at their verified overlap.
+        'quote_page_token_record_limit' => (int) env('ZOHO_V2_QUOTE_PAGE_TOKEN_RECORD_LIMIT', 100000),
+        // Live 2026-08-12: 1,000 authoritative Quote hydrations plus the
+        // complete ID scan finish comfortably inside the 1,200s delivery
+        // timeout. This halves repeated scan overhead versus 500-record jobs.
+        'quote_chunk_size' => (int) env('ZOHO_V2_QUOTE_RECONCILIATION_CHUNK_SIZE', 1000),
     ],
     'bulk' => [
         'poll_delay_seconds' => (int) env('ZOHO_V2_BULK_POLL_DELAY_SECONDS', 30),

@@ -6,8 +6,8 @@ use App\Jobs\FinalizeProspectBatchJob;
 use App\Models\Company;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectBatch;
+use App\Models\ProspectBatchContact;
 use App\Models\ProspectBatchItem;
-use App\Models\ProspectContactCandidate;
 use App\Models\ProviderCall;
 use Illuminate\Console\Command;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -73,7 +73,7 @@ class RecoverExistingProspectingDataTest extends TestCase
 
         $this->artisan('prospecting:recover-existing-data', ['--dry-run' => true])
             ->expectsOutputToContain('DRY RUN')
-            ->expectsOutputToContain('Emails Company Enrichment à revoir')
+            ->expectsOutputToContain('Emails Company Enrichment à importer automatiquement')
             ->expectsOutputToContain('Domaines de snapshots à revoir')
             ->expectsOutputToContain('Appels fournisseur: 0')
             ->assertSuccessful();
@@ -124,7 +124,7 @@ class RecoverExistingProspectingDataTest extends TestCase
             'discovery_runs' => DiscoveryRun::query()->count(),
             'prospect_batches' => ProspectBatch::query()->count(),
             'prospect_batch_items' => ProspectBatchItem::query()->count(),
-            'prospect_contact_candidates' => ProspectContactCandidate::query()->count(),
+            'prospect_batch_contacts' => ProspectBatchContact::query()->count(),
             'provider_calls' => ProviderCall::query()->count(),
         ];
     }

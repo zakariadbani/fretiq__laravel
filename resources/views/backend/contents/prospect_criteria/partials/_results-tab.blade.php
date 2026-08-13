@@ -272,15 +272,14 @@
                                                                     <th class="min-w-140px">Nom</th>
                                                                     <th class="min-w-140px">Email</th>
                                                                     <th class="min-w-100px">Poste</th>
-                                                                    <th>Statut</th>
+                                                                    <th>État</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody>
                                                                 @foreach($company->contacts as $contact)
                                                                     @php
-                                                                        // Contact status badge with safe fallback (never blank).
-                                                                        $cStatus    = $contact->status ?? '';
-                                                                        $cStatusCfg = config('global.data.contact_statuses.' . $cStatus);
+                                                                        $cStatus    = $contact->lifecycle_state ?? 'needs_verification';
+                                                                        $cStatusCfg = config('global.data.contact_lifecycle_states.' . $cStatus);
                                                                     @endphp
                                                                     <tr>
                                                                         <td>

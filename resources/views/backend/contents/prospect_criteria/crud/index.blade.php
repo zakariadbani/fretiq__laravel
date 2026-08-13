@@ -70,6 +70,10 @@
                 </div>
 
                 @can('create prospect_criteria')
+                <a href="{{ route('admin.prospect_criteria.import_form') }}" class="btn btn-light-primary me-3">
+                    <i class="bi bi-upload fs-2"></i>
+                    Importer CSV
+                </a>
                 <a href="{{ route('admin.prospect_criteria.create') }}" class="btn btn-primary">
                     <i class="bi bi-plus-lg fs-2"></i>
                     Ajouter un critère

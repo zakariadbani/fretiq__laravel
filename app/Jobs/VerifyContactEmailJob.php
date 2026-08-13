@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\Contact;
 use App\Models\ProviderCall;
 use App\Services\Discovery\ContactVerificationService;
+use App\Services\Discovery\EmailVerificationSettings;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -25,8 +26,14 @@ final class VerifyContactEmailJob implements ShouldQueue
         $this->onQueue('prospecting');
     }
 
-    public function handle(ContactVerificationService $service): void
+    public function handle(ContactVerificationService $service, EmailVerificationSettings $settings): void
     {
+        if (! $settings->enabled()) {
+            $this->release(300);
+
+            return;
+        }
+
         $call = ProviderCall::query()
             ->where('provider', 'hunter')
             ->where('operation', 'email_verifier')

@@ -12,8 +12,10 @@ use App\Models\Contact;
 use App\Models\Segment;
 use App\Models\SenderIdentity;
 use App\Models\Suppression;
+use App\Services\Campaign\CampaignDeliveryFence;
 use App\Services\Campaign\CampaignService;
 use App\Services\Campaign\CampaignsClient;
+use App\Services\Campaign\ZohoCampaignsDriver;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -57,9 +59,7 @@ class CampaignSendTest extends TestCase
             'company_id'  => $co->id,
             'email'       => $email,
             'name'        => 'Jean Dupont',
-            'status'      => 'new',
             'source'      => 'manual',
-            'legal_basis' => 'relationship',
             'email_kind'  => 'role',
             'email_verification_status' => 'valid',
             'email_verification_source' => 'hunter',
@@ -143,6 +143,79 @@ class CampaignSendTest extends TestCase
         $this->assertNotNull($recipient->provider_message_id, 'provider_message_id must be set after send');
 
         Mail::assertSent(CampaignMailable::class);
+    }
+
+    public function test_all_sendable_run_waits_for_pending_verification_without_transport(): void
+    {
+        $contact = $this->makeClientContact('pending-run@example.test');
+        $contact->forceFill([
+            'email_verification_status' => 'pending',
+            'email_verification_source' => 'hunter',
+            'email_verification_checked_at' => null,
+        ])->save();
+        $campaign = $this->makeCampaign(
+            Segment::create(['name' => 'Pending clients', 'scope' => 'client']),
+            $this->makeTemplate(),
+            $this->makeSender(),
+        );
+        $campaign->update(['email_verification_policy' => Campaign::VERIFICATION_ALL_SENDABLE]);
+
+        $service = app(CampaignService::class);
+        $run = $service->scheduleOneShot($campaign);
+        $service->sendRun($run);
+
+        $this->assertSame('scheduled', $run->fresh()->status);
+        $this->assertDatabaseMissing('campaign_recipients', ['campaign_run_id' => $run->id]);
+        Mail::assertNothingSent();
+    }
+
+    public function test_zoho_run_rechecks_pending_verification_after_transport_claim(): void
+    {
+        config(['services.zoho.driver' => 'zoho']);
+
+        $contact = $this->makeClientContact('pending-after-claim@example.test');
+        $campaign = $this->makeCampaign(
+            Segment::create(['name' => 'Pending after claim', 'scope' => 'client']),
+            $this->makeTemplate(),
+            $this->makeSender(),
+        );
+        $campaign->update([
+            'delivery_channel' => 'zoho',
+            'email_verification_policy' => Campaign::VERIFICATION_ALL_SENDABLE,
+        ]);
+
+        $this->app->forgetInstance(CampaignService::class);
+        $this->mock(CampaignDeliveryFence::class, function ($mock) use ($contact): void {
+            $mock->shouldReceive('claimZohoTransport')
+                ->once()
+                ->andReturnUsing(function (CampaignRun $run) use ($contact): CampaignRun {
+                    $contact->forceFill([
+                        'email_verification_status' => 'pending',
+                        'email_verification_source' => 'hunter',
+                        'email_verification_checked_at' => null,
+                    ])->save();
+
+                    $run->update(['status' => 'sending', 'started_at' => now()]);
+
+                    return $run->fresh();
+                });
+        });
+        $this->mock(ZohoCampaignsDriver::class, fn ($mock) => $mock->shouldNotReceive('dispatchRun'));
+
+        $service = app(CampaignService::class);
+        $run = $service->scheduleOneShot($campaign);
+        $service->sendRun($run);
+
+        $run->refresh();
+        $this->assertSame('scheduled', $run->status);
+        $this->assertNull($run->started_at);
+        $this->assertNull($run->finished_at);
+        $this->assertDatabaseHas('campaign_recipients', [
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'queued',
+        ]);
+        Mail::assertNothingSent();
     }
 
     /**
@@ -404,9 +477,7 @@ class CampaignSendTest extends TestCase
             'company_id'  => $transportCo->id,
             'email'       => 'filtermatch@transport.test',
             'name'        => 'Filter Match',
-            'status'      => 'new',
             'source'      => 'manual',
-            'legal_basis' => 'relationship',
             'email_kind'  => 'role',
             'email_verification_status' => 'valid',
             'email_verification_source' => 'hunter',
@@ -426,9 +497,7 @@ class CampaignSendTest extends TestCase
             'company_id'  => $financeCo->id,
             'email'       => 'pininclude@finance.test',
             'name'        => 'Pin Include',
-            'status'      => 'new',
             'source'      => 'manual',
-            'legal_basis' => 'relationship',
             'email_kind'  => 'role',
             'email_verification_status' => 'valid',
             'email_verification_source' => 'hunter',

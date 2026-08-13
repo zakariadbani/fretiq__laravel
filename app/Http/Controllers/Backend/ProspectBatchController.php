@@ -123,7 +123,7 @@ class ProspectBatchController extends BackendController
 
         return view('backend.contents.prospect_batches.crud.view', [
             'model' => $batch,
-            'items' => $batch->items()->withCount('contactCandidates')->orderBy('row_number')->paginate(25),
+            'items' => $batch->items()->withCount('importedContacts')->orderBy('row_number')->paginate(25),
             'viewConfig' => \App\Crud\ViewConfigs\ProspectBatchViewConfig::make($batch),
         ]);
     }
@@ -238,12 +238,14 @@ class ProspectBatchController extends BackendController
                 'review' => (int) $batch->review_items,
                 'failed' => (int) $batch->failed_items,
                 'promoted' => (int) $batch->promoted_companies,
-                'contacts' => (int) $batch->candidate_contacts,
+                'imported_contacts_count' => (int) $batch->imported_contacts,
             ],
             'worker_waiting' => $workerWaiting,
             'terminal' => in_array($batch->status, ['review', 'completed', 'failed', 'cancelled'], true),
             'view_url' => route('admin.prospect_batches.view', $batch),
-            'review_url' => Route::has('admin.prospect_review.index') ? route('admin.prospect_review.index') : null,
+            'review_url' => Route::has('admin.prospect_review.index')
+                ? route('admin.prospect_review.index', ['tab' => 'companies', 'batch' => $batch->getKey()])
+                : null,
         ]);
     }
 

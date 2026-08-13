@@ -77,7 +77,7 @@ final class ZohoModuleRegistry
                 key: 'events', apiName: 'Events', modelClass: $crm.'ZohoActivity', table: 'zoho_activities',
                 dependencies: ['users'], fetchStrategy: 'records_if_modified_since', supportsModifiedTime: true,
                 activityType: 'meeting', submodule: 'Events', visibilityAllowlist: $activityFields, bulkReadSupported: true,
-                promotedFieldSources: ['subject' => ['Event_Title', 'Subject'], 'status' => ['Status'], 'activity_at' => ['Start_DateTime', 'Activity_DateTime', 'Created_Time'], 'start_at' => ['Start_DateTime'], 'end_at' => ['End_DateTime']],
+                promotedFieldSources: ['subject' => ['Event_Title', 'Subject'], 'status' => ['Status', 'Check_In_Status', 'Record_Status__s'], 'activity_at' => ['Start_DateTime', 'Activity_DateTime', 'Created_Time'], 'start_at' => ['Start_DateTime'], 'end_at' => ['End_DateTime']],
             ),
             new ModuleDefinition(
                 key: 'calls', apiName: 'Calls', modelClass: $crm.'ZohoActivity', table: 'zoho_activities',

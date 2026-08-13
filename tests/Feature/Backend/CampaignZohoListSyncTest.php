@@ -259,6 +259,45 @@ class CampaignZohoListSyncTest extends TestCase
         $this->assertSame(0, $gateway->sendCampaignCalls);
     }
 
+    public function test_all_sendable_pending_verification_blocks_before_any_gateway_call(): void
+    {
+        [$campaign, $jean] = $this->campaignWithTwoEligibleContacts();
+        $campaign->update(['email_verification_policy' => Campaign::VERIFICATION_ALL_SENDABLE]);
+        $jean->forceFill([
+            'email_verification_status' => 'pending',
+            'email_verification_source' => 'hunter',
+            'email_verification_checked_at' => null,
+        ])->save();
+
+        $gateway = new class implements ZohoRecipientListGateway {
+            public int $calls = 0;
+
+            public function ensureCampaignList(int $campaignId, string $listName, array $seedContacts): string
+            {
+                $this->calls++;
+
+                return 'must-not-be-created';
+            }
+
+            public function listEmails(string $listKey): array { $this->calls++; return []; }
+            public function addContacts(string $listKey, array $contacts): void { $this->calls++; }
+            public function createCampaign(): void { $this->calls++; }
+            public function sendCampaign(): void { $this->calls++; }
+        };
+
+        try {
+            (new CampaignZohoListSyncService(app(SegmentService::class), $gateway))->sync($campaign->fresh());
+            $this->fail('Expected pending verification to block Zoho list preparation.');
+        } catch (\LogicException $exception) {
+            $this->assertStringContainsString('Aucun appel externe', $exception->getMessage());
+        }
+
+        $this->assertSame(0, $gateway->calls);
+        $this->assertDatabaseCount('campaign_runs', 0);
+        $this->assertDatabaseCount('campaign_recipients', 0);
+        $this->assertNull($campaign->fresh()->zoho_list_key);
+    }
+
     /** @return array{Campaign, Contact, Contact} */
     private function campaignWithTwoEligibleContacts(): array
     {
@@ -266,12 +305,14 @@ class CampaignZohoListSyncTest extends TestCase
             'name' => 'Acme', 'relationship' => 'client', 'source' => 'manual', 'qualification_status' => 'pending',
         ]);
         $jean = Contact::create([
-            'company_id' => $company->id, 'email' => 'jean@acme.test', 'name' => 'Jean Dupont', 'status' => 'new',
-            'source' => 'manual', 'legal_basis' => 'relationship', 'email_kind' => 'role',
+            'company_id' => $company->id, 'email' => 'jean@acme.test', 'name' => 'Jean Dupont',
+            'source' => 'manual', 'email_kind' => 'role', 'email_verification_status' => 'valid',
+            'email_verification_source' => 'hunter', 'email_verification_checked_at' => now(),
         ]);
         $marie = Contact::create([
-            'company_id' => $company->id, 'email' => 'marie@acme.test', 'name' => 'Marie Dupont', 'status' => 'new',
-            'source' => 'manual', 'legal_basis' => 'relationship', 'email_kind' => 'role',
+            'company_id' => $company->id, 'email' => 'marie@acme.test', 'name' => 'Marie Dupont',
+            'source' => 'manual', 'email_kind' => 'role', 'email_verification_status' => 'valid',
+            'email_verification_source' => 'hunter', 'email_verification_checked_at' => now(),
         ]);
         $segment = Segment::create(['name' => 'Clients', 'scope' => 'client']);
         $template = CampaignTemplate::create(['name' => 'Modèle', 'subject' => 'Sujet', 'html_content' => '<p>Bonjour</p>']);

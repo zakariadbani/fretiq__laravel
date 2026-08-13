@@ -80,6 +80,10 @@ test.describe('Contacts module', () => {
     await expectPath(page, '/admin/contacts');
     await waitForDataTable(page, 'contact-table');
     await contacts.expectTableVisible();
+    await expect(contacts.table.locator('thead')).toContainText('État');
+    await expect(contacts.table.locator('thead')).not.toContainText('Qualité email');
+    await expect(contacts.table.locator('thead')).not.toContainText('Statut');
+    await expect(contacts.table.locator('thead')).not.toContainText('Légal');
   });
 
   // ── 2. Create flow ─────────────────────────────────────────────────────────

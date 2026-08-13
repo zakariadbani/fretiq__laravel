@@ -191,7 +191,7 @@
                                 </div>
                             </th>
                         @endforeach
-                        @can('create demandes')
+                        @can('edit campaigns')
                             <th class="text-end pe-7 min-w-150px">Action</th>
                         @endcan
                     </tr>
@@ -221,7 +221,7 @@
                                     'step' => $step,
                                 ])
                             @endforeach
-                            @can('create demandes')
+                            @can('edit campaigns')
                                 <td class="text-end pe-7">
                                     @if(!$isReplied)
                                         <form method="POST"
@@ -230,7 +230,7 @@
                                             @csrf
                                             <button type="submit" class="btn btn-sm btn-light-success">
                                                 <i class="bi bi-reply me-1"></i>
-                                                R&eacute;pondu &rarr; Demande
+                                                Marquer répondu
                                             </button>
                                         </form>
                                     @else
@@ -258,7 +258,7 @@
                         <th>Envoyé le</th>
                         <th>Ouvert le</th>
                         <th>Cliqué le</th>
-                        @can('create demandes')
+                        @can('edit campaigns')
                         <th class="text-end pe-7">Action</th>
                         @endcan
                     </tr>
@@ -307,16 +307,16 @@
                         <td>{{ $sentAt?->format('d/m/Y H:i') ?? '—' }}</td>
                         <td>{{ $openedAt?->format('d/m/Y H:i') ?? '—' }}</td>
                         <td>{{ $clickedAt?->format('d/m/Y H:i') ?? '—' }}</td>
-                        @can('create demandes')
+                        @can('edit campaigns')
                         <td class="text-end pe-7">
                             @if(!$isReplied)
                             <form method="POST"
                                   action="{{ route('admin.campaigns.markReplied', [$model->id, $row->id]) }}"
-                                  onsubmit="return confirm('Marquer ce contact comme répondu et créer une demande ?');">
+                                  onsubmit="return confirm('Marquer ce contact comme répondu et arrêter ses séquences actives ?');">
                                 @csrf
-                                <button type="submit" class="btn btn-sm btn-light-success" title="Marquer répondu → Demande">
+                                <button type="submit" class="btn btn-sm btn-light-success" title="Marquer comme répondu">
                                     <i class="bi bi-reply me-1"></i>
-                                    Répondu → Demande
+                                    Marquer répondu
                                 </button>
                             </form>
                             @else

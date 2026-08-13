@@ -22,7 +22,7 @@ class SequenceController extends BackendController
      *
      * @var array<string>
      */
-    protected $toggleableFields = ['is_active', 'stop_on_reply'];
+    protected $toggleableFields = ['is_active'];
 
     public function __construct(Request $request, Sequence $model, SequencesDataTable $dataTable)
     {

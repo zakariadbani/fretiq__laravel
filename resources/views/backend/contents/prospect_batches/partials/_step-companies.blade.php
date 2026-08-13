@@ -1,4 +1,4 @@
-<div data-kt-stepper-element="content" data-prospect-step="1">
+<div class="current flex-column" data-kt-stepper-element="content" data-prospect-step="1">
     @if($model->exists)
         <div class="alert alert-light-primary d-flex align-items-center" role="status">
             <i class="bi bi-check-circle-fill text-primary fs-2 me-3"></i>

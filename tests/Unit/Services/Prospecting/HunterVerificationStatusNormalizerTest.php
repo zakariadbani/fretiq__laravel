@@ -39,6 +39,9 @@ class HunterVerificationStatusNormalizerTest extends TestCase
         $this->assertSame('invalid', $service->normalize([
             'verification' => ['result' => 'undeliverable'],
         ]));
+        $this->assertSame('missing', $service->normalize([
+            'verification' => ['status' => 'missing'],
+        ]));
         $this->assertSame('unknown', $service->normalize([
             'verification' => ['status' => 'unknown'],
         ]));

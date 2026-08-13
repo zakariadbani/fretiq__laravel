@@ -28,7 +28,7 @@ class ContactController extends BackendController
         $this->middleware('permission:create contacts')->only(['create', 'store']);
         $this->middleware('permission:edit contacts')->only(['edit', 'update', 'executeSwitch']);
         $this->middleware('permission:delete contacts')->only(['delete']);
-        $this->middleware('permission:verify contacts')->only(['verifyEmail', 'approveEmail']);
+        $this->middleware('permission:verify contacts')->only('verifyEmail');
 
         $this->listTitle = 'Contacts';
         $this->title = 'name';
@@ -48,7 +48,9 @@ class ContactController extends BackendController
      */
     public function view($id)
     {
-        $model = $this->currentModel->with('company')->find($id);
+        $model = app(\App\Services\Prospecting\ContactLifecycleService::class)
+            ->select($this->currentModel->with('company'))
+            ->find($id);
 
         if ($model === null) {
             session()->flash('error', trans('app.not_found'));
@@ -145,16 +147,17 @@ class ContactController extends BackendController
         ]);
         $contact = Contact::query()->findOrFail($id);
         $force = (bool) ($validated['force'] ?? false);
-        $verification->verify($contact, $force, $validated['client_token'] ?? null);
+        try {
+            $verification->verify($contact, $force, $validated['client_token'] ?? null);
+        } catch (\DomainException $exception) {
+            if ($exception->getMessage() === 'email_verification_disabled') {
+                return redirect()->route('admin.contacts.view', $contact)
+                    ->with('error', 'La vérification email est désactivée dans les paramètres.');
+            }
+            throw $exception;
+        }
 
         return redirect()->route('admin.contacts.view', $contact)->with('success', 'Vérification demandée.');
-    }
-
-    public function approveEmail(ContactVerificationService $verification, int $id)
-    {
-        $contact = $verification->approveManually(Contact::query()->findOrFail($id));
-
-        return redirect()->route('admin.contacts.view', $contact)->with('success', 'Adresse approuvée manuellement.');
     }
 
     /**
@@ -164,8 +167,6 @@ class ContactController extends BackendController
     {
         return [
             'companies' => Company::orderBy('name')->get(['id', 'name']),
-            'statuses' => config('global.data.contact_statuses', []),
-            'legalBases' => config('global.data.contact_legal_bases', []),
             'emailKinds' => config('global.data.contact_email_kinds', []),
             'sources' => config('global.data.contact_sources', []),
         ];

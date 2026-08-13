@@ -5,10 +5,9 @@ namespace App\Services\Prospecting;
 use App\Jobs\FinalizeProspectBatchJob;
 use App\Jobs\ProcessProspectBatchItemJob;
 use App\Models\Company;
-use App\Models\Contact;
 use App\Models\ProspectBatch;
+use App\Models\ProspectBatchContact;
 use App\Models\ProspectBatchItem;
-use App\Models\ProspectContactCandidate;
 use App\Models\ProspectCriteria;
 use App\Models\User;
 use App\Services\Discovery\DomainCanonicalizer;
@@ -17,18 +16,14 @@ use App\Services\Providers\Hunter\HunterClient;
 use App\Services\Providers\ProviderCallContext;
 use App\Services\Providers\ProviderCallLedger;
 use App\Services\Providers\ProviderExecution;
-use Carbon\CarbonImmutable;
-use DateTimeInterface;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use LogicException;
-use Throwable;
 
 final class ProspectBatchService
 {
@@ -45,21 +40,6 @@ final class ProspectBatchService
         'lean' => 10,
         'balanced' => 100,
         'deep' => 200,
-    ];
-
-    /** @var list<string> */
-    private const VERIFICATION_STATUSES = [
-        'valid', 'accept_all', 'pending', 'unknown', 'missing',
-        'webmail', 'invalid', 'disposable', 'manual',
-    ];
-
-    /** @var list<string> */
-    private const VERIFICATION_SOURCES = ['hunter', 'recovery', 'manual', 'zoho'];
-
-    /** @var list<string> */
-    private const CANDIDATE_METADATA_KEYS = [
-        'origin', 'provider', 'operation', 'department', 'seniority',
-        'confidence', 'decision_maker', 'page', 'offset', 'source_hash',
     ];
 
     public function __construct(
@@ -448,128 +428,6 @@ final class ProspectBatchService
         }
     }
 
-    public function stageContactCandidates(
-        ProspectBatch $batch,
-        ProspectBatchItem $item,
-        iterable $rows,
-    ): int {
-        if ((int) $item->prospect_batch_id !== (int) $batch->getKey()) {
-            throw new InvalidArgumentException('prospect_candidate_item_batch_mismatch');
-        }
-
-        return DB::transaction(function () use ($batch, $item, $rows): int {
-            $accepted = [];
-
-            foreach ($rows as $row) {
-                if (! is_array($row)) {
-                    continue;
-                }
-
-                $email = strtolower(trim((string) ($row['email'] ?? '')));
-
-                if (! $this->isValidCandidateEmail($email) || isset($accepted[$email])) {
-                    continue;
-                }
-
-                $source = strtolower(trim((string) ($row['source'] ?? '')));
-
-                if ($source === '' || strlen($source) > 32 || preg_match('/^[a-z0-9_]+$/', $source) !== 1) {
-                    continue;
-                }
-
-                $existing = ProspectContactCandidate::query()
-                    ->where('prospect_batch_id', $batch->getKey())
-                    ->where('normalized_email', $email)
-                    ->lockForUpdate()
-                    ->first();
-
-                if ($existing !== null && (int) $existing->prospect_batch_item_id !== (int) $item->getKey()) {
-                    continue;
-                }
-
-                $verificationStatus = strtolower(trim((string) ($row['verification_status'] ?? '')));
-                if (! in_array($verificationStatus, self::VERIFICATION_STATUSES, true)) {
-                    $verificationStatus = null;
-                }
-                $verificationSource = strtolower(trim((string) ($row['verification_source'] ?? '')));
-                if ($verificationStatus === null || ! in_array($verificationSource, self::VERIFICATION_SOURCES, true)) {
-                    $verificationSource = null;
-                }
-                $verificationCheckedAt = $verificationStatus === null || $verificationSource === null
-                    ? null
-                    : $this->evidenceDate($row['verification_checked_at'] ?? null);
-
-                $attributes = [
-                    'company_id' => $item->company_id,
-                    'email' => $email,
-                    'normalized_email' => $email,
-                    'name' => $this->boundedNullable($row['name'] ?? null, 255),
-                    'position' => $this->boundedNullable($row['position'] ?? null, 120),
-                    'phone' => $this->boundedNullable($row['phone'] ?? null, 50),
-                    'source' => $source,
-                    'email_kind' => in_array(($row['email_kind'] ?? 'role'), ['role', 'personal'], true)
-                        ? $row['email_kind'] ?? 'role'
-                        : 'role',
-                    'verification_status' => $verificationStatus,
-                    'verification_checked_at' => $verificationCheckedAt,
-                    'verification_source' => $verificationSource,
-                    'decision_reason' => $this->safeReason($row['decision_reason'] ?? null),
-                    'metadata' => $this->candidateMetadata($row['metadata'] ?? null),
-                ];
-
-                if ($existing === null) {
-                    try {
-                        ProspectContactCandidate::query()->create($attributes + [
-                            'prospect_batch_id' => $batch->getKey(),
-                            'prospect_batch_item_id' => $item->getKey(),
-                            'decision' => 'pending',
-                        ]);
-                    } catch (QueryException $exception) {
-                        if (! $this->isUniqueConstraintViolation($exception)) {
-                            throw $exception;
-                        }
-
-                        $winner = ProspectContactCandidate::query()
-                            ->where('prospect_batch_id', $batch->getKey())
-                            ->where('normalized_email', $email)
-                            ->first();
-
-                        if ($winner === null) {
-                            throw $exception;
-                        }
-
-                        if ((int) $winner->prospect_batch_item_id !== (int) $item->getKey()) {
-                            continue;
-                        }
-                    }
-                } else {
-                    foreach (['company_id', 'name', 'position', 'phone', 'metadata'] as $nullableField) {
-                        if ($attributes[$nullableField] === null) {
-                            unset($attributes[$nullableField]);
-                        }
-                    }
-                    if ($verificationStatus === null) {
-                        unset(
-                            $attributes['verification_status'],
-                            $attributes['verification_checked_at'],
-                            $attributes['verification_source'],
-                        );
-                    }
-                    if ($attributes['decision_reason'] === null) {
-                        unset($attributes['decision_reason']);
-                    }
-                    $existing->forceFill($attributes)->save();
-                }
-
-                $accepted[$email] = true;
-            }
-
-            $this->recomputeCounters($batch);
-
-            return count($accepted);
-        });
-    }
-
     public function promoteItem(ProspectBatchItem $item, ?User $actor = null): Company
     {
         $canonical = $this->domains->canonicalize((string) $item->selected_domain);
@@ -653,10 +511,6 @@ final class ProspectBatchService
                     'error_code' => null,
                     'error_message' => null,
                 ])->save();
-                ProspectContactCandidate::query()
-                    ->where('prospect_batch_item_id', $locked->getKey())
-                    ->whereNull('company_id')
-                    ->update(['company_id' => $company->getKey(), 'updated_at' => now()]);
 
                 return ['company' => $company->fresh(), 'conflict' => null];
             });
@@ -672,88 +526,81 @@ final class ProspectBatchService
         return $result['company'];
     }
 
-    public function promoteContactCandidate(
-        ProspectContactCandidate $candidate,
-        ?User $actor = null,
-    ): Contact {
-        $result = DB::transaction(function () use ($candidate): array {
-            $locked = ProspectContactCandidate::query()->lockForUpdate()->findOrFail($candidate->getKey());
-            if ($locked->decision === 'promoted' && $locked->contact_id !== null) {
-                return ['contact' => Contact::withTrashed()->findOrFail($locked->contact_id), 'conflict' => null];
-            }
-            if ($locked->decision !== 'approved') {
-                throw new LogicException('prospect_contact_not_approved');
-            }
-
-            $companyId = $locked->company_id
-                ?? ProspectBatchItem::query()->whereKey($locked->prospect_batch_item_id)->value('company_id');
-            if ($companyId === null) {
-                throw new LogicException('prospect_contact_company_required');
-            }
-            $email = strtolower(trim((string) $locked->normalized_email));
-            if (! $this->isValidCandidateEmail($email)) {
-                throw new LogicException('prospect_contact_email_invalid');
-            }
-
-            $contact = Contact::withNormalizedEmail($email)->lockForUpdate()->first();
-            if ($contact !== null && (int) $contact->company_id !== (int) $companyId) {
-                $locked->forceFill(['decision_reason' => 'email_owned_by_another_company'])->save();
-
-                return ['contact' => null, 'conflict' => 'prospect_contact_email_owned_by_another_company'];
-            }
-
-            if ($contact === null) {
-                try {
-                    $contact = Contact::query()->create([
-                        'company_id' => $companyId,
-                        'email' => $email,
-                        'name' => $this->contactName($locked, $email),
-                        'position' => $locked->position,
-                        'phone' => $locked->phone,
-                        'source' => 'discovered',
-                        'status' => 'new',
-                        'legal_basis' => 'legitimate_interest',
-                        'email_kind' => in_array($locked->email_kind, ['role', 'personal'], true)
-                            ? $locked->email_kind
-                            : 'role',
-                        'source_captured_at' => $locked->created_at ?? now(),
-                        ...$this->candidateVerificationAttributes($locked),
-                    ]);
-                } catch (QueryException $exception) {
-                    if (! $this->isUniqueConstraintViolation($exception)) {
-                        throw $exception;
-                    }
-                    $contact = Contact::withNormalizedEmail($email)->lockForUpdate()->first();
-                    if ($contact === null) {
-                        throw $exception;
-                    }
-                    if ((int) $contact->company_id !== (int) $companyId) {
-                        $locked->forceFill(['decision_reason' => 'email_owned_by_another_company'])->save();
-
-                        return ['contact' => null, 'conflict' => 'prospect_contact_email_owned_by_another_company'];
-                    }
-                }
-            }
-
-            $verification = $this->candidateVerificationAttributes($locked);
-            if ($this->shouldReplaceContactVerification($contact, $verification)) {
-                $contact->forceFill($verification)->save();
-            }
-            $locked->forceFill([
-                'company_id' => $companyId,
-                'contact_id' => $contact->getKey(),
-                'decision' => 'promoted',
-                'decision_reason' => null,
-            ])->save();
-
-            return ['contact' => $contact->fresh(), 'conflict' => null];
-        });
-
-        if ($result['contact'] === null) {
-            throw new LogicException((string) $result['conflict']);
+    /** Link the resolved company before provider contact calls without promoting the review item. */
+    public function linkCompanyForProcessing(ProspectBatchItem $item): Company
+    {
+        if ($item->company_id !== null) {
+            return Company::withRejected()->findOrFail($item->company_id);
         }
 
-        return $result['contact'];
+        $canonical = $this->domains->canonicalize((string) $item->selected_domain);
+        if ($canonical === null || $canonical->isPlatform) {
+            throw new LogicException('prospect_item_domain_not_promotable');
+        }
+
+        $lock = Cache::lock('prospect-promote:'.hash('sha256', $canonical->registrableDomain), 30);
+        try {
+            $acquired = $lock->block(3);
+        } catch (LockTimeoutException) {
+            throw new LogicException('prospect_item_promotion_lock_timeout');
+        }
+        if (! $acquired) {
+            throw new LogicException('prospect_item_promotion_lock_timeout');
+        }
+
+        try {
+            return DB::transaction(function () use ($item, $canonical): Company {
+                $locked = ProspectBatchItem::query()->lockForUpdate()->findOrFail($item->getKey());
+                if ($locked->company_id !== null) {
+                    return Company::withRejected()->findOrFail($locked->company_id);
+                }
+
+                $selected = $this->domains->canonicalize((string) $locked->selected_domain);
+                if ($selected === null || $selected->isPlatform
+                    || $selected->registrableDomain !== $canonical->registrableDomain) {
+                    throw new LogicException('prospect_item_domain_not_promotable');
+                }
+
+                $matches = $this->companiesForRegistrableDomain($selected, true);
+                $company = $matches->first(
+                    fn (Company $candidate): bool => $this->canonicalHost($candidate->domain) === $selected->host,
+                );
+                $related = $matches->reject(fn (Company $candidate): bool => $company !== null && $candidate->is($company));
+
+                if ($related->isNotEmpty()
+                    || ($company !== null && ! $this->companyNamesAgree($locked->company_name, $company->name))) {
+                    throw new LogicException('prospect_item_domain_conflict');
+                }
+
+                if ($company === null) {
+                    try {
+                        $company = Company::query()->create($this->newCompanyAttributes($locked, $selected));
+                    } catch (QueryException $exception) {
+                        if (! $this->isUniqueConstraintViolation($exception)) {
+                            throw $exception;
+                        }
+
+                        $company = Company::withRejected()
+                            ->where('domain', $selected->host)
+                            ->lockForUpdate()
+                            ->first();
+                        if ($company === null) {
+                            throw $exception;
+                        }
+                        if (! $this->companyNamesAgree($locked->company_name, $company->name)) {
+                            throw new LogicException('prospect_item_domain_conflict');
+                        }
+                    }
+                }
+
+                $this->fillEmptyCompanyFields($company, $locked, $selected);
+                $locked->forceFill(['company_id' => $company->getKey()])->save();
+
+                return $company->fresh();
+            });
+        } finally {
+            $lock->release();
+        }
     }
 
     public function refreshCounters(ProspectBatch $batch): void
@@ -1149,9 +996,29 @@ final class ProspectBatchService
             if (isset($stored['reserved_units'][$provider])) {
                 $stored['reserved_units'][$provider] = (float) $stored['reserved_units'][$provider];
             }
+            if (isset($current['reserved_units'][$provider])) {
+                $current['reserved_units'][$provider] = (float) $current['reserved_units'][$provider];
+            }
         }
 
-        return $stored === $current;
+        return $this->canonicalizeEstimate($stored) === $this->canonicalizeEstimate($current);
+    }
+
+    private function canonicalizeEstimate(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+
+        foreach ($value as $key => $item) {
+            $value[$key] = $this->canonicalizeEstimate($item);
+        }
+
+        return $value;
     }
 
     private function recomputeCounters(ProspectBatch $batch): void
@@ -1165,9 +1032,7 @@ final class ProspectBatchService
             'review_items' => (clone $items)->where('status', 'review')->count(),
             'failed_items' => (clone $items)->where('status', 'failed')->count(),
             'promoted_companies' => (clone $items)->where('status', 'promoted')->count(),
-            'candidate_contacts' => ProspectContactCandidate::query()
-                ->where('prospect_batch_id', $batchId)
-                ->count(),
+            'imported_contacts' => ProspectBatchContact::query()->where('prospect_batch_id', $batchId)->count(),
         ])->save();
     }
 
@@ -1221,89 +1086,6 @@ final class ProspectBatchService
         $value = $this->nullableText($value);
 
         return $value === null ? null : mb_substr($value, 0, $length);
-    }
-
-    private function evidenceDate(mixed $value): ?CarbonImmutable
-    {
-        if ($value instanceof DateTimeInterface) {
-            return CarbonImmutable::instance($value);
-        }
-        if (! is_string($value) || trim($value) === '') {
-            return null;
-        }
-
-        try {
-            return CarbonImmutable::parse($value);
-        } catch (Throwable) {
-            return null;
-        }
-    }
-
-    /** @return array<string, bool|int|string>|null */
-    private function candidateMetadata(mixed $value): ?array
-    {
-        if (! is_array($value)) {
-            return null;
-        }
-
-        $safe = [];
-        foreach (self::CANDIDATE_METADATA_KEYS as $key) {
-            if (! array_key_exists($key, $value)) {
-                continue;
-            }
-            $candidate = $value[$key];
-            if ($key === 'source_hash') {
-                if (is_string($candidate) && preg_match('/^[a-f0-9]{64}$/', $candidate) === 1) {
-                    $safe[$key] = $candidate;
-                }
-
-                continue;
-            }
-            if ($key === 'confidence') {
-                $candidate = filter_var($candidate, FILTER_VALIDATE_INT, [
-                    'options' => ['min_range' => 0, 'max_range' => 100],
-                ]);
-                if ($candidate !== false) {
-                    $safe[$key] = $candidate;
-                }
-
-                continue;
-            }
-            if (in_array($key, ['page', 'offset'], true)) {
-                $candidate = filter_var($candidate, FILTER_VALIDATE_INT, [
-                    'options' => ['min_range' => 0, 'max_range' => 10_000],
-                ]);
-                if ($candidate !== false) {
-                    $safe[$key] = $candidate;
-                }
-
-                continue;
-            }
-            if ($key === 'decision_maker' && is_bool($candidate)) {
-                $safe[$key] = $candidate;
-
-                continue;
-            }
-            if (! is_string($candidate)) {
-                continue;
-            }
-            $candidate = trim($candidate);
-            if ($candidate !== '' && mb_strlen($candidate) <= 64
-                && preg_match('/[\x00-\x1F\x7F]/', $candidate) !== 1
-                && ! str_contains($candidate, '://')
-                && ! str_contains($candidate, '@')) {
-                $safe[$key] = $candidate;
-            }
-        }
-
-        return $safe === [] ? null : $safe;
-    }
-
-    private function safeReason(mixed $value): ?string
-    {
-        $value = strtolower(trim((string) $value));
-
-        return preg_match('/^[a-z][a-z0-9_]{0,63}$/', $value) === 1 ? $value : null;
     }
 
     private function isUniqueConstraintViolation(QueryException $exception): bool
@@ -1438,72 +1220,5 @@ final class ProspectBatchService
         }
 
         return $safe;
-    }
-
-    private function contactName(ProspectContactCandidate $candidate, string $email): string
-    {
-        $name = $this->boundedNullable($candidate->name, 255);
-        if ($name !== null) {
-            return $name;
-        }
-
-        $local = strstr($email, '@', true);
-
-        return $local === false || $local === '' ? $email : $local;
-    }
-
-    /** @return array<string, mixed> */
-    private function candidateVerificationAttributes(ProspectContactCandidate $candidate): array
-    {
-        $status = strtolower(trim((string) $candidate->verification_status));
-        $source = strtolower(trim((string) $candidate->verification_source));
-        if (! in_array($status, self::VERIFICATION_STATUSES, true)
-            || ! in_array($source, self::VERIFICATION_SOURCES, true)) {
-            return [];
-        }
-
-        return [
-            'email_verification_status' => $status,
-            'email_verification_checked_at' => $candidate->verification_checked_at,
-            'email_verification_source' => $source,
-        ];
-    }
-
-    /** @param array<string, mixed> $candidate */
-    private function shouldReplaceContactVerification(Contact $contact, array $candidate): bool
-    {
-        if ($candidate === []) {
-            return false;
-        }
-
-        $hasExistingEvidence = $contact->email_verification_status !== null
-            || $contact->email_verification_checked_at !== null
-            || $contact->email_verification_source !== null;
-        if (! $hasExistingEvidence) {
-            return true;
-        }
-
-        $candidateSource = (string) ($candidate['email_verification_source'] ?? '');
-        $contactSource = strtolower(trim((string) $contact->email_verification_source));
-        if ($contactSource === 'manual' && $candidateSource !== 'manual') {
-            return false;
-        }
-
-        $candidateCheckedAt = $candidate['email_verification_checked_at'] ?? null;
-        $contactCheckedAt = $contact->email_verification_checked_at;
-        if (! $candidateCheckedAt instanceof DateTimeInterface || ! $contactCheckedAt instanceof DateTimeInterface) {
-            return false;
-        }
-
-        return $candidateCheckedAt->getTimestamp() > $contactCheckedAt->getTimestamp();
-    }
-
-    private function isValidCandidateEmail(string $email): bool
-    {
-        if ($email === '' || strlen($email) > 191 || preg_match('/[^\x21-\x7E]/', $email) === 1) {
-            return false;
-        }
-
-        return ! Validator::make(['email' => $email], ['email' => ['required', 'email:rfc', 'max:191']])->fails();
     }
 }

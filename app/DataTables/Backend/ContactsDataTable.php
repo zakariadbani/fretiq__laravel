@@ -4,7 +4,7 @@ namespace App\DataTables\Backend;
 
 use App\DataTables\BackendDataTable;
 use App\Models\Contact;
-use App\Services\Campaign\ContactEligibilityService;
+use App\Services\Prospecting\ContactLifecycleService;
 use Illuminate\Http\Request;
 
 class ContactsDataTable extends BackendDataTable
@@ -20,12 +20,6 @@ class ContactsDataTable extends BackendDataTable
             'orderable' => true,
             'searchable' => true,
         ],
-        'email_verification_status' => [
-            'title' => 'Qualité email',
-            'orderable' => true,
-            'searchable' => false,
-            'raw' => true,
-        ],
         'position' => [
             'title' => 'Poste',
             'orderable' => true,
@@ -37,14 +31,8 @@ class ContactsDataTable extends BackendDataTable
             'searchable' => true,
             'raw' => true,
         ],
-        'status' => [
-            'title' => 'Statut',
-            'orderable' => true,
-            'searchable' => false,
-            'raw' => true,
-        ],
-        'legal_basis' => [
-            'title' => 'Légal',
+        'lifecycle_state' => [
+            'title' => 'État',
             'orderable' => true,
             'searchable' => false,
             'raw' => true,
@@ -57,11 +45,11 @@ class ContactsDataTable extends BackendDataTable
     ];
 
     protected $table_filters = [
-        'status' => [
+        'lifecycle_state' => [
             'type' => 'select_enum',
-            'filterKey' => 'status',
-            'configKey' => 'contact_statuses',
-            'title' => 'Statut',
+            'filterKey' => 'lifecycle_state',
+            'configKey' => 'contact_lifecycle_states',
+            'title' => 'État',
         ],
         'email_kind' => [
             'type' => 'select_enum',
@@ -75,15 +63,9 @@ class ContactsDataTable extends BackendDataTable
             'configKey' => 'contact_sources',
             'title' => 'Source',
         ],
-        'email_verification_status' => [
-            'type' => 'select_enum',
-            'filterKey' => 'email_verification_status',
-            'configKey' => 'contact_email_verification_statuses',
-            'title' => 'Qualité email',
-        ],
     ];
 
-    public function __construct(Contact $model, Request $request, private readonly ContactEligibilityService $eligibility)
+    public function __construct(Contact $model, Request $request, private readonly ContactLifecycleService $lifecycle)
     {
         parent::__construct($model, $request);
     }
@@ -93,17 +75,14 @@ class ContactsDataTable extends BackendDataTable
      */
     public function query()
     {
-        return $this->currentModel->newQuery()->with('company');
+        return $this->lifecycle->select($this->currentModel->newQuery()->with('company'));
     }
 
     /**
-     * Render company as a link, status and legal_basis as coloured badges.
+     * Render company as a link and the calculated lifecycle as a badge.
      */
     protected function createEditColumns(): void
     {
-        $statuses = config('global.data.contact_statuses', []);
-        $legalBases = config('global.data.contact_legal_bases', []);
-
         $this->datatables->filterColumn('company', function ($query, $keyword) {
             $kw = '%'.mb_strtolower($keyword).'%';
             $query->whereHas('company', function ($q) use ($kw) {
@@ -123,33 +102,34 @@ class ContactsDataTable extends BackendDataTable
             return '<a href="'.$url.'" class="text-gray-900 text-hover-primary">'.$name.'</a>';
         });
 
-        $this->datatables->editColumn('status', function (Contact $row) use ($statuses) {
-            if (empty($row->status)) {
-                return '<span class="text-muted">—</span>';
-            }
-            $cfg = $statuses[$row->status] ?? [];
-            $label = $cfg['label'] ?? $row->status;
+        $this->datatables->filterColumn('lifecycle_state', function ($query, $state): void {
+            $this->lifecycle->applyState($query, (string) $state);
+        });
+        $this->datatables->orderColumn('lifecycle_state', function ($query, $direction): void {
+            $this->lifecycle->orderByState($query, (string) $direction);
+        });
+        $this->datatables->editColumn('lifecycle_state', function (Contact $row) {
+            $cfg = $this->lifecycle->label((string) $row->lifecycle_state);
+            $label = $cfg['label'] ?? $row->lifecycle_state;
             $color = $cfg['color'] ?? 'secondary';
 
             return '<span class="badge badge-light-'.e($color).'">'.e($label).'</span>';
         });
+    }
 
-        $this->datatables->editColumn('email_verification_status', function (Contact $row) {
-            $badge = $this->eligibility->badge($row);
+    protected function applyFilters(): void
+    {
+        $request = $this->currentRequest->all();
+        $state = trim((string) ($request['lifecycle_state'] ?? ''));
+        unset($request['lifecycle_state']);
 
-            return '<span class="badge badge-light-'.e($badge['color']).'">'.e($badge['label']).'</span>';
-        });
+        foreach ($this->createFilterConditions($request) as $condition) {
+            $this->currentQuery->where($condition[0], $condition[1], $condition[2]);
+        }
 
-        $this->datatables->editColumn('legal_basis', function (Contact $row) use ($legalBases) {
-            if (empty($row->legal_basis)) {
-                return '<span class="text-muted">—</span>';
-            }
-            $cfg = $legalBases[$row->legal_basis] ?? [];
-            $label = $cfg['label'] ?? $row->legal_basis;
-            $color = $cfg['color'] ?? 'secondary';
-
-            return '<span class="badge badge-light-'.e($color).'">'.e($label).'</span>';
-        });
+        if ($state !== '') {
+            $this->lifecycle->applyState($this->currentQuery, $state);
+        }
     }
 
     protected function getEntityName(): string

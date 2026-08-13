@@ -68,9 +68,7 @@ class MarkRepliedTest extends TestCase
             'company_id'  => $co->id,
             'email'       => $email,
             'name'        => 'J',
-            'status'      => 'new',
             'source'      => 'manual',
-            'legal_basis' => 'relationship',
             'email_kind'  => 'role',
         ]);
     }
@@ -124,7 +122,7 @@ class MarkRepliedTest extends TestCase
 
     /**
      * Superadmin can mark a recipient as replied.
-     * Expect: redirect (302 to campaign view) or 200; Demande created; recipient.status='replied'.
+     * Reply evidence is recorded without creating a demande before triage.
      */
     public function test_superadmin_can_mark_replied(): void
     {
@@ -139,13 +137,14 @@ class MarkRepliedTest extends TestCase
         // Controller returns redirect to campaign view
         $response->assertRedirect();
 
-        $this->assertDatabaseHas('demandes', [
+        $this->assertDatabaseMissing('demandes', [
             'contact_id'  => $contact->id,
             'campaign_id' => $campaign->id,
         ]);
 
         $recipient->refresh();
         $this->assertSame('replied', $recipient->status, 'Recipient status must be replied');
+        $this->assertNotNull($recipient->replied_at);
     }
 
     /**
@@ -164,16 +163,17 @@ class MarkRepliedTest extends TestCase
         // Must not be 403
         $this->assertNotEquals(403, $response->status(), 'Commercial must not receive 403 on markReplied');
 
-        $this->assertDatabaseHas('demandes', [
+        $this->assertDatabaseMissing('demandes', [
             'contact_id'  => $contact->id,
             'campaign_id' => $campaign->id,
         ]);
+        $this->assertSame('replied', $recipient->fresh()->status);
     }
 
     /**
-     * After markReplied, the CampaignRun.conversion_count is incremented.
+     * A reply alone is not a conversion; only interested triage creates a demande.
      */
-    public function test_mark_replied_increments_conversion_count(): void
+    public function test_mark_replied_does_not_increment_conversion_count_without_interested_triage(): void
     {
         $contact   = $this->makeContact('jrun@acme.test');
         $campaign  = $this->makeCampaign();
@@ -188,9 +188,9 @@ class MarkRepliedTest extends TestCase
         $run->refresh();
 
         $this->assertSame(
-            $initialCount + 1,
+            $initialCount,
             (int) $run->conversion_count,
-            'conversion_count must be incremented after markReplied',
+            'conversion_count must remain unchanged until interested triage creates a demande',
         );
     }
 }

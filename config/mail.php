@@ -15,6 +15,11 @@ return [
 
     'default' => env('MAIL_MAILER', 'smtp'),
 
+    // This is deliberately independent from MAIL_MAILER: every application
+    // path goes through SmtpMailRouter so local previews cannot accidentally
+    // inherit a provider mailer.
+    'smtp_mode' => env('SMTP_MODE'),
+
     /*
     |--------------------------------------------------------------------------
     | Mailer Configurations
@@ -34,6 +39,14 @@ return [
     */
 
     'mailers' => [
+        'mailpit' => [
+            'transport' => 'smtp',
+            'host' => env('MAILPIT_HOST', '127.0.0.1'),
+            'port' => env('MAILPIT_PORT', 1025),
+            'encryption' => null,
+            'username' => null,
+            'password' => null,
+        ],
         'smtp' => [
             'transport' => 'smtp',
             'host' => env('MAIL_HOST', 'smtp.mailgun.org'),

@@ -159,14 +159,6 @@ class Company extends Model
     }
 
     /**
-     * Staged contact candidates associated with this company.
-     */
-    public function prospectContactCandidates(): HasMany
-    {
-        return $this->hasMany(ProspectContactCandidate::class);
-    }
-
-    /**
      * The discovery/manual run currently admitted to call Hunter for this company.
      */
     public function enrichmentClaimRun(): BelongsTo

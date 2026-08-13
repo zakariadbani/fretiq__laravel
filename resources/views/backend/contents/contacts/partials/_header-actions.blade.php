@@ -9,34 +9,32 @@
     @can('verify contacts')
         @php
             $verificationStatus = strtolower((string) $model->email_verification_status);
-            $verificationFresh = $model->email_verification_checked_at?->gte(
-                now()->subDays((int) config('prospecting.email_verification_ttl_days', 90))
-            ) ?? false;
+            $hasVerificationEvidence = filled($model->email_verification_status)
+                || filled($model->email_verification_source)
+                || $model->email_verification_checked_at !== null;
+            $verificationEnabled = app(\App\Services\Discovery\EmailVerificationSettings::class)->enabled();
         @endphp
         @if($verificationStatus === 'pending')
             <span class="badge badge-light-primary">Vérification en cours</span>
         @else
             <form method="POST" action="{{ route('admin.contacts.verify-email', $model->id) }}" class="d-inline">
                 @csrf
-                <label class="form-check form-check-inline form-check-sm mb-0 me-1" title="Confirme le coût avant l’appel Hunter">
+                <label class="form-check form-check-inline form-check-sm mb-0 me-1" title="Confirme le coût avant l’appel au service externe">
                     <input class="form-check-input" type="checkbox" name="confirm_provider_cost" value="1" required>
                     <span class="form-check-label">Confirmer</span>
                 </label>
-                @if($verificationFresh)
+                @if($hasVerificationEvidence)
                     <input type="hidden" name="force" value="1">
                     <input type="hidden" name="client_token" value="{{ \Illuminate\Support\Str::uuid() }}">
                 @endif
-                <button type="submit" class="btn btn-sm btn-light-primary">
-                    {{ $verificationFresh ? 'Revérifier' : 'Vérifier' }} l’email
-                    ({{ number_format((float) config('prospecting.provider_units.hunter.email_verifier', 0.5), 1, ',', ' ') }} crédit Hunter)
+                <button type="submit" class="btn btn-sm btn-light-primary" {{ $verificationEnabled ? '' : 'disabled' }}>
+                    {{ $hasVerificationEvidence ? 'Revérifier' : 'Vérifier' }} l’email
+                    ({{ number_format((float) config('prospecting.provider_units.hunter.email_verifier', 0.5), 1, ',', ' ') }} crédit)
                 </button>
             </form>
-        @endif
-        @if(in_array($verificationStatus, ['', 'unknown'], true))
-            <form method="POST" action="{{ route('admin.contacts.approve-email', $model->id) }}" class="d-inline">
-                @csrf
-                <button type="submit" class="btn btn-sm btn-light">Approuver manuellement</button>
-            </form>
+            @if(! $verificationEnabled)
+                <span class="text-muted fs-8">Désactivée dans les paramètres</span>
+            @endif
         @endif
     @endcan
     @can('edit contacts')

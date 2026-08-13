@@ -42,10 +42,7 @@ class SequenceViewConfig
                 'icon' => 'bi-list-ol',
                 'text' => $stepsCount . ' étape' . ($stepsCount !== 1 ? 's' : ''),
             ];
-            $subtitle[] = [
-                'icon' => $model->stop_on_reply ? 'bi-reply-fill' : 'bi-reply',
-                'text' => $model->stop_on_reply ? 'Stop si réponse' : 'Continue sur réponse',
-            ];
+            $subtitle[] = ['icon' => 'bi-reply-fill', 'text' => 'Arrêt automatique sur réponse'];
         }
 
         // ── Hero tiles ────────────────────────────────────────────────────────
@@ -54,12 +51,9 @@ class SequenceViewConfig
             $activeColor = $model->is_active ? 'success' : 'secondary';
             $activeLabel = $model->is_active ? 'Actif' : 'Inactif';
 
-            $stopColor = $model->stop_on_reply ? 'success' : 'secondary';
-            $stopLabel = $model->stop_on_reply ? 'Oui' : 'Non';
-
             $tiles = [
                 ['icon' => 'bi-toggle-on',  'color' => $activeColor, 'value' => $activeLabel,   'caption' => 'Actif'],
-                ['icon' => 'bi-reply-fill',  'color' => $stopColor,   'value' => $stopLabel,      'caption' => 'Stop si réponse'],
+                ['icon' => 'bi-reply-fill', 'color' => 'success', 'value' => 'Toujours', 'caption' => 'Arrêt sur réponse'],
                 ['icon' => 'bi-list-ol',     'color' => 'primary',    'value' => $stepsCount ?? 0, 'caption' => 'Étapes'],
             ];
         }
@@ -102,7 +96,7 @@ class SequenceViewConfig
             $detailRows = [
                 ['label' => 'Nom',              'value' => $model->name,          'type' => 'text'],
                 ['label' => 'Actif',            'value' => $model->is_active,     'type' => 'boolean'],
-                ['label' => 'Stop si réponse',  'value' => $model->stop_on_reply, 'type' => 'boolean'],
+                ['label' => 'Arrêt sur réponse', 'value' => 'Toujours', 'type' => 'text'],
                 ['label' => 'Nombre d\'étapes', 'value' => $stepsCount,           'type' => 'text'],
                 ['label' => 'Créé le',          'value' => $model->created_at,    'type' => 'date'],
             ];

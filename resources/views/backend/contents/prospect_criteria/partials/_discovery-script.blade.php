@@ -382,7 +382,7 @@
             + Number(data.contact_attempts_reserved || 0) + ' tentatives d’enrichissement, '
             + Number(data.successful_enrichments || 0) + '/'
             + Number(data.successful_enrichments_target || 0) + ' enrichissement(s) réussi(s), '
-            + Number(data.contacts_count || 0) + ' contact(s) créé(s).';
+            + Number(data.contacts_count || 0) + ' contact(s) importé(s).';
         showToast('success', completion, 'Succès');
         stop(state, true);
 

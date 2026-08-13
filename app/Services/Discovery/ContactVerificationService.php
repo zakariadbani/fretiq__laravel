@@ -10,6 +10,7 @@ use App\Services\Providers\ProviderCallContext;
 use App\Services\Providers\ProviderCallLedger;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use DomainException;
 use InvalidArgumentException;
 
 final class ContactVerificationService
@@ -22,11 +23,12 @@ final class ContactVerificationService
     public function __construct(
         private readonly HunterClient $hunter,
         private readonly ProviderCallLedger $ledger,
+        private readonly EmailVerificationSettings $settings,
     ) {}
 
     public function verify(Contact $contact, bool $force = false, ?string $clientToken = null): Contact
     {
-        if ($this->isFresh($contact) && ! $force) {
+        if ($this->hasEvidence($contact) && ! $force) {
             return $contact->fresh() ?? $contact;
         }
 
@@ -48,22 +50,12 @@ final class ContactVerificationService
         return $this->execute($contactId, $idempotencyKey, true);
     }
 
-    public function approveManually(Contact $contact): Contact
-    {
-        return DB::transaction(function () use ($contact): Contact {
-            $locked = Contact::query()->lockForUpdate()->findOrFail($contact->id);
-            $locked->forceFill([
-                'email_verification_status' => 'unknown',
-                'email_verification_source' => 'manual',
-                'email_verification_checked_at' => now(),
-            ])->save();
-
-            return $locked->fresh();
-        });
-    }
-
     private function execute(int $contactId, string $key, bool $isPoll): Contact
     {
+        if (! $this->settings->enabled()) {
+            throw new DomainException('email_verification_disabled');
+        }
+
         $contact = Contact::query()->findOrFail($contactId);
         $execution = $this->hunter->emailVerifier($this->context($key), strtolower(trim((string) $contact->email)));
 
@@ -169,11 +161,11 @@ final class ContactVerificationService
         return (float) $execution->call->reserved_units > 0 ? $this->unitCost() : 0.0;
     }
 
-    private function isFresh(Contact $contact): bool
+    private function hasEvidence(Contact $contact): bool
     {
-        return $contact->email_verification_checked_at?->gte(
-            now()->subDays((int) config('prospecting.email_verification_ttl_days', 90)),
-        ) ?? false;
+        return filled($contact->email_verification_status)
+            || filled($contact->email_verification_source)
+            || $contact->email_verification_checked_at !== null;
     }
 
     private function idempotencyKey(Contact $contact, bool $force, ?string $clientToken): string

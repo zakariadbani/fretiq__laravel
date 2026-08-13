@@ -81,7 +81,7 @@ class PacedSequenceEnrollmentService
 
             $locked->loadMissing(['segment', 'sequence']);
             $firstStep = $locked->sequence->steps()->orderBy('step_no')->firstOrFail();
-            $contacts = $this->segmentService->resolve($locked->segment);
+            $contacts = $this->segmentService->resolve($locked->segment, $locked->emailVerificationPolicy());
             $existingContactIds = SequenceEnrollment::query()
                 ->where('sequence_id', $locked->sequence_id)
                 ->pluck('contact_id')

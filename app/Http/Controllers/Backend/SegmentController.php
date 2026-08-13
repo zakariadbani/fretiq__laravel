@@ -162,7 +162,7 @@ class SegmentController extends BackendController
      *   filter        array    nullable
      *   filter.sector array    nullable, max 20, chaque entrée string max 100
      *   filter.country array   nullable, max 20, chaque entrée string size:2 in company_countries keys
-     *   filter.status string   nullable, in contact_statuses keys
+     *   filter.lifecycle_state string nullable, in calculated lifecycle keys
      *
      * Réponse 200 :
      *   matched, suppressed, duplicates_excluded, final, sample[],
@@ -181,7 +181,7 @@ class SegmentController extends BackendController
     private function validatedScopeFilter(Request $request): array
     {
         $countryCodes    = array_keys(config('global.data.company_countries', []));
-        $contactStatuses = array_keys(config('global.data.contact_statuses', []));
+        $lifecycleStates = array_keys(config('global.data.contact_lifecycle_states', []));
         $segmentScopes   = array_keys(config('global.data.segment_scopes', []));
 
         $validated = $request->validate([
@@ -193,7 +193,7 @@ class SegmentController extends BackendController
             'filter.country.*'     => 'string|size:2|in:' . implode(',', $countryCodes),
             'filter.criteria_id'   => ['nullable', 'array'],
             'filter.criteria_id.*' => ['integer', 'exists:prospect_criteria,id'],
-            'filter.status'        => 'nullable|string|in:' . implode(',', $contactStatuses),
+            'filter.lifecycle_state' => 'nullable|string|in:' . implode(',', $lifecycleStates),
         ]);
 
         return [
@@ -258,7 +258,7 @@ class SegmentController extends BackendController
             'scopes'         => config('global.data.segment_scopes', []),
             'sectors'        => $sectors,
             'countries'      => $countries,
-            'contactStatuses' => config('global.data.contact_statuses', []),
+            'lifecycleStates' => config('global.data.contact_lifecycle_states', []),
         ];
     }
 
@@ -298,10 +298,10 @@ class SegmentController extends BackendController
             $filter['country'] = $country;
         }
 
-        // filter.status — scalaire, on exclut si vide.
-        $status = trim((string) ($rawFilter['status'] ?? ''));
+        // filter.lifecycle_state — scalaire, on exclut si vide.
+        $status = trim((string) ($rawFilter['lifecycle_state'] ?? ''));
         if ($status !== '') {
-            $filter['status'] = $status;
+            $filter['lifecycle_state'] = $status;
         }
 
         $attributes['is_manual'] = $this->currentRequest->boolean('is_manual');
@@ -523,7 +523,9 @@ class SegmentController extends BackendController
 
         // Excluded contacts (separate query, not in paginator total).
         // Always the saved excluded contacts — pins are filter-independent.
-        $excludedContacts = $segment->excludedContacts()->with('company:id,name')->get();
+        $excludedContacts = app(\App\Services\Prospecting\ContactLifecycleService::class)
+            ->select($segment->excludedContacts()->with('company:id,name'))
+            ->get();
 
         return view('backend.contents.segments.partials._contacts-rows', [
             'segment'          => $segment,
@@ -555,7 +557,7 @@ class SegmentController extends BackendController
         ];
         $scopeLabel = $scopeLabels[$scope] ?? $scope;
 
-        $hasFilter = ! empty($filter['sector']) || ! empty($filter['country']) || ! empty($filter['status']);
+        $hasFilter = ! empty($filter['sector']) || ! empty($filter['country']) || ! empty($filter['lifecycle_state']);
 
         if (! $hasFilter) {
             return "Cible : tous les contacts {$scopeLabel}";
@@ -584,11 +586,11 @@ class SegmentController extends BackendController
             }
         }
 
-        // Statut
-        if (! empty($filter['status'])) {
-            $statusConfig = config('global.data.contact_statuses.' . $filter['status'], null);
-            $statusLabel  = $statusConfig['label'] ?? $filter['status'];
-            $parts[] = 'au statut ' . $statusLabel;
+        // État
+        if (! empty($filter['lifecycle_state'])) {
+            $statusConfig = config('global.data.contact_lifecycle_states.' . $filter['lifecycle_state'], null);
+            $statusLabel  = $statusConfig['label'] ?? $filter['lifecycle_state'];
+            $parts[] = 'à l’état ' . $statusLabel;
         }
 
         return implode(' ', $parts);
@@ -625,9 +627,9 @@ class SegmentController extends BackendController
             $filter['criteria_id'] = $criteriaId;
         }
 
-        $status = trim((string) ($rawFilter['status'] ?? ''));
+        $status = trim((string) ($rawFilter['lifecycle_state'] ?? ''));
         if ($status !== '') {
-            $filter['status'] = $status;
+            $filter['lifecycle_state'] = $status;
         }
 
         return $filter;

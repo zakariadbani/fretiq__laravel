@@ -182,7 +182,7 @@ class ProspectCriteriaViewConfig
             [
                 'icon' => 'bi-person-lines-fill',
                 'color' => 'info',
-                'label' => 'Contacts créés (dernière exéc.)',
+                'label' => 'Contacts importés (dernière exéc.)',
                 'value' => $runContactsCount,
                 'hint' => $runContactsCount === null
                     ? 'Données disponibles après la première découverte'
@@ -193,7 +193,7 @@ class ProspectCriteriaViewConfig
         // Contact coverage
         $contactCoverage = $stats['contact_coverage'] ?? null;
         if ($hasId && is_array($contactCoverage)) {
-            $batchDeferred = (int) ($contactCoverage['batch_deferred_count'] ?? 0);
+            $callable = (int) ($contactCoverage['callable_count'] ?? 0);
             $ineligible = (int) ($contactCoverage['ineligible_count'] ?? 0);
             $quotaDeferred = (int) ($contactCoverage['quota_deferred_count'] ?? 0);
 
@@ -216,10 +216,10 @@ class ProspectCriteriaViewConfig
                 [
                     'icon' => 'bi-person-plus-fill',
                     'color' => 'primary',
-                    'label' => 'Enrichissables maintenant',
-                    'value' => (int) ($contactCoverage['callable_count'] ?? 0),
+                    'label' => 'Entreprises à enrichir',
+                    'value' => (int) ($contactCoverage['eligible_count'] ?? 0),
                     'hint' => 'Score ≥ '.(int) ($contactCoverage['effective_min_score'] ?? 0)
-                        .' · '.$batchDeferred.' en attente du prochain lot',
+                        .' · '.$callable.' '.($callable === 1 ? 'traitable' : 'traitables').' au prochain lot',
                 ],
                 [
                     'icon' => 'bi-hourglass-split',

@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Backend;
 
 use App\Http\Controllers\Controller;
 use App\Services\Discovery\DiscoveryEngineRegistry;
+use App\Services\Discovery\ContactVerificationBatchService;
+use App\Services\Discovery\EmailVerificationSettings;
 use App\Services\Scheduling\BusinessCalendarService;
 use App\Services\Settings\SettingService;
 use App\Support\DomainBlocklist;
@@ -30,8 +32,9 @@ class SettingController extends Controller
         protected DiscoveryEngineRegistry $engineRegistry,
         protected BusinessCalendarService $calendarService,
     ) {
-        $this->middleware('permission:view settings');
-        $this->middleware('permission:edit settings')->only('save');
+        $this->middleware('permission:view settings')->only('index');
+        $this->middleware('permission:edit settings')->only(['save', 'estimateEmailVerification', 'runEmailVerification']);
+        $this->middleware('permission:verify contacts')->only(['estimateEmailVerification', 'runEmailVerification']);
     }
 
     /**
@@ -275,8 +278,26 @@ class SettingController extends Controller
 
         'delivrabilite' => [
             'label' => 'Délivrabilité',
-            'enabled' => false,
-            'description' => 'Paramètres de délivrabilité : SPF / DKIM / DMARC, gestion des rebonds et warm-up.',
+            'enabled' => true,
+            'description' => 'Vérification des adresses et politique appliquée par défaut aux nouvelles campagnes.',
+            'fields' => [
+                'email_verification_enabled' => [
+                    'type' => 'boolean',
+                    'label' => 'Activer la vérification des adresses email',
+                    'default' => true,
+                    'help' => 'Lorsqu\'elle est désactivée, aucun nouvel appel de vérification ne part, y compris depuis les actions individuelles et groupées.',
+                ],
+                'default_email_verification_policy' => [
+                    'type' => 'select',
+                    'label' => 'Politique par défaut des nouvelles campagnes',
+                    'default' => 'verified_only',
+                    'options' => [
+                        'verified_only' => 'Adresses vérifiées uniquement',
+                        'all_sendable' => 'Toutes les adresses envoyables',
+                    ],
+                    'help' => 'Chaque campagne conserve ensuite son propre choix.',
+                ],
+            ],
         ],
 
     ];
@@ -429,6 +450,15 @@ class SettingController extends Controller
             ]);
         }
 
+        if ($request->has('settings.delivrabilite')) {
+            $request->validate([
+                'settings.delivrabilite.default_email_verification_policy' => [
+                    'required',
+                    Rule::in(['verified_only', 'all_sendable']),
+                ],
+            ]);
+        }
+
         DB::transaction(function () use ($request) {
             foreach ($this->tabs as $group => $tabConfig) {
                 if (! ($tabConfig['enabled'] ?? false) || ! $request->has("settings.{$group}")) {
@@ -467,6 +497,36 @@ class SettingController extends Controller
         return redirect()
             ->to(route('admin.settings.index').'#kt_tab_'.$activeTab)
             ->with('success', 'Les paramètres ont été enregistrés avec succès.');
+    }
+
+    public function estimateEmailVerification(ContactVerificationBatchService $batch): \Illuminate\Http\JsonResponse
+    {
+        return response()->json($batch->estimate());
+    }
+
+    public function runEmailVerification(
+        Request $request,
+        ContactVerificationBatchService $batch,
+        EmailVerificationSettings $settings,
+    ): \Illuminate\Http\JsonResponse {
+        $validated = $request->validate([
+            'confirm' => ['accepted'],
+            'expected_count' => ['required', 'integer', 'min:0'],
+        ]);
+
+        if (! $settings->enabled()) {
+            return response()->json(['message' => 'La vérification email est désactivée.'], 409);
+        }
+
+        $estimate = $batch->estimate();
+        if ((int) $validated['expected_count'] !== $estimate['eligible']) {
+            return response()->json([
+                'message' => 'L\'estimation a changé. Confirmez le nouveau nombre de contacts.',
+                'estimate' => $estimate,
+            ], 409);
+        }
+
+        return response()->json(['queued' => $batch->enqueue(), 'estimate' => $estimate]);
     }
 
     /**

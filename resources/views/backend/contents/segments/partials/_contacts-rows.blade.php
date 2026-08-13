@@ -15,7 +15,7 @@
 
 @php
     $pinnedOut = $counts['pinned_out'] ?? 0;
-    $contactStatuses = config('global.data.contact_statuses', []);
+    $contactStatuses = config('global.data.contact_lifecycle_states', []);
 @endphp
 
 <div data-contacts-count="{{ $counts['contacts_count'] ?? 0 }}">
@@ -50,7 +50,7 @@
                     </thead>
                     <tbody>
                         @forelse($excludedContacts as $exc)
-                            @php $excStatusCfg = $contactStatuses[$exc->status] ?? []; @endphp
+                            @php $excStatusCfg = $contactStatuses[$exc->lifecycle_state] ?? []; @endphp
                             <tr>
                                 <td>
                                     <span class="text-gray-800 fw-semibold fs-7">{{ $exc->name }}</span>
@@ -140,7 +140,7 @@
                         <th class="min-w-120px">Email</th>
                         <th class="min-w-100px">Société</th>
                         <th class="min-w-80px">Provenance</th>
-                        <th class="min-w-80px">Statut</th>
+                        <th class="min-w-80px">État</th>
                         <th class="text-end">Action</th>
                     </tr>
                 </thead>
@@ -148,7 +148,7 @@
                     @foreach($paginator->items() as $contact)
                         @php
                             $prov       = $provenance[$contact->id] ?? 'filter';
-                            $statusCfg  = $contactStatuses[$contact->status] ?? [];
+                            $statusCfg  = $contactStatuses[$contact->lifecycle_state] ?? [];
                         @endphp
                         <tr>
                             <td>
@@ -222,7 +222,7 @@
         @foreach($paginator->items() as $contact)
             @php
                 $prov      = $provenance[$contact->id] ?? 'filter';
-                $statusCfg = $contactStatuses[$contact->status] ?? [];
+                $statusCfg = $contactStatuses[$contact->lifecycle_state] ?? [];
             @endphp
             <div class="border rounded p-3 mb-3">
                 <div class="d-flex justify-content-between align-items-start mb-2">

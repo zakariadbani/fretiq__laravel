@@ -39,7 +39,7 @@ class SmtpCampaignPacingTest extends TestCase
         config([
             'app.env' => 'testing',
             'services.zoho.driver' => 'local',
-            'prospecting.smtp.mode' => 'mailpit',
+            'mail.smtp_mode' => 'mailpit',
         ]);
         Mail::fake();
         Queue::fake();
@@ -170,7 +170,7 @@ class SmtpCampaignPacingTest extends TestCase
         app(CampaignService::class)->sendRun($run);
         $reservation = SmtpSendReservation::firstOrFail();
         $reservation->update(['reserved_for' => now()->subSecond()]);
-        config(['app.env' => 'production', 'prospecting.smtp.mode' => 'sender_identity']);
+        config(['mail.smtp_mode' => 'sender_identity']);
 
         (new SendSmtpReservationJob($reservation->id))->handle(
             app(SmtpSendReservationService::class),

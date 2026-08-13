@@ -117,21 +117,7 @@
                                     </div>
                                 </div>
 
-                                {{-- stop_on_reply --}}
-                                <div class="d-flex align-items-center">
-                                    <div class="form-check form-switch form-check-custom form-check-solid me-4">
-                                        <input type="hidden" name="stop_on_reply" value="0" />
-                                        <input class="form-check-input"
-                                               type="checkbox"
-                                               name="stop_on_reply"
-                                               id="stop_on_reply"
-                                               value="1"
-                                               {{ old('stop_on_reply', $model->stop_on_reply ?? true) ? 'checked' : '' }} />
-                                        <label class="form-check-label fw-semibold text-gray-700" for="stop_on_reply">
-                                            Arrêter sur réponse du contact
-                                        </label>
-                                    </div>
-                                </div>
+                                <div class="text-muted fs-7">Toute réponse arrête automatiquement les inscriptions actives de ce contact.</div>
 
                             </div>
                         </div>

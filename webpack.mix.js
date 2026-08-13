@@ -30,6 +30,7 @@ const requiredCustomBackendAssets = [
     'js/custom/backend/crud-charts.js',
     'js/custom/backend/crud-form-handler.js',
     'js/custom/backend/crud-tabs.js',
+    'js/custom/backend/prospect-batch-wizard.js',
     'js/custom/backend/quill-html-field.js',
     'js/custom/backend/segment-contacts.js',
     'js/custom/backend/segment-form.js',

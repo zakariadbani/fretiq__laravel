@@ -67,7 +67,7 @@ class Segment extends Model
     public function rules(): array
     {
         $countryCodes  = implode(',', array_keys(config('global.data.company_countries', [])));
-        $contactStatuses = implode(',', array_keys(config('global.data.contact_statuses', [])));
+        $lifecycleStates = implode(',', array_keys(config('global.data.contact_lifecycle_states', [])));
 
         return [
             'name'  => 'required|string|max:255',
@@ -85,8 +85,8 @@ class Segment extends Model
             'filter.country'   => 'nullable|array|max:20',
             'filter.country.*' => 'string|size:2|in:' . $countryCodes,
 
-            // filter.status: optional single contact-status value
-            'filter.status'   => 'nullable|string|in:' . $contactStatuses,
+            // filter.lifecycle_state: optional calculated contact-state value
+            'filter.lifecycle_state'   => 'nullable|string|in:' . $lifecycleStates,
         ];
     }
 

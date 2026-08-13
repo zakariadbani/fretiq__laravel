@@ -55,9 +55,9 @@ class ProspectBatchItem extends Model
         return $this->belongsTo(ProspectBatch::class, 'prospect_batch_id');
     }
 
-    public function contactCandidates(): HasMany
+    public function importedContacts(): HasMany
     {
-        return $this->hasMany(ProspectContactCandidate::class);
+        return $this->hasMany(ProspectBatchContact::class);
     }
 
     public function providerCalls(): HasMany

@@ -39,7 +39,7 @@
         @php
             $filter         = is_array($model->filter) ? $model->filter : [];
             $countries      = config('global.data.company_countries', []);
-            $contactStatuses = config('global.data.contact_statuses', []);
+            $contactStatuses = config('global.data.contact_lifecycle_states', []);
 
             // sectors — scalar legacy support: cast to array
             $sectors = $filter['sector'] ?? [];
@@ -50,7 +50,7 @@
             if (!is_array($filterCountries)) { $filterCountries = (array) $filterCountries; }
 
             // status — always single scalar or missing
-            $filterStatus = $filter['status'] ?? null;
+            $filterStatus = $filter['lifecycle_state'] ?? null;
 
             // Funnel data (passed from controller as $stats['funnel'])
             $funnel = $stats['funnel'] ?? null;
@@ -101,9 +101,9 @@
                             </div>
                         </div>
 
-                        {{-- Row: Statut du contact --}}
+                        {{-- Row: État du contact --}}
                         <div class="d-flex align-items-start mb-4">
-                            <span class="fw-semibold text-gray-700 w-200px flex-shrink-0">Statut du contact</span>
+                            <span class="fw-semibold text-gray-700 w-200px flex-shrink-0">État du contact</span>
                             <div>
                                 @if(!$filterStatus)
                                     <span class="text-muted">Tous</span>

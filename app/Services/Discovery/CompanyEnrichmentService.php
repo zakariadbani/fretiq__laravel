@@ -17,7 +17,7 @@ class CompanyEnrichmentService
         private readonly CompanyDiscoveryService $discovery,
         private readonly DiscoveryQuotaService $quota,
         private readonly HunterEnrichmentService $hunter,
-        private readonly ContactUpsertService $contacts,
+        private readonly DiscoveredContactImportService $contacts,
     ) {}
 
     /**
@@ -45,8 +45,7 @@ class CompanyEnrichmentService
         ?string $batchId = null,
         int $approvedAttempts = 1,
         int $successTarget = 1,
-    ): array
-    {
+    ): array {
         [$company, $run] = $this->quota->reserveCriteriaEnrichment(
             $companyId,
             $criteria,
@@ -189,13 +188,13 @@ class CompanyEnrichmentService
 
             $ownedCompany->forceFill($attributes)->save();
 
-            $created = $enrichment === null
-                ? 0
-                : $this->contacts->upsertFromHunter(
-                    $ownedCompany,
-                    (string) $ownedCompany->domain,
+            $import = $enrichment === null
+                ? new ContactImportResult
+                : $this->contacts->import($ownedCompany, array_map(
+                    static fn (array $row): array => $row + ['source_url' => (string) $ownedCompany->domain, 'source' => 'hunter_company_enrichment'],
                     $enrichment['emails'] ?? [],
-                );
+                ));
+            $created = $import->created;
 
             // Hunter can return an address already owned by another company (or
             // a soft-deleted globally unique address). Treat that as no usable

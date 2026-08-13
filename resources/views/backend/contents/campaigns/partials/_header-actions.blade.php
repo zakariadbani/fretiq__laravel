@@ -6,6 +6,15 @@
     $automationReady = ($schedulerHealth['status'] ?? 'missing') === 'healthy';
     $canSchedule = $ready && $automationReady;
     $canSend = $ready && ($isNonSequence || $automationReady);
+    $smtpMode = (string) config('mail.smtp_mode');
+    $testTransport = match ($smtpMode) {
+        'mailpit' => 'Mailpit',
+        'sender_identity' => $model->senderIdentity?->hasCompleteSmtpConfiguration()
+            && in_array($model->senderIdentity?->smtp_encryption, ['tls', 'ssl'], true)
+            ? 'SMTP de l’identité'
+            : 'SMTP de l’identité — configuration incomplète',
+        default => 'Configuration SMTP invalide',
+    };
 @endphp
 
 @if($isView)
@@ -45,8 +54,13 @@
             <i class="bi bi-three-dots me-1"></i>Outils d’envoi
         </button>
         <div class="dropdown-menu dropdown-menu-end p-2 min-w-250px">
-            <button type="button" id="btn-test-send" class="dropdown-item rounded py-2 campaign-post" data-guard-unsaved="true"
-                    data-url="{{ route('admin.campaigns.testSend', $model) }}">
+            <button type="button" id="btn-test-send" class="dropdown-item rounded py-2 campaign-test-send" data-guard-unsaved="true"
+                    data-url="{{ route('admin.campaigns.testSend', $model) }}"
+                    data-recipient="{{ auth()->user()?->email }}"
+                    data-sender-name="{{ $model->senderIdentity?->name }}"
+                    data-sender-email="{{ $model->senderIdentity?->email }}"
+                    data-mode="{{ $smtpMode }}"
+                    data-transport="{{ $testTransport }}">
                 <i class="bi bi-envelope-check me-2"></i>M’envoyer un test
             </button>
             @include('backend.contents.campaigns.partials._stats-sync-button', ['model' => $model, 'dropdown' => true])
@@ -156,6 +170,39 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     document.querySelectorAll('.campaign-schedule').forEach((button) => button.addEventListener('click', confirmDispatch(button, 'schedule')));
     document.querySelectorAll('.campaign-send').forEach((button) => button.addEventListener('click', confirmDispatch(button, 'send')));
+
+    document.querySelectorAll('.campaign-test-send').forEach((button) => button.addEventListener('click', guarded(function () {
+        const trigger = this;
+        Swal.fire({
+            title: 'M’envoyer un test', showCancelButton: true, confirmButtonText: 'Envoyer le test', cancelButtonText: 'Annuler',
+            html: '<div class="text-start"><label class="form-label" for="campaign-test-recipient">Destinataire</label><input id="campaign-test-recipient" class="form-control" type="email" maxlength="191"><div class="text-muted fs-7 mt-3"><span id="campaign-test-from"></span><br><span id="campaign-test-mode"></span></div><div id="campaign-test-external-warning" class="alert alert-danger mt-4 mb-0 d-none">Ce mode peut envoyer un véritable email externe, y compris depuis l’environnement local.</div></div>',
+            didOpen: (popup) => {
+                popup.querySelector('#campaign-test-recipient').value = trigger.dataset.recipient || '';
+                popup.querySelector('#campaign-test-from').textContent = `Depuis : ${trigger.dataset.senderName || 'Non définie'} <${trigger.dataset.senderEmail || '—'}>`;
+                popup.querySelector('#campaign-test-mode').textContent = `Mode : ${trigger.dataset.mode || 'non défini'} · ${trigger.dataset.transport || 'inconnu'}`;
+                popup.querySelector('#campaign-test-external-warning').classList.toggle('d-none', trigger.dataset.mode !== 'sender_identity');
+            },
+            preConfirm: () => {
+                const input = document.getElementById('campaign-test-recipient');
+                const value = input.value.trim();
+                if (! value || ! input.checkValidity()) {
+                    Swal.showValidationMessage('Saisissez une adresse email valide.');
+                    return false;
+                }
+                return value;
+            },
+        }).then((result) => {
+            if (!result.isConfirmed) return; trigger.disabled = true;
+            request(trigger.dataset.url, 'post', { recipient_email: result.value }).then((response) => {
+                const sender = response.data.sender || {};
+                return Swal.fire({
+                    icon: 'success',
+                    title: 'Test envoyé',
+                    text: `Destinataire : ${response.data.recipient || result.value} · Expéditeur : ${sender.name || '—'} <${sender.email || '—'}> · Transport : ${response.data.transport || 'inconnu'}`,
+                });
+            }).catch((e) => Swal.fire({ icon:'error', title:'Envoi test impossible', text:errorMessage(e) })).finally(() => trigger.disabled = false);
+        });
+    })));
 
     document.querySelectorAll('.campaign-post, [data-campaign-stats-sync]').forEach((button) => button.addEventListener('click', guarded(function () {
         this.disabled = true; request(this.dataset.url).then(reload).catch((e) => Swal.fire({ icon:'error', title:'Action impossible', text:errorMessage(e) })).finally(() => this.disabled = false);

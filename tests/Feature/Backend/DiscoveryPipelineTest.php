@@ -9,13 +9,12 @@ use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
 use App\Models\Setting;
 use App\Services\Discovery\CompanyEnrichmentService;
-use App\Services\Discovery\ContactUpsertService;
+use App\Services\Discovery\DiscoveredContactImportService;
 use App\Services\Discovery\DiscoveryPipelineService;
 use App\Services\Discovery\HomepageSnapshotService;
 use App\Services\Quota\DiscoveryQuotaService;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
-use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -349,70 +348,6 @@ class DiscoveryPipelineTest extends TestCase
         $this->assertTrue((bool) data_get($criteria->discovery_cursors, "{$key}.exhausted"));
     }
 
-    public function test_duplicate_domain_query_exception_advances_cursor_without_aborting_run(): void
-    {
-        config([
-            'services.serpapi.driver' => 'serpapi',
-            'services.serpapi.api_key' => 'test-key',
-            'services.hunter.driver' => 'local',
-        ]);
-
-        Http::fake([
-            '*' => Http::response([
-                'organic_results' => [[
-                    'title' => 'Race Domain',
-                    'link' => 'https://race-domain.test/about',
-                    'snippet' => 'Fresh candidate',
-                ]],
-            ], 200),
-        ]);
-
-        $this->app->bind(ContactUpsertService::class, fn () => new class extends ContactUpsertService
-        {
-            public function upsertFromHunter(Company $company, string $domain, array $emails): int
-            {
-                throw new QueryException(
-                    'mysql',
-                    'insert into `companies` (`domain`) values (?)',
-                    [$domain],
-                    new \Exception("SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry '{$domain}' for key 'companies_domain_unique'")
-                );
-            }
-        });
-
-        $criteria = $this->makeCriteria([
-            'daily_limit' => 10,
-            'auto_enrich' => true,
-            'min_score_enrich' => 0,
-            'ai_queries' => [['q' => 'duplicate query', 'enabled' => true]],
-        ]);
-
-        $run = DiscoveryRun::create([
-            'prospect_criteria_id' => $criteria->id,
-            'type' => 'discovery',
-            'status' => 'running',
-            'credits_reserved' => 10,
-            'consumed' => 0,
-            'companies_count' => 0,
-            'contact_consumed' => 0,
-            'contact_credits_reserved' => 1,
-            'successful_enrichments_target' => 1,
-            'successful_enrichments' => 0,
-            'started_at' => now(),
-        ]);
-
-        /** @var DiscoveryPipelineService $pipeline */
-        $pipeline = app(DiscoveryPipelineService::class);
-        $stats = $pipeline->run($criteria, 1, $run, 1);
-
-        $run->refresh();
-        $this->assertSame('running', $run->status);
-        $this->assertSame(1, (int) $run->consumed);
-        $this->assertSame(1, (int) $run->contact_consumed);
-        $this->assertSame(0, (int) $run->companies_count);
-        $this->assertSame(1, $stats['contacts_consumed']);
-    }
-
     public function test_quota_lock_failure_keeps_candidate_cursor_for_retry_without_hunter_debit(): void
     {
         Setting::set('decouverte.auto_scoring', false);
@@ -452,7 +387,7 @@ class DiscoveryPipelineTest extends TestCase
         $this->assertSame(0, (int) $run->contact_consumed);
     }
 
-    public function test_contact_upsert_preserves_status_and_never_resurrects_soft_deleted_email(): void
+    public function test_shared_contact_import_preserves_status_and_never_resurrects_soft_deleted_email(): void
     {
         $criteria = $this->makeCriteria();
         $originalCompany = Company::create([
@@ -476,12 +411,12 @@ class DiscoveryPipelineTest extends TestCase
         $contact = Contact::create([
             'company_id' => $originalCompany->id,
             'email' => 'atomic@example.test',
-            'name' => 'Before',
+            'name' => '',
             'status' => 'qualified',
         ]);
         DB::table('contacts')->where('id', $contact->id)->update(['updated_at' => now()->subDay()]);
         $previousUpdatedAt = $contact->fresh()->updated_at;
-        $service = app(ContactUpsertService::class);
+        $service = app(DiscoveredContactImportService::class);
         $email = [[
             'value' => 'atomic@example.test',
             'first_name' => 'After',
@@ -489,19 +424,19 @@ class DiscoveryPipelineTest extends TestCase
             'position' => 'Direction',
         ]];
 
-        $this->assertSame(0, $service->upsertFromHunter($originalCompany, $originalCompany->domain, $email));
+        $this->assertSame(1, $service->import($originalCompany, $email)->updated);
         $contact->refresh();
         $this->assertSame('qualified', $contact->status);
         $this->assertSame('After Update', $contact->name);
         $this->assertTrue($contact->updated_at->greaterThan($previousUpdatedAt));
 
-        $this->assertSame(0, $service->upsertFromHunter($otherCompany, $otherCompany->domain, $email));
+        $this->assertSame(['owned_by_another_company' => 1], $service->import($otherCompany, $email)->skipped);
         $contact->refresh();
         $this->assertSame($originalCompany->id, $contact->company_id);
         $this->assertSame('After Update', $contact->name);
 
         $contact->delete();
-        $this->assertSame(0, $service->upsertFromHunter($otherCompany, $otherCompany->domain, $email));
+        $this->assertSame(['tombstoned' => 1], $service->import($otherCompany, $email)->skipped);
         $this->assertFalse(Contact::where('email', 'atomic@example.test')->exists());
         $tombstone = Contact::withTrashed()->where('email', 'atomic@example.test')->firstOrFail();
         $this->assertNotNull($tombstone->deleted_at);

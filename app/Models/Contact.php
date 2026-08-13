@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Jobs\StartContactEmailVerificationJob;
+use App\Services\Discovery\EmailVerificationSettings;
 use App\Models\Traits\Validator;
 use App\Support\ConfigEnum;
 use Illuminate\Database\Eloquent\Builder;
@@ -34,10 +36,7 @@ class Contact extends Model
         'position',
         'phone',
         'source',
-        'status',
         'zoho_contact_id',
-        'legal_basis',
-        'consent_at',
         'email_kind',
         'source_url',
         'source_captured_at',
@@ -52,10 +51,11 @@ class Contact extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'consent_at' => 'datetime',
         'source_captured_at' => 'datetime',
         'email_verification_checked_at' => 'datetime',
     ];
+
+    private bool $queueInitialEmailVerification = false;
 
     // ── Relationships ──────────────────────────────────────────────────────────
 
@@ -92,15 +92,13 @@ class Contact extends Model
      * empty or null, so we never insert an explicit NULL into a NOT NULL column
      * that carries a sensible DB default.
      *
-     * DB defaults: status='new', source='manual', legal_basis='unknown', email_kind='role'.
+     * DB defaults: source='manual', email_kind='role'.
      */
     protected static function booted(): void
     {
         static::saving(function (Contact $contact) {
             $defaults = [
-                'status' => 'new',
                 'source' => 'manual',
-                'legal_basis' => 'unknown',
                 'email_kind' => 'role',
             ];
             foreach ($defaults as $col => $default) {
@@ -109,6 +107,33 @@ class Contact extends Model
                     $contact->setAttribute($col, $default);
                 }
             }
+
+            $emailChanged = $contact->exists && $contact->isDirty('email');
+            if ($emailChanged) {
+                $contact->forceFill([
+                    'email_verification_status' => null,
+                    'email_verification_source' => null,
+                    'email_verification_checked_at' => null,
+                ]);
+            }
+
+            $hasImportedEvidence = filled($contact->email_verification_status)
+                || filled($contact->email_verification_source)
+                || $contact->email_verification_checked_at !== null;
+            $contact->queueInitialEmailVerification = $emailChanged || (! $contact->exists && ! $hasImportedEvidence);
+        });
+
+        static::saved(function (Contact $contact): void {
+            if (! $contact->queueInitialEmailVerification
+                || ! app(EmailVerificationSettings::class)->enabled()) {
+                return;
+            }
+
+            $contact->queueInitialEmailVerification = false;
+            StartContactEmailVerificationJob::dispatch(
+                (int) $contact->getKey(),
+                hash('sha256', strtolower(trim((string) $contact->email))),
+            )->afterCommit();
         });
     }
 
@@ -130,10 +155,7 @@ class Contact extends Model
             'position' => 'nullable|string|max:120',
             'phone' => 'nullable|string|max:50',
             'source' => 'nullable|'.ConfigEnum::in('contact_sources'),
-            'status' => 'nullable|'.ConfigEnum::in('contact_statuses'),
-            'legal_basis' => 'nullable|'.ConfigEnum::in('contact_legal_bases'),
             'email_kind' => 'nullable|'.ConfigEnum::in('contact_email_kinds'),
-            'consent_at' => 'nullable|date',
             'source_url' => 'nullable|string|max:500',
             'source_captured_at' => 'nullable|date',
             'email_verification_status' => 'nullable|string|max:16',
@@ -145,14 +167,8 @@ class Contact extends Model
 
     // ── Accessors / Helpers ────────────────────────────────────────────────────
 
-    /**
-     * Returns the Metronic badge CSS class for the current status value.
-     * Example: 'badge-light-success' for 'qualified'.
-     */
-    public function statusBadgeClass(): string
+    public function lifecycleState(): string
     {
-        $color = config('global.data.contact_statuses.'.$this->status.'.color', 'secondary');
-
-        return 'badge-light-'.$color;
+        return app(\App\Services\Prospecting\ContactLifecycleService::class)->stateFor($this);
     }
 }

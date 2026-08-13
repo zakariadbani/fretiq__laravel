@@ -91,34 +91,12 @@
                         {{-- Right column --}}
                         <div class="col-lg-6">
 
-                            {{-- Statut --}}
-                            <div class="fv-row mb-5">
-                                <label class="fw-semibold fs-6 mb-2">Statut</label>
-                                <select name="status" id="contact_status" class="form-select form-select-solid">
-                                    <option value="">Sélectionner un statut...</option>
-                                    @foreach(config('global.data.contact_statuses', []) as $key => $data)
-                                        <option value="{{ $key }}">{{ $data['label'] }}</option>
-                                    @endforeach
-                                </select>
-                            </div>
-
                             {{-- Source --}}
                             <div class="fv-row mb-5">
                                 <label class="fw-semibold fs-6 mb-2">Source</label>
                                 <select name="source" id="contact_source" class="form-select form-select-solid">
                                     <option value="">Sélectionner une source...</option>
                                     @foreach(config('global.data.contact_sources', []) as $key => $data)
-                                        <option value="{{ $key }}">{{ $data['label'] }}</option>
-                                    @endforeach
-                                </select>
-                            </div>
-
-                            {{-- Base légale RGPD --}}
-                            <div class="fv-row mb-5">
-                                <label class="fw-semibold fs-6 mb-2">Base légale (RGPD)</label>
-                                <select name="legal_basis" id="contact_legal_basis" class="form-select form-select-solid">
-                                    <option value="">Sélectionner une base légale...</option>
-                                    @foreach(config('global.data.contact_legal_bases', []) as $key => $data)
                                         <option value="{{ $key }}">{{ $data['label'] }}</option>
                                     @endforeach
                                 </select>
@@ -198,9 +176,7 @@
         document.getElementById('contact_email').value        = btn.dataset.contactEmail        || '';
         document.getElementById('contact_position').value     = btn.dataset.contactPosition     || '';
         document.getElementById('contact_phone').value        = btn.dataset.contactPhone        || '';
-        setSelectValue('contact_status',     btn.dataset.contactStatus);
         setSelectValue('contact_source',     btn.dataset.contactSource);
-        setSelectValue('contact_legal_basis', btn.dataset.contactLegalBasis);
         setSelectValue('contact_email_kind', btn.dataset.contactEmailKind);
 
         if (modalTitleText) modalTitleText.textContent = 'Modifier le contact';

@@ -119,12 +119,10 @@ final class ProviderCallLedger
 
             return new ProviderExecution($reserved->call->fresh(), $response, false);
         } catch (ProviderRequestException $exception) {
-            $this->recordFailure($reserved->call->id, $exception);
-            throw $exception;
+            throw $this->recordFailure($reserved->call->id, $exception);
         } catch (Throwable) {
             $exception = new ProviderRequestException('provider_transport_failed', false);
-            $this->recordFailure($reserved->call->id, $exception);
-            throw $exception;
+            throw $this->recordFailure($reserved->call->id, $exception);
         }
     }
 
@@ -238,6 +236,70 @@ final class ProviderCallLedger
         });
     }
 
+    /**
+     * Explicitly reopens a confirmed failed read-only provider call after an
+     * operator asks to retry the affected review item.
+     */
+    public function authorizeKnownFailureRetryForItem(int $itemId, string $itemErrorCode): int
+    {
+        if ($itemId < 1) {
+            throw new \InvalidArgumentException('provider_item_invalid');
+        }
+
+        $canonicalCode = $itemErrorCode === 'too_many_requests' ? 'usage_limit' : $itemErrorCode;
+        $allowedCodes = match ($canonicalCode) {
+            'usage_limit' => ['usage_limit', 'too_many_requests'],
+            'rate_limit' => ['rate_limit'],
+            'pagination_error' => ['pagination_error'],
+            'provider_unavailable' => ['provider_unavailable', 'provider_transport_failed', 'provider_http_error'],
+            'provider_call_not_replayable' => [
+                'usage_limit', 'too_many_requests', 'rate_limit', 'pagination_error',
+                'provider_unavailable', 'provider_transport_failed', 'provider_http_error',
+            ],
+            default => [],
+        };
+        if ($allowedCodes === []) {
+            return 0;
+        }
+
+        return DB::transaction(function () use ($itemId, $allowedCodes): int {
+            $calls = ProviderCall::query()
+                ->where('prospect_batch_item_id', $itemId)
+                ->where('status', 'failed')
+                ->lockForUpdate()
+                ->get()
+                ->filter(fn (ProviderCall $call): bool => in_array(
+                    data_get($call->metadata, 'error_code'),
+                    $allowedCodes,
+                    true,
+                ));
+
+            if ($calls->isNotEmpty() && $calls->every(fn (ProviderCall $call): bool => $call->attempt_count >= self::MAX_ATTEMPTS)) {
+                throw new ProviderRequestException('provider_call_retry_exhausted', false);
+            }
+
+            $authorized = 0;
+            foreach ($calls as $call) {
+                if ($call->attempt_count >= self::MAX_ATTEMPTS) {
+                    continue;
+                }
+                $call->forceFill([
+                    'status' => 'retryable',
+                    'metadata' => $this->mergeMetadata($call->metadata ?? [], [
+                        'retryable' => true,
+                        'reason' => 'operator_retry_authorized',
+                        'source' => 'manual_review',
+                    ]),
+                    'retry_at' => now(),
+                    'finished_at' => null,
+                ])->save();
+                $authorized++;
+            }
+
+            return $authorized;
+        });
+    }
+
     private function validateOperation(string $provider, string $operation): void
     {
         if (preg_match('/^[a-z][a-z0-9_]{0,23}$/', $provider) !== 1
@@ -258,12 +320,12 @@ final class ProviderCallLedger
         }
     }
 
-    private function recordFailure(int $callId, ProviderRequestException $exception): void
+    private function recordFailure(int $callId, ProviderRequestException $exception): ProviderRequestException
     {
-        DB::transaction(function () use ($callId, $exception): void {
+        return DB::transaction(function () use ($callId, $exception): ProviderRequestException {
             $call = ProviderCall::query()->whereKey($callId)->lockForUpdate()->first();
             if ($call === null || $call->status !== 'running') {
-                return;
+                return $exception;
             }
 
             $retryAfter = $exception->retryAfterSeconds
@@ -280,6 +342,13 @@ final class ProviderCallLedger
                 'retry_at' => $retryable ? now()->addSeconds($retryAfter) : null,
                 'finished_at' => $retryable ? null : now(),
             ])->save();
+
+            return new ProviderRequestException(
+                $exception->safeCode,
+                $retryable,
+                $exception->httpStatus,
+                $retryable ? $retryAfter : null,
+            );
         });
     }
 

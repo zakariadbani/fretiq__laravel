@@ -25,7 +25,7 @@ class WaveProjectionService
      *     next_run_at: ?string
      * }
      */
-    public function projectNext(Campaign $campaign, ?int $segmentId = null, ?int $dailyLimit = null): array
+    public function projectNext(Campaign $campaign, ?int $segmentId = null, ?int $dailyLimit = null, ?string $policy = null): array
     {
         $segment = $segmentId === null ? $campaign->segment : Segment::find($segmentId);
         $limit = $dailyLimit === null ? $campaign->pacedDailyCompanyLimit() : max(1, $dailyLimit);
@@ -49,7 +49,7 @@ class WaveProjectionService
                 ->all()
             : [];
 
-        $eligibleCompanies = $this->segmentService->resolve($segment)
+        $eligibleCompanies = $this->segmentService->resolve($segment, $policy ?? $campaign->emailVerificationPolicy())
             ->reject(fn (Contact $contact): bool => isset($existingContactIds[$contact->id]) || ! $contact->company_id)
             ->groupBy('company_id')
             ->sort(function (Collection $left, Collection $right): int {

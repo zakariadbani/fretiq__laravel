@@ -11,11 +11,11 @@ use App\Models\SenderIdentity;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStep;
 use App\Models\SequenceStepSend;
-use App\Services\Mail\SenderIdentitySmtpMailer;
+use App\Services\Mail\SmtpMailRouter;
 
 class SmtpCampaignsDriver implements CampaignsClient
 {
-    public function __construct(private readonly SenderIdentitySmtpMailer $mailer)
+    public function __construct(private readonly SmtpMailRouter $mailer)
     {
     }
 

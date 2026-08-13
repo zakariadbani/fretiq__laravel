@@ -6,11 +6,11 @@ use App\Jobs\FinalizeProspectBatchJob;
 use App\Jobs\ProcessProspectBatchItemJob;
 use App\Models\ProspectBatch;
 use App\Models\ProspectBatchItem;
-use App\Models\ProspectContactCandidate;
 use App\Models\ProspectCriteria;
 use App\Models\User;
 use App\Services\Prospecting\ProspectBatchService;
 use App\Services\Prospecting\ProspectItemProcessor;
+use App\Services\Providers\ProviderRequestException;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request as HttpRequest;
@@ -96,7 +96,34 @@ class ProspectBatchJobsTest extends TestCase
         $this->assertNotNull($batch->started_at);
     }
 
-    public function test_item_worker_promotes_ready_company_and_assigns_staged_candidates(): void
+    public function test_item_worker_reopens_a_terminal_batch_when_an_item_is_retried(): void
+    {
+        config([
+            'services.hunter.driver' => 'local',
+            'services.serpapi.driver' => 'local',
+        ]);
+        $batch = ProspectBatch::factory()->create([
+            'status' => 'failed',
+            'finished_at' => now()->subMinute(),
+            'error' => 'usage_limit',
+        ]);
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create([
+            'status' => 'pending',
+            'provided_domain' => 'geodis.com',
+        ]);
+
+        (new ProcessProspectBatchItemJob($item->id))->handle(
+            app(ProspectItemProcessor::class),
+            app(ProspectBatchService::class),
+        );
+
+        $batch->refresh();
+        $this->assertSame('running', $batch->status);
+        $this->assertNull($batch->finished_at);
+        $this->assertNull($batch->error);
+    }
+
+    public function test_item_worker_links_and_promotes_the_resolved_company(): void
     {
         config([
             'services.hunter.driver' => 'local',
@@ -119,12 +146,6 @@ class ProspectBatchJobsTest extends TestCase
         $this->assertSame('promoted', $item->status);
         $this->assertNotNull($item->company_id);
         $this->assertDatabaseHas('companies', ['id' => $item->company_id, 'domain' => 'geodis.com']);
-        $this->assertFalse(
-            ProspectContactCandidate::query()
-                ->where('prospect_batch_item_id', $item->id)
-                ->whereNull('company_id')
-                ->exists(),
-        );
     }
 
     public function test_confirmation_only_queues_finalizer_and_never_calls_hunter_in_request(): void
@@ -212,6 +233,57 @@ class ProspectBatchJobsTest extends TestCase
 
         $this->assertSame('completed', $batch->fresh()->status);
         $this->assertNotNull($batch->fresh()->finished_at);
+    }
+
+    public function test_item_worker_releases_a_transient_failure_without_dispatching_a_finalizer(): void
+    {
+        $batch = ProspectBatch::factory()->create(['status' => 'running']);
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create([
+            'status' => 'pending',
+            'provided_domain' => 'acme.fr',
+        ]);
+        Http::fake(['api.hunter.io/v2/companies/find*' => Http::response([], 503, ['Retry-After' => '120'])]);
+        $job = (new ProcessProspectBatchItemJob($item->id))->withFakeQueueInteractions();
+
+        $job->handle(app(ProspectItemProcessor::class), app(ProspectBatchService::class));
+
+        $job->assertReleased(120 + ($item->id % 11));
+        $this->assertSame('pending', $item->fresh()->status);
+        Queue::assertNotPushed(FinalizeProspectBatchJob::class);
+    }
+
+    public function test_exhausted_pending_retry_becomes_a_known_failure_and_dispatches_finalization(): void
+    {
+        $batch = ProspectBatch::factory()->create(['status' => 'running']);
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create([
+            'status' => 'pending',
+            'domain_reason' => 'provided_domain',
+            'error_code' => 'provider_unavailable',
+        ]);
+
+        (new ProcessProspectBatchItemJob($item->id))->failed(new ProviderRequestException('provider_unavailable', true, 503, 600));
+
+        $item->refresh();
+        $this->assertSame('failed', $item->status);
+        $this->assertSame('provided_domain', $item->domain_reason);
+        $this->assertSame('provider_unavailable', $item->error_code);
+        Queue::assertPushed(FinalizeProspectBatchJob::class, fn (FinalizeProspectBatchJob $job): bool => $job->batchId === $batch->id);
+    }
+
+    public function test_finalizer_returns_without_releasing_or_terminalizing_a_retry_pending_batch(): void
+    {
+        $batch = ProspectBatch::factory()->create(['status' => 'running']);
+        ProspectBatchItem::factory()->for($batch, 'batch')->create([
+            'status' => 'pending',
+            'error_code' => 'provider_unavailable',
+        ]);
+        $job = (new FinalizeProspectBatchJob($batch->id))->withFakeQueueInteractions();
+
+        $job->handle(app(ProspectBatchService::class));
+
+        $job->assertNotReleased();
+        $this->assertSame('running', $batch->fresh()->status);
+        $this->assertNull($batch->fresh()->error);
     }
 
     private function criteria(): ProspectCriteria

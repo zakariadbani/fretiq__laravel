@@ -30,7 +30,7 @@
                     @foreach([
                         1 => ['Ajouter les entreprises', 'bi-building-add'],
                         2 => ['Choisir la qualité', 'bi-sliders'],
-                        3 => ['Confirmer le coût', 'bi-wallet2'],
+                        3 => ['Vérifier et lancer', 'bi-check2-circle'],
                         4 => ['Traitement', 'bi-hourglass-split'],
                     ] as $number => [$label, $icon])
                         <div class="stepper-item mx-2 my-2" data-kt-stepper-element="nav" data-step-nav="{{ $number }}">
@@ -67,7 +67,16 @@
 </form>
 
 @push('scripts')
-    <script src="{{ asset('assets/js/custom/backend/prospect-batch-wizard.js') }}"></script>
+    @php
+        $wizardAssetPath = 'assets/js/custom/backend/prospect-batch-wizard.js';
+        $wizardAssetFile = public_path($wizardAssetPath);
+        $wizardAssetUrl = asset($wizardAssetPath);
+
+        if (is_file($wizardAssetFile)) {
+            $wizardAssetUrl .= '?v='.filemtime($wizardAssetFile);
+        }
+    @endphp
+    <script src="{{ $wizardAssetUrl }}"></script>
 @endpush
 
 </x-default-layout>

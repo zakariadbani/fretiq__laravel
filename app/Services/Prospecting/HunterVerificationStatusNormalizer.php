@@ -28,6 +28,7 @@ final class HunterVerificationStatusNormalizer
             'valid', 'deliverable' => 'valid',
             'accept_all', 'risky' => 'accept_all',
             'invalid', 'undeliverable' => 'invalid',
+            'missing' => 'missing',
             'unknown' => 'unknown',
             'disposable' => 'disposable',
             'webmail' => 'webmail',

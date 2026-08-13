@@ -6,6 +6,7 @@ namespace App\Services\Campaign;
 
 use App\Jobs\SendSequenceWaveStepJob;
 use App\Jobs\SyncCampaignWaveZohoListJob;
+use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
 use App\Models\SequenceEnrollment;
@@ -23,6 +24,7 @@ class SequenceWaveService
         private readonly BusinessCalendarService $calendar,
         private readonly ZohoRecipientListGateway $listGateway,
         private readonly CampaignDeliveryFence $deliveryFence,
+        private readonly ContactEligibilityService $contactEligibility,
     ) {}
 
     public function isDeferred(CampaignRun $run): bool
@@ -41,15 +43,29 @@ class SequenceWaveService
                 ->where('status', 'paused')
                 ->exists();
     }
+
+    public function hasPendingVerification(CampaignRun $run): bool
+    {
+        $run->loadMissing(['campaign', 'recipients.contact']);
+        if ($run->campaign?->emailVerificationPolicy() !== Campaign::VERIFICATION_ALL_SENDABLE) {
+            return false;
+        }
+
+        return $run->recipients->where('status', 'queued')->contains(
+            fn (CampaignRecipient $recipient): bool => $recipient->contact?->email_verification_status === 'pending',
+        );
+    }
     /** @return Collection<int, \App\Models\Contact> */
     public function eligibleContacts(CampaignRun $run): Collection
     {
-        $run->loadMissing(['sequenceStep', 'recipients.contact.company']);
+        $run->loadMissing(['campaign', 'sequenceStep', 'recipients.contact.company']);
         if ($run->sequenceStep === null) {
             return $run->recipients->where('status', 'queued')->pluck('contact')->filter()->values();
         }
         $stepNo = (int) $run->sequenceStep->step_no;
         $contacts = collect();
+        $suppressedEmails = Suppression::query()->pluck('email')
+            ->mapWithKeys(fn ($email): array => [mb_strtolower(trim((string) $email)) => true]);
 
         foreach ($run->recipients->where('status', 'queued') as $recipient) {
             $enrollment = SequenceEnrollment::query()
@@ -59,27 +75,32 @@ class SequenceWaveService
             if ($enrollment?->status === 'paused') {
                 continue;
             }
-            $suppressed = $recipient->contact === null
-                || Suppression::isSuppressed((string) $recipient->contact->email);
+            $normalizedEmail = mb_strtolower(trim((string) $recipient->contact?->email));
+            $suppressed = $recipient->contact === null || isset($suppressedEmails[$normalizedEmail]);
+            $qualityReason = $recipient->contact === null ? 'missing_contact' : $this->contactEligibility->sendIneligibilityReason(
+                $recipient->contact,
+                $run->campaign?->emailVerificationPolicy() ?? \App\Models\Campaign::VERIFICATION_VERIFIED_ONLY,
+                $suppressed,
+            );
             $eligible = $enrollment !== null
                 && $enrollment->status === 'active'
                 && (int) $enrollment->current_step === $stepNo - 1
-                && ! $suppressed;
+                && $qualityReason === null;
 
             if ($eligible) {
                 $contacts->push($recipient->contact);
                 continue;
             }
 
-            $reason = $suppressed ? 'suppressed' : 'enrollment_ineligible';
+            $reason = $qualityReason ?? 'enrollment_ineligible';
             $recipient->update(['status' => 'skipped', 'skip_reason' => $reason]);
             if ($enrollment !== null) {
                 SequenceStepSend::updateOrCreate(
                     ['enrollment_id' => $enrollment->id, 'step_no' => $stepNo],
                     ['campaign_run_id' => $run->id, 'status' => 'skipped'],
                 );
-                if ($suppressed && $enrollment->status === 'active') {
-                    $enrollment->update(['status' => 'stopped', 'stopped_reason' => 'suppressed', 'next_send_at' => null]);
+                if ($qualityReason !== null && $enrollment->status === 'active') {
+                    $enrollment->update(['status' => 'stopped', 'stopped_reason' => $qualityReason, 'next_send_at' => null]);
                 }
             }
         }
@@ -95,6 +116,9 @@ class SequenceWaveService
             return;
         }
         if (in_array($run->status, ['sent', 'failed', 'canceled'], true) || $this->isDeferred($run)) {
+            return;
+        }
+        if ($this->hasPendingVerification($run)) {
             return;
         }
 
@@ -146,6 +170,10 @@ class SequenceWaveService
             return;
         }
         $run = $claimedRun->load(['campaign.senderIdentity', 'sequenceStep.template', 'recipients.contact.company']);
+        if ($this->hasPendingVerification($run)) {
+            $run->update(['status' => 'scheduled', 'started_at' => null, 'finished_at' => null]);
+            return;
+        }
         $summary = $this->driver->dispatchRun($run, $contacts);
         $campaignKey = (string) $summary['campaign_key'];
 

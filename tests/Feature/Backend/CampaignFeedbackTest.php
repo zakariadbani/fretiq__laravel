@@ -108,6 +108,8 @@ class CampaignFeedbackTest extends TestCase
         $this->assertSame('bounced', $recipient->fresh()->status);
         $this->assertSame('soft', $recipient->fresh()->bounce_type);
         $this->assertDatabaseMissing('suppressions', ['email' => 'feedback@example.test']);
+        $this->assertSame('invalid', $recipient->contact->fresh()->email_verification_status);
+        $this->assertSame('bounce', $recipient->contact->fresh()->email_verification_source);
     }
 
     public function test_second_soft_bounce_within_thirty_days_suppresses(): void

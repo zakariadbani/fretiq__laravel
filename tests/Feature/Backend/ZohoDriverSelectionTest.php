@@ -98,13 +98,14 @@ class ZohoDriverSelectionTest extends TestCase
         ]);
 
         return Contact::create([
-            'company_id'  => $co->id,
-            'email'       => $email,
-            'name'        => 'Jean Dupont',
-            'status'      => 'new',
-            'source'      => 'manual',
-            'legal_basis' => 'relationship',
-            'email_kind'  => 'role',
+            'company_id' => $co->id,
+            'email' => $email,
+            'name' => 'Jean Dupont',
+            'source' => 'manual',
+            'email_kind' => 'role',
+            'email_verification_status' => 'valid',
+            'email_verification_source' => 'import',
+            'email_verification_checked_at' => now(),
         ]);
     }
 
@@ -157,7 +158,7 @@ class ZohoDriverSelectionTest extends TestCase
             CampaignsClient::class,
             fn () => config('services.zoho.driver', 'local') === 'zoho'
                 ? new ZohoCampaignsDriver(app(\App\Services\Zoho\ZohoCampaignsClient::class))
-                : new LocalCampaignsDriver(),
+                : app(LocalCampaignsDriver::class),
         );
 
         $driver = app(CampaignsClient::class);
@@ -177,7 +178,7 @@ class ZohoDriverSelectionTest extends TestCase
             CampaignsClient::class,
             fn () => config('services.zoho.driver', 'local') === 'zoho'
                 ? new ZohoCampaignsDriver(app(\App\Services\Zoho\ZohoCampaignsClient::class))
-                : new LocalCampaignsDriver(),
+                : app(LocalCampaignsDriver::class),
         );
 
         $driver = app(CampaignsClient::class);
@@ -249,7 +250,7 @@ class ZohoDriverSelectionTest extends TestCase
             CampaignsClient::class,
             fn () => config('services.zoho.driver', 'local') === 'zoho'
                 ? new ZohoCampaignsDriver(app(\App\Services\Zoho\ZohoCampaignsClient::class))
-                : new LocalCampaignsDriver(),
+                : app(LocalCampaignsDriver::class),
         );
 
         $contact = $this->makeClientContact('zoho-run@acme.test');
@@ -300,7 +301,7 @@ class ZohoDriverSelectionTest extends TestCase
             CampaignsClient::class,
             fn () => config('services.zoho.driver', 'local') === 'zoho'
                 ? new ZohoCampaignsDriver(app(\App\Services\Zoho\ZohoCampaignsClient::class))
-                : new LocalCampaignsDriver(),
+                : app(LocalCampaignsDriver::class),
         );
 
         $contactA = $this->makeClientContact('zoho-multi-a@acme.test');

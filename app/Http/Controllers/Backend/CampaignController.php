@@ -34,7 +34,7 @@ use App\Services\Campaign\PacedCampaignBatchService;
 use App\Services\Campaign\PacedSequenceEnrollmentService;
 use App\Services\Campaign\SegmentService;
 use App\Services\Campaign\WaveProjectionService;
-use App\Services\Demande\DemandeCaptureService;
+use App\Services\Inbox\ReplyRecordingService;
 use App\Services\Translation\LanguageResolver;
 use Carbon\Carbon;
 use DateTimeZone;
@@ -68,10 +68,9 @@ class CampaignController extends BackendController
 
         $this->middleware('permission:view campaigns')->only(['index', 'view', 'segmentCount', 'nextWavePreview']);
         $this->middleware('permission:create campaigns')->only(['create', 'store']);
-        $this->middleware('permission:edit campaigns')->only(['edit', 'update', 'cancelRun']);
+        $this->middleware('permission:edit campaigns')->only(['edit', 'update', 'cancelRun', 'markReplied']);
         $this->middleware('permission:delete campaigns')->only(['delete']);
         $this->middleware('permission:send campaigns')->only(['dispatchPreview', 'schedule', 'sendNow', 'testSend', 'sequenceAutoEnroll', 'syncZohoList', 'syncStats', 'retryZohoWave', 'startRunNow', 'resendRun']);
-        $this->middleware('permission:create demandes')->only(['markReplied']);
 
         $this->listTitle = 'Campagnes';
         $this->title     = 'name';
@@ -973,6 +972,8 @@ class CampaignController extends BackendController
             'templates'            => $templates->sortBy('name')->values(),
             'senderIdentities'     => $senderIdentities->sortBy('name')->values(),
             'scheduleTypes'        => config('global.data.schedule_types', []),
+            'emailVerificationPolicies' => config('global.data.campaign_email_verification_policies', []),
+            'defaultEmailVerificationPolicy' => app(\App\Services\Discovery\EmailVerificationSettings::class)->defaultCampaignPolicy(),
             'recurrenceFrequencies'=> config('global.data.recurrence_frequencies', []),
             'sequences'            => $sequences,
             'selectedSegment'       => $selectedSegment,
@@ -1023,8 +1024,17 @@ class CampaignController extends BackendController
             $attributes['delivery_channel'] = in_array($attributes['delivery_channel'] ?? null, ['zoho', 'smtp'], true)
                 ? $attributes['delivery_channel']
                 : 'zoho';
+            $attributes['email_verification_policy'] = in_array(
+                $attributes['email_verification_policy'] ?? null,
+                Campaign::EMAIL_VERIFICATION_POLICIES,
+                true,
+            ) ? $attributes['email_verification_policy'] : app(\App\Services\Discovery\EmailVerificationSettings::class)->defaultCampaignPolicy();
         } elseif (! array_key_exists('delivery_channel', $attributes)) {
             $attributes['delivery_channel'] = $currentCampaign->delivery_channel;
+        }
+
+        if ($currentCampaign !== null && ! array_key_exists('email_verification_policy', $attributes)) {
+            $attributes['email_verification_policy'] = $currentCampaign->emailVerificationPolicy();
         }
 
         if ($currentCampaign?->deliverySettingsLocked()) {
@@ -1036,6 +1046,10 @@ class CampaignController extends BackendController
             if (array_key_exists('sender_identity_id', $attributes)
                 && (int) $attributes['sender_identity_id'] !== (int) $currentCampaign->sender_identity_id) {
                 $lockedErrors['sender_identity_id'] = 'L’expéditeur est verrouillé après le début de la livraison.';
+            }
+            if (array_key_exists('email_verification_policy', $attributes)
+                && (string) $attributes['email_verification_policy'] !== $currentCampaign->emailVerificationPolicy()) {
+                $lockedErrors['email_verification_policy'] = 'La politique de vérification est verrouillée après la première livraison acceptée.';
             }
 
             if ($lockedErrors !== []) {
@@ -1172,7 +1186,7 @@ class CampaignController extends BackendController
      * @param int $id  Segment ID
      * @return \Illuminate\Http\JsonResponse
      */
-    public function segmentCount($id)
+    public function segmentCount(Request $request, $id)
     {
         $unavailable = [
             'count' => 0,
@@ -1190,6 +1204,9 @@ class CampaignController extends BackendController
         }
 
         try {
+            $policy = $request->validate([
+                'email_verification_policy' => ['nullable', 'in:verified_only,all_sendable'],
+            ])['email_verification_policy'] ?? Campaign::VERIFICATION_VERIFIED_ONLY;
             $segmentService = app(SegmentService::class);
             $stats = $segmentService->resolveWithStats(
                 $segment->scope,
@@ -1198,6 +1215,7 @@ class CampaignController extends BackendController
                 $segment->includedContactIds(),
                 $segment->excludedContactIds(),
                 $segment->is_manual,
+                $policy,
             );
             $count = (int) $stats['final'];
             $companyCount = (int) $stats['company_count'];
@@ -1236,12 +1254,14 @@ class CampaignController extends BackendController
         $validated = $request->validate([
             'segment_id' => ['sometimes', 'nullable', 'integer', 'exists:segments,id'],
             'daily_company_limit' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'email_verification_policy' => ['sometimes', 'nullable', 'in:verified_only,all_sendable'],
         ]);
 
         $projection = app(WaveProjectionService::class)->projectNext(
             $campaign,
             isset($validated['segment_id']) ? (int) $validated['segment_id'] : null,
             isset($validated['daily_company_limit']) ? (int) $validated['daily_company_limit'] : null,
+            $validated['email_verification_policy'] ?? null,
         );
 
         return response()->json(['is_sequence_paced' => true] + $projection);
@@ -1272,6 +1292,7 @@ class CampaignController extends BackendController
         $validated = $request->validate([
             'segment_id'  => ['required', 'integer', 'exists:segments,id'],
             'template_id' => ['nullable', 'integer', 'exists:campaign_templates,id'],
+            'email_verification_policy' => ['nullable', 'in:verified_only,all_sendable'],
         ]);
 
         $segment = Segment::findOrFail((int) $validated['segment_id']);
@@ -1282,7 +1303,10 @@ class CampaignController extends BackendController
         $unknown = 0;
 
         try {
-            $contacts  = app(SegmentService::class)->resolve($segment);
+            $contacts  = app(SegmentService::class)->resolve(
+                $segment,
+                $validated['email_verification_policy'] ?? Campaign::VERIFICATION_VERIFIED_ONLY,
+            );
             $baseLang  = config('translation.base_language', 'fr');
             $resolver  = app(LanguageResolver::class);
 
@@ -1727,21 +1751,36 @@ class CampaignController extends BackendController
         return redirect()->to(route('admin.campaigns.view', $campaign->id) . "?wave_id={$run->id}#campaign_vagues")
             ->with('success', 'Relance Zoho mise en file d’attente. La date est dépassée : après synchronisation, la campagne sera créée et envoyée immédiatement.');
     }
-    /** Send a safe preview to the authenticated user through local mail only. */
-    public function testSend($id)
+    /** Send a safe preview without touching campaign operational rows. */
+    public function testSend(\Illuminate\Http\Request $request, $id)
     {
         $campaign = Campaign::findOrFail((int) $id);
         $user = auth()->user();
+        $attributes = $request->validate(['recipient_email' => 'required|email:rfc|max:191']);
+        $router = app(\App\Services\Mail\SmtpMailRouter::class);
 
         try {
-            app(CampaignTestMailService::class)->send($campaign, $user);
+            app(CampaignTestMailService::class)->send($campaign, $user, $attributes['recipient_email']);
+            $mode = $router->mode();
+            $transport = $router->transportLabel($campaign->senderIdentity);
         } catch (\InvalidArgumentException $exception) {
-            return redirect()->route('admin.campaigns.view', $campaign->id)
-                ->with('error', $exception->getMessage());
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
+        } catch (\App\Services\Mail\SmtpConfigurationException $exception) {
+            \Illuminate\Support\Facades\Log::warning('Campaign preview blocked by SMTP routing.', ['campaign_id' => $campaign->id, 'exception_class' => $exception::class]);
+
+            return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
+        } catch (\Throwable $exception) {
+            \Illuminate\Support\Facades\Log::warning('Campaign preview failed.', ['campaign_id' => $campaign->id, 'exception_class' => $exception::class]);
+
+            return response()->json(['success' => false, 'message' => 'Envoi test impossible. Vérifiez la configuration SMTP.'], 500);
         }
 
-        return redirect()->route('admin.campaigns.view', $campaign->id)
-            ->with('success', html_entity_decode("Email test envoy&eacute; &agrave; {$user->email}."));
+        return response()->json([
+            'success' => true, 'message' => 'Email test envoyé.', 'recipient' => $attributes['recipient_email'],
+            'sender' => ['name' => $campaign->senderIdentity->name, 'email' => $campaign->senderIdentity->email],
+            'mode' => $mode,
+            'transport' => $transport,
+        ]);
     }
 
 
@@ -1932,8 +1971,7 @@ class CampaignController extends BackendController
     }
 
     /**
-     * Mark a campaign recipient as replied and capture a Demande.
-     * Requires `create demandes` permission (enforced via middleware).
+     * Mark a campaign recipient as replied and stop every active sequence enrollment.
      *
      * POST /campaigns/{id}/recipients/{recipientId}/replied
      *
@@ -1948,44 +1986,12 @@ class CampaignController extends BackendController
             $q->where('campaign_id', $campaign->id);
         })->findOrFail((int) $recipientId);
 
-        // Idempotency guard — early-return if this recipient OR any other recipient
-        // of the same campaign + same contact already has status 'replied'.
-        $alreadyReplied = $recipient->status === 'replied'
-            || CampaignRecipient::where('contact_id', $recipient->contact_id)
-                ->whereHas('run', function ($q) use ($campaign) {
-                    $q->where('campaign_id', $campaign->id);
-                })
-                ->where('status', 'replied')
-                ->exists();
-
-        if ($alreadyReplied) {
-            session()->flash('info', 'Ce contact a déjà été marqué comme répondu pour cette campagne.');
-
-            return redirect()->route('admin.campaigns.view', $campaign->id)
-                ->withFragment('campaign_destinataires');
-        }
-
         return DB::transaction(function () use ($campaign, $recipient) {
-            // Mark the recipient as replied
-            $recipient->update([
-                'status'     => 'replied',
-                'replied_at' => now(),
-            ]);
-
-            // Capture the Demande
             if ($recipient->contact) {
-                app(DemandeCaptureService::class)->capture(
-                    $recipient->contact,
-                    [
-                        'campaign_id'     => $campaign->id,
-                        'campaign_run_id' => $recipient->campaign_run_id,
-                    ],
-                    'reply',
-                    null
-                );
+                app(ReplyRecordingService::class)->recordContact($recipient->contact, $recipient);
             }
 
-            session()->flash('success', 'Destinataire marqué comme répondu. Une demande a été créée.');
+            session()->flash('success', 'Destinataire marqué comme répondu. Ses séquences actives ont été arrêtées.');
 
             return redirect()->route('admin.campaigns.view', $campaign->id)
                 ->withFragment('campaign_destinataires');

@@ -2,11 +2,9 @@
 
 namespace App\Services\Demande;
 
-use App\Models\Campaign;
 use App\Models\CampaignRun;
 use App\Models\Contact;
 use App\Models\Demande;
-use App\Services\Campaign\SequenceService;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -17,18 +15,12 @@ use Illuminate\Support\Facades\Log;
  *
  * Steps:
  *  1. Create a Demande with full attribution (campaign/run/sequence ids).
- *  2. Mark contact.status = 'converted'.
- *  3. Stop any active drip enrollments for sequences with stop_on_reply=true.
- *  4. Increment CampaignRun.conversion_count if a run is attributed.
+ *  2. Increment CampaignRun.conversion_count if a run is attributed.
  *
  * @see campaign-automation.md §6 (analytics + attribution)
  */
 class DemandeCaptureService
 {
-    public function __construct(
-        private readonly SequenceService $sequenceService,
-    ) {}
-
     /**
      * Capture a demande (reply / interest signal) for a contact.
      *
@@ -62,20 +54,7 @@ class DemandeCaptureService
             'attribution' => $attribution,
         ]);
 
-        // ── 2. Mark contact as converted ──────────────────────────────────────
-        $contact->update(['status' => 'converted']);
-
-        // ── 3. Stop active drip enrollments for sequences with stop_on_reply ──
-        $stoppedCount = $this->sequenceService->stopForReply($contact, 'replied');
-
-        if ($stoppedCount > 0) {
-            Log::info('[DemandeCaptureService] Inscriptions de séquence arrêtées sur réponse.', [
-                'contact_id' => $contact->id,
-                'stopped'    => $stoppedCount,
-            ]);
-        }
-
-        // ── 4. Increment conversion_count on the attributed run ───────────────
+        // ── 2. Increment conversion_count on the attributed run ───────────────
         if (! empty($attribution['campaign_run_id'])) {
             CampaignRun::where('id', $attribution['campaign_run_id'])
                 ->increment('conversion_count');

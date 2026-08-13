@@ -274,7 +274,7 @@ class PacedCampaignBatchService
             ->all();
 
         return $this->segmentService
-            ->resolve($campaign->segment)
+            ->resolve($campaign->segment, $campaign->emailVerificationPolicy())
             ->reject(fn (Contact $contact): bool => isset($knownCompanyIds[$contact->company_id]))
             ->groupBy('company_id')
             ->sort(function (Collection $left, Collection $right): int {

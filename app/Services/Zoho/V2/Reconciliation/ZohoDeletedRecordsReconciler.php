@@ -72,7 +72,9 @@ final class ZohoDeletedRecordsReconciler
                 }
             }
             // Numeric Deleted Records continuation was live-verified on 2026-08-09.
-            $more = $response->info['more_records'] ?? data_get($response->root('info'), 'more_records');
+            $more = $response->status === 204
+                ? false
+                : ($response->info['more_records'] ?? data_get($response->root('info'), 'more_records'));
             if (! is_bool($more)) {
                 $this->recordScanFailure($moduleKey, $batchId, $correlationId, $status, $page, $mutationFence);
 

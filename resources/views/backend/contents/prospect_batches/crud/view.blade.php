@@ -27,9 +27,9 @@
         @if($model->status === 'review')
             <div class="alert alert-warning d-flex align-items-center mt-6">
                 <i class="bi bi-exclamation-triangle fs-2 me-3"></i>
-                <div class="flex-grow-1">Certaines entreprises ou certains contacts demandent votre choix.</div>
+                <div class="flex-grow-1">Certaines entreprises ou certains domaines demandent votre choix.</div>
                 @if(Route::has('admin.prospect_review.index'))
-                    <a href="{{ route('admin.prospect_review.index') }}" class="btn btn-sm btn-warning">Ouvrir À revoir</a>
+                    <a href="{{ route('admin.prospect_review.index', ['tab' => 'companies', 'batch' => $model->id]) }}" class="btn btn-sm btn-warning">Ouvrir À revoir</a>
                 @endif
             </div>
         @elseif($model->status === 'failed')
@@ -47,14 +47,14 @@
                 @else
                     <div class="table-responsive d-none d-md-block">
                         <table class="table table-row-dashed align-middle">
-                            <thead><tr><th>Entreprise</th><th>Domaine</th><th>Statut</th><th>Contacts</th><th>Motif</th></tr></thead>
+                            <thead><tr><th>Entreprise</th><th>Domaine</th><th>Statut</th><th>Contacts importés</th><th>Motif</th></tr></thead>
                             <tbody>
                             @foreach($items as $item)
                                 <tr>
                                     <td><div class="fw-semibold">{{ $item->company_name }}</div><div class="text-muted fs-8">{{ collect([$item->city, $item->country])->filter()->join(', ') }}</div></td>
                                     <td>{{ $item->selected_domain ?: $item->provided_domain ?: '—' }}</td>
                                     <td><span class="badge badge-light-{{ in_array($item->status, ['ready', 'promoted']) ? 'success' : ($item->status === 'review' ? 'warning' : ($item->status === 'failed' ? 'danger' : 'primary')) }}">{{ ucfirst($item->status) }}</span></td>
-                                    <td>{{ $item->contact_candidates_count }}</td>
+                                    <td>{{ $item->imported_contacts_count }}</td>
                                     <td>{{ $item->domain_reason ?: $item->error_code ?: '—' }}</td>
                                 </tr>
                             @endforeach
@@ -67,12 +67,13 @@
                                 <div class="card-body py-4">
                                     <div class="d-flex justify-content-between gap-3"><strong>{{ $item->company_name }}</strong><span class="badge badge-light-primary">{{ ucfirst($item->status) }}</span></div>
                                     <div class="text-muted fs-7 mt-2">{{ $item->selected_domain ?: $item->provided_domain ?: 'Domaine à revoir' }}</div>
-                                    <div class="fs-8 mt-2">{{ $item->contact_candidates_count }} contact(s)</div>
+                                    <div class="fs-8 mt-2">{{ $item->imported_contacts_count }} contact(s) importé(s)</div>
                                 </div>
                             </article>
                         @endforeach
                     </div>
-                    <div class="mt-5">{{ $items->links() }}</div>
+                    <p class="text-muted fs-8 mt-4 mb-3">Importer un contact ne déclenche aucun email. Les règles d’éligibilité restent appliquées au moment de préparer un envoi.</p>
+                    <div class="mt-5">{{ $items->links('pagination::bootstrap-5') }}</div>
                 @endif
             </div>
         </div>

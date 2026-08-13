@@ -26,7 +26,11 @@ class CampaignZohoListSyncService
      */
     public function sync(Campaign $campaign): array
     {
-        $contacts = $this->segmentService->resolve($campaign->segment);
+        $contacts = $this->segmentService->resolve($campaign->segment, $campaign->emailVerificationPolicy());
+        if ($campaign->emailVerificationPolicy() === Campaign::VERIFICATION_ALL_SENDABLE
+            && $contacts->contains(fn ($contact): bool => $contact->email_verification_status === 'pending')) {
+            throw new \LogicException('La préparation de liste attend la fin des vérifications email en cours. Aucun appel externe n’a été effectué.');
+        }
         $target = $this->contactsByEmail($contacts);
         if ($target === []) {
             throw new \LogicException('La préparation de liste Zoho nécessite au moins un destinataire approuvé. Aucune liste, campagne ou envoi Zoho n’a été créé.');

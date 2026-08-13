@@ -215,14 +215,14 @@
                                 placeholder="Tous les pays" />
                         </div>
 
-                        {{-- Statut du contact --}}
+                        {{-- État du contact --}}
                         <div class="col-md-4 fv-row">
-                            <label class="fw-semibold fs-6 mb-2">Statut du contact</label>
-                            <select name="filter[status]" class="form-select form-select-solid">
-                                <option value="">Tous les statuts</option>
-                                @foreach($contactStatuses as $key => $data)
+                            <label class="fw-semibold fs-6 mb-2">État du contact</label>
+                            <select name="filter[lifecycle_state]" class="form-select form-select-solid">
+                                <option value="">Tous les états</option>
+                                @foreach($lifecycleStates as $key => $data)
                                     <option value="{{ $key }}"
-                                        {{ old('filter.status', $model->filter['status'] ?? '') === $key ? 'selected' : '' }}>
+                                        {{ old('filter.lifecycle_state', $model->filter['lifecycle_state'] ?? '') === $key ? 'selected' : '' }}>
                                         {{ $data['label'] }}
                                     </option>
                                 @endforeach

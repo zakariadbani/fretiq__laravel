@@ -18,11 +18,11 @@ class PermissionsSeeder extends Seeder
      *
      * Keyword permissions: backend.access, send campaigns, manage roles, manage permissions,
      *                      view zoho, sync zoho, run discovery, view settings, edit settings,
-     *                      enrich companies, view consumption, view provider quota
+     *                      enrich companies, view consumption, view provider quota, view provider activity
      *
      * Role mapping:
      *   superadmin  → all permissions
-     *   admin       → all permissions except manage packages, view provider quota,
+     *   admin       → all permissions except manage packages, view provider quota, view provider activity,
      *                 manage roles, manage permissions, view settings, edit settings
      *   commercial  → view/create/edit on companies, contacts, segments, campaigns, sequences,
      *                 demandes, prospect_criteria, campaign_templates, sender_identities
@@ -72,7 +72,7 @@ class PermissionsSeeder extends Seeder
             'enrich companies',  // commercial can trigger Hunter enrichment manually
             'view consumption',  // client-facing "Ma consommation" page — commercial + admin
             'view provider quota', // superadmin only — real vendor-account balances, NOT for admin/commercial
-            'view provider activity',
+            'view provider activity', // superadmin only by default — may be granted manually to another role
             'view inbox',
             'edit inbox',
             'verify contacts',
@@ -102,6 +102,7 @@ class PermissionsSeeder extends Seeder
             $superadminOnlyPermissions = [
                 'manage packages',
                 'view provider quota',
+                'view provider activity',
                 'manage roles',
                 'manage permissions',
                 'view settings',

@@ -52,7 +52,7 @@ class InboxTriageActionsTest extends TestCase
         $this->assertSame(1, $recipient->run->fresh()->conversion_count);
     }
 
-    public function test_not_interested_marks_the_contact_unqualified_without_a_demande(): void
+    public function test_not_interested_records_the_reply_without_a_demande(): void
     {
         [$email, $recipient] = $this->campaignReply();
 
@@ -60,13 +60,12 @@ class InboxTriageActionsTest extends TestCase
             ->post(route('admin.inbox.triage', $email), ['action' => 'not_interested'])
             ->assertRedirect(route('admin.inbox.view', $email));
 
-        $this->assertSame('unqualified', $recipient->contact->fresh()->status);
         $this->assertSame('replied', $recipient->fresh()->status);
         $this->assertSame(InboxEmail::STATUS_IGNORE, $email->fresh()->status);
         $this->assertDatabaseCount('demandes', 0);
     }
 
-    public function test_automatic_message_is_classified_without_changing_the_contact(): void
+    public function test_automatic_message_is_classified_without_recording_a_reply(): void
     {
         [$email, $recipient] = $this->campaignReply();
 
@@ -74,7 +73,6 @@ class InboxTriageActionsTest extends TestCase
             ->post(route('admin.inbox.triage', $email), ['action' => 'automatic'])
             ->assertRedirect(route('admin.inbox.view', $email));
 
-        $this->assertSame('new', $recipient->contact->fresh()->status);
         $this->assertSame('sent', $recipient->fresh()->status);
         $this->assertSame('automatic', $email->fresh()->triage_action);
         $this->assertSame(InboxEmail::STATUS_IGNORE, $email->fresh()->status);
@@ -134,8 +132,6 @@ class InboxTriageActionsTest extends TestCase
             'email' => 'prospect@example.test',
             'name' => 'Prospect',
             'source' => 'manual',
-            'status' => 'new',
-            'legal_basis' => 'relationship',
             'email_kind' => 'role',
         ]);
         $segment = Segment::create(['name' => 'Inbox segment', 'scope' => 'client']);
@@ -243,7 +239,7 @@ class InboxTriageActionsTest extends TestCase
         $email->refresh();
         $this->assertSame('interested', $email->triage_action);
         $this->assertSame(InboxEmail::STATUS_TRAITE, $email->status);
-        $this->assertSame('converted', $recipient->contact->fresh()->status);
+        $this->assertSame('replied', $recipient->fresh()->status);
         $this->assertDatabaseCount('demandes', 1);
     }
 

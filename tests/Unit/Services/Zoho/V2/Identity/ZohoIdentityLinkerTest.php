@@ -11,6 +11,7 @@ use App\Models\Zoho\ZohoUser;
 use App\Models\Zoho\ZohoUserMapping;
 use App\Services\Zoho\V2\Identity\ZohoIdentityLinker;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ZohoIdentityLinkerTest extends TestCase
@@ -120,6 +121,31 @@ class ZohoIdentityLinkerTest extends TestCase
         $this->assertSame(0, app(ZohoIdentityLinker::class)->linkMarketingContacts()['created']);
         $this->assertSame(1, ZohoMarketingLink::query()->count());
         $this->assertSame($firstHash, $link->fresh()->match_key_hash);
+    }
+
+    public function test_marketing_linking_selects_only_identity_columns_from_large_zoho_mirrors(): void
+    {
+        Contact::factory()->create(['email' => 'bounded-memory@example.test']);
+        $this->zohoLead('lead-bounded-memory', 'bounded-memory@example.test');
+        $this->zohoContact('contact-bounded-memory', 'bounded-memory@example.test');
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        app(ZohoIdentityLinker::class)->linkMarketingContacts();
+
+        $queries = collect(DB::getQueryLog())->pluck('query');
+        foreach (['zoho_leads', 'zoho_contacts'] as $table) {
+            $query = (string) $queries->first(
+                fn (string $query): bool => str_starts_with(strtolower(trim($query)), 'select')
+                    && str_contains(strtolower($query), $table),
+            );
+
+            $this->assertNotSame('', $query, $table);
+            $this->assertStringContainsString('zoho_id', $query, $table);
+            $this->assertStringContainsString('normalized_email', $query, $table);
+            $this->assertStringNotContainsString('*', $query, $table);
+            $this->assertStringNotContainsString('raw_payload', $query, $table);
+        }
     }
 
     public function test_marketing_linking_does_not_require_the_users_api_mirror(): void

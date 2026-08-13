@@ -32,8 +32,6 @@ class ContactFactory extends Factory
             ]),
             'phone'        => fake()->phoneNumber(),
             'source'       => 'manual',
-            'status'       => 'new',
-            'legal_basis'  => 'legitimate_interest',
             'email_kind'   => 'role',
         ];
     }

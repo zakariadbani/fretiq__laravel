@@ -3,8 +3,8 @@
 namespace App\Jobs;
 
 use App\Models\ProspectBatch;
+use App\Models\ProspectBatchContact;
 use App\Models\ProspectBatchItem;
-use App\Models\ProspectContactCandidate;
 use App\Services\Prospecting\ProspectBatchService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -70,11 +70,7 @@ final class FinalizeProspectBatchJob implements ShouldBeUnique, ShouldQueue
                 return 'discover';
             }
 
-            $reviewRequired = (clone $items)->where('status', 'review')->exists()
-                || ProspectContactCandidate::query()
-                    ->where('prospect_batch_id', $batch->getKey())
-                    ->where('decision', 'pending')
-                    ->exists();
+            $reviewRequired = (clone $items)->where('status', 'review')->exists();
             $failed = (clone $items)->where('status', 'failed')->count();
             $total = (clone $items)->count();
             $successful = (clone $items)->whereIn('status', ['ready', 'promoted'])->count();
@@ -101,8 +97,8 @@ final class FinalizeProspectBatchJob implements ShouldBeUnique, ShouldQueue
         });
 
         if ($action === 'wait') {
-            $this->release(10);
-
+            // Terminal item jobs dispatch a fresh finalizer. Polling here burns
+            // attempts while a provider retry is deliberately delayed.
             return;
         }
         if ($action !== 'discover') {
@@ -141,7 +137,7 @@ final class FinalizeProspectBatchJob implements ShouldBeUnique, ShouldQueue
             'review_items' => (clone $items)->where('status', 'review')->count(),
             'failed_items' => (clone $items)->where('status', 'failed')->count(),
             'promoted_companies' => (clone $items)->where('status', 'promoted')->count(),
-            'candidate_contacts' => ProspectContactCandidate::query()
+            'imported_contacts' => ProspectBatchContact::query()
                 ->where('prospect_batch_id', $batch->getKey())
                 ->count(),
         ])->save();

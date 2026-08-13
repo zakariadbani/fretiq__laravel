@@ -127,7 +127,7 @@ class InboxEmailController extends BackendController
 
         $messages = [
             'interested' => html_entity_decode('Demande cr&eacute;&eacute;e et message trait&eacute;.'),
-            'not_interested' => html_entity_decode('Contact marqu&eacute; non qualifi&eacute; et message class&eacute;.'),
+            'not_interested' => html_entity_decode('R&eacute;ponse enregistr&eacute;e et message class&eacute; non int&eacute;ress&eacute;.'),
             'automatic' => html_entity_decode('Message automatique class&eacute;.'),
         ];
 

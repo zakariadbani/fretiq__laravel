@@ -6,8 +6,8 @@ use App\Crud\ViewConfigs\SenderIdentityViewConfig;
 use App\Mail\SmtpConnectionTestMailable;
 use App\Models\SenderIdentity;
 use App\Models\User;
-use App\Services\Mail\SenderIdentitySmtpMailer;
 use App\Services\Mail\RequiredTlsEsmtpTransport;
+use App\Services\Mail\SmtpMailRouter;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -28,6 +28,7 @@ class SenderIdentitySmtpTest extends TestCase
     {
         parent::setUp();
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
+        config(['mail.smtp_mode' => 'mailpit']);
         $this->user = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
         $this->user->assignRole('superadmin');
     }
@@ -218,7 +219,36 @@ class SenderIdentitySmtpTest extends TestCase
             ->assertOk()
             ->assertSee('href="#sender_smtp"', false)
             ->assertSee('id="sender_smtp"', false)
-            ->assertSee('Mode local — email capturé par Mailpit.', false);
+            ->assertSee('data-smtp-status="mailpit"', false)
+            ->assertSee('Mailpit — capture locale active.', false);
+    }
+
+    public function test_smtp_tab_exposes_all_read_only_router_statuses_without_credentials(): void
+    {
+        $incomplete = $this->identity(['smtp_password' => 'never-render-this-password']);
+        $ready = $this->identity([
+            'smtp_enabled' => true,
+            'smtp_host' => 'smtp.ready.test',
+            'smtp_username' => 'ready-user',
+            'smtp_password' => 'another-hidden-password',
+        ]);
+
+        config(['mail.smtp_mode' => 'sender_identity']);
+        $this->actingAs($this->user)->get(route('admin.sender_identities.edit', $ready))
+            ->assertOk()
+            ->assertSee('data-smtp-status="sender-identity-ready"', false)
+            ->assertSee('Un test peut envoyer un véritable email externe, y compris depuis l’environnement local.', false)
+            ->assertDontSee('another-hidden-password', false);
+
+        $this->actingAs($this->user)->get(route('admin.sender_identities.edit', $incomplete))
+            ->assertOk()
+            ->assertSee('data-smtp-status="sender-identity-incomplete"', false)
+            ->assertDontSee('never-render-this-password', false);
+
+        config(['mail.smtp_mode' => null]);
+        $this->actingAs($this->user)->get(route('admin.sender_identities.edit', $incomplete))
+            ->assertOk()
+            ->assertSee('data-smtp-status="invalid-mode"', false);
     }
 
     public function test_sender_identity_stores_independent_hourly_and_daily_caps(): void
@@ -230,10 +260,10 @@ class SenderIdentitySmtpTest extends TestCase
         $this->assertSame([8, 40], [$b->smtp_hourly_limit, $b->smtp_daily_limit]);
     }
 
-    public function test_non_production_mode_ignores_identity_credentials_and_routes_to_mailpit_mailer(): void
+    public function test_mailpit_mode_ignores_identity_credentials_and_routes_to_mailpit_mailer(): void
     {
         Mail::fake();
-        config(['prospecting.smtp.mode' => 'sender_identity']);
+        config(['mail.smtp_mode' => 'mailpit']);
         $identity = $this->identity([
             'smtp_enabled' => true,
             'smtp_host' => 'must-not-be-used.example.test',
@@ -241,7 +271,7 @@ class SenderIdentitySmtpTest extends TestCase
             'smtp_password' => 'secret-pass',
         ]);
 
-        app(SenderIdentitySmtpMailer::class)->send(
+        app(SmtpMailRouter::class)->send(
             $identity,
             'receiver@example.test',
             new SmtpConnectionTestMailable($identity),
@@ -306,9 +336,9 @@ class SenderIdentitySmtpTest extends TestCase
         $this->assertSame('tls', $identity->fresh()->smtp_encryption);
     }
 
-    public function test_production_sender_identity_mode_builds_a_fresh_mailer_for_each_identity(): void
+    public function test_sender_identity_mode_builds_a_fresh_mailer_for_each_identity_in_local(): void
     {
-        config(['app.env' => 'production', 'prospecting.smtp.mode' => 'sender_identity']);
+        config(['mail.smtp_mode' => 'sender_identity']);
         $a = $this->identity(['email' => 'a@example.test', 'smtp_enabled' => true, 'smtp_host' => 'smtp-a.test', 'smtp_username' => 'a', 'smtp_password' => 'pa']);
         $b = $this->identity(['email' => 'b@example.test', 'smtp_enabled' => true, 'smtp_host' => 'smtp-b.test', 'smtp_username' => 'b', 'smtp_password' => 'pb']);
         $mailer = Mockery::mock(Mailer::class);
@@ -320,14 +350,14 @@ class SenderIdentitySmtpTest extends TestCase
         $manager->shouldReceive('build')->once()->with(Mockery::on(fn (array $config) => $config['host'] === 'smtp-b.test'))->andReturn($mailer);
         $this->app->instance(MailManager::class, $manager);
 
-        $service = app(SenderIdentitySmtpMailer::class);
+        $service = app(SmtpMailRouter::class);
         $service->send($a, 'receiver@example.test', new SmtpConnectionTestMailable($a));
         $service->send($b, 'receiver@example.test', new SmtpConnectionTestMailable($b));
     }
 
-    public function test_production_tls_identity_installs_a_fail_closed_starttls_transport(): void
+    public function test_sender_identity_mode_installs_a_fail_closed_starttls_transport_in_local(): void
     {
-        config(['app.env' => 'production', 'prospecting.smtp.mode' => 'sender_identity']);
+        config(['mail.smtp_mode' => 'sender_identity']);
         $identity = $this->identity([
             'smtp_enabled' => true,
             'smtp_host' => 'smtp.example.test',
@@ -349,7 +379,7 @@ class SenderIdentitySmtpTest extends TestCase
         $manager->shouldReceive('build')->once()->andReturn($mailer);
         $this->app->instance(MailManager::class, $manager);
 
-        app(SenderIdentitySmtpMailer::class)->send(
+        app(SmtpMailRouter::class)->send(
             $identity,
             'receiver@example.test',
             new SmtpConnectionTestMailable($identity),
@@ -365,7 +395,12 @@ class SenderIdentitySmtpTest extends TestCase
 
         $this->actingAs($this->user)->postJson(route('admin.sender_identities.testSmtp', $identity), [
             'receiver_email' => 'receiver@example.test',
-        ])->assertOk()->assertJsonPath('success', true);
+        ])->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('recipient', 'receiver@example.test')
+            ->assertJsonPath('sender.email', $identity->email)
+            ->assertJsonPath('mode', 'mailpit')
+            ->assertJsonPath('transport', 'Mailpit');
 
         Mail::assertSent(SmtpConnectionTestMailable::class, fn ($mail) => $mail->hasTo('receiver@example.test'));
     }
@@ -383,7 +418,7 @@ class SenderIdentitySmtpTest extends TestCase
 
     public function test_smtp_test_rejects_incomplete_configuration_and_never_exposes_credentials(): void
     {
-        config(['app.env' => 'production', 'prospecting.smtp.mode' => 'sender_identity']);
+        config(['mail.smtp_mode' => 'sender_identity']);
         $identity = $this->identity(['smtp_enabled' => true, 'smtp_password' => 'never-show-me']);
 
         $response = $this->actingAs($this->user)->postJson(route('admin.sender_identities.testSmtp', $identity), [
@@ -391,6 +426,21 @@ class SenderIdentitySmtpTest extends TestCase
         ])->assertUnprocessable();
 
         $this->assertStringNotContainsString('never-show-me', $response->getContent());
+    }
+
+    public function test_smtp_test_reports_an_invalid_global_mode_without_sending_or_exposing_credentials(): void
+    {
+        Mail::fake();
+        config(['mail.smtp_mode' => 'invalid']);
+        $identity = $this->identity(['smtp_password' => 'never-show-invalid-mode-secret']);
+
+        $response = $this->actingAs($this->user)->postJson(route('admin.sender_identities.testSmtp', $identity), [
+            'receiver_email' => 'receiver@example.test',
+        ])->assertUnprocessable()
+            ->assertJsonPath('message', 'Configuration SMTP invalide : SMTP_MODE doit être mailpit ou sender_identity.');
+
+        Mail::assertNothingSent();
+        $this->assertStringNotContainsString('never-show-invalid-mode-secret', $response->getContent());
     }
 
     private function identity(array $attributes = []): SenderIdentity

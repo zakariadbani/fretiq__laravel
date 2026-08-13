@@ -87,7 +87,7 @@ class ZohoModuleRegistryTest extends TestCase
         ], $registry->get('tasks')->promotedFieldSources);
         $this->assertSame([
             'subject' => ['Event_Title', 'Subject'],
-            'status' => ['Status'],
+            'status' => ['Status', 'Check_In_Status', 'Record_Status__s'],
             'activity_at' => ['Start_DateTime', 'Activity_DateTime', 'Created_Time'],
             'start_at' => ['Start_DateTime'],
             'end_at' => ['End_DateTime'],

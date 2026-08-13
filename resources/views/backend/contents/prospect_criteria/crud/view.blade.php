@@ -50,6 +50,10 @@
 
     {{-- ── Tab 2: Résultats (inline discovered companies) ────────────────── --}}
     <div class="tab-pane fade" id="criteria_resultats" role="tabpanel">
+        <div class="alert alert-info d-flex align-items-start mb-6" role="status">
+            <i class="bi bi-info-circle fs-2 me-3" aria-hidden="true"></i>
+            <div><strong>Contacts importés automatiquement.</strong> Cet import ne déclenche aucun email ; l’éligibilité est contrôlée séparément avant chaque campagne.</div>
+        </div>
         @include('backend.contents.prospect_criteria.partials._query-results', [
             'model'       => $model,
             'queryGroups' => $queryGroups ?? [],

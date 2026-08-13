@@ -23,8 +23,8 @@ Route::get('/admin/prospecting', [ProspectingDashboardController::class, 'index'
 
 Route::controller(ProspectReviewController::class)->prefix('admin')->name('admin.prospect_review.')->group(function (): void {
     Route::get('/prospect-review', 'index')->name('index');
+    Route::get('/prospect-review/items/{item}/status', 'itemStatus')->name('items.status');
     Route::post('/prospect-review/items/{item}/decide', 'decideItem')->name('items.decide');
-    Route::post('/prospect-review/candidates/{candidate}/decide', 'decideCandidate')->name('candidates.decide');
 });
 
 Route::controller(ProviderActivityController::class)->prefix('admin')->name('admin.provider_activity.')->group(function (): void {

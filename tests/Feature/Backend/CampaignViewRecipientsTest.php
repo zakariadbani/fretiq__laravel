@@ -99,9 +99,7 @@ class CampaignViewRecipientsTest extends TestCase
             'company_id'  => $company->id,
             'email'       => $email,
             'name'        => 'Contact ' . $email,
-            'status'      => 'new',
             'source'      => 'manual',
-            'legal_basis' => 'relationship',
             'email_kind'  => 'role',
         ]);
     }
@@ -536,8 +534,7 @@ class CampaignViewRecipientsTest extends TestCase
     }
 
     /**
-     * (m) markReplied is idempotent: second POST does NOT create a second Demande;
-     *     conversion_count incremented only once.
+     * (m) markReplied is idempotent reply evidence and never creates a demande.
      */
     public function test_mark_replied_is_idempotent(): void
     {
@@ -548,31 +545,28 @@ class CampaignViewRecipientsTest extends TestCase
 
         $url = "/admin/campaigns/{$campaign->id}/recipients/{$recipient->id}/replied";
 
-        // First POST — should create Demande and increment conversion_count.
+        // Both calls record the same reply evidence.
+        $this->actingAs($this->superadmin)->post($url)->assertRedirect();
         $this->actingAs($this->superadmin)->post($url)->assertRedirect();
 
-        // Second POST — idempotent, must not create another Demande.
-        $this->actingAs($this->superadmin)->post($url)->assertRedirect();
-
-        // Exactly 1 Demande exists for this contact + campaign.
         $this->assertSame(
-            1,
+            0,
             Demande::where('contact_id', $contact->id)
                    ->where('campaign_id', $campaign->id)
                    ->count(),
-            'Second markReplied must not create a duplicate Demande.'
+            'Reply evidence must not create a demande before interested triage.'
         );
 
-        // conversion_count incremented exactly once.
         $run->refresh();
-        $this->assertSame(1, (int) $run->conversion_count, 'conversion_count must be 1 after one successful capture.');
+        $this->assertSame(0, (int) $run->conversion_count);
+        $this->assertSame('replied', $recipient->fresh()->status);
+        $this->assertNotNull($recipient->fresh()->replied_at);
     }
 
     /**
-     * (n) markReplied blocked when contact already replied in another run of same campaign.
-     *     No new Demande created; redirect with info flash.
+     * (n) the specifically attributed recipient is updated even after an earlier reply.
      */
-    public function test_mark_replied_blocked_when_contact_replied_in_other_run(): void
+    public function test_mark_replied_updates_the_attributed_recipient_when_another_run_already_replied(): void
     {
         $campaign  = $this->makeCampaign('block1');
         $run1      = $this->makeRun($campaign, 'bl1');
@@ -590,7 +584,6 @@ class CampaignViewRecipientsTest extends TestCase
         $response = $this->actingAs($this->superadmin)->post($url);
         $response->assertRedirect();
 
-        // No new Demande should have been created.
         $this->assertSame(
             0,
             Demande::where('contact_id', $contact->id)
@@ -598,6 +591,8 @@ class CampaignViewRecipientsTest extends TestCase
                    ->count(),
             'markReplied must not create a Demande when contact already replied in another run.'
         );
+        $this->assertSame('replied', $recipientRun2->fresh()->status);
+        $this->assertNotNull($recipientRun2->fresh()->replied_at);
     }
     public function test_sequence_step_matrix_renders_truthful_cells_summaries_and_history_labels(): void
     {
@@ -605,7 +600,6 @@ class CampaignViewRecipientsTest extends TestCase
         $sequence = Sequence::create([
             'name' => 'Sequence step matrix',
             'is_active' => true,
-            'stop_on_reply' => true,
         ]);
         $step1 = SequenceStep::create([
             'sequence_id' => $sequence->id,

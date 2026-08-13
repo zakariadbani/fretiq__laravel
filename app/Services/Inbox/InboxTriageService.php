@@ -2,7 +2,6 @@
 
 namespace App\Services\Inbox;
 
-use App\Models\CampaignRecipient;
 use App\Models\Contact;
 use App\Models\Demande;
 use App\Models\InboxEmail;
@@ -15,7 +14,10 @@ class InboxTriageService
 {
     public const ACTIONS = ['interested', 'not_interested', 'automatic'];
 
-    public function __construct(private readonly DemandeCaptureService $demandeCaptureService) {}
+    public function __construct(
+        private readonly DemandeCaptureService $demandeCaptureService,
+        private readonly ReplyRecordingService $replyRecording,
+    ) {}
 
     public function triage(InboxEmail $email, string $action, User $actor): bool
     {
@@ -72,10 +74,9 @@ class InboxTriageService
                     $email->demande_id = $demande->id;
                 }
 
-                $this->markRecipientReplied($email);
+                $this->replyRecording->record($email);
             } elseif ($action === 'not_interested') {
-                $email->contact?->update(['status' => 'unqualified']);
-                $this->markRecipientReplied($email);
+                $this->replyRecording->record($email);
             }
 
             $email->fill([
@@ -89,19 +90,4 @@ class InboxTriageService
         });
     }
 
-    private function markRecipientReplied(InboxEmail $email): void
-    {
-        $recipient = $email->campaignRecipient;
-        if ($recipient === null && $email->sequenceStepSend?->campaign_run_id !== null && $email->contact_id !== null) {
-            $recipient = CampaignRecipient::query()
-                ->where('campaign_run_id', $email->sequenceStepSend->campaign_run_id)
-                ->where('contact_id', $email->contact_id)
-                ->lockForUpdate()
-                ->first();
-        }
-
-        if ($recipient !== null && $recipient->status !== 'replied') {
-            $recipient->update(['status' => 'replied', 'replied_at' => now()]);
-        }
-    }
 }

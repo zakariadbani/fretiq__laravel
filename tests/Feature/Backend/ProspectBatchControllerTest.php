@@ -57,10 +57,23 @@ class ProspectBatchControllerTest extends TestCase
             ->assertOk()
             ->assertSee('Ajouter les entreprises')
             ->assertSee('Choisir la qualité')
-            ->assertSee('Confirmer le coût')
+            ->assertSee('Vérifier et lancer')
             ->assertSee('Traitement')
             ->assertSee('value="balanced"', false)
             ->assertSee('checked', false);
+    }
+
+    public function test_create_renders_the_company_inputs_in_the_current_step(): void
+    {
+        $this->actingAs($this->user)
+            ->get(route('admin.prospect_batches.create'))
+            ->assertOk()
+            ->assertSee(
+                'class="current flex-column" data-kt-stepper-element="content" data-prospect-step="1"',
+                false,
+            )
+            ->assertSee('id="companies_text"', false)
+            ->assertSee('id="companies_csv"', false);
     }
 
     public function test_store_accepts_copy_paste_or_csv_but_not_both(): void

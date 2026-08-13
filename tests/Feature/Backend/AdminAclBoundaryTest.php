@@ -17,6 +17,7 @@ class AdminAclBoundaryTest extends TestCase
     private const SUPERADMIN_ONLY_PERMISSIONS = [
         'manage packages',
         'view provider quota',
+        'view provider activity',
         'manage roles',
         'manage permissions',
         'view settings',
@@ -38,7 +39,7 @@ class AdminAclBoundaryTest extends TestCase
         $this->admin->assignRole('admin');
     }
 
-    public function test_seeded_superadmin_has_all_six_restricted_permissions_and_admin_has_none(): void
+    public function test_seeded_superadmin_has_all_seven_restricted_permissions_and_admin_has_none(): void
     {
         $superadmin = Role::findByName('superadmin');
         $admin = Role::findByName('admin');
@@ -49,7 +50,7 @@ class AdminAclBoundaryTest extends TestCase
         }
     }
 
-    public function test_seeded_admin_excludes_exactly_the_six_superadmin_only_permissions(): void
+    public function test_seeded_admin_excludes_exactly_the_seven_superadmin_only_permissions(): void
     {
         $allPermissions = Permission::query()->pluck('name')->sort()->values();
         $adminPermissions = Role::findByName('admin')->permissions->pluck('name')->sort()->values();

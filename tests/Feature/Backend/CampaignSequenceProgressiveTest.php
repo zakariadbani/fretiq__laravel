@@ -22,6 +22,7 @@ use App\Models\SequenceStepSend;
 use App\Models\Setting;
 use App\Models\User;
 use App\Services\Campaign\CampaignService;
+use App\Services\Campaign\CampaignDeliveryFence;
 use App\Services\Campaign\CampaignWaveZohoListSyncService;
 use App\Services\Campaign\PacedSequenceEnrollmentService;
 use App\Services\Campaign\SegmentService;
@@ -1026,6 +1027,118 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertNull($run->failure_reason);
     }
 
+    public function test_sequence_wave_rechecks_pending_verification_after_transport_claim(): void
+    {
+        config(['services.zoho.driver' => 'zoho']);
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence(), [
+            'delivery_channel' => 'zoho',
+            'email_verification_policy' => Campaign::VERIFICATION_ALL_SENDABLE,
+        ]);
+        $contact = $this->contact($this->company(50));
+        $contact->forceFill([
+            'email_verification_status' => 'valid',
+            'email_verification_source' => 'hunter',
+            'email_verification_checked_at' => now(),
+        ])->save();
+        SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $contact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+        ]);
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $sequence->steps()->firstOrFail()->id,
+            'occurrence_key' => 'sequence-wave-pending-after-claim',
+            'run_at' => now(),
+            'status' => 'scheduled',
+            'zoho_list_key' => 'prepared-list',
+            'driver_ref' => 'zoho-wave-synced',
+        ]);
+        CampaignRecipient::create([
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'queued',
+        ]);
+
+        $this->mock(CampaignDeliveryFence::class, function (MockInterface $mock) use ($contact): void {
+            $mock->shouldReceive('claimZohoTransport')
+                ->once()
+                ->andReturnUsing(function (CampaignRun $run) use ($contact): CampaignRun {
+                    $contact->forceFill([
+                        'email_verification_status' => 'pending',
+                        'email_verification_checked_at' => null,
+                    ])->save();
+
+                    $run->update(['status' => 'sending', 'started_at' => now()]);
+
+                    return $run->fresh();
+                });
+        });
+        $this->mock(ZohoCampaignsDriver::class, fn (MockInterface $mock) => $mock->shouldNotReceive('dispatchRun'));
+
+        app(SequenceWaveService::class)->send($run);
+
+        $run->refresh();
+        $this->assertSame('scheduled', $run->status);
+        $this->assertNull($run->started_at);
+        $this->assertNull($run->finished_at);
+        $this->assertDatabaseHas('campaign_recipients', [
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'queued',
+        ]);
+    }
+
+    public function test_verified_only_sequence_wave_excludes_pending_instead_of_waiting(): void
+    {
+        config(['services.zoho.driver' => 'zoho']);
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence(), [
+            'delivery_channel' => 'zoho',
+            'email_verification_policy' => Campaign::VERIFICATION_VERIFIED_ONLY,
+        ]);
+        $contact = $this->contact($this->company(50));
+        $contact->forceFill([
+            'email_verification_status' => 'pending',
+            'email_verification_source' => 'hunter',
+            'email_verification_checked_at' => null,
+        ])->save();
+        $enrollment = SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $contact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+        ]);
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $sequence->steps()->firstOrFail()->id,
+            'occurrence_key' => 'sequence-wave-verified-only-pending',
+            'run_at' => now(),
+            'status' => 'scheduled',
+            'zoho_list_key' => 'prepared-list',
+            'driver_ref' => 'zoho-wave-synced',
+        ]);
+        CampaignRecipient::create([
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'queued',
+        ]);
+        $this->mock(ZohoCampaignsDriver::class, fn (MockInterface $mock) => $mock->shouldNotReceive('dispatchRun'));
+
+        app(SequenceWaveService::class)->send($run);
+
+        $this->assertSame('sent', $run->fresh()->status);
+        $this->assertDatabaseHas('campaign_recipients', [
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'skipped',
+            'skip_reason' => 'verification_pending',
+        ]);
+        $this->assertSame('stopped', $enrollment->fresh()->status);
+    }
+
     public function test_wave_view_shows_explicit_and_legacy_membership(): void
     {
         $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
@@ -1859,10 +1972,11 @@ class CampaignSequenceProgressiveTest extends TestCase
             'company_id' => $company->id,
             'email' => uniqid('contact_') . '@example.test',
             'name' => 'Contact',
-            'status' => 'new',
             'source' => 'manual',
-            'legal_basis' => 'relationship',
             'email_kind' => 'role',
+            'email_verification_status' => 'valid',
+            'email_verification_source' => 'import',
+            'email_verification_checked_at' => now(),
         ]);
     }
 

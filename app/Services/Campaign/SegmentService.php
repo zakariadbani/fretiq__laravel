@@ -3,8 +3,10 @@
 namespace App\Services\Campaign;
 
 use App\Models\Contact;
+use App\Models\Campaign;
 use App\Models\Segment;
 use App\Models\Suppression;
+use App\Services\Prospecting\ContactLifecycleService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -47,6 +49,7 @@ class SegmentService
 {
     public function __construct(
         private readonly ContactEligibilityService $contactEligibility,
+        private readonly ContactLifecycleService $lifecycle,
     ) {
     }
 
@@ -56,9 +59,9 @@ class SegmentService
      *
      * @return Collection<int, Contact>  Eligible Contact models (with 'company' relation loaded).
      */
-    public function resolve(Segment $segment): Collection
+    public function resolve(Segment $segment, string $policy = Campaign::VERIFICATION_VERIFIED_ONLY): Collection
     {
-        return $this->resolveCollection($segment);
+        return $this->resolveCollection($segment, $policy);
     }
 
     /**
@@ -73,10 +76,11 @@ class SegmentService
      * @param  bool      $manualOnly  Resolve the include IDs as an explicit allow-list
      * @return Collection<int, Contact>
      */
-    public function resolveAudience(string $scope, array $filter, array $includeIds = [], array $excludeIds = [], bool $manualOnly = false): Collection
+    public function resolveAudience(string $scope, array $filter, array $includeIds = [], array $excludeIds = [], bool $manualOnly = false, string $policy = Campaign::VERIFICATION_VERIFIED_ONLY): Collection
     {
         $qualityEligible = $this->filterByQuality(
             $this->buildPostDedupCollection($scope, $filter, $includeIds, $manualOnly),
+            $policy,
         );
 
         return $qualityEligible
@@ -88,7 +92,7 @@ class SegmentService
      * Return the count of eligible contacts for a segment.
      * Delegates to resolveWithStats for a truthful, pipeline-consistent count.
      */
-    public function previewCount(Segment $segment): int
+    public function previewCount(Segment $segment, string $policy = Campaign::VERIFICATION_VERIFIED_ONLY): int
     {
         return $this->resolveWithStats(
             $segment->scope,
@@ -97,6 +101,7 @@ class SegmentService
             $segment->includedContactIds(),
             $segment->excludedContactIds(),
             $segment->is_manual,
+            $policy,
         )['final'];
     }
 
@@ -134,6 +139,7 @@ class SegmentService
         array $includeIds = [],
         array $excludeIds = [],
         bool $manualOnly = false,
+        string $policy = Campaign::VERIFICATION_VERIFIED_ONLY,
     ): array {
         // ── Count-only path (stages 1–4, no model hydration) ────────────────────
         $q12 = $this->buildBaseQuery($scope, $filter, hydrating: false, includeIds: $includeIds, manualOnly: $manualOnly);
@@ -156,7 +162,7 @@ class SegmentService
         // For back-compat callers with no includeIds/excludeIds this path is cheap
         // (empty ids → resolveCollection result already correct).
         $postDedup = $this->buildPostDedupCollection($scope, $filter, $includeIds, $manualOnly);
-        $qualityEligible = $this->filterByQuality($postDedup);
+        $qualityEligible = $this->filterByQuality($postDedup, $policy);
         $verification_excluded = $postDedup->count() - $qualityEligible->count();
 
         // Apply excludes: reject any contact whose id is in excludeIds.
@@ -209,7 +215,7 @@ class SegmentService
      * @param  Segment  $segment
      * @return Collection<int, Contact>
      */
-    private function resolveCollection(Segment $segment): Collection
+    private function resolveCollection(Segment $segment, string $policy): Collection
     {
         return $this->resolveAudience(
             $segment->scope,
@@ -217,6 +223,7 @@ class SegmentService
             $segment->includedContactIds(),
             $segment->excludedContactIds(),
             $segment->is_manual,
+            $policy,
         );
     }
 
@@ -235,7 +242,7 @@ class SegmentService
         $query = $this->buildBaseQuery($scope, $filter, hydrating: true, includeIds: $includeIds, manualOnly: $manualOnly);
         $this->applySuppressionStage($query);
 
-        $contacts = $query->get();
+        $contacts = $this->lifecycle->select($query)->get();
 
         // Stage 4: dedup by email (case-insensitive, application-level safety net).
         return $contacts
@@ -250,10 +257,10 @@ class SegmentService
      * @param  Collection<int, Contact>  $contacts
      * @return Collection<int, Contact>
      */
-    private function filterByQuality(Collection $contacts): Collection
+    private function filterByQuality(Collection $contacts, string $policy): Collection
     {
         return $contacts
-            ->reject(fn (Contact $contact): bool => $this->contactEligibility->qualityReason($contact) !== null)
+            ->reject(fn (Contact $contact): bool => $this->contactEligibility->audienceQualityReason($contact, $policy) !== null)
             ->values();
     }
 
@@ -357,7 +364,7 @@ class SegmentService
      *   sector      → companies.sector      (exact match; scalar or array → where / whereIn)
      *   criteria_id → companies.criteria_id (exact match; scalar or array of ints)
      *   country     → companies.country     (exact match, 2-char ISO; scalar or array)
-     *   status      → contacts.status       (exact match; scalar only)
+     *   lifecycle_state → calculated contact state (scalar or array)
      *
      * Boolean semantics inside the company whereHas:
      *   sector OR criteria_id  — when BOTH are present they are ORed with each other,
@@ -402,9 +409,8 @@ class SegmentService
             });
         }
 
-        if (! empty($filter['status'])) {
-            // status is always a scalar — plain string match on contacts.status.
-            $query->where('status', $filter['status']);
+        if (! empty($filter['lifecycle_state'])) {
+            $this->lifecycle->applyState($query, $filter['lifecycle_state']);
         }
     }
 

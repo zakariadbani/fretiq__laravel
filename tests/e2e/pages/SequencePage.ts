@@ -10,12 +10,11 @@ import { DataTablePage } from './DataTablePage';
  * Form field names (from form.blade.php):
  *   name (required, text)
  *   is_active   (checkbox switch, value="1")
- *   stop_on_reply (checkbox switch, value="1")
  *
  *   No Select2 on the main create/edit form.
  *
  * Toggleable fields declared in SequenceController::$toggleableFields:
- *   is_active, stop_on_reply
+ *   is_active
  *   — toggled via PUT /sequences/executeSwitch/{id} (DataTable inline switch)
  *
  * Step-builder add form (on view AND edit pages, inside #sequence_steps pane):
@@ -61,9 +60,6 @@ export class SequencePage extends DataTablePage {
   /** Checkbox switch for is_active — scoped to #form_crud */
   readonly isActiveCheckbox: Locator;
 
-  /** Checkbox switch for stop_on_reply — scoped to #form_crud */
-  readonly stopOnReplyCheckbox: Locator;
-
   // ── Step-builder add-form locators (inside #sequence_steps pane) ──────────
 
   /**
@@ -101,7 +97,6 @@ export class SequencePage extends DataTablePage {
     // Main form fields — scoped to #form_crud
     this.nameInput          = page.locator('#form_crud input[name="name"]');
     this.isActiveCheckbox   = page.locator('#form_crud input[type="checkbox"][name="is_active"]');
-    this.stopOnReplyCheckbox = page.locator('#form_crud input[type="checkbox"][name="stop_on_reply"]');
 
     // Step-builder form — inside the #sequence_steps pane (view or edit page)
     // These are scoped to the add-step card-footer form to avoid matching step-row delete forms.
@@ -149,12 +144,11 @@ export class SequencePage extends DataTablePage {
   /**
    * Fill and submit the create/edit form.
    * Only `name` is required server-side; checkboxes default to checked in the view.
-   * Leave isActive / stopOnReply undefined to keep whatever the form renders by default.
+   * Leave isActive undefined to keep whatever the form renders by default.
    */
   async fillAndSubmit(data: {
     name: string;
     isActive?: boolean;
-    stopOnReply?: boolean;
   }) {
     await this.nameInput.fill(data.name);
 
@@ -162,13 +156,6 @@ export class SequencePage extends DataTablePage {
       const checked = await this.isActiveCheckbox.isChecked();
       if (checked !== data.isActive) {
         await this.isActiveCheckbox.click();
-      }
-    }
-
-    if (data.stopOnReply !== undefined) {
-      const checked = await this.stopOnReplyCheckbox.isChecked();
-      if (checked !== data.stopOnReply) {
-        await this.stopOnReplyCheckbox.click();
       }
     }
 
@@ -192,37 +179,6 @@ export class SequencePage extends DataTablePage {
   async clickActiveSwitchOnRow(rowIndex: number) {
     const row = this.table.locator('tbody tr').nth(rowIndex);
     await row.locator('input[type="checkbox"][data-field="is_active"]').click();
-  }
-
-  /**
-   * Click the stop_on_reply toggle switch on a DataTable row.
-   *
-   * The DataTable renders stop_on_reply via the status.blade.php component
-   * which emits: <input type="checkbox" data-field="stop_on_reply" ...>
-   *
-   * If the switch input is present (data-field="stop_on_reply"), click it to fire
-   * the executeSwitch PUT AJAX call.  If the column renders as a read-only badge
-   * instead (e.g. SequencesDataTable.createEditColumns overrides the switch with a
-   * badge), click the badge cell so the test does not time-out and the subsequent
-   * expectMinRows assertion still verifies the row survived the interaction.
-   */
-  async clickStopOnReplySwitchOnRow(rowIndex: number) {
-    const row = this.table.locator('tbody tr').nth(rowIndex);
-
-    // Prefer the proper switch input identified by data-field (status.blade.php)
-    const switchInput = row.locator('input[type="checkbox"][data-field="stop_on_reply"]');
-    const switchCount = await switchInput.count();
-    if (switchCount > 0) {
-      await switchInput.click();
-      return;
-    }
-
-    // Fallback: stop_on_reply column renders as a static badge (Oui/Non).
-    // Target the badge by its text content which is stable regardless of column position.
-    // Badge click does not fire AJAX; network-idle resolves immediately and the row stays.
-    const badge = row.locator('.badge', { hasText: /^(Oui|Non)$/ }).first();
-    await badge.waitFor({ state: 'visible', timeout: 10000 });
-    await badge.click({ force: true });
   }
 
   /**

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Backend;
 
+use App\Crud\ViewConfigs\ProspectCriteriaViewConfig;
 use App\Exceptions\CriteriaCompanyNoLongerEligibleException;
 use App\Exceptions\QuotaExhaustedException;
 use App\Jobs\EnrichCriteriaContactsJob;
@@ -204,8 +205,7 @@ class CriteriaContactEnrichmentTest extends TestCase
             ->assertJsonPath('success_target', 1)
             ->assertJsonPath('attempt_limit', 2);
 
-        Queue::assertPushed(EnrichCriteriaContactsJob::class, fn (EnrichCriteriaContactsJob $job): bool =>
-            $job->successTarget === 1 && $job->approvedAttempts === 2);
+        Queue::assertPushed(EnrichCriteriaContactsJob::class, fn (EnrichCriteriaContactsJob $job): bool => $job->successTarget === 1 && $job->approvedAttempts === 2);
     }
 
     public function test_zero_callable_does_not_dispatch(): void
@@ -358,12 +358,23 @@ class CriteriaContactEnrichmentTest extends TestCase
                 + $snapshot['batch_deferred_count'],
         );
 
+        $viewConfig = ProspectCriteriaViewConfig::make($criteria, [
+            'contact_coverage' => $snapshot,
+        ]);
+        $enrichmentCard = collect($viewConfig['stat_cards'])
+            ->firstWhere('label', 'Entreprises à enrichir');
+
+        $this->assertNotNull($enrichmentCard);
+        $this->assertSame(3, $enrichmentCard['value']);
+        $this->assertSame('Score ≥ 50 · 1 traitable au prochain lot', $enrichmentCard['hint']);
+
         $this->actingAs($this->allowed)
             ->get(route('admin.prospect_criteria.view', $criteria))
             ->assertOk()
             ->assertSee('Entreprises avec contacts')
             ->assertSee('Entreprises sans contacts')
-            ->assertSee('Enrichissables maintenant')
+            ->assertSee('Entreprises à enrichir')
+            ->assertSee('Score ≥ 50 · 1 traitable au prochain lot')
             ->assertSee('En attente du quota');
     }
 
@@ -521,13 +532,11 @@ class CriteriaContactEnrichmentTest extends TestCase
         $enrichment->shouldReceive('enrichForCriteria')
             ->once()
             ->ordered()
-            ->andReturnUsing(fn (int $companyId, ProspectCriteria $fresh, string $batchId) =>
-                $this->recordBatchAttempt($fresh->id, $companyId, $batchId, 0));
+            ->andReturnUsing(fn (int $companyId, ProspectCriteria $fresh, string $batchId) => $this->recordBatchAttempt($fresh->id, $companyId, $batchId, 0));
         $enrichment->shouldReceive('enrichForCriteria')
             ->once()
             ->ordered()
-            ->andReturnUsing(fn (int $companyId, ProspectCriteria $fresh, string $batchId) =>
-                $this->recordBatchAttempt($fresh->id, $companyId, $batchId, 1, 3));
+            ->andReturnUsing(fn (int $companyId, ProspectCriteria $fresh, string $batchId) => $this->recordBatchAttempt($fresh->id, $companyId, $batchId, 1, 3));
 
         (new EnrichCriteriaContactsJob(
             criteriaId: $criteria->id,
@@ -580,8 +589,7 @@ class CriteriaContactEnrichmentTest extends TestCase
         $this->company($criteria);
         $enrichment = Mockery::mock(CompanyEnrichmentService::class);
         $enrichment->shouldReceive('enrichForCriteria')->once()
-            ->andReturnUsing(fn (int $companyId, ProspectCriteria $fresh, string $batchId) =>
-                $this->recordBatchAttempt($fresh->id, $companyId, $batchId, 0));
+            ->andReturnUsing(fn (int $companyId, ProspectCriteria $fresh, string $batchId) => $this->recordBatchAttempt($fresh->id, $companyId, $batchId, 0));
 
         // Became eligible after approval; approved maximum remains one.
         $this->company($criteria);
@@ -619,8 +627,7 @@ class CriteriaContactEnrichmentTest extends TestCase
         $enrichment->shouldReceive('enrichForCriteria')
             ->once()
             ->withArgs(fn (int $companyId): bool => $companyId !== $alreadyAttempted->id)
-            ->andReturnUsing(fn (int $companyId, ProspectCriteria $fresh, string $jobBatchId) =>
-                $this->recordBatchAttempt($fresh->id, $companyId, $jobBatchId, 0));
+            ->andReturnUsing(fn (int $companyId, ProspectCriteria $fresh, string $jobBatchId) => $this->recordBatchAttempt($fresh->id, $companyId, $jobBatchId, 0));
 
         (new EnrichCriteriaContactsJob(
             $criteria->id,

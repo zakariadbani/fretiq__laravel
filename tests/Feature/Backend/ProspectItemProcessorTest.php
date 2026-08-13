@@ -2,19 +2,28 @@
 
 namespace Tests\Feature\Backend;
 
+use App\Jobs\ProcessProspectBatchItemJob;
 use App\Models\Company;
+use App\Models\Contact;
 use App\Models\ProspectBatch;
+use App\Models\ProspectBatchContact;
 use App\Models\ProspectBatchItem;
-use App\Models\ProspectContactCandidate;
 use App\Models\ProviderCall;
 use App\Services\Prospecting\ProspectBatchService;
 use App\Services\Prospecting\ProspectItemProcessor;
 use App\Services\Providers\Hunter\HunterClient;
 use App\Services\Providers\ProviderCallContext;
+use App\Services\Providers\ProviderRequestException;
+use Illuminate\Contracts\Cache\Lock;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
+use RuntimeException;
 use Tests\TestCase;
 
 class ProspectItemProcessorTest extends TestCase
@@ -75,6 +84,27 @@ class ProspectItemProcessorTest extends TestCase
         $domainCall = ProviderCall::query()->where('operation', 'domain_search')->sole();
         $this->assertSame('10.00', $domainCall->reserved_units);
         $this->assertSame('0.00', $domainCall->consumed_units);
+    }
+
+    public function test_company_link_lock_contention_is_retried_instead_of_becoming_domain_review(): void
+    {
+        $item = $this->item(['provided_domain' => 'acme.fr']);
+        $lock = \Mockery::mock(Lock::class);
+        $lock->shouldReceive('block')->once()->with(3)->andThrow(new LockTimeoutException);
+        Cache::shouldReceive('lock')->once()->andReturn($lock);
+
+        try {
+            app(ProspectItemProcessor::class)->process($item);
+            $this->fail('Lock contention must release the item for a retry.');
+        } catch (ProviderRequestException $exception) {
+            $this->assertTrue($exception->retryable);
+            $this->assertSame('prospect_item_promotion_lock_timeout', $exception->safeCode);
+        }
+
+        $item->refresh();
+        $this->assertSame('pending', $item->status);
+        $this->assertSame('prospect_item_promotion_lock_timeout', $item->error_code);
+        $this->assertSame('provided_domain', $item->domain_reason);
     }
 
     public function test_perfect_domain_finder_match_is_auto_selected_when_name_and_country_agree(): void
@@ -286,7 +316,7 @@ class ProspectItemProcessorTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_domain_search_paginates_one_hundred_plus_twenty_and_stages_verification_evidence(): void
+    public function test_domain_search_paginates_one_hundred_plus_twenty_and_imports_verification_evidence(): void
     {
         $batch = ProspectBatch::factory()->create([
             'quality_preset' => 'deep',
@@ -340,31 +370,197 @@ class ProspectItemProcessorTest extends TestCase
         $this->assertSame('senior,executive', $domainSearchRequests[0]['seniority']);
         $this->assertSame('1', (string) $domainSearchRequests[0]['decision_maker']);
         $this->assertSame('valid,accept_all', $domainSearchRequests[0]['verification_status']);
-        $this->assertSame(121, ProspectContactCandidate::query()->where('prospect_batch_item_id', $item->id)->count());
-        $this->assertDatabaseHas('prospect_contact_candidates', [
-            'normalized_email' => 'person119@acme.fr',
-            'source' => 'hunter_domain_search',
+        $this->assertSame(121, Contact::query()->where('company_id', $item->company_id)->count());
+        $this->assertSame(121, ProspectBatchContact::query()->where('prospect_batch_item_id', $item->id)->count());
+        $this->assertDatabaseHas('contacts', [
+            'email' => 'person119@acme.fr',
+            'source' => 'discovered',
             'email_kind' => 'role',
-            'verification_status' => 'valid',
-            'verification_source' => 'hunter',
+            'email_verification_status' => 'valid',
+            'email_verification_source' => 'hunter',
         ]);
         $this->assertSame(
             '2026-08-01',
-            ProspectContactCandidate::query()
-                ->where('normalized_email', 'person119@acme.fr')
+            Contact::query()
+                ->where('email', 'person119@acme.fr')
                 ->sole()
-                ->verification_checked_at
+                ->email_verification_checked_at
                 ->toDateString(),
         );
-        $siteCandidate = ProspectContactCandidate::query()->where('normalized_email', 'contact@acme.fr')->sole();
-        $this->assertSame('hunter_company_enrichment', $siteCandidate->source);
-        $this->assertSame('company_site', data_get($siteCandidate->metadata, 'origin'));
+        $siteContact = Contact::query()->where('email', 'contact@acme.fr')->sole();
+        $this->assertDatabaseHas('prospect_batch_contacts', [
+            'prospect_batch_item_id' => $item->id,
+            'contact_id' => $siteContact->id,
+            'provider_source' => 'hunter_company_enrichment',
+        ]);
         $domainCalls = ProviderCall::query()
             ->where('operation', 'domain_search')
             ->orderBy('id')
             ->get();
         $this->assertSame(['10.00', '10.00'], $domainCalls->pluck('reserved_units')->all());
         $this->assertSame(['10.00', '2.00'], $domainCalls->pluck('consumed_units')->all());
+    }
+
+    public function test_domain_search_falls_back_to_free_plan_window_after_pagination_error(): void
+    {
+        $item = $this->item(['provided_domain' => 'acme.fr']);
+        $domainSearchRequests = [];
+
+        Http::fake(function (Request $request) use (&$domainSearchRequests) {
+            if (str_contains($request->url(), '/companies/find')) {
+                return Http::response(['data' => []], 200);
+            }
+
+            if (str_contains($request->url(), '/domain-search')) {
+                $domainSearchRequests[] = $request->data();
+                $limit = (int) ($request->data()['limit'] ?? 0);
+
+                if ($limit === 100) {
+                    return Http::response(['errors' => [['id' => 'pagination_error']]], 400);
+                }
+
+                return Http::response([
+                    'data' => ['domain' => 'acme.fr', 'emails' => $this->hunterEmails(0, 10)],
+                    'meta' => ['results' => 50, 'limit' => 10, 'offset' => 0],
+                ], 200);
+            }
+
+            return Http::response([], 500);
+        });
+
+        app(ProspectItemProcessor::class)->process($item);
+
+        $item->refresh();
+        $this->assertSame('ready', $item->status);
+        $this->assertSame([100, 10], array_map(static fn (array $query): int => (int) $query['limit'], $domainSearchRequests));
+        $this->assertSame([0, 0], array_map(static fn (array $query): int => (int) $query['offset'], $domainSearchRequests));
+        $this->assertSame(10, data_get($item->source_metadata, 'processing.domain_search_limit_cap'));
+        $this->assertTrue((bool) data_get($item->source_metadata, 'processing.domain_search_done'));
+        $this->assertSame(10, data_get($item->source_metadata, 'processing.domain_search_offset'));
+        $this->assertDatabaseHas('provider_calls', [
+            'operation' => 'domain_search',
+            'status' => 'failed',
+            'http_status' => 400,
+        ]);
+        $this->assertDatabaseHas('provider_calls', [
+            'operation' => 'domain_search',
+            'status' => 'succeeded',
+            'result_count' => 10,
+        ]);
+    }
+
+    public function test_existing_failed_domain_search_pagination_call_recovers_with_a_new_ten_result_request(): void
+    {
+        $item = $this->item([
+            'provided_domain' => 'acme.fr',
+            'selected_domain' => 'acme.fr',
+            'registrable_domain' => 'acme.fr',
+            'source_metadata' => ['processing' => ['company_enrichment_done' => true]],
+        ]);
+        $filtersHash = hash('sha256', json_encode([], JSON_THROW_ON_ERROR));
+        $failedKey = hash('sha256', implode('|', [
+            'prospect_item_v1',
+            (string) $item->id,
+            'domain_search',
+            hash('sha256', "acme.fr|{$filtersHash}|0|100"),
+        ]));
+        $failedCall = ProviderCall::query()->create([
+            'prospect_batch_id' => $item->prospect_batch_id,
+            'prospect_batch_item_id' => $item->id,
+            'provider' => 'hunter',
+            'operation' => 'domain_search',
+            'idempotency_key' => $failedKey,
+            'status' => 'failed',
+            'http_status' => 400,
+            'reserved_units' => 10,
+            'consumed_units' => 0,
+            'attempt_count' => 1,
+            'metadata' => ['error_code' => 'pagination_error', 'retryable' => false],
+            'started_at' => now()->subMinute(),
+            'finished_at' => now()->subMinute(),
+        ]);
+        $domainSearchRequests = [];
+
+        Http::fake(function (Request $request) use (&$domainSearchRequests) {
+            $domainSearchRequests[] = $request->data();
+
+            return Http::response([
+                'data' => ['domain' => 'acme.fr', 'emails' => $this->hunterEmails(0, 3)],
+                'meta' => ['results' => 3, 'limit' => 10, 'offset' => 0],
+            ], 200);
+        });
+
+        app(ProspectItemProcessor::class)->process($item);
+
+        $item->refresh();
+        $this->assertSame('ready', $item->status);
+        $this->assertCount(1, $domainSearchRequests);
+        $this->assertSame(10, (int) $domainSearchRequests[0]['limit']);
+        $this->assertSame(0, (int) $domainSearchRequests[0]['offset']);
+        $failedCall->refresh();
+        $this->assertSame('failed', $failedCall->status);
+        $this->assertSame(1, $failedCall->attempt_count);
+        $this->assertSame('pagination_error', data_get($failedCall->metadata, 'error_code'));
+        $this->assertSame(2, ProviderCall::query()->where('operation', 'domain_search')->count());
+    }
+
+    public function test_domain_search_attempts_the_ten_result_fallback_only_once(): void
+    {
+        $item = $this->item(['provided_domain' => 'acme.fr']);
+        $domainSearchRequests = [];
+
+        Http::fake(function (Request $request) use (&$domainSearchRequests) {
+            if (str_contains($request->url(), '/companies/find')) {
+                return Http::response(['data' => []], 200);
+            }
+
+            $domainSearchRequests[] = $request->data();
+
+            return Http::response(['errors' => [['id' => 'pagination_error']]], 400);
+        });
+
+        app(ProspectItemProcessor::class)->process($item);
+
+        $item->refresh();
+        $this->assertSame('failed', $item->status);
+        $this->assertSame('pagination_error', $item->error_code);
+        $this->assertSame([100, 10], array_map(static fn (array $query): int => (int) $query['limit'], $domainSearchRequests));
+        $this->assertSame(2, ProviderCall::query()->where('operation', 'domain_search')->count());
+    }
+
+    public function test_unrelated_domain_search_failure_remains_blocked_without_fallback(): void
+    {
+        $item = $this->item(['provided_domain' => 'acme.fr']);
+        $domainSearchRequests = [];
+
+        Http::fake(function (Request $request) use (&$domainSearchRequests) {
+            if (str_contains($request->url(), '/companies/find')) {
+                return Http::response(['data' => $this->companyEnrichment([
+                    'site' => ['emailAddresses' => ['retained@acme.fr']],
+                ])], 200);
+            }
+
+            $domainSearchRequests[] = $request->data();
+
+            return Http::response(['errors' => [['id' => 'invalid_request']]], 400);
+        });
+
+        app(ProspectItemProcessor::class)->process($item);
+
+        $item->refresh();
+        $this->assertSame('failed', $item->status);
+        $this->assertSame('invalid_request', $item->error_code);
+        $this->assertCount(1, $domainSearchRequests);
+        $this->assertNull(data_get($item->source_metadata, 'processing.domain_search_limit_cap'));
+        $this->assertSame(1, ProviderCall::query()->where('operation', 'domain_search')->count());
+        $this->assertNotNull($item->company_id);
+        $retained = Contact::query()->where('email', 'retained@acme.fr')->sole();
+        $this->assertSame($item->company_id, $retained->company_id);
+        $this->assertDatabaseHas('prospect_batch_contacts', [
+            'prospect_batch_item_id' => $item->id,
+            'contact_id' => $retained->id,
+            'provider_source' => 'hunter_company_enrichment',
+        ]);
     }
 
     public function test_company_enrichment_not_found_is_empty_and_domain_search_continues(): void
@@ -413,7 +609,7 @@ class ProspectItemProcessorTest extends TestCase
         $this->assertSame(404, $domainCall->http_status);
         $this->assertSame('0.00', $domainCall->consumed_units);
         $this->assertTrue((bool) data_get($item->fresh()->source_metadata, 'processing.domain_search_done'));
-        $this->assertDatabaseCount('prospect_contact_candidates', 0);
+        $this->assertDatabaseCount('prospect_batch_contacts', 0);
     }
 
     public function test_not_found_settlement_is_scoped_by_provider_operation_and_key(): void
@@ -514,7 +710,7 @@ class ProspectItemProcessorTest extends TestCase
         app(ProspectItemProcessor::class)->process($item);
 
         $this->assertSame('ready', $item->fresh()->status);
-        $this->assertGreaterThan(0, ProspectContactCandidate::query()->where('prospect_batch_item_id', $item->id)->count());
+        $this->assertGreaterThan(0, ProspectBatchContact::query()->where('prospect_batch_item_id', $item->id)->count());
         $calls = ProviderCall::query()->orderBy('id')->get();
         $this->assertSame(['company_enrichment', 'domain_search'], $calls->pluck('operation')->all());
         foreach ($calls as $call) {
@@ -551,7 +747,8 @@ class ProspectItemProcessorTest extends TestCase
         $this->assertSame('ready', $item->fresh()->status);
         $this->assertCount(1, $requests);
         $this->assertSame(10, (int) $requests[0]['limit']);
-        $this->assertDatabaseCount('prospect_contact_candidates', 10);
+        $this->assertDatabaseCount('prospect_batch_contacts', 10);
+        $this->assertDatabaseCount('contacts', 10);
         $domainCall = ProviderCall::query()->where('operation', 'domain_search')->sole();
         $this->assertSame('1.00', $domainCall->reserved_units);
         $this->assertSame('1.00', $domainCall->consumed_units);
@@ -632,13 +829,14 @@ class ProspectItemProcessorTest extends TestCase
         $processor->process($named);
 
         $this->assertSame(1, ProviderCall::query()->where('operation', 'email_finder')->count());
-        $this->assertDatabaseHas('prospect_contact_candidates', [
+        $namedContact = Contact::query()->where('email', 'ada@named.fr')->sole();
+        $this->assertSame('accept_all', $namedContact->email_verification_status);
+        $this->assertDatabaseHas('prospect_batch_contacts', [
             'prospect_batch_item_id' => $named->id,
-            'normalized_email' => 'ada@named.fr',
-            'source' => 'hunter_email_finder',
-            'verification_status' => 'accept_all',
+            'contact_id' => $namedContact->id,
+            'provider_source' => 'hunter_email_finder',
         ]);
-        $this->assertDatabaseMissing('prospect_contact_candidates', [
+        $this->assertDatabaseMissing('prospect_batch_contacts', [
             'prospect_batch_item_id' => $unnamed->id,
         ]);
     }
@@ -654,19 +852,93 @@ class ProspectItemProcessorTest extends TestCase
             }
 
             return Http::response([
-                'data' => ['domain' => 'acme.fr', 'emails' => []],
-                'meta' => ['results' => 0, 'limit' => 100, 'offset' => 0],
+                'data' => ['domain' => 'acme.fr', 'emails' => [[
+                    'value' => 'replay@acme.fr',
+                    'verification' => ['status' => 'valid', 'date' => '2026-08-13'],
+                ]]],
+                'meta' => ['results' => 1, 'limit' => 100, 'offset' => 0],
             ], 200);
         });
         $processor = app(ProspectItemProcessor::class);
 
         $processor->process($item);
         $this->assertSame(2, $sent);
+        $this->assertSame(1, Contact::query()->where('email', 'replay@acme.fr')->count());
+        $this->assertSame(1, ProspectBatchContact::query()->where('prospect_batch_item_id', $item->id)->count());
         $processor->process($item->fresh());
 
         $this->assertSame(2, $sent);
+        $this->assertSame(1, Contact::query()->where('email', 'replay@acme.fr')->count());
+        $this->assertSame(1, ProspectBatchContact::query()->where('prospect_batch_item_id', $item->id)->count());
         $this->assertSame('ready', $item->fresh()->status);
         $this->assertSame(2, ProviderCall::query()->count());
+    }
+
+    public function test_provider_settlement_contact_import_and_provenance_are_atomic_and_job_replay_is_safe(): void
+    {
+        $item = $this->item(['provided_domain' => 'acme.fr']);
+        $sent = 0;
+        Http::fake(function (Request $request) use (&$sent) {
+            $sent++;
+            if (str_contains($request->url(), '/companies/find')) {
+                return Http::response(['data' => $this->companyEnrichment([
+                    'site' => ['emailAddresses' => ['atomic@acme.fr']],
+                ])], 200);
+            }
+
+            return Http::response(['data' => ['domain' => 'acme.fr', 'emails' => []]], 200);
+        });
+
+        $event = 'eloquent.creating: '.ProspectBatchContact::class;
+        Event::listen($event, static fn () => throw new RuntimeException('forced_provenance_failure'));
+        Queue::fake();
+        $job = new ProcessProspectBatchItemJob($item->id);
+
+        try {
+            $job->handle(app(ProspectItemProcessor::class), app(ProspectBatchService::class));
+            $this->fail('The forced provenance failure must abort provider settlement.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('forced_provenance_failure', $exception->getMessage());
+        } finally {
+            Event::forget($event);
+        }
+
+        $item->refresh();
+        $this->assertNotNull($item->company_id);
+        $this->assertDatabaseHas('companies', ['id' => $item->company_id, 'domain' => 'acme.fr']);
+        $this->assertDatabaseMissing('contacts', ['email' => 'atomic@acme.fr']);
+        $this->assertDatabaseCount('prospect_batch_contacts', 0);
+        $this->assertSame('running', ProviderCall::query()->where('operation', 'company_enrichment')->sole()->status);
+        $this->assertSame('review', $item->status);
+        $this->assertSame('provider_outcome_uncertain', $item->domain_reason);
+        $requestsAfterFailure = $sent;
+
+        $job->handle(app(ProspectItemProcessor::class), app(ProspectBatchService::class));
+
+        $this->assertSame($requestsAfterFailure, $sent);
+        $this->assertSame('review', $item->fresh()->status);
+    }
+
+    public function test_pre_provider_company_link_failure_returns_item_to_queue_retry_without_provider_review(): void
+    {
+        $item = $this->item(['provided_domain' => 'acme.fr']);
+        $event = 'eloquent.creating: '.Company::class;
+        Event::listen($event, static fn () => throw new RuntimeException('forced_company_link_failure'));
+
+        try {
+            app(ProspectItemProcessor::class)->process($item);
+            $this->fail('The local pre-provider failure must preserve its original exception.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('forced_company_link_failure', $exception->getMessage());
+        } finally {
+            Event::forget($event);
+        }
+
+        $item->refresh();
+        $this->assertSame('pending', $item->status);
+        $this->assertSame('processor_unexpected_failure', $item->error_code);
+        $this->assertNotSame('provider_outcome_uncertain', $item->domain_reason);
+        $this->assertDatabaseCount('provider_calls', 0);
     }
 
     public function test_stranded_running_provider_call_moves_item_to_review_without_second_transport(): void
@@ -697,6 +969,32 @@ class ProspectItemProcessorTest extends TestCase
         $this->assertSame('review', $item->fresh()->status);
         $this->assertSame('provider_outcome_uncertain', $item->fresh()->domain_reason);
         $this->assertSame('running', ProviderCall::query()->sole()->status);
+    }
+
+    public function test_transient_company_enrichment_failure_returns_item_to_pending_and_preserves_completed_resolution(): void
+    {
+        $item = $this->item([
+            'provided_domain' => 'acme.fr',
+            'source_metadata' => ['source' => 'import'],
+        ]);
+        Http::fake(['api.hunter.io/v2/companies/find*' => Http::response([], 503)]);
+
+        try {
+            app(ProspectItemProcessor::class)->process($item);
+            $this->fail('Expected the transient provider failure to leave the processor.');
+        } catch (ProviderRequestException $exception) {
+            $this->assertTrue($exception->retryable);
+            $this->assertSame('provider_unavailable', $exception->safeCode);
+            $this->assertSame(30, $exception->retryAfterSeconds);
+        }
+
+        $item->refresh();
+        $this->assertSame('pending', $item->status);
+        $this->assertSame('acme.fr', $item->selected_domain);
+        $this->assertSame('provided_domain', $item->domain_reason);
+        $this->assertTrue((bool) data_get($item->source_metadata, 'processing.resolution_done'));
+        $this->assertSame('provider_unavailable', $item->error_code);
+        $this->assertNull($item->processed_at);
     }
 
     private function item(array $overrides = []): ProspectBatchItem

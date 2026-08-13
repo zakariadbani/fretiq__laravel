@@ -20,17 +20,24 @@ use App\Services\Discovery\DiscoveryEngineRegistry;
 use App\Services\Discovery\DiscoveryProgressPresenter;
 use App\Services\Discovery\IntentQueryService;
 use App\Services\Prospecting\ProspectBatchService;
+use App\Services\Prospecting\ProspectCriteriaCsvImporter;
 use App\Services\Quota\DiscoveryQuotaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class ProspectCriteriaController extends BackendController
 {
-    use Crudable, Datatableable;
+    use Crudable {
+        store as protected crudStore;
+        update as protected crudUpdate;
+    }
+    use Datatableable;
 
     /**
      * Whitelist of boolean fields that may be toggled via executeSwitch.
@@ -44,7 +51,7 @@ class ProspectCriteriaController extends BackendController
         parent::__construct($request, $model, $dataTable);
 
         $this->middleware('permission:view prospect_criteria')->only(['index', 'view', 'discoveryStatus']);
-        $this->middleware('permission:create prospect_criteria')->only(['create', 'store']);
+        $this->middleware('permission:create prospect_criteria')->only(['create', 'store', 'importForm', 'importPreview', 'importStore', 'downloadImportTemplate']);
         $this->middleware('permission:edit prospect_criteria')->only(['edit', 'update', 'executeSwitch', 'generateQueries']);
         $this->middleware('permission:delete prospect_criteria')->only(['delete']);
         $this->middleware('permission:run discovery')->only(['discover', 'hunterDiscoverPreview', 'hunterDiscoverImport']);
@@ -65,6 +72,182 @@ class ProspectCriteriaController extends BackendController
         ));
 
         $this->viewConfigClass = \App\Crud\ViewConfigs\ProspectCriteriaViewConfig::class;
+    }
+
+    public function importForm()
+    {
+        return view('backend.contents.prospect_criteria.crud.import', [
+            'rows' => [],
+            'existingNames' => [],
+            'importToken' => null,
+        ]);
+    }
+
+    public function importPreview(Request $request, ProspectCriteriaCsvImporter $importer)
+    {
+        $request->validate(['csv' => ['required', 'file', 'max:512']]);
+        $file = $request->file('csv');
+        if ($file === null) {
+            throw ValidationException::withMessages(['csv' => ['Le fichier CSV est requis.']]);
+        }
+
+        $mimes = [(string) $file->getMimeType(), (string) $file->getClientMimeType()];
+        if (array_intersect($mimes, [
+            'application/x-msdownload',
+            'application/x-dosexec',
+            'application/x-executable',
+            'application/vnd.microsoft.portable-executable',
+        ]) !== []) {
+            throw ValidationException::withMessages(['csv' => ['Le type de fichier CSV est invalide.']]);
+        }
+
+        $rows = $importer->parse((string) file_get_contents($file->getRealPath()), $file->getClientOriginalName());
+        $existingNames = $this->existingImportNames($rows);
+
+        return view('backend.contents.prospect_criteria.crud.import', [
+            'rows' => $rows,
+            'existingNames' => $existingNames,
+            'importToken' => $existingNames === [] ? $this->makeImportToken($request->user()->id, $rows) : null,
+        ]);
+    }
+
+    public function importStore(Request $request)
+    {
+        try {
+            $rows = $this->decryptImportToken((string) $request->input('import_token'), (int) $request->user()->id);
+            $this->withCriteriaWriteLock(function () use ($rows): void {
+                DB::transaction(function () use ($rows): void {
+                    $existing = $this->existingImportNames($rows);
+                    if ($existing !== []) {
+                        throw ValidationException::withMessages(['csv' => ['Un ou plusieurs noms existent déjà : '.implode(', ', $existing).'.']]);
+                    }
+
+                    foreach ($rows as $row) {
+                        ProspectCriteria::create([
+                            'name' => $row['name'],
+                            'ai_target' => $row['ai_target'],
+                            'ai_exclude' => $row['ai_exclude'],
+                            'sectors' => $row['sectors'],
+                            'countries' => $row['countries'],
+                            'company_sizes' => $row['company_sizes'],
+                            'target_positions' => $row['target_positions'],
+                            'daily_limit' => $row['daily_limit'],
+                            'contact_limit' => $row['contact_limit'],
+                            'min_score_enrich' => $row['min_score_enrich'],
+                            'run_at_hour' => null,
+                            'ai_queries' => null,
+                            'is_active' => false,
+                            'auto_run' => false,
+                            'auto_enrich' => false,
+                        ]);
+                    }
+                });
+            });
+        } catch (ValidationException $exception) {
+            return redirect()->route('admin.prospect_criteria.import_form')->withErrors($exception->errors());
+        }
+
+        return redirect()->route('admin.prospect_criteria.index')
+            ->with('success', count($rows).' critère(s) importé(s), tous inactifs.');
+    }
+
+    public function store()
+    {
+        return $this->withCriteriaWriteLock(fn () => $this->crudStore());
+    }
+
+    public function update($id)
+    {
+        return $this->withCriteriaWriteLock(fn () => $this->crudUpdate($id));
+    }
+
+    public function downloadImportTemplate(ProspectCriteriaCsvImporter $importer)
+    {
+        return response($importer->template(), 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="modele-criteres-prospection.csv"',
+        ]);
+    }
+
+    /** @param list<array<string, mixed>> $rows */
+    private function existingImportNames(array $rows): array
+    {
+        $names = array_values(array_unique(array_map(fn (array $row) => mb_strtolower((string) $row['name']), $rows)));
+        if ($names === []) {
+            return [];
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($names), '?'));
+
+        return ProspectCriteria::query()
+            ->whereRaw("LOWER(name) IN ({$placeholders})", $names)
+            ->pluck('name')
+            ->all();
+    }
+
+    /** @param list<array<string, mixed>> $rows */
+    private function makeImportToken(int $userId, array $rows): string
+    {
+        return Crypt::encryptString(json_encode([
+            'schema' => 1,
+            'user_id' => $userId,
+            'issued_at' => now()->timestamp,
+            'rows' => $rows,
+        ], JSON_THROW_ON_ERROR));
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function decryptImportToken(string $token, int $userId): array
+    {
+        try {
+            $payload = json_decode(Crypt::decryptString($token), true, 512, JSON_THROW_ON_ERROR);
+        } catch (\Throwable) {
+            throw ValidationException::withMessages(['csv' => ['La prévisualisation est invalide ou a expiré. Importez de nouveau le fichier.']]);
+        }
+
+        $issuedAt = $payload['issued_at'] ?? null;
+        $rows = $payload['rows'] ?? null;
+        if (($payload['schema'] ?? null) !== 1
+            || ($payload['user_id'] ?? null) !== $userId
+            || ! is_int($issuedAt)
+            || ! is_array($rows)
+            || $rows === []
+            || count($rows) > ProspectCriteriaCsvImporter::MAX_ROWS
+            || $issuedAt < now()->subMinutes(30)->timestamp
+            || $issuedAt > now()->addMinute()->timestamp) {
+            throw ValidationException::withMessages(['csv' => ['La prévisualisation est invalide ou a expiré. Importez de nouveau le fichier.']]);
+        }
+
+        foreach ($rows as $row) {
+            if (! is_array($row) || ! isset($row['name']) || trim((string) $row['name']) === '') {
+                throw ValidationException::withMessages(['csv' => ['La prévisualisation est invalide ou a expiré. Importez de nouveau le fichier.']]);
+            }
+        }
+
+        return $rows;
+    }
+
+    private function withCriteriaWriteLock(callable $callback): mixed
+    {
+        if (DB::getDriverName() === 'mysql') {
+            $result = DB::selectOne('SELECT GET_LOCK(?, 10) AS acquired', ['fretiq:prospect_criteria:write']);
+            if ((int) ($result->acquired ?? 0) !== 1) {
+                throw ValidationException::withMessages(['name' => ['La modification des critères est momentanément occupée. Réessayez.']]);
+            }
+
+            try {
+                return $callback();
+            } finally {
+                DB::selectOne('SELECT RELEASE_LOCK(?) AS released', ['fretiq:prospect_criteria:write']);
+            }
+        }
+
+        $lock = Cache::lock('prospect-criteria-write', 15);
+        try {
+            return $lock->block(10, $callback);
+        } catch (\Illuminate\Cache\LockTimeoutException) {
+            throw ValidationException::withMessages(['name' => ['La modification des critères est momentanément occupée. Réessayez.']]);
+        }
     }
 
     /**
@@ -142,7 +325,7 @@ class ProspectCriteriaController extends BackendController
         $companiesQuery = $auditMode ? $model->companies()->withRejected() : $model->companies();
         $sortColumn = $allowedResultSorts[$resultsSort];
         $resultCompanies = $companiesQuery
-            ->with('contacts')
+            ->with(['contacts' => fn ($query) => app(\App\Services\Prospecting\ContactLifecycleService::class)->select($query)])
             ->withCount('contacts')
             ->orderBy($sortColumn, $resultsDir)
             ->when($resultsSort !== 'recent', fn ($query) => $query->orderByDesc('companies.id'))
@@ -202,7 +385,7 @@ class ProspectCriteriaController extends BackendController
     {
         $all = Company::withRejected()
             ->where('criteria_id', $model->id)
-            ->with('contacts')
+            ->with(['contacts' => fn ($query) => app(\App\Services\Prospecting\ContactLifecycleService::class)->select($query)])
             ->latest('id')
             ->get()
             ->groupBy(fn (Company $company) => $company->discovery_query ?: '');
@@ -421,19 +604,36 @@ class ProspectCriteriaController extends BackendController
      */
     public function duplicate(ProspectCriteria $prospectCriteria)
     {
-        // prospect_criteria.name is varchar(100); keep the 'Copie de ' prefix intact
-        // and trim the original-name tail so the prefixed clone name fits the column.
-        $prefix = 'Copie de ';
+        $clone = $this->withCriteriaWriteLock(function () use ($prospectCriteria): ProspectCriteria {
+            $clone = $prospectCriteria->replicate();
+            $clone->name = $this->nextCopyName($prospectCriteria->name);
+            $clone->is_active = false;
+            $clone->auto_run = false;
+            $clone->save();
 
-        $clone = $prospectCriteria->replicate();
-        $clone->name = $prefix.Str::limit($prospectCriteria->name, 100 - mb_strlen($prefix), '');
-        $clone->is_active = false;
-        $clone->auto_run = false;
-        $clone->save();
+            return $clone;
+        });
 
         session()->flash('success', trans('app.creation_completed'));
 
         return redirect()->route('admin.prospect_criteria.edit', $clone->id);
+    }
+
+    private function nextCopyName(string $sourceName): string
+    {
+        $prefix = 'Copie de ';
+        for ($copy = 1; $copy <= 1000; $copy++) {
+            $suffix = $copy === 1 ? '' : ' ('.$copy.')';
+            $candidate = $prefix.Str::limit($sourceName, 100 - mb_strlen($prefix.$suffix), '').$suffix;
+            $exists = ProspectCriteria::query()
+                ->whereRaw('LOWER(name) = ?', [mb_strtolower($candidate)])
+                ->exists();
+            if (! $exists) {
+                return $candidate;
+            }
+        }
+
+        throw ValidationException::withMessages(['name' => ['Impossible de générer un nom de copie unique.']]);
     }
 
     /**

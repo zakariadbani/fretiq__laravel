@@ -28,7 +28,7 @@ import {
  *   - The E2E_FIXTURE Sequence (with one step) and E2E_FIXTURE Template are pre-seeded
  *     by `php artisan fretiq:e2e-seed` and are used for read-only reference.
  *     Mutation tests create their own rows and clean up in afterAll.
- *   - Toggleable fields: is_active (first switch per row), stop_on_reply (second switch).
+ *   - Toggleable field: is_active.
  *   - Enrollment pause/resume test requires an enrollment to exist on the sequence.
  *     Since the e2e-seed does NOT create enrollments, this test uses the fixture sequence
  *     and skips gracefully if no enrollments are found rather than failing.
@@ -251,29 +251,13 @@ test.describe('Sequences module', () => {
     await sequences.expectMinRows(1);
   });
 
-  // ── 7. executeSwitch — stop_on_reply toggle ───────────────────────────────
+  // ── 7. Universal reply behavior ───────────────────────────────────────────
 
-  test('executeSwitch stop_on_reply: toggle switch, DataTable row remains visible', async ({ page }) => {
+  test('create form has no stop-on-reply switch and explains the universal behavior', async ({ page }) => {
     const sequences = new SequencePage(page);
-    const name = uniqueName('E2E Toggle StopOnReply');
-    createdSequenceNames.push(name);
-
-    // Create a sequence with stop_on_reply enabled.
     await sequences.gotoCreate();
-    await sequences.fillAndSubmit({ name, stopOnReply: true });
-    await page.waitForURL((u) => !u.pathname.endsWith('/create'), { timeout: 15000 });
-
-    await sequences.goto();
-    await waitForDataTable(page, 'sequence-table');
-    await sequences.search(name);
-    await waitForDataTable(page, 'sequence-table');
-
-    // Click the stop_on_reply switch (second checkbox per row).
-    await sequences.clickStopOnReplySwitchOnRow(0);
-    await page.waitForLoadState('networkidle');
-
-    // Row must still be present after toggle.
-    await sequences.expectMinRows(1);
+    await expect(page.locator('#form_crud input[name="stop_on_reply"]')).toHaveCount(0);
+    await expect(page.getByText('Toute réponse arrête automatiquement les inscriptions actives de ce contact.')).toBeVisible();
   });
 
   // ── 8. Step management: addStep + deleteStep ──────────────────────────────

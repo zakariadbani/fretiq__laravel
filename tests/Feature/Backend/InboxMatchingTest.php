@@ -24,7 +24,7 @@ class InboxMatchingTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_campaign_recipient_thread_links_both_foreign_keys_without_changing_status(): void
+    public function test_campaign_recipient_thread_links_both_foreign_keys_and_records_reply(): void
     {
         $contact = $this->contact('campaign@example.test');
         $recipient = $this->recipient($contact, 'sent');
@@ -34,10 +34,11 @@ class InboxMatchingTest extends TestCase
 
         $this->assertSame($contact->id, $email->fresh()->contact_id);
         $this->assertSame($recipient->id, $email->fresh()->campaign_recipient_id);
-        $this->assertSame('sent', $recipient->fresh()->status);
+        $this->assertSame('replied', $recipient->fresh()->status);
+        $this->assertNotNull($recipient->fresh()->replied_at);
     }
 
-    public function test_sequence_thread_links_contact_only_without_changing_send_status(): void
+    public function test_sequence_thread_links_contact_records_reply_and_stops_enrollment(): void
     {
         $contact = $this->contact('sequence@example.test');
         $sequence = Sequence::create(['name' => 'Reply sequence', 'is_active' => true]);
@@ -55,7 +56,9 @@ class InboxMatchingTest extends TestCase
         $this->assertSame($send->id, $email->fresh()->sequence_step_send_id);
         $this->assertSame($contact->id, $email->fresh()->contact_id);
         $this->assertNull($email->fresh()->campaign_recipient_id);
-        $this->assertSame('sent', $send->fresh()->status);
+        $this->assertSame('replied', $send->fresh()->status);
+        $this->assertSame('stopped', $enrollment->fresh()->status);
+        $this->assertSame('replied', $enrollment->fresh()->stopped_reason);
     }
 
     public function test_case_insensitive_sender_email_is_used_as_fallback(): void
@@ -119,8 +122,6 @@ class InboxMatchingTest extends TestCase
             'email' => $email,
             'name' => $email,
             'source' => 'manual',
-            'status' => 'new',
-            'legal_basis' => 'relationship',
             'email_kind' => 'role',
         ]);
     }

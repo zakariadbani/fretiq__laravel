@@ -14,6 +14,12 @@ class Campaign extends Model
 {
     use Validator;
 
+    public const VERIFICATION_VERIFIED_ONLY = 'verified_only';
+
+    public const VERIFICATION_ALL_SENDABLE = 'all_sendable';
+
+    public const EMAIL_VERIFICATION_POLICIES = [self::VERIFICATION_VERIFIED_ONLY, self::VERIFICATION_ALL_SENDABLE];
+
     public const AMBIGUOUS_ZOHO_DRIVER_REFS = ['zoho-send-attempted', 'zoho-send-uncertain'];
 
     /**
@@ -47,6 +53,7 @@ class Campaign extends Model
         'sequence_auto_enroll_enabled',
         'driver',
         'delivery_channel',
+        'email_verification_policy',
         'smtp_daily_email_limit',
         'delivery_started_at',
         'zoho_list_key',
@@ -264,6 +271,10 @@ class Campaign extends Model
             if ($model->timezone === null || $model->timezone === '') {
                 $model->timezone = 'Europe/Paris';
             }
+            if (! in_array($model->email_verification_policy, self::EMAIL_VERIFICATION_POLICIES, true)) {
+                $model->email_verification_policy = app(\App\Services\Discovery\EmailVerificationSettings::class)
+                    ->defaultCampaignPolicy();
+            }
         });
     }
 
@@ -313,8 +324,16 @@ class Campaign extends Model
             'is_active'          => 'nullable|boolean',
             'driver'             => 'nullable|in:local,zoho',
             'delivery_channel'   => 'nullable|in:zoho,smtp',
+            'email_verification_policy' => 'required|in:verified_only,all_sendable',
             'smtp_daily_email_limit' => 'nullable|integer|min:0|max:500',
         ];
+    }
+
+    public function emailVerificationPolicy(): string
+    {
+        return in_array($this->email_verification_policy, self::EMAIL_VERIFICATION_POLICIES, true)
+            ? $this->email_verification_policy
+            : self::VERIFICATION_VERIFIED_ONLY;
     }
 
     /**

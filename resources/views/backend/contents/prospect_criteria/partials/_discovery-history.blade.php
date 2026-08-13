@@ -46,7 +46,7 @@
                 {{ $runsTotal }} lancement(s) · {{ number_format($searchesTotal) }} recherche(s) d’entreprises consommée(s)
                 · {{ number_format($hunterAttemptsTotal) }} tentative(s) d’enrichissement consommée(s)
                 · {{ number_format($successfulEnrichmentsTotal) }} enrichissement(s) réussi(s)
-                · {{ number_format($contactsCreatedTotal) }} contact(s) créé(s).
+                · {{ number_format($contactsCreatedTotal) }} contact(s) importé(s).
             </div>
         </div>
     </div>
@@ -68,7 +68,7 @@
                             <th>Enrichissements réussis</th>
                             <th>Traitées</th>
                             <th>Nouvelles</th>
-                            <th>Contacts créés</th>
+                            <th>Contacts importés</th>
                             <th>Ignorés</th>
                             <th>Sous seuil</th>
                             <th>Durée</th>

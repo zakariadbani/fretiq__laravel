@@ -10,7 +10,7 @@ use App\Models\CampaignRun;
  * CampaignsClient — driver contract for campaign email delivery.
  *
  * Implementations:
- *   LocalCampaignsDriver  — sends via Laravel Mail (Mailpit in dev, Mail::fake in tests).
+ *   LocalCampaignsDriver  — sends through the application SMTP router.
  *   ZohoCampaignsDriver   — Phase 5; pushes list + campaign to Zoho Campaigns API.
  *
  * The driver boundary: fretiq owns scheduling, compliance filtering, recipient rows,

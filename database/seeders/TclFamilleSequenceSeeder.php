@@ -154,7 +154,6 @@ class TclFamilleSequenceSeeder extends Seeder
                 ['name' => 'Famille ' . $n . ' — ' . $libelles[$n]],
                 [
                     'is_active'     => false,
-                    'stop_on_reply' => true,
                 ],
             );
 

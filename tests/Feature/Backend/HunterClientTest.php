@@ -100,6 +100,27 @@ class HunterClientTest extends TestCase
         $this->assertFalse($call->metadata['retryable']);
     }
 
+    public function test_429_too_many_requests_is_normalized_as_a_terminal_usage_limit(): void
+    {
+        Http::fake(['api.hunter.io/v2/companies/find*' => Http::response([
+            'errors' => [['id' => 'too_many_requests', 'code' => 429]],
+        ], 429)]);
+
+        try {
+            $this->client()->companyEnrichment($this->context('usage-limit'), 'acme.test');
+            $this->fail('Expected a terminal usage-limit failure.');
+        } catch (ProviderRequestException $exception) {
+            $this->assertSame('usage_limit', $exception->safeCode);
+            $this->assertFalse($exception->retryable);
+            $this->assertSame(429, $exception->httpStatus);
+        }
+
+        $call = ProviderCall::query()->sole();
+        $this->assertSame('failed', $call->status);
+        $this->assertSame('usage_limit', $call->metadata['error_code']);
+        $this->assertFalse($call->metadata['retryable']);
+    }
+
     public function test_domain_search_sends_only_documented_filters_and_pagination(): void
     {
         Http::fake(['api.hunter.io/v2/domain-search*' => Http::response([

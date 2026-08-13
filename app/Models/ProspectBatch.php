@@ -38,7 +38,7 @@ class ProspectBatch extends Model
         'review_items',
         'failed_items',
         'promoted_companies',
-        'candidate_contacts',
+        'imported_contacts',
         'started_at',
         'finished_at',
         'error',
@@ -57,7 +57,7 @@ class ProspectBatch extends Model
         'review_items' => 'integer',
         'failed_items' => 'integer',
         'promoted_companies' => 'integer',
-        'candidate_contacts' => 'integer',
+        'imported_contacts' => 'integer',
         'started_at' => 'datetime',
         'finished_at' => 'datetime',
     ];
@@ -67,9 +67,9 @@ class ProspectBatch extends Model
         return $this->hasMany(ProspectBatchItem::class);
     }
 
-    public function contactCandidates(): HasMany
+    public function importedContacts(): HasMany
     {
-        return $this->hasMany(ProspectContactCandidate::class);
+        return $this->hasMany(ProspectBatchContact::class);
     }
 
     public function providerCalls(): HasMany
@@ -109,7 +109,7 @@ class ProspectBatch extends Model
             'review_items' => 'nullable|integer|min:0',
             'failed_items' => 'nullable|integer|min:0',
             'promoted_companies' => 'nullable|integer|min:0',
-            'candidate_contacts' => 'nullable|integer|min:0',
+            'imported_contacts' => 'nullable|integer|min:0',
             'started_at' => 'nullable|date',
             'finished_at' => 'nullable|date',
             'error' => 'nullable|string',

@@ -641,6 +641,9 @@ final class HunterClient
     {
         $error = $this->firstError($body);
         $id = strtolower((string) ($error['id'] ?? ''));
+        if ($httpStatus === 429) {
+            return 'usage_limit';
+        }
         if ($id !== '' && preg_match('/^[a-z0-9_:-]{1,64}$/', $id) === 1) {
             if ($id === 'claimed_email') {
                 return 'claimed_email';
@@ -658,7 +661,7 @@ final class HunterClient
         return match (true) {
             $httpStatus === 401 => 'authentication_failed',
             $httpStatus === 403 => 'permission_denied',
-            $httpStatus === 429 => 'rate_limit',
+            $httpStatus === 429 => 'usage_limit',
             in_array($httpStatus, [400, 422], true) => 'invalid_request',
             $httpStatus === 404 => 'not_found',
             $httpStatus >= 500 => 'provider_unavailable',

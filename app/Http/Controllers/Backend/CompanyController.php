@@ -64,21 +64,13 @@ class CompanyController extends BackendController
     ];
 
     /**
-     * Chart-only colour overrides per contact status.
-     * Badges keep their Bootstrap classes; this map only affects chart payloads
-     * where 'secondary' grey is invisible and qualified/converted would collide.
-     */
-    private const STATUS_CHART_HEX = [
-        'new' => '#A1A5B7', // visible grey (gray-500) instead of near-white secondary
-        'converted' => '#00A3A3', // distinct teal — config 'success' would collide with qualified
-    ];
-
-    /**
      * Override the trait's view() to eager-load contacts and inject $stats.
      */
     public function view($id)
     {
-        $model = $this->currentModel->withRejected()->with('contacts')->find($id);
+        $model = $this->currentModel->withRejected()->with([
+            'contacts' => fn ($query) => app(\App\Services\Prospecting\ContactLifecycleService::class)->select($query),
+        ])->find($id);
 
         if ($model === null) {
             session()->flash('error', trans('app.not_found'));
@@ -104,9 +96,7 @@ class CompanyController extends BackendController
 
         // ── KPI scalars ───────────────────────────────────────────────────────
         $contactsTotal = $company->contacts->count();
-        $contactsQualified = $company->contacts
-            ->whereIn('status', ['qualified', 'converted'])
-            ->count();
+        $contactsReplied = $company->contacts->where('lifecycle_state', 'replied')->count();
 
         // ── CampaignRecipient rows for this company's contacts (single fetch, filtered in PHP — swap to DB aggregates when Phase 3 volume arrives) ────
         $recipients = $contactIds->isNotEmpty()
@@ -131,8 +121,8 @@ class CompanyController extends BackendController
             : 0;
 
         // ── Contacts donut (config-ordered, zero-excluded) ────────────────────
-        $statusCounts = $company->contacts->countBy('status');
-        $contactStatuses = config('global.data.contact_statuses', []);
+        $statusCounts = $company->contacts->countBy('lifecycle_state');
+        $contactStatuses = config('global.data.contact_lifecycle_states', []);
         $donutSeries = [];
         $donutLabels = [];
         $donutColors = [];
@@ -142,7 +132,7 @@ class CompanyController extends BackendController
             if ($count > 0) {
                 $donutSeries[] = $count;
                 $donutLabels[] = $cfg['label'];
-                $donutColors[] = self::STATUS_CHART_HEX[$key] ?? (self::SEMANTIC_HEX[$cfg['color']] ?? '#E1E3EA');
+                $donutColors[] = self::SEMANTIC_HEX[$cfg['color']] ?? '#E1E3EA';
             }
         }
 
@@ -172,7 +162,7 @@ class CompanyController extends BackendController
 
         return [
             'contacts_total' => $contactsTotal,
-            'contacts_qualified' => $contactsQualified,
+            'contacts_replied' => $contactsReplied,
             'emails_sent' => $emailsSent,
             'demandes_total' => $demandesTotal,
             'ai_score' => $company->ai_score,
@@ -198,7 +188,9 @@ class CompanyController extends BackendController
      */
     public function edit($id)
     {
-        $model = $this->currentModel->withRejected()->with('contacts')->find($id);
+        $model = $this->currentModel->withRejected()->with([
+            'contacts' => fn ($query) => app(\App\Services\Prospecting\ContactLifecycleService::class)->select($query),
+        ])->find($id);
 
         if ($model === null) {
             session()->flash('error', trans('app.not_found'));

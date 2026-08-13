@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Backend;
 
+use App\Models\ProspectBatch;
+use App\Models\ProspectBatchItem;
 use App\Models\ProviderCall;
 use App\Services\Providers\ProviderCallContext;
 use App\Services\Providers\ProviderCallLedger;
@@ -63,11 +65,47 @@ class ProviderCallLedgerTest extends TestCase
 
     public function test_terminal_provider_errors_and_retryable_rate_limits_are_distinguished(): void
     {
+        $this->assertFalse(ProviderRequestException::fromHttp(429, 'usage_limit', provider: 'hunter')->retryable);
+        $this->assertTrue(ProviderRequestException::fromHttp(429, 'rate_limit', provider: 'serpapi')->retryable);
         $this->assertTrue(ProviderRequestException::fromHttp(403, 'rate_limit', provider: 'hunter')->retryable);
         $this->assertFalse(ProviderRequestException::fromHttp(403, 'rate_limit', provider: 'serpapi')->retryable);
         $this->assertFalse(ProviderRequestException::fromHttp(403, 'authorization_failed', provider: 'hunter')->retryable);
         $this->assertTrue(ProviderRequestException::fromHttp(503, 'unavailable')->retryable);
         $this->assertFalse(ProviderRequestException::fromHttp(422, 'invalid_request')->retryable);
+    }
+
+    public function test_retryable_failures_rethrow_the_effective_ledger_delay_and_stop_at_the_attempt_cap(): void
+    {
+        $ledger = app(ProviderCallLedger::class);
+        $context = new ProviderCallContext(hash('sha256', 'effective-backoff'), 1);
+
+        foreach ([30, 120, 600] as $expectedDelay) {
+            try {
+                $ledger->execute($context, 'hunter', 'domain_search', function (): never {
+                    throw ProviderRequestException::fromHttp(503, 'provider_unavailable', provider: 'hunter');
+                });
+                $this->fail('Expected a retryable provider failure.');
+            } catch (ProviderRequestException $exception) {
+                $this->assertTrue($exception->retryable);
+                $this->assertSame($expectedDelay, $exception->retryAfterSeconds);
+            }
+
+            ProviderCall::query()->where('idempotency_key', $context->idempotencyKey)->update(['retry_at' => now()->subSecond()]);
+        }
+
+        try {
+            $ledger->execute($context, 'hunter', 'domain_search', function (): never {
+                throw ProviderRequestException::fromHttp(503, 'provider_unavailable', provider: 'hunter');
+            });
+            $this->fail('Expected the provider call to become terminal at the attempt cap.');
+        } catch (ProviderRequestException $exception) {
+            $this->assertFalse($exception->retryable);
+            $this->assertNull($exception->retryAfterSeconds);
+        }
+
+        $call = ProviderCall::query()->where('idempotency_key', $context->idempotencyKey)->sole();
+        $this->assertSame('failed', $call->status);
+        $this->assertSame(4, $call->attempt_count);
     }
 
     public function test_metadata_allowlist_drops_api_key_full_url_raw_response_and_email(): void
@@ -184,6 +222,41 @@ class ProviderCallLedgerTest extends TestCase
         $this->expectExceptionMessage('provider_call_in_progress');
         $ledger->execute($context, 'hunter', 'domain_search', fn (): ProviderResponse => new ProviderResponse(200, []));
         $this->assertFalse($first->replayed);
+    }
+
+    public function test_operator_retry_reopens_only_the_matching_confirmed_failure(): void
+    {
+        $batch = ProspectBatch::factory()->create();
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create();
+        $safe = ProviderCall::query()->create([
+            'prospect_batch_id' => $batch->id,
+            'prospect_batch_item_id' => $item->id,
+            'provider' => 'hunter',
+            'operation' => 'company_enrichment',
+            'idempotency_key' => hash('sha256', 'safe-operator-retry'),
+            'status' => 'failed',
+            'attempt_count' => 1,
+            'metadata' => ['error_code' => 'usage_limit', 'retryable' => false],
+        ]);
+        $unsafe = ProviderCall::query()->create([
+            'prospect_batch_id' => $batch->id,
+            'prospect_batch_item_id' => $item->id,
+            'provider' => 'hunter',
+            'operation' => 'domain_search',
+            'idempotency_key' => hash('sha256', 'unsafe-operator-retry'),
+            'status' => 'failed',
+            'attempt_count' => 1,
+            'metadata' => ['error_code' => 'permission_denied', 'retryable' => false],
+        ]);
+
+        $authorized = app(ProviderCallLedger::class)
+            ->authorizeKnownFailureRetryForItem($item->id, 'too_many_requests');
+
+        $this->assertSame(1, $authorized);
+        $this->assertSame('retryable', $safe->fresh()->status);
+        $this->assertSame('failed', $unsafe->fresh()->status);
+        $this->assertSame('usage_limit', $safe->fresh()->metadata['error_code']);
+        $this->assertSame('operator_retry_authorized', $safe->fresh()->metadata['reason']);
     }
 
     public function test_pending_logical_call_can_be_polled_under_the_same_key_without_a_second_reservation(): void

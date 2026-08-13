@@ -101,6 +101,20 @@ class ZohoMapperTest extends TestCase
         $this->assertSame(['zoho_quote_id', 'zoho_line_item_id', 'identity_source', 'product_zoho_id', 'product_name', 'sequence', 'quantity', 'list_price', 'unit_price', 'unit_price_raw', 'description', 'unit_of_measure', 'discount', 'tax', 'total', 'total_raw', 'currency_code', 'raw_payload', 'payload_hash', 'field_schema_hash', 'zoho_created_at', 'zoho_modified_at', 'last_seen_at', 'last_synced_at', 'zoho_deleted_at', 'zoho_deletion_type', 'sync_batch_id'], array_keys($first['items'][0]));
     }
 
+    public function test_quote_package_type_is_bounded_to_its_column_without_truncating_raw_payload(): void
+    {
+        $source = 'Palette '.str_repeat('é', 300);
+
+        $quote = (new QuoteMapper)->map([
+            'id' => 'quote-long-package-type',
+            'Type_de_Colis' => $source,
+        ], $this->context());
+
+        $this->assertSame(191, mb_strlen($quote['package_type']));
+        $this->assertSame(mb_substr($source, 0, 191), $quote['package_type']);
+        $this->assertSame($source, $quote['raw_payload']['Type_de_Colis']);
+    }
+
     public function test_activities_histories_custom_modules_and_owner_lookups_are_mapped(): void
     {
         $data = $this->fixture();
@@ -292,6 +306,8 @@ class ZohoMapperTest extends TestCase
         $meeting = (new ActivityMapper('meeting'))->map([
             'id' => 'meeting-1',
             'Event_Title' => 'Client meeting',
+            'Check_In_Status' => 'PLANNED',
+            'Record_Status__s' => 'Available',
             'Start_DateTime' => '2026-08-10T09:00:00+01:00',
             'End_DateTime' => '2026-08-10T10:00:00+01:00',
         ], $context);
@@ -317,6 +333,7 @@ class ZohoMapperTest extends TestCase
             $meeting['activity_type'], $meeting['subject'], $meeting['start_at'], $meeting['end_at'],
         ]);
         $this->assertSame($meeting['start_at'], $meeting['activity_at']);
+        $this->assertSame('PLANNED', $meeting['status']);
         $this->assertSame(['call', 'Completed', '2026-08-11 08:00:00'], [
             $call['activity_type'], $call['status'], $call['activity_at'],
         ]);
@@ -325,6 +342,27 @@ class ZohoMapperTest extends TestCase
         $this->assertSame($task['due_at'], $task['activity_at']);
         $this->assertSame(['note', 'Call notes', null], [$note['activity_type'], $note['subject'], $note['status']]);
         $this->assertSame('2026-08-13 08:00:00', $note['activity_at']);
+    }
+
+    public function test_event_status_prefers_standard_then_check_in_then_record_lifecycle(): void
+    {
+        $mapper = new ActivityMapper('meeting');
+
+        $this->assertSame('Scheduled', $mapper->map([
+            'id' => 'meeting-standard-status',
+            'Status' => 'Scheduled',
+            'Check_In_Status' => 'PLANNED',
+            'Record_Status__s' => 'Available',
+        ], $this->context())['status']);
+        $this->assertSame('PLANNED', $mapper->map([
+            'id' => 'meeting-check-in-status',
+            'Check_In_Status' => 'PLANNED',
+            'Record_Status__s' => 'Available',
+        ], $this->context())['status']);
+        $this->assertSame('Available', $mapper->map([
+            'id' => 'meeting-record-status',
+            'Record_Status__s' => 'Available',
+        ], $this->context())['status']);
     }
 
     public function test_calls_use_call_start_time_when_event_start_datetime_is_also_present(): void

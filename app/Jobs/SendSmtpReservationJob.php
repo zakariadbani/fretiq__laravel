@@ -10,7 +10,7 @@ use App\Services\Campaign\ContactEligibilityService;
 use App\Services\Campaign\SequenceService;
 use App\Services\Campaign\SmtpCampaignsDriver;
 use App\Services\Campaign\SmtpSendReservationService;
-use App\Services\Mail\SenderIdentitySmtpMailer;
+use App\Services\Mail\SmtpMailRouter;
 use App\Support\TrackingToken;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
@@ -195,7 +195,7 @@ class SendSmtpReservationJob implements ShouldQueue, ShouldBeUnique
             return;
         }
 
-        if (app(SenderIdentitySmtpMailer::class)->usesSenderIdentityTransport()
+        if (app(SmtpMailRouter::class)->usesSenderIdentityTransport()
             && ! $campaign->senderIdentity?->hasCompleteSmtpConfiguration()) {
             // This is a definitive local preflight failure: no SMTP connection
             // was attempted, so it is safe to defer and let the operator edit
@@ -205,13 +205,15 @@ class SendSmtpReservationJob implements ShouldQueue, ShouldBeUnique
         }
 
         $contact = $recipient->contact;
-        $supportsBounceFeedback = $driver->supportsBounceFeedback($campaign);
         $skipReason = $contactEligibility->sendIneligibilityReasonForSingle(
             $contact,
-            $supportsBounceFeedback,
+            $campaign->emailVerificationPolicy(),
         );
-        if ($skipReason === 'accept_all_feedback_required' && ! $supportsBounceFeedback) {
-            $skipReason = 'bounce_feedback_unhealthy';
+
+        if ($skipReason === 'verification_pending') {
+            $reservations->defer($reservation, now()->addMinutes(5));
+
+            return;
         }
 
         if ($skipReason !== null) {

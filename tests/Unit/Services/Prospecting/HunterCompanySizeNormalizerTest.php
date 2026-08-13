@@ -86,7 +86,7 @@ class HunterCompanySizeNormalizerTest extends TestCase
             fingerprint: str_repeat('a', 64),
             verificationChanges: [['contact_id' => 1]],
             companyChanges: [['company_id' => 2]],
-            contactCandidates: [['normalized_email' => 'role@example.test']],
+            discoveredContacts: [['email' => 'role@example.test']],
             snapshotItems: [['host' => 'example.test']],
             counts: ['verification_statuses' => 1],
             sourceEvidenceHashes: ['payload' => str_repeat('b', 64)],
@@ -95,7 +95,7 @@ class HunterCompanySizeNormalizerTest extends TestCase
         $this->assertSame(str_repeat('a', 64), $plan->fingerprint);
         $this->assertSame([['contact_id' => 1]], $plan->verificationChanges);
         $this->assertSame([['company_id' => 2]], $plan->companyChanges);
-        $this->assertSame([['normalized_email' => 'role@example.test']], $plan->contactCandidates);
+        $this->assertSame([['email' => 'role@example.test']], $plan->discoveredContacts);
         $this->assertSame([['host' => 'example.test']], $plan->snapshotItems);
         $this->assertSame(['verification_statuses' => 1], $plan->counts);
         $this->assertSame(['payload' => str_repeat('b', 64)], $plan->sourceEvidenceHashes);

@@ -8,8 +8,12 @@ use App\Models\Zoho\ZohoQuoteItem;
 use App\Models\Zoho\ZohoSyncFailure;
 use App\Services\Zoho\V2\Contracts\ZohoTransport;
 use App\Services\Zoho\V2\DTO\TransportResult;
+use App\Services\Zoho\V2\Mappers\QuoteItemMapper;
+use App\Services\Zoho\V2\Mappers\QuoteMapper;
 use App\Services\Zoho\V2\Reconciliation\ZohoDeletedRecordsReconciler;
 use App\Services\Zoho\V2\Reconciliation\ZohoReconciliationService;
+use App\Services\Zoho\V2\Transport\Sleeper;
+use App\Services\Zoho\V2\Transport\ZohoThrottleUnavailableException;
 use DateTimeInterface;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -17,6 +21,12 @@ use Tests\TestCase;
 class ZohoReconciliationServiceTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config()->set('zoho-v2.reconciliation.quote_paged_verification', false);
+    }
 
     public function test_deleted_records_are_retained_as_idempotent_tombstones(): void
     {
@@ -34,6 +44,93 @@ class ZohoReconciliationServiceTest extends TestCase
         $this->assertNotNull($lead->fresh()->zoho_deleted_at);
         $this->assertSame('recycle', $lead->fresh()->zoho_deletion_type);
         $this->assertSame(1, ZohoLead::query()->tombstoned()->count());
+    }
+
+    public function test_no_deleted_records_204_completes_without_pagination_metadata(): void
+    {
+        $this->app->instance(ZohoTransport::class, new ReconciliationTransport([
+            '/Leads/deleted' => ['status' => 204],
+        ]));
+
+        $result = app(ZohoDeletedRecordsReconciler::class)->reconcile('leads', 105, 'no-deleted-records');
+
+        $this->assertTrue($result['complete']);
+        $this->assertFalse($result['degraded']);
+        $this->assertSame(204, $result['status']);
+        $this->assertSame(1, $result['pages']);
+        $this->assertSame(1, $result['api_requests']);
+        $this->assertSame(0, $result['seen']);
+        $this->assertDatabaseMissing('zoho_sync_failures', [
+            'module' => 'leads',
+            'failure_kind' => 'deletion_scan',
+        ]);
+    }
+
+    public function test_active_scan_waits_for_the_next_capacity_window_instead_of_restarting(): void
+    {
+        $transport = new ReconciliationCapacityTransport([
+            '/Leads/deleted' => [
+                ['status' => 204],
+            ],
+            '/Leads' => [
+                ['status' => 0, 'error_code' => 'throttle_unavailable'],
+                ['data' => [], 'info' => ['more_records' => false]],
+            ],
+        ]);
+        $sleeper = new ReconciliationCapacitySleeper;
+        $this->app->instance(ZohoTransport::class, $transport);
+        $this->app->instance(Sleeper::class, $sleeper);
+
+        $result = app(ZohoReconciliationService::class)->reconcile('leads', 106, 'capacity-scan');
+
+        $this->assertTrue($result['complete']);
+        $this->assertFalse($result['degraded']);
+        $this->assertSame(1, $result['pages']);
+        $this->assertSame(2, $transport->countCalls('/Leads'));
+        $this->assertNotEmpty($sleeper->milliseconds);
+        $this->assertLessThanOrEqual(10_000, max($sleeper->milliseconds));
+        $this->assertGreaterThan(0, array_sum($sleeper->milliseconds));
+    }
+
+    public function test_record_hydration_waits_for_capacity_without_advancing_or_quarantining(): void
+    {
+        $transport = new ReconciliationCapacityTransport([
+            '/Leads/deleted' => [
+                ['status' => 204],
+            ],
+            '/Leads' => [
+                ['data' => [['id' => 'lead-capacity-hydration']], 'info' => ['more_records' => false]],
+            ],
+        ]);
+        $sleeper = new ReconciliationCapacitySleeper;
+        $this->app->instance(ZohoTransport::class, $transport);
+        $this->app->instance(Sleeper::class, $sleeper);
+        $attempts = 0;
+
+        $result = app(ZohoReconciliationService::class)->reconcile(
+            'leads',
+            107,
+            'capacity-hydration',
+            hydrateRecord: function (string $id) use (&$attempts): array {
+                $attempts++;
+                if ($attempts === 1) {
+                    throw new ZohoThrottleUnavailableException;
+                }
+                $this->lead($id);
+
+                return ['successful' => true, 'created' => 1, 'updated' => 0, 'unchanged' => 0, 'quarantined' => 0, 'api_requests' => 1];
+            },
+        );
+
+        $this->assertTrue($result['complete']);
+        $this->assertFalse($result['degraded']);
+        $this->assertSame(2, $attempts);
+        $this->assertSame(1, $result['hydration']['attempted']);
+        $this->assertSame(0, $result['hydration']['quarantined']);
+        $this->assertNotEmpty($sleeper->milliseconds);
+        $this->assertLessThanOrEqual(10_000, max($sleeper->milliseconds));
+        $this->assertGreaterThan(0, array_sum($sleeper->milliseconds));
+        $this->assertDatabaseMissing('zoho_sync_failures', ['module' => 'leads', 'resolved_at' => null]);
     }
 
     public function test_deletion_state_advances_to_permanent_but_never_regresses(): void
@@ -252,6 +349,334 @@ class ZohoReconciliationServiceTest extends TestCase
         $this->assertSame(2, $result['hydration']['unchanged']);
         $this->assertSame(2, $result['hydration']['api_requests']);
         $this->assertSame('healthy', $result['status']);
+    }
+
+    public function test_paged_quote_verification_skips_specific_reads_when_parent_and_items_match(): void
+    {
+        config()->set('zoho-v2.reconciliation.quote_paged_verification', true);
+        $quoteId = '600000000000000101';
+        $itemId = '600000000000000201';
+        $parent = [
+            'id' => $quoteId,
+            'Subject' => 'Same quote',
+            'Currency' => 'EUR',
+            'Exchange_Rate' => '1',
+            'Valid_Till' => '2026-08-30',
+            'Date_de_Cotation' => '2026-08-01',
+            'Type_de_Transport' => ['Express', 'Road'],
+            'Created_Time' => '2026-08-01T08:00:00+00:00',
+            'Modified_Time' => '2026-08-02T09:00:00+00:00',
+        ];
+        $item = [
+            'id' => $itemId,
+            'Parent_Id' => ['id' => $quoteId],
+            'Quantity' => 1,
+            'Prix_1x40' => '10',
+            'Prix_Total' => '10',
+            'Created_Time' => '2026-08-01T08:00:00+00:00',
+            'Modified_Time' => '2026-08-02T09:00:00+00:00',
+        ];
+        $specificParent = array_replace($parent, ['Type_de_Transport' => ['Road', 'Express']]);
+        $specificItem = array_replace($item, [
+            'Quantity' => '1.0000',
+            'Prix_1x40' => '10.00',
+            'Prix_Total' => '10.00',
+            'Modified_Time' => '2026-08-03T09:00:00+00:00',
+            '$layout_id' => 'specific-read-only-metadata',
+        ]);
+        $context = ['seen_at' => now()->subDay(), 'synced_at' => now()->subDay()];
+        ZohoQuote::query()->create(app(QuoteMapper::class)->map(
+            $specificParent + ['Quoted_Items' => [$specificItem]],
+            $context,
+        ));
+        ZohoQuoteItem::query()->create(app(QuoteItemMapper::class)->map($specificItem, $context + [
+            'quote_zoho_id' => $quoteId,
+            'currency_code' => 'EUR',
+            'sequence' => 1,
+        ]));
+        $this->assertNotSame(
+            app(QuoteItemMapper::class)->payloadHash($item),
+            app(QuoteItemMapper::class)->payloadHash($specificItem),
+        );
+        $transport = new ReconciliationTransport([
+            '/Quotes/deleted' => ['status' => 204],
+            '/Quotes' => ['data' => [$parent], 'info' => ['more_records' => false]],
+            '/Quoted_Items' => ['data' => [$item], 'info' => ['more_records' => false]],
+        ]);
+        $this->app->instance(ZohoTransport::class, $transport);
+        $specificReads = 0;
+
+        $result = app(ZohoReconciliationService::class)->reconcile(
+            'quotes',
+            880,
+            'paged-quote-verification',
+            hydrateRecord: static function (string $id) use (&$specificReads): array {
+                $specificReads++;
+
+                return ['successful' => true, 'created' => 0, 'updated' => 0, 'unchanged' => 1, 'quarantined' => 0, 'api_requests' => 1];
+            },
+            heartbeat: static fn (): bool => true,
+            mutationFence: static fn (): bool => true,
+        );
+
+        $this->assertSame(0, $specificReads);
+        $this->assertTrue($result['fast_path']);
+        $this->assertTrue($result['complete']);
+        $this->assertSame('healthy', $result['status']);
+        $this->assertSame(1, $result['swept_count']);
+        $this->assertContains('/Quoted_Items', array_column($transport->calls, 'path'));
+        $this->assertSame(880, ZohoQuote::query()->where('zoho_id', $quoteId)->value('sync_batch_id'));
+        $this->assertSame(880, ZohoQuoteItem::query()->where('zoho_line_item_id', $itemId)->value('sync_batch_id'));
+    }
+
+    public function test_paged_quote_verification_hydrates_only_the_parent_of_a_changed_item(): void
+    {
+        config()->set('zoho-v2.reconciliation.quote_paged_verification', true);
+        $quoteId = '600000000000000102';
+        $itemId = '600000000000000202';
+        $parent = ['id' => $quoteId, 'Subject' => 'Same quote', 'Currency' => 'EUR'];
+        $oldItem = ['id' => $itemId, 'Parent_Id' => ['id' => $quoteId], 'Quantity' => 1, 'Prix_Total' => '10'];
+        $newItem = ['id' => $itemId, 'Parent_Id' => ['id' => $quoteId], 'Quantity' => 1, 'Prix_Total' => '20'];
+        ZohoQuote::query()->create([
+            'zoho_id' => $quoteId,
+            'subject' => 'Same quote',
+            'currency_code' => 'EUR',
+            'raw_payload' => $parent + ['Quoted_Items' => [$oldItem]],
+            'payload_hash' => hash('sha256', 'changed-item-parent'),
+            'last_seen_at' => now()->subDay(),
+            'last_synced_at' => now()->subDay(),
+        ]);
+        ZohoQuoteItem::query()->create([
+            'zoho_quote_id' => $quoteId,
+            'zoho_line_item_id' => $itemId,
+            'sequence' => 1,
+            'currency_code' => 'EUR',
+            'raw_payload' => $oldItem,
+            'payload_hash' => app(QuoteItemMapper::class)->payloadHash($oldItem),
+            'last_seen_at' => now()->subDay(),
+            'last_synced_at' => now()->subDay(),
+        ]);
+        $this->app->instance(ZohoTransport::class, new ReconciliationTransport([
+            '/Quotes/deleted' => ['status' => 204],
+            '/Quotes' => ['data' => [$parent], 'info' => ['more_records' => false]],
+            '/Quoted_Items' => ['data' => [$newItem], 'info' => ['more_records' => false]],
+        ]));
+        $specificIds = [];
+
+        $result = app(ZohoReconciliationService::class)->reconcile(
+            'quotes',
+            881,
+            'paged-quote-item-drift',
+            hydrateRecord: function (string $id) use (&$specificIds, $quoteId, $itemId, $newItem): array {
+                $specificIds[] = $id;
+                ZohoQuote::query()->where('zoho_id', $quoteId)->update(['sync_batch_id' => 881]);
+                ZohoQuoteItem::query()->where('zoho_line_item_id', $itemId)->update([
+                    'raw_payload' => json_encode($newItem, JSON_THROW_ON_ERROR),
+                    'payload_hash' => app(QuoteItemMapper::class)->payloadHash($newItem),
+                    'sync_batch_id' => 881,
+                ]);
+
+                return ['successful' => true, 'created' => 0, 'updated' => 1, 'unchanged' => 0, 'quarantined' => 0, 'api_requests' => 1];
+            },
+            heartbeat: static fn (): bool => true,
+            mutationFence: static fn (): bool => true,
+        );
+
+        $this->assertSame([$quoteId], $specificIds);
+        $this->assertTrue($result['complete']);
+        $this->assertFalse($result['degraded']);
+        $this->assertSame(1, $result['hydration']['updated']);
+        $this->assertSame(1, $result['hydration']['attempted']);
+    }
+
+    public function test_paged_quote_verification_consumes_parent_and_item_page_tokens(): void
+    {
+        config()->set('zoho-v2.reconciliation.quote_paged_verification', true);
+        $parents = [
+            ['id' => '600000000000000111', 'Subject' => 'First quote', 'Currency' => 'EUR'],
+            ['id' => '600000000000000112', 'Subject' => 'Second quote', 'Currency' => 'EUR'],
+        ];
+        $items = [
+            ['id' => '600000000000000211', 'Parent_Id' => ['id' => $parents[0]['id']], 'Quantity' => 1, 'Prix_Total' => '10'],
+            ['id' => '600000000000000212', 'Parent_Id' => ['id' => $parents[1]['id']], 'Quantity' => 2, 'Prix_Total' => '20'],
+        ];
+        $context = ['seen_at' => now()->subDay(), 'synced_at' => now()->subDay()];
+        foreach ($parents as $index => $parent) {
+            ZohoQuote::query()->create(app(QuoteMapper::class)->map($parent, $context));
+            ZohoQuoteItem::query()->create(app(QuoteItemMapper::class)->map($items[$index], $context + [
+                'quote_zoho_id' => $parent['id'],
+                'currency_code' => 'EUR',
+                'sequence' => 1,
+            ]));
+        }
+        $transport = new ReconciliationTransport([
+            '/Quotes/deleted' => ['status' => 204],
+            '/Quotes' => ['data' => [$parents[0]], 'info' => ['more_records' => true, 'next_page_token' => 'quote-page-2']],
+            '/Quotes|token:quote-page-2' => ['data' => [$parents[1]], 'info' => ['more_records' => false]],
+            '/Quoted_Items' => ['data' => [$items[0]], 'info' => ['more_records' => true, 'next_page_token' => 'item-page-2']],
+            '/Quoted_Items|token:item-page-2' => ['data' => [$items[1]], 'info' => ['more_records' => false]],
+        ]);
+        $this->app->instance(ZohoTransport::class, $transport);
+        $specificReads = 0;
+
+        $result = app(ZohoReconciliationService::class)->reconcile(
+            'quotes',
+            882,
+            'paged-quote-pagination',
+            hydrateRecord: static function () use (&$specificReads): array {
+                $specificReads++;
+
+                return ['successful' => true, 'created' => 0, 'updated' => 0, 'unchanged' => 1, 'quarantined' => 0, 'api_requests' => 1];
+            },
+            heartbeat: static fn (): bool => true,
+            mutationFence: static fn (): bool => true,
+        );
+
+        $this->assertSame(0, $specificReads);
+        $this->assertSame(['quote-page-2', 'item-page-2'], $transport->pageTokens);
+        $this->assertSame(4, $result['pages']);
+        $this->assertSame(5, $result['api_requests']);
+        $this->assertSame(2, $result['swept_count']);
+        $this->assertSame('healthy', $result['status']);
+    }
+
+    public function test_paged_quote_verification_reverses_direction_at_the_provider_record_limit(): void
+    {
+        config()->set('zoho-v2.reconciliation.quote_paged_verification', true);
+        config()->set('zoho-v2.reconciliation.quote_page_token_record_limit', 2);
+        $quoteId = '600000000000000121';
+        $parent = ['id' => $quoteId, 'Subject' => 'Large quote', 'Currency' => 'EUR'];
+        $items = collect(range(1, 3))->map(static fn (int $index): array => [
+            'id' => '60000000000000022'.$index,
+            'Parent_Id' => ['id' => $quoteId],
+            'Quantity' => $index,
+            'Prix_Total' => (string) ($index * 10),
+        ])->all();
+        $context = ['seen_at' => now()->subDay(), 'synced_at' => now()->subDay()];
+        ZohoQuote::query()->create(app(QuoteMapper::class)->map($parent, $context));
+        foreach ($items as $sequence => $item) {
+            ZohoQuoteItem::query()->create(app(QuoteItemMapper::class)->map($item, $context + [
+                'quote_zoho_id' => $quoteId,
+                'currency_code' => 'EUR',
+                'sequence' => $sequence + 1,
+            ]));
+        }
+        $transport = new ReconciliationTransport([
+            '/Quotes/deleted' => ['status' => 204],
+            '/Quotes' => ['data' => [$parent], 'info' => ['more_records' => false]],
+            '/Quoted_Items|sort:desc' => ['data' => [$items[2], $items[1]], 'info' => ['more_records' => true, 'next_page_token' => 'unused-desc-token']],
+            '/Quoted_Items|sort:asc' => ['data' => [$items[0]], 'info' => ['more_records' => true, 'next_page_token' => 'asc-page-2']],
+            '/Quoted_Items|sort:asc|token:asc-page-2' => ['data' => [$items[1]], 'info' => ['more_records' => true, 'next_page_token' => 'unused-asc-overlap-token']],
+        ]);
+        $this->app->instance(ZohoTransport::class, $transport);
+        $specificReads = 0;
+
+        $result = app(ZohoReconciliationService::class)->reconcile(
+            'quotes',
+            883,
+            'paged-quote-two-directions',
+            hydrateRecord: static function () use (&$specificReads): array {
+                $specificReads++;
+
+                return ['successful' => true, 'created' => 0, 'updated' => 0, 'unchanged' => 1, 'quarantined' => 0, 'api_requests' => 1];
+            },
+            heartbeat: static fn (): bool => true,
+            mutationFence: static fn (): bool => true,
+        );
+
+        $this->assertSame(0, $specificReads);
+        $this->assertSame(['asc-page-2'], $transport->pageTokens);
+        $this->assertSame(4, $result['pages']);
+        $this->assertSame(5, $result['api_requests']);
+        $this->assertSame(3, ZohoQuoteItem::query()->where('sync_batch_id', 883)->count());
+        $this->assertSame('healthy', $result['status']);
+    }
+
+    public function test_paged_quote_verification_resumes_a_verified_direction_from_the_reverse_edge(): void
+    {
+        config()->set('zoho-v2.reconciliation.quote_paged_verification', true);
+        config()->set('zoho-v2.reconciliation.quote_page_token_record_limit', 2);
+        $quoteId = '600000000000000131';
+        $parent = ['id' => $quoteId, 'Subject' => 'Resumed quote', 'Currency' => 'EUR'];
+        $items = collect(range(1, 3))->map(static fn (int $index): array => [
+            'id' => '60000000000000023'.$index,
+            'Parent_Id' => ['id' => $quoteId],
+            'Quantity' => $index,
+            'Prix_Total' => (string) ($index * 10),
+        ])->all();
+        $context = ['seen_at' => now()->subDay(), 'synced_at' => now()->subDay()];
+        ZohoQuote::query()->create(app(QuoteMapper::class)->map($parent, $context));
+        foreach ($items as $sequence => $item) {
+            $mapped = app(QuoteItemMapper::class)->map($item, $context + [
+                'quote_zoho_id' => $quoteId,
+                'currency_code' => 'EUR',
+                'sequence' => $sequence + 1,
+            ]);
+            if ($sequence > 0) {
+                $mapped['sync_batch_id'] = 884;
+            }
+            ZohoQuoteItem::query()->create($mapped);
+        }
+        $transport = new ReconciliationTransport([
+            '/Quotes/deleted' => ['status' => 204],
+            '/Quotes' => ['data' => [$parent], 'info' => ['more_records' => false]],
+            '/Quoted_Items|sort:asc' => ['data' => [$items[0]], 'info' => ['more_records' => true, 'next_page_token' => 'resume-asc-page-2']],
+            '/Quoted_Items|sort:asc|token:resume-asc-page-2' => ['data' => [$items[1]], 'info' => ['more_records' => true, 'next_page_token' => 'unused-resume-token']],
+        ]);
+        $this->app->instance(ZohoTransport::class, $transport);
+
+        $result = app(ZohoReconciliationService::class)->reconcile(
+            'quotes',
+            884,
+            'paged-quote-resume-direction',
+            hydrateRecord: static fn (): array => ['successful' => true, 'created' => 0, 'updated' => 0, 'unchanged' => 1, 'quarantined' => 0, 'api_requests' => 1],
+            heartbeat: static fn (): bool => true,
+            mutationFence: static fn (): bool => true,
+        );
+
+        $itemCalls = collect($transport->calls)->where('path', '/Quoted_Items')->values();
+        $this->assertNotEmpty($itemCalls);
+        $this->assertTrue($itemCalls->every(static fn (array $call): bool => $call['query']['sort_order'] === 'asc'));
+        $this->assertSame(3, ZohoQuoteItem::query()->where('sync_batch_id', 884)->count());
+        $this->assertSame('healthy', $result['status']);
+    }
+
+    public function test_numeric_zoho_ids_remain_strings_during_reconciliation_hydration(): void
+    {
+        $id = '600000000000000001';
+        ZohoQuote::query()->create([
+            'zoho_id' => $id,
+            'raw_payload' => [],
+            'payload_hash' => hash('sha256', $id),
+        ]);
+        $this->app->instance(ZohoTransport::class, new ReconciliationTransport([
+            '/Quotes/deleted' => ['data' => [], 'info' => ['more_records' => false]],
+            '/Quotes' => ['data' => [['id' => $id]], 'info' => ['more_records' => false]],
+        ]));
+        $hydrated = [];
+
+        $result = app(ZohoReconciliationService::class)->reconcile(
+            'quotes',
+            773,
+            'numeric-quote-id',
+            function (string $zohoId) use (&$hydrated): array {
+                $hydrated[] = $zohoId;
+
+                return [
+                    'successful' => true,
+                    'created' => 0,
+                    'updated' => 0,
+                    'unchanged' => 1,
+                    'quarantined' => 0,
+                    'api_requests' => 1,
+                ];
+            },
+            static fn (): bool => true,
+        );
+
+        $this->assertSame([$id], $hydrated);
+        $this->assertSame(1, $result['hydration']['attempted']);
+        $this->assertTrue($result['complete']);
     }
 
     public function test_quote_sweep_is_sorted_chunked_and_resumes_after_its_durable_cursor(): void
@@ -576,12 +1001,25 @@ final class ReconciliationTransport implements ZohoTransport
     public function get(string $path, array $query = [], ?string $correlationId = null): TransportResult
     {
         $this->calls[] = compact('path', 'query');
-        $key = $path;
+        $token = isset($query['page_token']) ? (string) $query['page_token'] : null;
+        $sort = isset($query['sort_order']) ? strtolower((string) $query['sort_order']) : null;
+        $candidates = [];
+        if ($sort !== null) {
+            if ($token !== null) {
+                $candidates[] = $path.'|sort:'.$sort.'|token:'.$token;
+            }
+            $candidates[] = $path.'|sort:'.$sort;
+        }
+        if ($token !== null) {
+            $candidates[] = $path.'|token:'.$token;
+        }
+        if (($query['page'] ?? 1) > 1) {
+            $candidates[] = $path.'|page:'.$query['page'];
+        }
+        $candidates[] = $path;
+        $key = collect($candidates)->first(fn (string $candidate): bool => array_key_exists($candidate, $this->responses)) ?? $path;
         if (isset($query['page_token'])) {
             $this->pageTokens[] = (string) $query['page_token'];
-            $key .= '|token:'.$query['page_token'];
-        } elseif (($query['page'] ?? 1) > 1) {
-            $key .= '|page:'.$query['page'];
         }
         $payload = $this->responses[$key] ?? $this->responses[$path] ?? [];
         $status = (int) ($payload['status'] ?? 200);
@@ -592,5 +1030,53 @@ final class ReconciliationTransport implements ZohoTransport
     public function getIfModifiedSince(string $path, DateTimeInterface $since, array $query = [], ?string $correlationId = null): TransportResult
     {
         return $this->get($path, $query, $correlationId);
+    }
+}
+
+final class ReconciliationCapacityTransport implements ZohoTransport
+{
+    /** @var list<string> */
+    private array $calls = [];
+
+    /** @param array<string,list<array<string,mixed>>> $responses */
+    public function __construct(private array $responses) {}
+
+    public function get(string $path, array $query = [], ?string $correlationId = null): TransportResult
+    {
+        $this->calls[] = $path;
+        $payload = array_shift($this->responses[$path]) ?? ['status' => 500, 'error_code' => 'http_500'];
+        $status = (int) ($payload['status'] ?? 200);
+
+        return new TransportResult(
+            $status,
+            $status < 300 ? (array) ($payload['data'] ?? []) : [],
+            $status < 300 ? (array) ($payload['info'] ?? []) : [],
+            [],
+            $correlationId ?? 'capacity-reconciliation-test',
+            [],
+            $payload['error_code'] ?? null,
+            $status < 300 ? $payload : [],
+        );
+    }
+
+    public function getIfModifiedSince(string $path, DateTimeInterface $since, array $query = [], ?string $correlationId = null): TransportResult
+    {
+        return $this->get($path, $query, $correlationId);
+    }
+
+    public function countCalls(string $path): int
+    {
+        return count(array_filter($this->calls, static fn (string $call): bool => $call === $path));
+    }
+}
+
+final class ReconciliationCapacitySleeper implements Sleeper
+{
+    /** @var list<int> */
+    public array $milliseconds = [];
+
+    public function sleepMilliseconds(int $milliseconds): void
+    {
+        $this->milliseconds[] = $milliseconds;
     }
 }

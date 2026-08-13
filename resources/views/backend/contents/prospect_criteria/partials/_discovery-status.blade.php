@@ -44,7 +44,7 @@
                 <span class="text-muted fs-8">
                     {{ number_format($progress['companies_count']) }} entreprise(s) enregistrée(s)
                     · {{ number_format($progress['successful_enrichments']) }}/{{ number_format($progress['successful_enrichments_target']) }} enrichissement(s) réussi(s)
-                    · {{ number_format($progress['contacts_count']) }} contact(s) créé(s)
+                    · {{ number_format($progress['contacts_count']) }} contact(s) importé(s)
                 </span>
             </div>
 
@@ -129,7 +129,7 @@
                     Résultats de cette exécution :
                     <strong data-discovery-companies>{{ $progress['companies_count'] }}</strong> entreprise(s) enregistrée(s),
                     <strong data-discovery-low-score>{{ $progress['low_score_count'] }}</strong> sous le seuil d’enrichissement,
-                    <strong data-discovery-contacts>{{ $progress['contacts_count'] }}</strong> contacts créé(s),
+                    <strong data-discovery-contacts>{{ $progress['contacts_count'] }}</strong> contacts importé(s),
                     <strong data-discovery-excluded>{{ $progress['excluded_count'] }}</strong> exclue(s),
                     <strong data-discovery-skipped>{{ $progress['skipped_count'] }}</strong> ignorée(s).
                     <span class="ms-2" data-discovery-heartbeat>

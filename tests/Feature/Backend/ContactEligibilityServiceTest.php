@@ -2,9 +2,16 @@
 
 namespace Tests\Feature\Backend;
 
+use App\Models\Campaign;
+use App\Models\CampaignRecipient;
+use App\Models\CampaignRun;
+use App\Models\CampaignTemplate;
 use App\Models\Company;
 use App\Models\Contact;
+use App\Models\Segment;
+use App\Models\SenderIdentity;
 use App\Models\Suppression;
+use App\Services\Campaign\CampaignFeedbackService;
 use App\Services\Campaign\ContactEligibilityService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -17,66 +24,82 @@ class ContactEligibilityServiceTest extends TestCase
     use RefreshDatabase;
 
     #[DataProvider('verificationPolicy')]
-    public function test_verification_policy(
+    public function test_campaign_verification_policy_matrix(
         ?string $status,
-        ?string $source,
-        bool $sendTime,
-        bool $feedback,
+        string $policy,
         ?string $expectedReason,
     ): void {
-        $contact = $this->contact([
-            'email_verification_status' => $status,
-            'email_verification_source' => $source,
-            'email_verification_checked_at' => now(),
-        ]);
+        $contact = $this->contactModel($status);
 
         $this->assertSame(
             $expectedReason,
-            app(ContactEligibilityService::class)->qualityReason(
-                $contact->load('company'),
-                $sendTime,
-                $feedback,
-            ),
+            app(ContactEligibilityService::class)->qualityReason($contact, $policy),
         );
     }
 
     public static function verificationPolicy(): array
     {
         return [
-            'valid' => ['valid', 'hunter', true, false, null],
-            'accept_all segment risk' => ['accept_all', 'hunter', false, false, null],
-            'accept_all unsafe send' => ['accept_all', 'hunter', true, false, 'accept_all_feedback_required'],
-            'accept_all safe send' => ['accept_all', 'hunter', true, true, null],
-            'unknown' => ['unknown', 'hunter', true, true, 'verification_required'],
-            'pending' => ['pending', 'hunter', true, true, 'verification_required'],
-            'manual approval' => ['unknown', 'manual', true, true, null],
-            'missing' => [null, null, true, true, 'verification_required'],
-            'invalid' => ['invalid', 'hunter', true, true, 'invalid_email'],
-            'disposable' => ['disposable', 'hunter', true, true, 'disposable_email'],
-            'webmail prospect' => ['webmail', 'hunter', true, true, 'personal_email'],
+            'strict valid' => ['valid', Campaign::VERIFICATION_VERIFIED_ONLY, null],
+            'strict missing' => [null, Campaign::VERIFICATION_VERIFIED_ONLY, 'verification_required'],
+            'strict unknown' => ['unknown', Campaign::VERIFICATION_VERIFIED_ONLY, 'verification_required'],
+            'strict accept all' => ['accept_all', Campaign::VERIFICATION_VERIFIED_ONLY, 'verification_required'],
+            'strict webmail' => ['webmail', Campaign::VERIFICATION_VERIFIED_ONLY, 'verification_required'],
+            'all missing' => [null, Campaign::VERIFICATION_ALL_SENDABLE, null],
+            'all unknown' => ['unknown', Campaign::VERIFICATION_ALL_SENDABLE, null],
+            'all accept all' => ['accept_all', Campaign::VERIFICATION_ALL_SENDABLE, null],
+            'all webmail' => ['webmail', Campaign::VERIFICATION_ALL_SENDABLE, null],
+            'pending always waits' => ['pending', Campaign::VERIFICATION_ALL_SENDABLE, 'verification_pending'],
+            'invalid always blocked' => ['invalid', Campaign::VERIFICATION_ALL_SENDABLE, 'invalid_email'],
+            'disposable always blocked' => ['disposable', Campaign::VERIFICATION_ALL_SENDABLE, 'disposable_email'],
         ];
     }
 
-    public function test_stale_valid_verification_requires_reverification(): void
+    public function test_valid_verification_never_expires(): void
     {
-        config()->set('prospecting.email_verification_ttl_days', 90);
-        $contact = $this->contact([
-            'email_verification_status' => 'valid',
-            'email_verification_source' => 'hunter',
-            'email_verification_checked_at' => now()->subDays(91),
-        ])->load('company');
+        $contact = $this->contactModel('valid');
+        $contact->setAttribute('email_verification_checked_at', now()->subYears(5));
 
-        $this->assertSame(
-            'verification_required',
-            app(ContactEligibilityService::class)->qualityReason($contact, true, true),
-        );
+        $this->assertNull(app(ContactEligibilityService::class)->qualityReason($contact));
     }
 
-    public function test_send_check_tests_suppression_once(): void
+    public function test_all_sendable_allows_personal_address(): void
+    {
+        $contact = $this->contactModel(null);
+        $contact->email_kind = 'personal';
+
+        $this->assertNull(app(ContactEligibilityService::class)->qualityReason(
+            $contact,
+            Campaign::VERIFICATION_ALL_SENDABLE,
+        ));
+    }
+
+    public function test_all_sendable_keeps_pending_in_the_audience_but_blocks_transport(): void
+    {
+        $contact = $this->contactModel('pending');
+        $service = app(ContactEligibilityService::class);
+
+        $this->assertNull($service->audienceQualityReason(
+            $contact,
+            Campaign::VERIFICATION_ALL_SENDABLE,
+        ));
+        $this->assertSame('verification_pending', $service->qualityReason(
+            $contact,
+            Campaign::VERIFICATION_ALL_SENDABLE,
+        ));
+        $this->assertSame('verification_pending', $service->audienceQualityReason(
+            $contact,
+            Campaign::VERIFICATION_VERIFIED_ONLY,
+        ));
+    }
+
+    public function test_send_check_tests_suppression_once_and_keeps_cold_gate(): void
     {
         config()->set('prospecting.cold_send_enabled', true);
-        $contact = $this->contact([
-            'email' => '  QUALITY@example.test  ',
+        $company = Company::factory()->create(['relationship' => 'prospect']);
+        $contact = Contact::factory()->create([
+            'company_id' => $company->id,
+            'email' => 'quality@example.test',
             'email_verification_status' => 'valid',
             'email_verification_source' => 'hunter',
             'email_verification_checked_at' => now(),
@@ -91,69 +114,74 @@ class ContactEligibilityServiceTest extends TestCase
         DB::flushQueryLog();
         DB::enableQueryLog();
         $reason = app(ContactEligibilityService::class)
-            ->sendIneligibilityReasonForSingle($contact, true);
+            ->sendIneligibilityReasonForSingle($contact, Campaign::VERIFICATION_VERIFIED_ONLY);
         $queries = DB::getQueryLog();
         DB::disableQueryLog();
 
         $this->assertSame('suppressed', $reason);
         $this->assertCount(1, $queries);
-    }
 
-    public function test_personal_prospect_is_blocked(): void
-    {
-        $contact = $this->contact([
-            'email_kind' => 'personal',
-            'email_verification_status' => 'valid',
-            'email_verification_source' => 'hunter',
-            'email_verification_checked_at' => now(),
-        ])->load('company');
-
-        $this->assertSame(
-            'personal_email',
-            app(ContactEligibilityService::class)->qualityReason($contact),
-        );
-    }
-
-    public function test_personal_client_is_not_blocked_by_email_kind(): void
-    {
-        $contact = $this->contact([
-            'email_kind' => 'personal',
-            'email_verification_status' => 'valid',
-            'email_verification_source' => 'hunter',
-            'email_verification_checked_at' => now(),
-        ], 'client')->load('company');
-
-        $this->assertNull(app(ContactEligibilityService::class)->qualityReason($contact));
-    }
-
-    public function test_cold_send_flag_does_not_empty_segment_preview_but_blocks_send(): void
-    {
         config()->set('prospecting.cold_send_enabled', false);
-        $contact = $this->contact([
-            'email_verification_status' => 'valid',
-            'email_verification_source' => 'hunter',
-            'email_verification_checked_at' => now(),
-        ])->load('company');
-        $service = app(ContactEligibilityService::class);
-
-        $this->assertNull($service->qualityReason($contact));
-        $this->assertSame(
-            'cold_send_disabled',
-            $service->sendIneligibilityReason($contact, false, false),
-        );
+        $this->assertSame('cold_send_disabled', app(ContactEligibilityService::class)
+            ->sendIneligibilityReason($contact, Campaign::VERIFICATION_VERIFIED_ONLY, false));
     }
 
-    public function test_segment_quality_filter_adds_no_query_per_contact_for_one_thousand_contacts(): void
+    public function test_bounce_evidence_blocks_both_policies_before_transport(): void
+    {
+        config()->set('prospecting.cold_send_enabled', true);
+        $contact = Contact::factory()->create([
+            'company_id' => Company::factory()->create(['relationship' => 'client'])->id,
+            'email_verification_status' => 'valid',
+            'email_verification_source' => 'import',
+            'email_verification_checked_at' => now(),
+        ])->load('company');
+        $run = $this->campaignRun();
+        $recipient = CampaignRecipient::create([
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'sent',
+            'sent_at' => now()->subMinute(),
+        ]);
+        app(CampaignFeedbackService::class)
+            ->apply($recipient, 'soft_bounce', now(), 'Temporary failure', 'dsn');
+        $contact->refresh()->load('company');
+
+        $service = app(ContactEligibilityService::class);
+        $this->assertSame('bounced', $service->sendIneligibilityReasonForSingle(
+            $contact,
+            Campaign::VERIFICATION_VERIFIED_ONLY,
+        ));
+        $this->assertSame('bounced', $service->sendIneligibilityReasonForSingle(
+            $contact,
+            Campaign::VERIFICATION_ALL_SENDABLE,
+        ));
+
+        $contact->update(['email' => 'replacement-after-bounce@example.test']);
+        $this->assertNull($service->sendIneligibilityReasonForSingle(
+            $contact->fresh()->load('company'),
+            Campaign::VERIFICATION_ALL_SENDABLE,
+        ));
+    }
+
+    public function test_schema_keeps_evidence_and_removes_legacy_contact_fields(): void
+    {
+        $this->assertTrue(Schema::hasColumns('contacts', [
+            'email_verification_status',
+            'email_verification_checked_at',
+            'email_verification_source',
+        ]));
+        $this->assertFalse(Schema::hasColumn('contacts', 'status'));
+        $this->assertFalse(Schema::hasColumn('contacts', 'legal_basis'));
+        $this->assertFalse(Schema::hasColumn('contacts', 'consent_at'));
+        $this->assertTrue(Schema::hasColumn('campaigns', 'email_verification_policy'));
+        $this->assertFalse(Schema::hasColumn('sequences', 'stop_on_reply'));
+    }
+
+    public function test_policy_check_adds_no_query_per_contact(): void
     {
         $company = new Company(['relationship' => 'prospect']);
         $contacts = collect(range(1, 1000))->map(function (int $index) use ($company): Contact {
-            $contact = new Contact([
-                'email' => "quality-{$index}@example.test",
-                'email_kind' => 'role',
-            ]);
-            $contact->setAttribute('email_verification_status', 'valid');
-            $contact->setAttribute('email_verification_source', 'hunter');
-            $contact->setAttribute('email_verification_checked_at', now());
+            $contact = $this->contactModel($index % 2 === 0 ? 'valid' : null);
             $contact->setRelation('company', $company);
 
             return $contact;
@@ -161,90 +189,47 @@ class ContactEligibilityServiceTest extends TestCase
 
         DB::flushQueryLog();
         DB::enableQueryLog();
-        $service = app(ContactEligibilityService::class);
-        $reasons = $contacts->map(fn (Contact $contact): ?string => $service->qualityReason($contact));
+        $contacts->each(fn (Contact $contact) => app(ContactEligibilityService::class)
+            ->qualityReason($contact, Campaign::VERIFICATION_ALL_SENDABLE));
         $queries = DB::getQueryLog();
         DB::disableQueryLog();
 
-        $this->assertTrue($reasons->every(fn (?string $reason): bool => $reason === null));
         $this->assertCount(0, $queries);
     }
 
-    public function test_missing_company_context_fails_closed_without_lazy_loading(): void
+    private function contactModel(?string $status): Contact
     {
-        config()->set('prospecting.cold_send_enabled', false);
         $contact = new Contact([
-            'email' => 'role@example.test',
+            'email' => 'contact-'.uniqid().'@example.test',
             'email_kind' => 'role',
         ]);
-        $contact->setAttribute('email_verification_status', 'valid');
-        $contact->setAttribute('email_verification_source', 'hunter');
-        $contact->setAttribute('email_verification_checked_at', now());
-
-        DB::flushQueryLog();
-        DB::enableQueryLog();
-        $reason = app(ContactEligibilityService::class)
-            ->sendIneligibilityReason($contact, true, false);
-        $queries = DB::getQueryLog();
-        DB::disableQueryLog();
-
-        $this->assertSame('cold_send_disabled', $reason);
-        $this->assertCount(0, $queries);
-    }
-
-    public function test_badges_are_safe_configured_values_and_manual_approval_is_distinct(): void
-    {
-        $service = app(ContactEligibilityService::class);
-        $valid = $this->contactModel('valid', 'hunter');
-        $acceptAll = $this->contactModel('accept_all', 'hunter');
-        $missing = $this->contactModel(null, null);
-        $manual = $this->contactModel('unknown', 'manual');
-
-        $this->assertSame(['label' => 'Valide', 'color' => 'success', 'risk' => false], $service->badge($valid));
-        $this->assertSame(['label' => 'Accept-all', 'color' => 'warning', 'risk' => true], $service->badge($acceptAll));
-        $this->assertSame(['label' => 'Non vérifié', 'color' => 'secondary', 'risk' => true], $service->badge($missing));
-        $this->assertSame(['label' => 'Approuvé manuellement', 'color' => 'info', 'risk' => false], $service->badge($manual));
-    }
-
-    public function test_schema_and_model_metadata_persist_email_safety_evidence(): void
-    {
-        $this->assertTrue(Schema::hasColumns('contacts', [
-            'email_verification_checked_at',
-            'email_verification_source',
-        ]));
-        $this->assertTrue(Schema::hasColumn('campaign_recipients', 'bounce_type'));
-        $this->assertTrue(Schema::hasColumns('sequence_step_sends', [
-            'bounce_type',
-            'bounce_reason',
-            'bounced_at',
-        ]));
-
-        $contact = $this->contact([
-            'email_verification_status' => 'valid',
-            'email_verification_source' => 'hunter',
-            'email_verification_checked_at' => now()->startOfSecond(),
-        ]);
-
-        $this->assertSame('hunter', $contact->fresh()->email_verification_source);
-        $this->assertTrue($contact->fresh()->email_verification_checked_at->equalTo(now()->startOfSecond()));
-    }
-
-    private function contact(array $overrides = [], string $relationship = 'prospect'): Contact
-    {
-        $company = Company::factory()->create(['relationship' => $relationship]);
-
-        return Contact::factory()->create(array_merge([
-            'company_id' => $company->id,
-            'email_kind' => 'role',
-        ], $overrides));
-    }
-
-    private function contactModel(?string $status, ?string $source): Contact
-    {
-        $contact = new Contact;
         $contact->setAttribute('email_verification_status', $status);
-        $contact->setAttribute('email_verification_source', $source);
+        $contact->setAttribute('email_verification_source', $status === null ? null : 'hunter');
+        $contact->setAttribute('email_verification_checked_at', $status === null || $status === 'pending' ? null : now());
 
         return $contact;
+    }
+
+    private function campaignRun(): CampaignRun
+    {
+        $campaign = Campaign::create([
+            'name' => 'Eligibility bounce',
+            'segment_id' => Segment::create(['name' => 'Eligibility', 'scope' => 'client'])->id,
+            'template_id' => CampaignTemplate::create([
+                'name' => 'Eligibility',
+                'subject' => 'Hello',
+                'html_content' => '<p>Hello</p>',
+            ])->id,
+            'sender_identity_id' => SenderIdentity::create([
+                'name' => 'Eligibility',
+                'email' => 'eligibility-sender@example.test',
+            ])->id,
+        ]);
+
+        return CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => uniqid('eligibility-', true),
+            'run_at' => now(),
+        ]);
     }
 }

@@ -128,6 +128,10 @@
             'delivery_channel',
             isset($model) && $model->id ? ($model->delivery_channel ?? '') : 'zoho'
         );
+        $selectedVerificationPolicy = old(
+            'email_verification_policy',
+            isset($model) && $model->id ? $model->emailVerificationPolicy() : $defaultEmailVerificationPolicy
+        );
     @endphp
 
     <div class="row g-5">
@@ -205,6 +209,24 @@
                                        id="smtp_daily_email_limit"
                                        value="{{ old('smtp_daily_email_limit', $model->smtp_daily_email_limit ?? 20) }}">
                                 <div class="form-text">20 par défaut. Utilisez 0 pour mettre l’envoi SMTP en pause sans changer de canal.</div>
+                            </div>
+                        </div>
+
+                        <div class="col-lg-6">
+                            <div class="fv-row mb-7">
+                                <label class="required fw-semibold fs-6 mb-2" for="email_verification_policy">Politique de vérification email</label>
+                                @if($deliveryLocked)
+                                    <input type="hidden" name="email_verification_policy" value="{{ e($model->emailVerificationPolicy()) }}">
+                                @endif
+                                <select name="email_verification_policy" id="email_verification_policy" class="form-select form-select-solid" data-control="select2" data-hide-search="true" {{ $deliveryLocked ? 'disabled' : '' }}>
+                                    @foreach($emailVerificationPolicies as $value => $definition)
+                                        <option value="{{ $value }}" {{ $selectedVerificationPolicy === $value ? 'selected' : '' }}>{{ $definition['label'] }}</option>
+                                    @endforeach
+                                </select>
+                                <div class="form-text">Le mode strict exige un résultat valide. Le mode étendu accepte les adresses non vérifiées, inconnues, accept-all, webmail ou personnelles, mais attend toujours la fin d'une vérification en cours.</div>
+                                @if($deliveryLocked)
+                                    <div class="form-text text-warning">Ce choix est verrouillé depuis la première livraison acceptée.</div>
+                                @endif
                             </div>
                         </div>
 
@@ -725,6 +747,7 @@
 
             // ── Segment live count via AJAX ─────────────────────────
             const segmentSelect = document.getElementById('segment_select');
+            const verificationPolicySelect = document.getElementById('email_verification_policy');
             const countLabel    = document.getElementById('segment-count-label');
             const readinessWarning = document.getElementById('segment-readiness-warning');
 
@@ -753,7 +776,9 @@
                     }
                     countLabel.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Calcul en cours...';
 
-                    axios.get('{{ route("admin.campaigns.segmentCount", "") }}/' + segmentId)
+                    axios.get('{{ route("admin.campaigns.segmentCount", "") }}/' + segmentId, {
+                        params: {email_verification_policy: verificationPolicySelect?.value || 'verified_only'}
+                    })
                         .then(function (r) {
                             const data = r.data || {};
                             const matched = Number(data.matched_count || 0);
@@ -777,6 +802,9 @@
 
                 segmentSelect.addEventListener('change', function () {
                     fetchCount(this.value);
+                });
+                verificationPolicySelect?.addEventListener('change', function () {
+                    fetchCount(segmentSelect.value);
                 });
 
                 // Trigger on page load if a segment is already selected (edit page)
@@ -825,6 +853,7 @@
                     params: {
                         segment_id: segmentId,
                         daily_company_limit: dailyLimit,
+                        email_verification_policy: verificationPolicySelect?.value || 'verified_only',
                     },
                 }).then(function (response) {
                     if (requestId !== nextWaveRequest) return;
@@ -857,6 +886,7 @@
             if (dailyLimitInput && nextWavePreview) {
                 dailyLimitInput.addEventListener('input', scheduleNextWavePreview);
             }
+            verificationPolicySelect?.addEventListener('change', scheduleNextWavePreview);
             scheduleNextWavePreview();
 
             // ── Auto-fill subject hint from template ────────────────
@@ -1202,6 +1232,7 @@
                 const body = new URLSearchParams();
                 body.append('segment_id', segId);
                 if (tplId) body.append('template_id', tplId);
+                body.append('email_verification_policy', verificationPolicySelect?.value || 'verified_only');
 
                 const xhr = new XMLHttpRequest();
                 langSplitXhr = xhr;
@@ -1263,6 +1294,7 @@
             if (templateSelect) {
                 templateSelect.addEventListener('change', refreshAudienceLangSplit);
             }
+            verificationPolicySelect?.addEventListener('change', refreshAudienceLangSplit);
 
             // Trigger on load if both already selected (edit mode)
             if (segmentSelect && segmentSelect.value && templateSelect && templateSelect.value) {

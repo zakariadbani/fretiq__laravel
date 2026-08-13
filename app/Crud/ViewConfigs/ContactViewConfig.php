@@ -27,26 +27,18 @@ class ContactViewConfig
     {
         $hasId = $model && $model->id;
 
-        // ── Status badge ──────────────────────────────────────────────────────
-        $statusCfg = $hasId ? config('global.data.contact_statuses.'.$model->status, []) : [];
-        $statusLabel = $statusCfg['label'] ?? null;
-        $statusColor = $statusCfg['color'] ?? 'secondary';
+        $state = $hasId ? ($model->lifecycle_state ?? $model->lifecycleState()) : null;
+        $stateCfg = $hasId ? config('global.data.contact_lifecycle_states.'.$state, []) : [];
+        $stateLabel = $stateCfg['label'] ?? null;
+        $stateColor = $stateCfg['color'] ?? 'secondary';
 
         // ── Badges (status + suppressed) ──────────────────────────────────────
         $badges = [];
-        if ($hasId && $statusLabel) {
-            $badges[] = ['label' => $statusLabel, 'color' => $statusColor];
-        }
-        if ($hasId && ($stats['suppressed'] ?? false)) {
-            $badges[] = ['label' => 'Supprimé', 'color' => 'danger'];
-        }
-        if ($hasId) {
-            $qualityBadge = app(\App\Services\Campaign\ContactEligibilityService::class)->badge($model);
-            $badges[] = ['label' => $qualityBadge['label'], 'color' => $qualityBadge['color']];
+        if ($hasId && $stateLabel) {
+            $badges[] = ['label' => $stateLabel, 'color' => $stateColor];
         }
 
         // ── Hero tiles ────────────────────────────────────────────────────────
-        $lbCfg = $hasId ? config('global.data.contact_legal_bases.'.$model->legal_basis, []) : [];
         $ekCfg = $hasId ? config('global.data.contact_email_kinds.'.$model->email_kind, []) : [];
         $srcCfg = $hasId ? config('global.data.contact_sources.'.$model->source, []) : [];
 
@@ -93,13 +85,9 @@ class ContactViewConfig
                         ? route('admin.companies.view', $model->company_id)
                         : null,
                 ],
-                ['label' => 'Statut',      'value' => $model->status,     'type' => 'enum', 'configKey' => 'contact_statuses'],
-                ['label' => 'Base légale', 'value' => $model->legal_basis, 'type' => 'enum', 'configKey' => 'contact_legal_bases'],
+                ['label' => 'État', 'value' => $state, 'type' => 'enum', 'configKey' => 'contact_lifecycle_states'],
                 ['label' => 'Type email',  'value' => $model->email_kind,  'type' => 'enum', 'configKey' => 'contact_email_kinds'],
                 ['label' => 'Source',      'value' => $model->source,      'type' => 'enum', 'configKey' => 'contact_sources'],
-                ['label' => 'Qualité email', 'value' => app(\App\Services\Campaign\ContactEligibilityService::class)->badge($model)['label'], 'type' => 'text'],
-                ['label' => 'Vérifié le', 'value' => $model->email_verification_checked_at, 'type' => 'date'],
-                ['label' => 'Preuve', 'value' => config('global.data.contact_email_verification_sources.'.$model->email_verification_source, $model->email_verification_source), 'type' => 'text'],
                 ['label' => 'Créé le',     'value' => $model->created_at,  'type' => 'date'],
             ];
         }
@@ -173,8 +161,7 @@ class ContactViewConfig
             'badges' => $badges,
             'subtitle' => $subtitle,
             'tiles' => $hasId ? [
-                ['icon' => 'bi-patch-check',    'color' => $statusColor,                    'value' => $statusLabel ?? '—',         'caption' => 'Statut'],
-                ['icon' => 'bi-shield-check',   'color' => $lbCfg['color'] ?? 'secondary', 'value' => $lbCfg['label'] ?? '—',    'caption' => 'Base légale'],
+                ['icon' => 'bi-patch-check',    'color' => $stateColor, 'value' => $stateLabel ?? '—', 'caption' => 'État'],
                 ['icon' => 'bi-envelope-at',    'color' => $ekCfg['color'] ?? 'secondary', 'value' => $ekCfg['label'] ?? '—',    'caption' => 'Type email'],
                 ['icon' => 'bi-search',         'color' => $srcCfg['color'] ?? 'secondary', 'value' => $srcCfg['label'] ?? '—',    'caption' => 'Source'],
             ] : [],

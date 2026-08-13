@@ -63,7 +63,7 @@ final class RecoverExistingProspectingData extends Command
         $this->line('Prévisualisation de récupération (données locales uniquement)');
         $this->line('Fingerprint: '.$plan->fingerprint);
         $this->line('Statuts de vérification à corriger: '.($plan->counts['verification_statuses'] ?? 0));
-        $this->line('Emails Company Enrichment à revoir: '.($plan->counts['company_enrichment_emails'] ?? 0));
+        $this->line('Emails Company Enrichment à importer automatiquement: '.($plan->counts['company_enrichment_emails'] ?? 0));
         $this->line('Domaines de snapshots à revoir: '.($plan->counts['failed_snapshot_domains'] ?? 0));
         $this->line('Téléphones Hunter à compléter: '.($plan->counts['hunter_phones'] ?? 0));
         $this->line('Tailles Hunter à compléter: '.($plan->counts['hunter_sizes'] ?? 0));

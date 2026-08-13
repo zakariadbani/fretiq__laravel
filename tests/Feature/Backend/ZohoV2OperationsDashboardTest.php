@@ -52,8 +52,21 @@ class ZohoV2OperationsDashboardTest extends TestCase
     public function test_schema_ready_dashboard_renders_safe_v2_operations_screen(): void
     {
         $this->actingAs($this->admin)->get('/admin/zoho')
-            ->assertOk()->assertSee('Synchronisation &amp; qualité des données', false)
-            ->assertSee('non fourni par Zoho')->assertDontSee('raw_payload');
+            ->assertOk()
+            ->assertSee('Synchronisation Zoho')
+            ->assertSee('Centre de synchronisation')
+            ->assertSee('Synchronisation par module')
+            ->assertSee('Maintenance avancée')
+            ->assertDontSee('Zoho reste la source de vérité')
+            ->assertDontSee('Santé globale')
+            ->assertDontSee('OAuth CRM')
+            ->assertDontSee('File Zoho')
+            ->assertDontSee('Modules, fraîcheur et qualité')
+            ->assertDontSee('Schémas vérifiés')
+            ->assertDontSee('Fiabilité récente')
+            ->assertDontSee('Anomalies redigées et corrélation')
+            ->assertDontSee('Correspondances utilisateurs')
+            ->assertDontSee('raw_payload');
     }
 
     public function test_legacy_page_survives_before_the_v2_log_extension_migration(): void
@@ -92,7 +105,7 @@ class ZohoV2OperationsDashboardTest extends TestCase
         }
     }
 
-    public function test_failure_history_never_renders_stored_secret_or_exception_text(): void
+    public function test_focused_dashboard_hides_failure_history_and_stored_secret_text(): void
     {
         ZohoSyncFailure::create([
             'module' => 'accounts', 'failure_kind' => 'record', 'failure_key' => hash('sha256', 'secret-test'),
@@ -100,10 +113,14 @@ class ZohoV2OperationsDashboardTest extends TestCase
         ]);
 
         $this->actingAs($this->admin)->get('/admin/zoho')
-            ->assertOk()->assertSee('safe-correlation')->assertDontSee('DO-NOT-RENDER')->assertDontSee('RuntimeException');
+            ->assertOk()
+            ->assertDontSee('safe-correlation')
+            ->assertDontSee('client_secret')
+            ->assertDontSee('DO-NOT-RENDER')
+            ->assertDontSee('RuntimeException');
     }
 
-    public function test_dashboard_renders_mapping_gaps_without_manifest_payload_details(): void
+    public function test_focused_dashboard_hides_schema_mapping_details(): void
     {
         ZohoFieldManifest::query()->create([
             'module' => 'Leads',
@@ -117,9 +134,9 @@ class ZohoV2OperationsDashboardTest extends TestCase
 
         $this->actingAs($this->admin)->get('/admin/zoho')
             ->assertOk()
-            ->assertSee('Champs source manquants')
-            ->assertSee('industry')
-            ->assertSee('Secteur_Activit')
+            ->assertDontSee('Champs source manquants')
+            ->assertDontSee('industry')
+            ->assertDontSee('Secteur_Activit')
             ->assertDontSee('DO-NOT-RENDER')
             ->assertDontSee('Private_Field');
     }

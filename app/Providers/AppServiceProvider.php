@@ -19,6 +19,12 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register()
     {
+        // All framework mail notifications (password reset, verification, etc.)
+        // retain Laravel's normal channel rendering but use the same SMTP router.
+        $this->app->bind(
+            \Illuminate\Notifications\Channels\MailChannel::class,
+            \App\Notifications\Channels\RoutedMailChannel::class,
+        );
         // Zoho CRM HTTP client — concrete implementation selected by crm_driver config.
         $this->app->bind(
             \App\Services\Zoho\CrmClient::class,
@@ -53,7 +59,7 @@ class AppServiceProvider extends ServiceProvider
                 ? new \App\Services\Campaign\ZohoCampaignsDriver(
                     zohoClient: app(\App\Services\Zoho\ZohoCampaignsClient::class),
                 )
-                : new \App\Services\Campaign\LocalCampaignsDriver,
+                : app(\App\Services\Campaign\LocalCampaignsDriver::class),
         );
 
         $this->app->singleton(
@@ -115,13 +121,6 @@ class AppServiceProvider extends ServiceProvider
             ),
         );
 
-        // DemandeCaptureService depends on SequenceService — resolved via singleton.
-        $this->app->singleton(
-            \App\Services\Demande\DemandeCaptureService::class,
-            fn ($app) => new \App\Services\Demande\DemandeCaptureService(
-                sequenceService: $app->make(\App\Services\Campaign\SequenceService::class),
-            ),
-        );
     }
 
     /**

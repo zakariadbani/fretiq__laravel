@@ -5,8 +5,8 @@ namespace Tests\Feature\Backend;
 use App\Models\Company;
 use App\Models\Contact;
 use App\Models\ProspectBatch;
+use App\Models\ProspectBatchContact;
 use App\Models\ProspectBatchItem;
-use App\Models\ProspectContactCandidate;
 use App\Models\ProspectCriteria;
 use App\Models\ProviderCall;
 use App\Models\User;
@@ -43,18 +43,22 @@ class ProspectingSchemaTest extends TestCase
             'row_number' => 1,
         ]));
 
-        ProspectContactCandidate::factory()->create([
+        $company = Company::factory()->create();
+        $contact = Contact::factory()->for($company)->create(['email' => 'sales@example.test']);
+        ProspectBatchContact::query()->create([
             'prospect_batch_id' => $batch->id,
             'prospect_batch_item_id' => $item->id,
-            'email' => 'Sales@Example.test',
-            'normalized_email' => 'sales@example.test',
+            'contact_id' => $contact->id,
+            'provider_source' => 'hunter_domain_search',
+            'imported_at' => now(),
         ]);
 
-        $this->assertDuplicateRejected(fn () => ProspectContactCandidate::factory()->create([
+        $this->assertDuplicateRejected(fn () => ProspectBatchContact::query()->create([
             'prospect_batch_id' => $batch->id,
             'prospect_batch_item_id' => $item->id,
-            'email' => 'sales@example.test',
-            'normalized_email' => 'sales@example.test',
+            'contact_id' => $contact->id,
+            'provider_source' => 'hunter_email_finder',
+            'imported_at' => now(),
         ]));
 
         $call = [
@@ -91,7 +95,7 @@ class ProspectingSchemaTest extends TestCase
             'source_cursor' => ['offset' => 25],
             'estimate' => ['hunter_units' => 10],
             'recovery_audit' => [
-                'version' => 1,
+                'version' => 2,
                 'changes' => [['field' => 'phone', 'old' => null, 'new' => $auditMarker]],
             ],
             'cost_confirmed_at' => now(),
@@ -106,15 +110,12 @@ class ProspectingSchemaTest extends TestCase
             'processing_started_at' => now(),
             'processed_at' => now(),
         ]);
-        $candidate = ProspectContactCandidate::factory()->create([
+        $provenance = ProspectBatchContact::query()->create([
             'prospect_batch_id' => $batch->id,
             'prospect_batch_item_id' => $item->id,
-            'company_id' => $company->id,
             'contact_id' => $contact->id,
-            'decided_by' => $creator->id,
-            'verification_checked_at' => now(),
-            'decided_at' => now(),
-            'metadata' => ['confidence' => 90],
+            'provider_source' => 'hunter_domain_search',
+            'imported_at' => now(),
         ]);
         $providerCall = ProviderCall::query()->create([
             'prospect_batch_id' => $batch->id,
@@ -144,33 +145,30 @@ class ProspectingSchemaTest extends TestCase
         $this->assertInstanceOf(User::class, $batch->creator);
         $this->assertTrue($batch->criteria->is($criteria));
         $this->assertTrue($batch->items->contains($item));
-        $this->assertTrue($batch->contactCandidates->contains($candidate));
+        $this->assertTrue($batch->importedContacts->contains($provenance));
         $this->assertTrue($batch->providerCalls->contains($providerCall));
         $this->assertTrue($item->batch->is($batch));
         $this->assertTrue($item->company->is($company));
-        $this->assertTrue($item->contactCandidates->contains($candidate));
+        $this->assertTrue($item->importedContacts->contains($provenance));
         $this->assertTrue($item->providerCalls->contains($providerCall));
-        $this->assertTrue($candidate->batch->is($batch));
-        $this->assertTrue($candidate->item->is($item));
-        $this->assertTrue($candidate->company->is($company));
-        $this->assertTrue($candidate->contact->is($contact));
-        $this->assertTrue($candidate->decidedBy->is($creator));
+        $this->assertTrue($provenance->batch->is($batch));
+        $this->assertTrue($provenance->item->is($item));
+        $this->assertTrue($provenance->contact->is($contact));
         $this->assertTrue($providerCall->batch->is($batch));
         $this->assertTrue($providerCall->item->is($item));
         $this->assertTrue($criteria->prospectBatches->contains($batch));
         $this->assertTrue($creator->prospectBatches->contains($batch));
         $this->assertTrue($company->prospectBatchItems->contains($item));
-        $this->assertTrue($company->prospectContactCandidates->contains($candidate));
 
         $this->assertSame(['headquarters_location' => ['FR']], $criteria->hunter_discover_filters);
         $this->assertSame(25, $criteria->hunter_discover_offset);
         $this->assertTrue($criteria->hunter_discover_exhausted);
         $this->assertSame(['example.test', 'example.fr'], $item->domain_alternatives);
-        $this->assertSame(['confidence' => 90], $candidate->metadata);
+        $this->assertSame('hunter_domain_search', $provenance->provider_source);
         $this->assertSame(['page' => 2], $providerCall->metadata);
         $this->assertNotNull($batch->cost_confirmed_at);
         $this->assertNotNull($item->processed_at);
-        $this->assertNotNull($candidate->verification_checked_at);
+        $this->assertNotNull($provenance->imported_at);
         $this->assertNotNull($providerCall->retry_at);
 
         $this->assertSame(
@@ -182,17 +180,6 @@ class ProspectingSchemaTest extends TestCase
             ['pending', 'processing', 'review', 'ready', 'promoted', 'failed', 'skipped'],
             ProspectBatchItem::STATUSES
         );
-        $this->assertSame(
-            ['pending', 'approved', 'rejected', 'promoted'],
-            ProspectContactCandidate::DECISIONS
-        );
-    }
-
-    public function test_contact_candidate_factory_keeps_batch_and_item_in_same_batch(): void
-    {
-        $candidate = ProspectContactCandidate::factory()->create();
-
-        $this->assertTrue($candidate->batch->is($candidate->item->batch));
     }
 
     private function assertDuplicateRejected(Closure $callback): void

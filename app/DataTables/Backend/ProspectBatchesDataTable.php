@@ -14,7 +14,7 @@ class ProspectBatchesDataTable extends BackendDataTable
         'status' => ['title' => 'Statut', 'orderable' => true, 'searchable' => false, 'raw' => true],
         'total_items' => ['title' => 'Entreprises', 'orderable' => true, 'searchable' => false],
         'processed_items' => ['title' => 'Progression', 'orderable' => true, 'searchable' => false, 'raw' => true],
-        'candidate_contacts' => ['title' => 'Contacts', 'orderable' => true, 'searchable' => false],
+        'imported_contacts' => ['title' => 'Contacts importés', 'orderable' => true, 'searchable' => false],
         'created_at' => ['title' => 'Créé le', 'orderable' => true, 'searchable' => false],
     ];
 
@@ -48,7 +48,7 @@ class ProspectBatchesDataTable extends BackendDataTable
             'status',
             'total_items',
             'processed_items',
-            'candidate_contacts',
+            'imported_contacts',
             'created_at',
         ]);
         $user = request()->user();

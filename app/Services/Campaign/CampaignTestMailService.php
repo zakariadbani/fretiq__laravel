@@ -7,23 +7,19 @@ use App\Mail\SequenceStepMailable;
 use App\Models\Campaign;
 use App\Models\Contact;
 use App\Models\User;
-use Illuminate\Support\Facades\Mail;
+use App\Services\Mail\SmtpMailRouter;
 use Illuminate\Support\Facades\URL;
 use InvalidArgumentException;
 
 class CampaignTestMailService
 {
-    public function __construct(private readonly CampaignsClient $campaignsClient) {}
+    public function __construct(private readonly SmtpMailRouter $mailer) {}
 
     /**
-     * Send one local preview to the current user without creating operational rows.
+     * Send one SMTP preview without creating operational rows.
      */
-    public function send(Campaign $campaign, User $user): void
+    public function send(Campaign $campaign, User $user, string $recipientEmail): void
     {
-        if ($this->campaignsClient->driverName() !== 'local') {
-            throw new InvalidArgumentException('L\'envoi test est disponible uniquement avec le pilote local.');
-        }
-
         $campaign->loadMissing([
             'template.translations',
             'senderIdentity',
@@ -34,13 +30,13 @@ class CampaignTestMailService
             throw new InvalidArgumentException(html_entity_decode('Ajoutez une identit&eacute; d\'exp&eacute;diteur avant l\'envoi test.'));
         }
 
-        if (! filled($user->email)) {
+        if (! filled($recipientEmail)) {
             throw new InvalidArgumentException('Votre compte ne possede aucune adresse email de test.');
         }
 
         $contact = new Contact([
             'name' => $user->name ?: 'Utilisateur test',
-            'email' => $user->email,
+            'email' => $recipientEmail,
         ]);
         $contact->id = 0;
 
@@ -89,6 +85,6 @@ class CampaignTestMailService
             );
         }
 
-        Mail::to($user->email)->send($mailable);
+        $this->mailer->send($campaign->senderIdentity, $recipientEmail, $mailable);
     }
 }

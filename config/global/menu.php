@@ -24,8 +24,8 @@ return [
             'path' => 'admin/dashboard',
         ],
         [
-            'title' => 'Centre de prospection',
-            'permission' => ['view prospect_batches', 'review prospect matches', 'view companies', 'view contacts', 'view prospect_criteria'],
+            'title' => 'Découverte',
+            'permission' => ['view prospect_batches', 'review prospect matches', 'view prospect_criteria'],
             'classes' => ['item' => 'menu-accordion'],
             'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
             'icon' => [
@@ -36,14 +36,26 @@ return [
                 ['title' => 'Vue d’ensemble', 'permission' => 'view prospect_batches', 'path' => 'admin/prospecting'],
                 ['title' => 'Lots', 'permission' => 'view prospect_batches', 'path' => 'admin/prospect_batches', 'active_prefix' => 'admin/prospect_batches'],
                 ['title' => 'À revoir', 'permission' => 'review prospect matches', 'path' => 'admin/prospect-review', 'active_prefix' => 'admin/prospect-review'],
-                ['title' => 'Entreprises', 'permission' => 'view companies', 'path' => 'admin/companies', 'active_prefix' => 'admin/companies'],
-                ['title' => 'Contacts', 'permission' => 'view contacts', 'path' => 'admin/contacts', 'active_prefix' => 'admin/contacts'],
                 ['title' => 'Critères de découverte', 'permission' => 'view prospect_criteria', 'path' => 'admin/prospect_criteria', 'active_prefix' => 'admin/prospect_criteria'],
             ],
         ],
         [
-            'title' => 'Campagnes',
-            'permission' => ['view campaigns', 'view sequences', 'view segments', 'view campaign_templates', 'view sender_identities'],
+            'title' => 'Répertoire',
+            'permission' => ['view companies', 'view contacts'],
+            'classes' => ['item' => 'menu-accordion'],
+            'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
+            'icon' => [
+                'svg' => 'address-book',
+                'font' => '<i class="bi bi-people fs-2"></i>',
+            ],
+            'sub' => [
+                ['title' => 'Entreprises', 'permission' => 'view companies', 'path' => 'admin/companies', 'active_prefix' => 'admin/companies'],
+                ['title' => 'Contacts', 'permission' => 'view contacts', 'path' => 'admin/contacts', 'active_prefix' => 'admin/contacts'],
+            ],
+        ],
+        [
+            'title' => 'Campagnes & planning',
+            'permission' => ['view campaigns'],
             'classes' => ['item' => 'menu-accordion'],
             'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
             'icon' => [
@@ -53,6 +65,18 @@ return [
             'sub' => [
                 ['title' => 'Campagnes', 'permission' => 'view campaigns', 'path' => 'admin/campaigns', 'active_prefix' => 'admin/campaigns'],
                 ['title' => 'Planning', 'permission' => 'view campaigns', 'path' => 'admin/planner'],
+            ],
+        ],
+        [
+            'title' => 'Préparation des campagnes',
+            'permission' => ['view sequences', 'view segments', 'view campaign_templates', 'view sender_identities'],
+            'classes' => ['item' => 'menu-accordion'],
+            'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
+            'icon' => [
+                'svg' => 'abstract-14',
+                'font' => '<i class="bi bi-list-ol fs-2"></i>',
+            ],
+            'sub' => [
                 ['title' => 'Séquences', 'permission' => 'view sequences', 'path' => 'admin/sequences', 'active_prefix' => 'admin/sequences'],
                 ['title' => 'Segments', 'permission' => 'view segments', 'path' => 'admin/segments', 'active_prefix' => 'admin/segments'],
                 ['title' => 'Modèles d’email', 'permission' => 'view campaign_templates', 'path' => 'admin/campaign_templates', 'active_prefix' => 'admin/campaign_templates'],
@@ -60,8 +84,8 @@ return [
             ],
         ],
         [
-            'title' => 'Suivi',
-            'permission' => ['view demandes', 'view inbox', 'view suppressions', 'view consumption'],
+            'title' => 'Réponses & demandes',
+            'permission' => ['view demandes', 'view inbox'],
             'classes' => ['item' => 'menu-accordion'],
             'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
             'icon' => [
@@ -71,6 +95,18 @@ return [
             'sub' => [
                 ['title' => 'Demandes', 'permission' => 'view demandes', 'path' => 'admin/demandes', 'active_prefix' => 'admin/demandes'],
                 ['title' => 'Boîte de réception', 'permission' => 'view inbox', 'path' => 'admin/inbox', 'active_prefix' => 'admin/inbox'],
+            ],
+        ],
+        [
+            'title' => 'Conformité & consommation',
+            'permission' => ['view suppressions', 'view consumption'],
+            'classes' => ['item' => 'menu-accordion'],
+            'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
+            'icon' => [
+                'svg' => 'shield-tick',
+                'font' => '<i class="bi bi-shield-check fs-2"></i>',
+            ],
+            'sub' => [
                 ['title' => 'Suppressions', 'permission' => 'view suppressions', 'path' => 'admin/suppressions', 'active_prefix' => 'admin/suppressions'],
                 ['title' => 'Consommation', 'permission' => 'view consumption', 'path' => 'admin/consumption'],
             ],
@@ -111,11 +147,31 @@ return [
         ],
 
         [
-            'title' => 'Administration',
+            'content' => 'Administration',
             'permission' => [
                 'view users', 'manage roles', 'manage permissions', 'view settings',
                 'manage packages', 'view provider quota', 'view provider activity',
             ],
+            'classes' => ['content' => 'pt-8 pb-2'],
+        ],
+        [
+            'title' => 'Utilisateurs & accès',
+            'permission' => ['view users', 'manage roles', 'manage permissions'],
+            'classes' => ['item' => 'menu-accordion'],
+            'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
+            'icon' => [
+                'svg' => 'profile-user',
+                'font' => '<i class="bi bi-person-gear fs-2"></i>',
+            ],
+            'sub' => [
+                ['title' => 'Utilisateurs', 'permission' => 'view users', 'path' => 'admin/users', 'active_prefix' => 'admin/users'],
+                ['title' => 'Rôles', 'permission' => 'manage roles', 'path' => 'admin/user-management/roles', 'active_prefix' => 'admin/user-management/roles'],
+                ['title' => 'Permissions', 'permission' => 'manage permissions', 'path' => 'admin/user-management/permissions', 'active_prefix' => 'admin/user-management/permissions'],
+            ],
+        ],
+        [
+            'title' => 'Configuration',
+            'permission' => ['view settings', 'manage packages'],
             'classes' => ['item' => 'menu-accordion'],
             'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
             'icon' => [
@@ -123,12 +179,21 @@ return [
                 'font' => '<i class="bi bi-gear fs-2"></i>',
             ],
             'sub' => [
-                ['title' => 'Utilisateurs', 'permission' => 'view users', 'path' => 'admin/users', 'active_prefix' => 'admin/users'],
-                ['title' => 'Rôles', 'permission' => 'manage roles', 'path' => 'admin/user-management/roles', 'active_prefix' => 'admin/user-management/roles'],
-                ['title' => 'Permissions', 'permission' => 'manage permissions', 'path' => 'admin/user-management/permissions', 'active_prefix' => 'admin/user-management/permissions'],
                 ['title' => 'Paramètres', 'permission' => 'view settings', 'path' => 'admin/settings'],
-                ['title' => 'Observabilité', 'permission' => 'manage roles', 'path' => 'admin/observability'],
                 ['title' => 'Packs', 'permission' => 'manage packages', 'path' => 'admin/packages', 'active_prefix' => 'admin/packages'],
+            ],
+        ],
+        [
+            'title' => 'Supervision',
+            'permission' => ['manage roles', 'view provider quota', 'view provider activity'],
+            'classes' => ['item' => 'menu-accordion'],
+            'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
+            'icon' => [
+                'svg' => 'abstract-26',
+                'font' => '<i class="bi bi-activity fs-2"></i>',
+            ],
+            'sub' => [
+                ['title' => 'Observabilité', 'permission' => 'manage roles', 'path' => 'admin/observability'],
                 ['title' => 'Quota fournisseurs', 'permission' => 'view provider quota', 'path' => 'admin/provider-quota'],
                 ['title' => 'Activité fournisseurs', 'permission' => 'view provider activity', 'path' => 'admin/provider-activity'],
             ],

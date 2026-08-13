@@ -5,9 +5,10 @@ namespace App\Http\Controllers\Backend;
 use App\DataTables\Backend\SenderIdentitiesDataTable;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
-use App\Models\SenderIdentity;
 use App\Mail\SmtpConnectionTestMailable;
-use App\Services\Mail\SenderIdentitySmtpMailer;
+use App\Models\SenderIdentity;
+use App\Services\Mail\SmtpConfigurationException;
+use App\Services\Mail\SmtpMailRouter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -223,32 +224,46 @@ class SenderIdentityController extends BackendController
             }
         }
 
-        if (blank($attributes['smtp_password'] ?? null)) {
-            if ($connectionChanged) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Saisissez le mot de passe pour tester de nouveaux paramètres SMTP.',
-                ], 422);
-            }
-        } else {
-            $testing->smtp_password = $attributes['smtp_password'];
-        }
-
-        $mailer = app(SenderIdentitySmtpMailer::class);
-        if ($mailer->usesSenderIdentityTransport() && ! $testing->hasCompleteSmtpConfiguration()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Renseignez et activez la configuration SMTP complète avant de tester.',
-            ], 422);
-        }
+        $mailer = app(SmtpMailRouter::class);
 
         try {
+            $usesSenderIdentityTransport = $mailer->usesSenderIdentityTransport();
+
+            if (blank($attributes['smtp_password'] ?? null)) {
+                if ($usesSenderIdentityTransport && $connectionChanged) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Saisissez le mot de passe pour tester de nouveaux paramètres SMTP.',
+                    ], 422);
+                }
+            } else {
+                $testing->smtp_password = $attributes['smtp_password'];
+            }
+
+            if ($usesSenderIdentityTransport && ! $testing->hasCompleteSmtpConfiguration()) {
+                throw new SmtpConfigurationException('Renseignez et activez la configuration SMTP complète avant de tester.');
+            }
+
             $mailer->send($testing, $attributes['receiver_email'], new SmtpConnectionTestMailable($testing));
 
             return response()->json([
                 'success' => true,
                 'message' => 'Message accepté par le transport SMTP. Vérifiez la boîte de réception et les indésirables.',
+                'recipient' => $attributes['receiver_email'],
+                'sender' => ['name' => $testing->name, 'email' => $testing->email],
+                'mode' => $mailer->mode(),
+                'transport' => $mailer->transportLabel($testing),
             ]);
+        } catch (SmtpConfigurationException $exception) {
+            \Illuminate\Support\Facades\Log::warning('SMTP connection test blocked by configuration.', [
+                'sender_identity_id' => $identity->id,
+                'exception_class' => $exception::class,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => $exception->getMessage(),
+            ], 422);
         } catch (\Throwable $exception) {
             \Illuminate\Support\Facades\Log::warning('SMTP connection test failed.', [
                 'sender_identity_id' => $identity->id,

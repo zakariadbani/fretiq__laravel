@@ -3,6 +3,7 @@
 namespace App\Services\Campaign;
 
 use App\Models\Company;
+use App\Models\Campaign;
 use App\Models\Contact;
 use App\Models\Suppression;
 
@@ -14,41 +15,21 @@ class ContactEligibilityService
      * This method deliberately reads only attributes and an already-loaded
      * company relation, so collection callers never trigger an N+1 query.
      */
-    public function qualityReason(
-        Contact $contact,
-        bool $sendTime = false,
-        bool $supportsBounceFeedback = false,
-    ): ?string {
-        $isProspect = $this->relationship($contact) === 'prospect';
+    public function qualityReason(Contact $contact, string $policy = Campaign::VERIFICATION_VERIFIED_ONLY): ?string
+    {
+        if (strtolower(trim((string) $contact->email_verification_source)) === 'bounce') {
+            return 'bounced';
+        }
 
-        if ($isProspect && $contact->email_kind === 'personal') {
-            return 'personal_email';
+        $lifecycleState = strtolower(trim((string) $contact->getAttribute('lifecycle_state')));
+        if ($lifecycleState === 'bounced') {
+            return 'bounced';
+        }
+        if ($lifecycleState === 'invalid_email') {
+            return 'invalid_email';
         }
 
         $status = strtolower(trim((string) $contact->email_verification_status));
-        $source = strtolower(trim((string) $contact->email_verification_source));
-        $checkedAt = $contact->email_verification_checked_at;
-        $fresh = $checkedAt?->gte(
-            now()->subDays((int) config('prospecting.email_verification_ttl_days', 90)),
-        ) ?? false;
-
-        if (! $fresh) {
-            return 'verification_required';
-        }
-
-        if ($source === 'manual' && in_array($status, ['', 'unknown'], true)) {
-            return null;
-        }
-
-        if ($status === 'valid') {
-            return null;
-        }
-
-        if ($status === 'accept_all') {
-            return $sendTime && ! $supportsBounceFeedback
-                ? 'accept_all_feedback_required'
-                : null;
-        }
 
         if ($status === 'invalid') {
             return 'invalid_email';
@@ -59,10 +40,37 @@ class ContactEligibilityService
         }
 
         if ($status === 'webmail') {
-            return $isProspect ? 'personal_email' : null;
+            return $policy === Campaign::VERIFICATION_ALL_SENDABLE ? null : 'verification_required';
+        }
+
+        if ($status === 'pending') {
+            return 'verification_pending';
+        }
+
+        if ($status === 'valid') {
+            return null;
+        }
+
+        if ($policy === Campaign::VERIFICATION_ALL_SENDABLE
+            && in_array($status, ['', 'unknown', 'accept_all'], true)) {
+            return null;
         }
 
         return 'verification_required';
+    }
+
+    /**
+     * Audience previews retain pending addresses for all_sendable campaigns so
+     * the run can wait for their terminal result instead of silently dropping them.
+     */
+    public function audienceQualityReason(Contact $contact, string $policy): ?string
+    {
+        if ($policy === Campaign::VERIFICATION_ALL_SENDABLE
+            && strtolower(trim((string) $contact->email_verification_status)) === 'pending') {
+            return null;
+        }
+
+        return $this->qualityReason($contact, $policy);
     }
 
     /**
@@ -70,7 +78,7 @@ class ContactEligibilityService
      */
     public function sendIneligibilityReason(
         Contact $contact,
-        bool $supportsBounceFeedback,
+        string $policy,
         bool $suppressed,
     ): ?string {
         if ($suppressed) {
@@ -82,7 +90,7 @@ class ContactEligibilityService
             return 'cold_send_disabled';
         }
 
-        return $this->qualityReason($contact, true, $supportsBounceFeedback);
+        return $this->qualityReason($contact, $policy);
     }
 
     /**
@@ -91,52 +99,13 @@ class ContactEligibilityService
      */
     public function sendIneligibilityReasonForSingle(
         Contact $contact,
-        bool $supportsBounceFeedback,
+        string $policy = Campaign::VERIFICATION_VERIFIED_ONLY,
     ): ?string {
         return $this->sendIneligibilityReason(
             $contact,
-            $supportsBounceFeedback,
+            $policy,
             Suppression::isSuppressed((string) $contact->email),
         );
-    }
-
-    /**
-     * @return array{label:string,color:string,risk:bool}
-     */
-    public function badge(Contact $contact): array
-    {
-        $status = strtolower(trim((string) $contact->email_verification_status));
-        $source = strtolower(trim((string) $contact->email_verification_source));
-
-        if ($source === 'manual' && in_array($status, ['', 'unknown'], true)) {
-            $key = 'manual';
-        } elseif ($status === '') {
-            $key = 'missing';
-        } elseif (in_array($status, [
-            'valid',
-            'accept_all',
-            'pending',
-            'unknown',
-            'webmail',
-            'invalid',
-            'disposable',
-        ], true)) {
-            $key = $status;
-        } else {
-            $key = 'unknown';
-        }
-
-        $badge = config("global.data.contact_email_verification_statuses.{$key}", [
-            'label' => 'Non vérifié',
-            'color' => 'secondary',
-            'risk' => true,
-        ]);
-
-        return [
-            'label' => (string) ($badge['label'] ?? 'Non vérifié'),
-            'color' => (string) ($badge['color'] ?? 'secondary'),
-            'risk' => (bool) ($badge['risk'] ?? true),
-        ];
     }
 
     private function relationship(Contact $contact): ?string

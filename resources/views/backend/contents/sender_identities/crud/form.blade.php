@@ -310,10 +310,42 @@
                     </h3>
                 </div>
                 <div class="card-body border-top p-9">
-                    @if((string) config('app.env') !== 'production' || config('prospecting.smtp.mode', 'mailpit') !== 'sender_identity')
-                        <div class="alert alert-info d-flex align-items-center mb-7">
+                    @php
+                        $smtpMode = (string) config('mail.smtp_mode');
+                        $smtpIdentityReady = $model->hasCompleteSmtpConfiguration()
+                            && in_array($model->smtp_encryption, ['tls', 'ssl'], true);
+                    @endphp
+                    @if($smtpMode === 'mailpit')
+                        <div class="alert alert-info d-flex align-items-center mb-7" data-smtp-status="mailpit">
                             <i class="bi bi-inbox fs-2 text-info me-3"></i>
-                            <strong>Mode local — email capturé par Mailpit.</strong>
+                            <div>
+                                <strong>Mailpit — capture locale active.</strong>
+                                <div class="fs-7 mt-1">L’identité sélectionnée reste l’expéditeur. Ses identifiants SMTP enregistrés ne sont pas utilisés.</div>
+                            </div>
+                        </div>
+                    @elseif($smtpMode === 'sender_identity' && $smtpIdentityReady)
+                        <div class="alert alert-warning d-flex align-items-center mb-7" data-smtp-status="sender-identity-ready">
+                            <i class="bi bi-exclamation-triangle fs-2 text-warning me-3"></i>
+                            <div>
+                                <strong>SMTP réel prêt pour cette identité.</strong>
+                                <div class="fs-7 mt-1">Un test peut envoyer un véritable email externe, y compris depuis l’environnement local.</div>
+                            </div>
+                        </div>
+                    @elseif($smtpMode === 'sender_identity')
+                        <div class="alert alert-danger d-flex align-items-center mb-7" data-smtp-status="sender-identity-incomplete">
+                            <i class="bi bi-x-octagon fs-2 text-danger me-3"></i>
+                            <div>
+                                <strong>Configuration SMTP incomplète.</strong>
+                                <div class="fs-7 mt-1">Les envois utilisant cette identité sont bloqués jusqu’à ce que tous les paramètres requis soient enregistrés.</div>
+                            </div>
+                        </div>
+                    @else
+                        <div class="alert alert-danger d-flex align-items-center mb-7" data-smtp-status="invalid-mode">
+                            <i class="bi bi-x-octagon fs-2 text-danger me-3"></i>
+                            <div>
+                                <strong>Mode SMTP invalide ou absent.</strong>
+                                <div class="fs-7 mt-1">Définissez SMTP_MODE sur mailpit ou sender_identity avant tout envoi.</div>
+                            </div>
                         </div>
                     @endif
 

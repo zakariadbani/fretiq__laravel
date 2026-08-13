@@ -6,8 +6,8 @@ use App\Models\Company;
 use App\Models\Contact;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectBatch;
+use App\Models\ProspectBatchContact;
 use App\Models\ProspectBatchItem;
-use App\Models\ProspectContactCandidate;
 use App\Models\ProviderCall;
 use App\Services\Prospecting\ExistingProspectingDataRecoveryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -88,8 +88,8 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
             ],
         ]);
         $before = $this->databaseCounts();
-        $payload = $company->enrichment_data;
-        $snapshot = $run->candidates_snapshot;
+        $payload = (string) DB::table('companies')->where('id', $company->id)->value('enrichment_data');
+        $snapshot = (string) DB::table('discovery_runs')->where('id', $run->id)->value('candidates_snapshot');
 
         $first = app(ExistingProspectingDataRecoveryService::class)->preview();
         $second = app(ExistingProspectingDataRecoveryService::class)->preview();
@@ -101,7 +101,7 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
         $this->assertSame(1, $first->counts['hunter_sizes']);
         $this->assertSame(
             ['billing@payload.fr', 'ops@payload.fr', 'sales@payload.fr'],
-            array_column($first->contactCandidates, 'normalized_email'),
+            array_column($first->discoveredContacts, 'email'),
         );
         $sizeChange = collect($first->companyChanges)->firstWhere('field', 'estimated_size');
         $this->assertSame($company->id, $sizeChange['company_id']);
@@ -109,11 +109,11 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
         $this->assertSame($first->fingerprint, $second->fingerprint);
         $this->assertSame($first->verificationChanges, $second->verificationChanges);
         $this->assertSame($first->companyChanges, $second->companyChanges);
-        $this->assertSame($first->contactCandidates, $second->contactCandidates);
+        $this->assertSame($first->discoveredContacts, $second->discoveredContacts);
         $this->assertSame($first->snapshotItems, $second->snapshotItems);
         $this->assertSame($before, $this->databaseCounts());
-        $this->assertSame($payload, $company->fresh()->enrichment_data);
-        $this->assertSame($snapshot, $run->fresh()->candidates_snapshot);
+        $this->assertSame($payload, (string) DB::table('companies')->where('id', $company->id)->value('enrichment_data'));
+        $this->assertSame($snapshot, (string) DB::table('discovery_runs')->where('id', $run->id)->value('candidates_snapshot'));
         $this->assertNull($contact->fresh()->email_verification_status);
     }
 
@@ -163,8 +163,8 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
                 ],
             ],
         ]);
-        $payloadHash = hash('sha256', json_encode($company->enrichment_data, JSON_THROW_ON_ERROR));
-        $snapshotHash = hash('sha256', json_encode($run->candidates_snapshot, JSON_THROW_ON_ERROR));
+        $payloadHash = hash('sha256', (string) DB::table('companies')->where('id', $company->id)->value('enrichment_data'));
+        $snapshotHash = hash('sha256', (string) DB::table('discovery_runs')->where('id', $run->id)->value('candidates_snapshot'));
         $companyCount = Company::withRejected()->count();
         $contactCount = Contact::withTrashed()->count();
 
@@ -181,12 +181,17 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
             'status' => 'review',
             'company_id' => null,
         ]);
-        $this->assertDatabaseHas('prospect_contact_candidates', [
+        $this->assertDatabaseHas('contacts', [
+            'company_id' => $company->id,
+            'email' => 'sales@payload.fr',
+            'source' => 'discovered',
+            'status' => 'new',
+        ]);
+        $importedContactId = Contact::query()->where('email', 'sales@payload.fr')->value('id');
+        $this->assertDatabaseHas('prospect_batch_contacts', [
             'prospect_batch_id' => $result->batch->id,
-            'normalized_email' => 'sales@payload.fr',
-            'decision' => 'pending',
-            'decision_reason' => 'recovered_company_enrichment',
-            'contact_id' => null,
+            'contact_id' => $importedContactId,
+            'provider_source' => 'hunter_company_enrichment',
         ]);
 
         $freshCompany = $company->fresh();
@@ -198,12 +203,11 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
         $this->assertSame('valid', $freshContact->email_verification_status);
         $this->assertSame('2026-08-01 10:30:00', $freshContact->email_verification_checked_at?->format('Y-m-d H:i:s'));
         $this->assertSame('hunter', $freshContact->email_verification_source);
-        $this->assertSame($payloadHash, hash('sha256', json_encode($freshCompany->enrichment_data, JSON_THROW_ON_ERROR)));
-        $this->assertSame($snapshotHash, hash('sha256', json_encode($run->fresh()->candidates_snapshot, JSON_THROW_ON_ERROR)));
+        $this->assertSame($payloadHash, hash('sha256', (string) DB::table('companies')->where('id', $company->id)->value('enrichment_data')));
+        $this->assertSame($snapshotHash, hash('sha256', (string) DB::table('discovery_runs')->where('id', $run->id)->value('candidates_snapshot')));
         $this->assertSame($companyCount, Company::withRejected()->count());
-        $this->assertSame($contactCount, Contact::withTrashed()->count());
+        $this->assertSame($contactCount + 1, Contact::withTrashed()->count());
         $this->assertDatabaseMissing('companies', ['domain' => 'review-domain.fr']);
-        $this->assertDatabaseMissing('contacts', ['email' => 'sales@payload.fr']);
         $this->assertSame(0, ProviderCall::query()->count());
 
         $rawAudit = (string) DB::table('prospect_batches')
@@ -216,8 +220,8 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
         $this->assertSame('+33102030405', $phoneAudit['new'] ?? null);
         $this->assertSame('company', $phoneAudit['entity_type'] ?? null);
         $this->assertSame(2, $result->batch->fresh()->total_items);
-        $this->assertSame(2, $result->batch->fresh()->review_items);
-        $this->assertSame(1, $result->batch->fresh()->candidate_contacts);
+        $this->assertSame(1, $result->batch->fresh()->review_items);
+        $this->assertSame(1, $result->batch->fresh()->imported_contacts);
     }
 
     public function test_replay_keeps_one_fingerprint_and_rechecks_blank_targets_before_updates(): void
@@ -289,8 +293,8 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
 
         $service = app(ExistingProspectingDataRecoveryService::class);
         $plan = $service->preview();
-        $this->assertSame(1, $plan->counts['company_enrichment_emails']);
-        $this->assertSame($firstCompany->id, $plan->contactCandidates[0]['company_id']);
+        $this->assertSame(3, $plan->counts['company_enrichment_emails']);
+        $this->assertSame($firstCompany->id, $plan->discoveredContacts[0]['company_id']);
         $this->assertSame('accept_all', $plan->verificationChanges[0]['new']);
 
         $firstCompany->forceFill(['phone' => '+33000000000'])->save();
@@ -298,7 +302,7 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
         $first = $service->apply($plan);
         $afterApplyPlan = $service->preview();
         $itemCount = ProspectBatchItem::query()->count();
-        $candidateCount = ProspectContactCandidate::query()->count();
+        $provenanceCount = ProspectBatchContact::query()->count();
         $second = $service->apply($afterApplyPlan);
 
         $this->assertSame($plan->fingerprint, $afterApplyPlan->fingerprint);
@@ -306,7 +310,7 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
         $this->assertTrue($second->reused);
         $this->assertSame(1, ProspectBatch::query()->where('source_type', 'recovery')->count());
         $this->assertSame($itemCount, ProspectBatchItem::query()->count());
-        $this->assertSame($candidateCount, ProspectContactCandidate::query()->count());
+        $this->assertSame($provenanceCount, ProspectBatchContact::query()->count());
         $this->assertSame('+33000000000', $firstCompany->fresh()->phone);
         $this->assertSame('11-50', $firstCompany->fresh()->estimated_size);
         $this->assertSame('Existing sector', $firstCompany->fresh()->sector);
@@ -318,14 +322,15 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
             $fallbackContact->fresh()->email_verification_checked_at?->format('Y-m-d H:i:s'),
         );
         $this->assertSame('hunter', $fallbackContact->fresh()->email_verification_source);
-        $this->assertDatabaseHas('prospect_contact_candidates', [
+        $duplicateContactId = Contact::query()->where('email', 'duplicate@shared.fr')->value('id');
+        $this->assertDatabaseHas('prospect_batch_contacts', [
             'prospect_batch_id' => $first->batch->id,
-            'company_id' => $firstCompany->id,
-            'normalized_email' => 'duplicate@shared.fr',
+            'contact_id' => $duplicateContactId,
         ]);
-        $this->assertDatabaseMissing('prospect_contact_candidates', [
+        $deletedContactId = Contact::withTrashed()->where('email', 'deleted@shared.fr')->value('id');
+        $this->assertDatabaseMissing('prospect_batch_contacts', [
             'prospect_batch_id' => $first->batch->id,
-            'normalized_email' => 'deleted@shared.fr',
+            'contact_id' => $deletedContactId,
         ]);
         $this->assertSame(0, ProviderCall::query()->count());
     }
@@ -478,7 +483,7 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
 
         $result = $service->apply($plan);
 
-        $this->assertSame(1253, $result->batch->contactCandidates()->count());
+        $this->assertSame(1253, $result->batch->importedContacts()->count());
         $this->assertSame(40, $result->batch->items()
             ->where('domain_reason', 'recovered_failed_snapshot')
             ->count());
@@ -617,7 +622,7 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
         $this->assertSame($winner->id, $second->batch->id);
         $this->assertTrue($second->reused);
         $this->assertSame(1, ProspectBatch::query()->where('source_fingerprint', $plan->fingerprint)->count());
-        $this->assertSame(1, ProspectContactCandidate::query()->count());
+        $this->assertSame(1, ProspectBatchContact::query()->count());
         $this->assertSame(0, ProviderCall::query()->count());
     }
 
@@ -643,7 +648,7 @@ class ExistingProspectingDataRecoveryServiceTest extends TestCase
             'discovery_runs' => DiscoveryRun::query()->count(),
             'prospect_batches' => ProspectBatch::query()->count(),
             'prospect_batch_items' => ProspectBatchItem::query()->count(),
-            'prospect_contact_candidates' => ProspectContactCandidate::query()->count(),
+            'prospect_batch_contacts' => ProspectBatchContact::query()->count(),
             'provider_calls' => ProviderCall::query()->count(),
         ];
     }

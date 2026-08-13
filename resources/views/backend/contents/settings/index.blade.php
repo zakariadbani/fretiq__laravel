@@ -89,6 +89,25 @@
                                 )
                             @endforeach
 
+                            @if($tabKey === 'delivrabilite')
+                                @can('edit settings')
+                                    @can('verify contacts')
+                                        <div class="separator my-8"></div>
+                                        <div class="rounded border border-dashed border-gray-300 p-6" data-email-verification-batch>
+                                            <h3 class="fs-5 mb-2">Première vérification groupée</h3>
+                                            <p class="text-muted mb-4">L'estimation est locale et ne déclenche aucun appel externe. Seuls les contacts jamais vérifiés seront mis en file après confirmation.</p>
+                                            <div class="alert alert-light-primary d-none" data-email-verification-estimate></div>
+                                            <button type="button" class="btn btn-light-primary me-2" data-email-verification-estimate-button>
+                                                Estimer
+                                            </button>
+                                            <button type="button" class="btn btn-primary d-none" data-email-verification-run-button>
+                                                Confirmer et mettre en file
+                                            </button>
+                                        </div>
+                                    @endcan
+                                @endcan
+                            @endif
+
                         @else
 
                             {{-- Placeholder for disabled tabs --}}
@@ -162,6 +181,44 @@
                     activeTabInput.value = tabKey;
                 }
             });
+        });
+
+        var batch = document.querySelector('[data-email-verification-batch]');
+        if (!batch) return;
+        var estimateButton = batch.querySelector('[data-email-verification-estimate-button]');
+        var runButton = batch.querySelector('[data-email-verification-run-button]');
+        var output = batch.querySelector('[data-email-verification-estimate]');
+        var estimate = null;
+
+        function render(data) {
+            estimate = data;
+            output.textContent = data.eligible + ' contact(s) à vérifier · coût estimé : ' + data.estimated_cost + ' crédit(s) · déjà vérifiés : ' + data.exclusions.already_verified + ' · supprimés/exclus : ' + data.exclusions.suppressed;
+            output.classList.remove('d-none');
+            runButton.classList.toggle('d-none', data.eligible === 0);
+        }
+
+        estimateButton.addEventListener('click', async function () {
+            var response = await fetch(@json(route('admin.settings.email-verification.estimate')), {headers: {'Accept': 'application/json'}});
+            if (response.ok) render(await response.json());
+        });
+
+        runButton.addEventListener('click', async function () {
+            if (!estimate || !window.confirm('Mettre ' + estimate.eligible + ' contact(s) en file de vérification ?')) return;
+            var response = await fetch(@json(route('admin.settings.email-verification.run')), {
+                method: 'POST',
+                headers: {'Accept': 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': @json(csrf_token())},
+                body: JSON.stringify({confirm: true, expected_count: estimate.eligible})
+            });
+            var data = await response.json();
+            if (response.ok) {
+                output.textContent = data.queued + ' contact(s) mis en file.';
+                runButton.classList.add('d-none');
+            } else if (data.estimate) {
+                render(data.estimate);
+            } else {
+                output.textContent = data.message || 'Impossible de lancer la vérification.';
+                output.classList.remove('d-none');
+            }
         });
     });
 }());

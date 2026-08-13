@@ -183,8 +183,16 @@ class CampaignFeedbackService
 
     private function applyBounceSuppression(Contact $contact, string $outcome, CarbonInterface $at, string $source): void
     {
+        // Any bounce replaces a prior valid proof. Soft-bounce suppression keeps
+        // its existing threshold, but the address is immediately non-sendable.
+        $contact->forceFill([
+            'email_verification_status' => 'invalid',
+            'email_verification_source' => 'bounce',
+            'email_verification_checked_at' => $at,
+        ])->save();
+
         if ($outcome === 'hard_bounce') {
-            $this->suppress($contact, 'hard_bounce', $source, $at, true);
+            $this->suppress($contact, 'hard_bounce', $source, $at);
 
             return;
         }
@@ -202,7 +210,7 @@ class CampaignFeedbackService
                 ->count();
 
         if ($softCount >= max(1, (int) config('prospecting.bounce.soft_limit', 2))) {
-            $this->suppress($contact, 'soft_bounce', $source, $at, true);
+            $this->suppress($contact, 'soft_bounce', $source, $at);
         }
     }
 

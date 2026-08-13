@@ -21,7 +21,9 @@ final class ProviderRequestException extends RuntimeException
         ?int $retryAfterSeconds = null,
         ?string $provider = null,
     ): self {
-        $retryable = in_array($httpStatus, [408, 425, 429], true) || $httpStatus >= 500
+        // Hunter documents HTTP 429 as an account usage limit, not a short
+        // request-rate pause. Keep other provider semantics unchanged.
+        $retryable = in_array($httpStatus, [408, 425], true) || ($httpStatus === 429 && $provider !== 'hunter') || $httpStatus >= 500
             || ($httpStatus === 403 && $provider === 'hunter' && $safeCode === 'rate_limit');
 
         return new self($safeCode, $retryable, $httpStatus, self::normalizeRetryAfter($retryAfterSeconds));

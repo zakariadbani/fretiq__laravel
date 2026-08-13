@@ -12,12 +12,11 @@ use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStepSend;
 use App\Services\Scheduling\BusinessCalendarService;
-use App\Services\Mail\SenderIdentitySmtpMailer;
+use App\Services\Mail\SmtpMailRouter;
 use App\Support\TrackingToken;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 
@@ -30,7 +29,7 @@ use Illuminate\Support\Str;
  *     one row; the second sees the existing row and exits early.
  *   - If provider_message_id is already set on the SequenceStepSend row, the send
  *     is skipped — safe on retry even after a crash-after-send.
- *   - Never hold a DB lock across a Mail send (the firstOrCreate + Mail::send pattern
+ *   - Never hold a DB lock across a transport send (the firstOrCreate pattern
  *     follows the same claim-commit-then-send spirit as CampaignService).
  *
  * Hard rules (CLAUDE.md):
@@ -207,11 +206,13 @@ class SequenceService
         // SMTP accept-all is decided again by the reservation job with the
         // selected sender identity's real feedback health. Other quality rules
         // can be rejected before reserving a slot.
-        $preReservationSupportsFeedback = $e->campaign?->delivery_channel === 'smtp';
         $ineligibleReason = $this->contactEligibility->sendIneligibilityReasonForSingle(
             $contact,
-            $preReservationSupportsFeedback,
+            $e->campaign?->emailVerificationPolicy() ?? Campaign::VERIFICATION_VERIFIED_ONLY,
         );
+        if ($ineligibleReason === 'verification_pending') {
+            return;
+        }
         if ($e->campaign?->delivery_channel !== 'smtp' && $ineligibleReason !== null) {
             $e->update([
                 'status'         => 'stopped',
@@ -269,7 +270,10 @@ class SequenceService
             return;
         }
 
-        $finalReason = $this->contactEligibility->sendIneligibilityReasonForSingle($contact, false);
+        $finalReason = $this->contactEligibility->sendIneligibilityReasonForSingle(
+            $contact,
+            $e->campaign?->emailVerificationPolicy() ?? Campaign::VERIFICATION_VERIFIED_ONLY,
+        );
         if ($finalReason !== null) {
             $stepSend->update(['status' => 'skipped']);
             $e->update([
@@ -316,7 +320,7 @@ class SequenceService
                 messageId:      'sequence-send-' . $stepSend->id . '@fretiq.local',
             );
 
-            Mail::to($contact->email)->send($mailable);
+            app(SmtpMailRouter::class)->send($senderIdentity, $contact->email, $mailable);
 
             // Use the message ID from the sent message when accessible; otherwise
             // generate a locally-unique reference (LocalCampaignsDriver pattern).
@@ -409,20 +413,22 @@ class SequenceService
             return;
         }
 
-        if (app(SenderIdentitySmtpMailer::class)->usesSenderIdentityTransport()
+        if (app(SmtpMailRouter::class)->usesSenderIdentityTransport()
             && ! $campaign->senderIdentity?->hasCompleteSmtpConfiguration()) {
             $reservations->defer($reservation, now()->addMinutes(5));
             return;
         }
 
         $contact = $enrollment->contact;
-        $supportsBounceFeedback = $driver->supportsBounceFeedback($campaign);
         $ineligibleReason = $this->contactEligibility->sendIneligibilityReasonForSingle(
             $contact,
-            $supportsBounceFeedback,
+            $campaign->emailVerificationPolicy(),
         );
-        if ($ineligibleReason === 'accept_all_feedback_required' && ! $supportsBounceFeedback) {
-            $ineligibleReason = 'bounce_feedback_unhealthy';
+
+        if ($ineligibleReason === 'verification_pending') {
+            $reservations->defer($reservation, now()->addMinutes(5));
+
+            return;
         }
 
         if ($ineligibleReason !== null) {
@@ -493,7 +499,7 @@ class SequenceService
     // ── Stop on reply ──────────────────────────────────────────────────────────
 
     /**
-     * Stop all active enrollments for a contact in sequences that have stop_on_reply=true.
+     * Stop all active enrollments for a contact. A reply is a universal stop signal.
      *
      * Triggered manually (UI action) or by a reply-detection hook.
      *
@@ -505,16 +511,11 @@ class SequenceService
     {
         $enrollments = SequenceEnrollment::where('contact_id', $contact->id)
             ->where('status', 'active')
-            ->with('sequence')
             ->get();
 
         $stopped = 0;
 
         foreach ($enrollments as $enrollment) {
-            if (! $enrollment->sequence->stop_on_reply) {
-                continue;
-            }
-
             $enrollment->update([
                 'status'         => 'stopped',
                 'stopped_reason' => $reason,

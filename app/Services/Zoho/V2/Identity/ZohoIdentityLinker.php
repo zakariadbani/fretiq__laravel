@@ -18,8 +18,8 @@ final class ZohoIdentityLinker
     public function autoMapUsers(): array
     {
         $mapped = $ambiguous = 0;
-        $zohoUsers = ZohoUser::current()->whereNotNull('normalized_email')->get();
-        $fretiqUsers = User::query()->where('is_active', true)->get();
+        $zohoUsers = ZohoUser::current()->whereNotNull('normalized_email')->get(['zoho_id', 'normalized_email']);
+        $fretiqUsers = User::query()->where('is_active', true)->get(['id', 'email']);
         $zohoByEmail = $zohoUsers->groupBy(fn (ZohoUser $user) => $this->normal($user->normalized_email) ?? '');
         $fretiqByEmail = $fretiqUsers->groupBy(fn (User $user) => $this->normal($user->email) ?? '');
 
@@ -96,14 +96,17 @@ final class ZohoIdentityLinker
     public function linkMarketingContacts(): array
     {
         $created = $ambiguous = 0;
-        $fretiqContacts = Contact::query()->get();
+        // Identity matching must not hydrate the mirror's large raw_payload
+        // columns. Full backfills can otherwise exhaust the 128 MB CLI limit
+        // before post-reconciliation reaches Contacts.
+        $fretiqContacts = Contact::query()->get(['id', 'email']);
         $fretiqById = $fretiqContacts->keyBy(fn (Contact $contact) => (int) $contact->getKey());
         $fretiqByEmail = $fretiqContacts
             ->filter(fn (Contact $contact): bool => $this->normal($contact->email) !== null)
             ->groupBy(fn (Contact $contact): string => (string) $this->normal($contact->email));
         $zohoRecords = [
-            'leads' => ZohoLead::current()->get(),
-            'contacts' => ZohoContact::current()->get(),
+            'leads' => ZohoLead::current()->get(['zoho_id', 'normalized_email']),
+            'contacts' => ZohoContact::current()->get(['zoho_id', 'normalized_email']),
         ];
         $zohoById = [];
         $zohoByEmail = [];

@@ -38,6 +38,13 @@ class CampaignWaveZohoListSyncService
                 'contacts' => $run->recipients->where('status', 'queued')->count(),
             ];
         }
+        if ($this->waveService->hasPendingVerification($run)) {
+            return [
+                'list_key' => (string) ($run->zoho_list_key ?? ''),
+                'list_name' => $this->listName($run),
+                'contacts' => $run->recipients->where('status', 'queued')->count(),
+            ];
+        }
 
         $target = [];
         foreach ($this->waveService->eligibleContacts($run) as $contact) {

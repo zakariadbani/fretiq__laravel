@@ -4,9 +4,7 @@ namespace Tests\Feature\Backend;
 
 use App\Jobs\FinalizeProspectBatchJob;
 use App\Jobs\ProcessProspectBatchItemJob;
-use App\Models\ProspectBatch;
 use App\Models\ProspectBatchItem;
-use App\Models\ProspectContactCandidate;
 use App\Models\ProviderCall;
 use App\Models\User;
 use App\Services\Prospecting\CompanyListParser;
@@ -205,6 +203,34 @@ class ProspectBatchImportTest extends TestCase
         Queue::assertNothingPushed();
     }
 
+    public function test_equivalent_estimate_with_reordered_json_keys_can_be_confirmed(): void
+    {
+        Queue::fake();
+        $actor = $this->actorAllowedToRun();
+        $service = app(ProspectBatchService::class);
+        $batch = $service->createListBatch(
+            $actor,
+            app(CompanyListParser::class)->parseText('ACME | FR')['rows'],
+        );
+        $estimate = $service->estimate($batch);
+
+        $batch->forceFill([
+            'estimate' => [
+                'free' => $estimate['free'],
+                'calls' => array_reverse($estimate['calls'], true),
+                'items' => $estimate['items'],
+                'reserved_units' => array_reverse($estimate['reserved_units'], true),
+            ],
+        ])->save();
+
+        $confirmed = $service->confirmAndDispatch($batch->fresh(), $actor);
+
+        $this->assertSame('queued', $confirmed->status);
+        $this->assertNotNull($confirmed->cost_confirmed_at);
+        Queue::assertPushed(ProcessProspectBatchItemJob::class, 1);
+        Queue::assertPushed(FinalizeProspectBatchJob::class, 1);
+    }
+
     public function test_confirmation_requires_permission_and_replay_is_rejected(): void
     {
         Queue::fake();
@@ -250,36 +276,6 @@ class ProspectBatchImportTest extends TestCase
 
         Queue::assertPushed(ProcessProspectBatchItemJob::class, 2);
         Queue::assertPushed(FinalizeProspectBatchJob::class, 1);
-    }
-
-    public function test_candidate_email_is_normalized_and_never_moved_to_another_item(): void
-    {
-        $batch = ProspectBatch::factory()->create();
-        $first = ProspectBatchItem::factory()->create([
-            'prospect_batch_id' => $batch->id,
-            'row_number' => 1,
-        ]);
-        $second = ProspectBatchItem::factory()->create([
-            'prospect_batch_id' => $batch->id,
-            'row_number' => 2,
-        ]);
-        $service = app(ProspectBatchService::class);
-
-        $this->assertSame(1, $service->stageContactCandidates($batch, $first, [[
-            'email' => ' Sales@Example.FR ',
-            'source' => 'hunter_domain_search',
-        ]]));
-        $this->assertSame(0, $service->stageContactCandidates($batch, $second, [[
-            'email' => 'sales@example.fr',
-            'source' => 'hunter_company_enrichment',
-        ]]));
-
-        $candidate = ProspectContactCandidate::query()->sole();
-        $this->assertSame('sales@example.fr', $candidate->email);
-        $this->assertSame('sales@example.fr', $candidate->normalized_email);
-        $this->assertSame($first->id, $candidate->prospect_batch_item_id);
-        $this->assertSame('hunter_domain_search', $candidate->source);
-        $this->assertSame(1, $batch->fresh()->candidate_contacts);
     }
 
     private function actorAllowedToRun(): User

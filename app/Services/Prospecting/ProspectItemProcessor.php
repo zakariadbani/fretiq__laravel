@@ -6,6 +6,7 @@ use App\Models\Company;
 use App\Models\ProspectBatchItem;
 use App\Models\ProviderCall;
 use App\Services\Discovery\CanonicalDomain;
+use App\Services\Discovery\DiscoveredContactImportService;
 use App\Services\Discovery\DomainCanonicalizer;
 use App\Services\Providers\Hunter\HunterClient;
 use App\Services\Providers\ProviderCallContext;
@@ -16,10 +17,13 @@ use App\Services\Providers\SerpApi\SerpApiClient;
 use App\Support\EmailKind;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Throwable;
 
 final class ProspectItemProcessor
 {
     private const PAGE_LIMIT = 100;
+
+    private const FREE_PLAN_PAGE_LIMIT = 10;
 
     private const DOMAIN_SEARCH_EMAILS_PER_UNIT = 10;
 
@@ -29,6 +33,7 @@ final class ProspectItemProcessor
         private readonly SerpApiClient $serpApi,
         private readonly ProviderCallLedger $ledger,
         private readonly ProspectBatchService $batches,
+        private readonly DiscoveredContactImportService $contacts,
         private readonly HunterVerificationStatusNormalizer $verification,
         private readonly HunterCompanySizeNormalizer $companySizes,
     ) {}
@@ -46,6 +51,28 @@ final class ProspectItemProcessor
                 return;
             }
 
+            try {
+                $this->batches->linkCompanyForProcessing($item);
+            } catch (\LogicException $exception) {
+                if ($exception->getMessage() === 'prospect_item_promotion_lock_timeout') {
+                    throw new ProviderRequestException(
+                        'prospect_item_promotion_lock_timeout',
+                        true,
+                        retryAfterSeconds: 3,
+                    );
+                }
+                if (! in_array($exception->getMessage(), [
+                    'prospect_item_domain_not_promotable',
+                    'prospect_item_domain_conflict',
+                ], true)) {
+                    throw $exception;
+                }
+                $this->markReview($item, 'domain_identity_conflict');
+
+                return;
+            }
+            $item->refresh()->loadMissing('batch', 'company');
+
             $this->enrichCompany($item, $domain);
             $this->searchDomainContacts($item, $domain);
             $this->findNamedContact($item, $domain);
@@ -61,7 +88,28 @@ final class ProspectItemProcessor
                 return;
             }
 
+            if ($exception->retryable) {
+                $this->markRetryPending($item, $exception->safeCode);
+                throw $exception;
+            }
+
             $this->markFailed($item, $exception->safeCode);
+        } catch (Throwable $exception) {
+            // Once a provider call is running, retrying this item could repeat a
+            // remote request whose Contact/provenance transaction rolled back.
+            // Make the item explicitly reviewable before preserving the original
+            // exception for the queue's failure telemetry.
+            if ($this->hasRunningProviderCall($item)) {
+                $this->markReview($item, 'provider_outcome_uncertain');
+            } else {
+                // The claim itself or local company-linking failed before any
+                // provider request was admitted. Return it to the normal retry
+                // path rather than stranding it in a review state that cannot
+                // authorize a provider replay.
+                $this->markRetryPending($item, 'processor_unexpected_failure');
+            }
+
+            throw $exception;
         }
     }
 
@@ -371,7 +419,7 @@ final class ProspectItemProcessor
                 data_set($metadata, 'processing.company_enrichment_done', true);
                 $locked->forceFill(['source_metadata' => $metadata])->save();
                 if ($siteCandidates !== []) {
-                    $this->batches->stageContactCandidates($locked->batch, $locked, $siteCandidates);
+                    $this->contacts->import($locked->company, $siteCandidates, $locked);
                 }
             },
             consumedUnits: $data === [] ? 0 : $this->hunterUnits('company_enrichment'),
@@ -390,20 +438,31 @@ final class ProspectItemProcessor
             if (data_get($metadata, 'processing.domain_search_done') === true) {
                 return;
             }
+            $limitCap = data_get($metadata, 'processing.domain_search_limit_cap') === self::FREE_PLAN_PAGE_LIMIT
+                ? self::FREE_PLAN_PAGE_LIMIT
+                : self::PAGE_LIMIT;
+            $effectiveMaxResults = min($maxResults, $limitCap === self::FREE_PLAN_PAGE_LIMIT
+                ? self::FREE_PLAN_PAGE_LIMIT
+                : $maxResults);
             $offset = max(0, min(10_000, (int) data_get($metadata, 'processing.domain_search_offset', 0)));
-            if ($offset >= $maxResults) {
+            if ($offset >= $effectiveMaxResults) {
                 $this->markDomainSearchDone($item, $offset);
 
                 return;
             }
 
-            $limit = min(self::PAGE_LIMIT, $maxResults - $offset);
+            $limit = min($limitCap, $effectiveMaxResults - $offset);
             $context = $this->context(
                 $item,
                 'domain_search',
                 "{$domain->host}|{$filtersHash}|{$offset}|{$limit}",
                 reservedUnits: $this->domainSearchUnits($limit),
             );
+            if ($this->hasFailedFirstPagePaginationCall($context, $offset, $limit)) {
+                $this->capDomainSearchAtFreePlanLimit($item);
+
+                continue;
+            }
             try {
                 $execution = $this->hunter->domainSearch(
                     $context,
@@ -413,6 +472,13 @@ final class ProspectItemProcessor
                     $offset,
                 );
             } catch (ProviderRequestException $exception) {
+                if ($exception->safeCode === 'pagination_error'
+                    && $offset === 0
+                    && $limit > self::FREE_PLAN_PAGE_LIMIT) {
+                    $this->capDomainSearchAtFreePlanLimit($item);
+
+                    continue;
+                }
                 if ($exception->safeCode !== 'not_found') {
                     throw $exception;
                 }
@@ -443,10 +509,10 @@ final class ProspectItemProcessor
             $candidates = $this->normalizeHunterEmails($providerRows, 'hunter_domain_search', 'domain_search');
             $resultTotal = $this->boundedInteger($execution->response?->meta['results'] ?? null, 0, 10_000);
             $returned = count($providerRows);
-            $nextOffset = min($maxResults, $offset + $limit);
+            $nextOffset = min($effectiveMaxResults, $offset + $limit);
             $done = $returned < $limit
                 || ($resultTotal !== null && $nextOffset >= $resultTotal)
-                || $nextOffset >= $maxResults;
+                || $nextOffset >= $effectiveMaxResults;
 
             $this->settleBusinessWrite(
                 $item,
@@ -454,7 +520,7 @@ final class ProspectItemProcessor
                 $returned,
                 function (ProspectBatchItem $locked) use ($candidates, $nextOffset, $done): void {
                     if ($candidates !== []) {
-                        $this->batches->stageContactCandidates($locked->batch, $locked, $candidates);
+                        $this->contacts->import($locked->company, $candidates, $locked);
                     }
                     $metadata = $this->itemMetadata($locked);
                     data_set($metadata, 'processing.domain_search_offset', $nextOffset);
@@ -513,7 +579,7 @@ final class ProspectItemProcessor
             count($candidates),
             function (ProspectBatchItem $locked) use ($candidates): void {
                 if ($candidates !== []) {
-                    $this->batches->stageContactCandidates($locked->batch, $locked, $candidates);
+                    $this->contacts->import($locked->company, $candidates, $locked);
                 }
                 $metadata = $this->itemMetadata($locked);
                 data_set($metadata, 'processing.email_finder_done', true);
@@ -699,6 +765,24 @@ final class ProspectItemProcessor
         $this->batches->refreshCounters($item->batch);
     }
 
+    private function markRetryPending(ProspectBatchItem $item, string $safeCode): void
+    {
+        $safeCode = preg_match('/^[a-z][a-z0-9_]{0,63}$/', $safeCode) === 1 ? $safeCode : 'provider_request_failed';
+        ProspectBatchItem::query()->whereKey($item->getKey())->where('status', 'processing')->update([
+            'status' => 'pending', 'error_code' => $safeCode, 'error_message' => null,
+            'processed_at' => null, 'updated_at' => now(),
+        ]);
+        $this->batches->refreshCounters($item->batch);
+    }
+
+    private function hasRunningProviderCall(ProspectBatchItem $item): bool
+    {
+        return ProviderCall::query()
+            ->where('prospect_batch_item_id', $item->getKey())
+            ->where('status', 'running')
+            ->exists();
+    }
+
     private function markReady(ProspectBatchItem $item): void
     {
         ProspectBatchItem::query()
@@ -724,6 +808,38 @@ final class ProspectItemProcessor
             data_set($metadata, 'processing.domain_search_done', true);
             $locked->forceFill(['source_metadata' => $metadata])->save();
         });
+    }
+
+    private function hasFailedFirstPagePaginationCall(ProviderCallContext $context, int $offset, int $limit): bool
+    {
+        if ($offset !== 0 || $limit <= self::FREE_PLAN_PAGE_LIMIT) {
+            return false;
+        }
+
+        $call = ProviderCall::query()
+            ->where('provider', 'hunter')
+            ->where('operation', 'domain_search')
+            ->where('idempotency_key', $context->idempotencyKey)
+            ->where('prospect_batch_item_id', $context->itemId)
+            ->first(['status', 'metadata']);
+
+        return $call?->status === 'failed'
+            && data_get($call->metadata, 'error_code') === 'pagination_error';
+    }
+
+    private function capDomainSearchAtFreePlanLimit(ProspectBatchItem $item): void
+    {
+        DB::transaction(function () use ($item): void {
+            $locked = ProspectBatchItem::query()->lockForUpdate()->findOrFail($item->getKey());
+            if ($locked->status !== 'processing') {
+                return;
+            }
+
+            $metadata = $this->itemMetadata($locked);
+            data_set($metadata, 'processing.domain_search_limit_cap', self::FREE_PLAN_PAGE_LIMIT);
+            $locked->forceFill(['source_metadata' => $metadata])->save();
+        });
+        $item->refresh();
     }
 
     private function persistResolutionEvidence(ProspectBatchItem $item, string $key, array $rows): void
@@ -1035,6 +1151,9 @@ final class ProspectItemProcessor
                 'company_enrichment_done' => ($metadata['processing']['company_enrichment_done'] ?? false) === true,
                 'domain_search_done' => ($metadata['processing']['domain_search_done'] ?? false) === true,
                 'domain_search_offset' => max(0, min(10_000, (int) ($metadata['processing']['domain_search_offset'] ?? 0))),
+                'domain_search_limit_cap' => (int) ($metadata['processing']['domain_search_limit_cap'] ?? 0) === self::FREE_PLAN_PAGE_LIMIT
+                    ? self::FREE_PLAN_PAGE_LIMIT
+                    : 0,
                 'email_finder_done' => ($metadata['processing']['email_finder_done'] ?? false) === true,
             ], static fn (mixed $value): bool => $value !== false && $value !== 0);
         }

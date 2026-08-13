@@ -9,8 +9,7 @@ import { DataTablePage } from './DataTablePage';
  *
  * Form field names (from form.blade.php):
  *   name (required), email (required), company_id (Select2 required), position,
- *   phone, source_url, status (Select2), source (Select2), legal_basis (Select2),
- *   email_kind (Select2), consent_at
+ *   phone, source_url, source (Select2), email_kind (Select2)
  *
  * Routes (all relative to baseURL):
  *   index   GET  /admin/contacts
@@ -32,9 +31,7 @@ export class ContactsPage extends DataTablePage {
   // Select2 selects — locate wrapper div for selectSelect2() helper
   // company_id is required; others are optional
   readonly companyIdSelect: Locator;
-  readonly statusSelect: Locator;
   readonly sourceSelect: Locator;
-  readonly legalBasisSelect: Locator;
   readonly emailKindSelect: Locator;
 
   constructor(page: Page) {
@@ -53,9 +50,7 @@ export class ContactsPage extends DataTablePage {
 
     // Select2 wrappers — parent div of the native <select>
     this.companyIdSelect  = page.locator('#form_crud select[name="company_id"]').locator('..');
-    this.statusSelect     = page.locator('#form_crud select[name="status"]').locator('..');
     this.sourceSelect     = page.locator('#form_crud select[name="source"]').locator('..');
-    this.legalBasisSelect = page.locator('#form_crud select[name="legal_basis"]').locator('..');
     this.emailKindSelect  = page.locator('#form_crud select[name="email_kind"]').locator('..');
   }
 

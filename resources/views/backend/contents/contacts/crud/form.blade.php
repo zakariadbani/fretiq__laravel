@@ -162,24 +162,6 @@
                         {{-- Right column --}}
                         <div class="col-lg-6">
 
-                            {{-- Statut (select2 — active pane, safe width) --}}
-                            <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Statut</label>
-                                <select name="status"
-                                        class="form-select form-select-solid"
-                                        data-control="select2"
-                                        data-hide-search="true"
-                                        data-placeholder="Sélectionner un statut...">
-                                    <option value="">Sélectionner un statut...</option>
-                                    @foreach($statuses as $key => $data)
-                                        <option value="{{ $key }}"
-                                            {{ old('status', $model->status ?? '') === $key ? 'selected' : '' }}>
-                                            {{ $data['label'] }}
-                                        </option>
-                                    @endforeach
-                                </select>
-                            </div>
-
                             {{-- Source (select2 — active pane, safe width) --}}
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Source</label>
@@ -192,24 +174,6 @@
                                     @foreach($sources as $key => $data)
                                         <option value="{{ $key }}"
                                             {{ old('source', $model->source ?? '') === $key ? 'selected' : '' }}>
-                                            {{ $data['label'] }}
-                                        </option>
-                                    @endforeach
-                                </select>
-                            </div>
-
-                            {{-- Base légale RGPD (select2 — active pane, safe width) --}}
-                            <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Base légale (RGPD)</label>
-                                <select name="legal_basis"
-                                        class="form-select form-select-solid"
-                                        data-control="select2"
-                                        data-hide-search="true"
-                                        data-placeholder="Sélectionner une base légale...">
-                                    <option value="">Sélectionner une base légale...</option>
-                                    @foreach($legalBases as $key => $data)
-                                        <option value="{{ $key }}"
-                                            {{ old('legal_basis', $model->legal_basis ?? '') === $key ? 'selected' : '' }}>
                                             {{ $data['label'] }}
                                         </option>
                                     @endforeach
@@ -232,15 +196,6 @@
                                         </option>
                                     @endforeach
                                 </select>
-                            </div>
-
-                            {{-- Date de consentement --}}
-                            <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Date de consentement</label>
-                                <input type="datetime-local"
-                                       name="consent_at"
-                                       class="form-control form-control-solid"
-                                       value="{{ old('consent_at', isset($model->consent_at) ? $model->consent_at?->format('Y-m-d\TH:i') : '') }}" />
                             </div>
 
                         </div>

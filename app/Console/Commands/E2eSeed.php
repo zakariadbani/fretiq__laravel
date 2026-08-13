@@ -114,7 +114,6 @@ class E2eSeed extends Command
             ['name' => 'E2E_FIXTURE Sequence'],
             [
                 'is_active'     => false,
-                'stop_on_reply' => false,
             ]
         );
         $this->info("  Sequence         id={$sequence->id}  name={$sequence->name}");
@@ -137,7 +136,6 @@ class E2eSeed extends Command
             ['name' => 'E2E_FIXTURE Sequence Statistics'],
             [
                 'is_active' => false,
-                'stop_on_reply' => true,
             ]
         );
 
@@ -186,9 +184,10 @@ class E2eSeed extends Command
                 'company_id' => $statsCompany->id,
                 'name' => 'E2E Opened Contact',
                 'source' => 'manual',
-                'status' => 'contacted',
-                'legal_basis' => 'legitimate_interest',
                 'email_kind' => 'role',
+                'email_verification_status' => 'valid',
+                'email_verification_source' => 'e2e_fixture',
+                'email_verification_checked_at' => now(),
             ]
         );
         $unsentContact = Contact::updateOrCreate(
@@ -197,9 +196,10 @@ class E2eSeed extends Command
                 'company_id' => $statsCompany->id,
                 'name' => 'E2E Unsent Contact',
                 'source' => 'manual',
-                'status' => 'contacted',
-                'legal_basis' => 'legitimate_interest',
                 'email_kind' => 'role',
+                'email_verification_status' => 'valid',
+                'email_verification_source' => 'e2e_fixture',
+                'email_verification_checked_at' => now(),
             ]
         );
 

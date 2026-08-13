@@ -8,8 +8,9 @@ use App\Models\Company;
 use App\Models\Contact;
 use App\Models\DiscoveryRun;
 use App\Models\ProspectBatch;
+use App\Models\ProspectBatchContact;
 use App\Models\ProspectBatchItem;
-use App\Models\ProspectContactCandidate;
+use App\Services\Discovery\DiscoveredContactImportService;
 use App\Services\Discovery\DomainCanonicalizer;
 use App\Support\EmailKind;
 use Carbon\CarbonImmutable;
@@ -21,13 +22,14 @@ use Throwable;
 
 final class ExistingProspectingDataRecoveryService
 {
-    private const VERSION = 1;
+    private const VERSION = 2;
 
     public function __construct(
         private readonly HunterVerificationStatusNormalizer $verificationStatuses,
         private readonly HunterCompanySizeNormalizer $companySizes,
         private readonly DomainCanonicalizer $domains,
         private readonly ProspectBatchService $batches,
+        private readonly DiscoveredContactImportService $contacts,
     ) {}
 
     public function preview(): RecoveryPlan
@@ -39,7 +41,6 @@ final class ExistingProspectingDataRecoveryService
             ->orderBy('id')
             ->get();
 
-        $globalContactEmails = [];
         $contactsByCompanyEmail = [];
 
         foreach ($contacts as $contact) {
@@ -49,7 +50,6 @@ final class ExistingProspectingDataRecoveryService
                 continue;
             }
 
-            $globalContactEmails[$email] = true;
             $contactsByCompanyEmail[(int) $contact->company_id][$email] = $contact;
         }
 
@@ -74,7 +74,7 @@ final class ExistingProspectingDataRecoveryService
 
         $verificationChangesByContact = [];
         $companyChangesByKey = [];
-        $contactCandidatesByEmail = [];
+        $discoveredContactsByCompanyEmail = [];
         $sourceEvidenceHashes = [];
         $counts = $this->emptyCounts();
 
@@ -145,16 +145,15 @@ final class ExistingProspectingDataRecoveryService
                         : $rawEmail;
                     $email = $this->normalizeEmail($emailValue);
 
-                    if ($email === null
-                        || isset($globalContactEmails[$email])
-                        || isset($contactCandidatesByEmail[$email])) {
+                    $contactKey = (int) $company->getKey().'|'.$email;
+
+                    if ($email === null || isset($discoveredContactsByCompanyEmail[$contactKey])) {
                         continue;
                     }
 
-                    $contactCandidatesByEmail[$email] = [
+                    $discoveredContactsByCompanyEmail[$contactKey] = [
                         'company_id' => (int) $company->getKey(),
                         'email' => $email,
-                        'normalized_email' => $email,
                         'source' => 'hunter_company_enrichment',
                         'email_kind' => EmailKind::classify($email),
                         'source_hash' => $payloadHash,
@@ -335,7 +334,7 @@ final class ExistingProspectingDataRecoveryService
 
         $companyChanges = array_values($companyChangesByKey);
         $verificationChanges = array_values($verificationChangesByContact);
-        $contactCandidates = array_values($contactCandidatesByEmail);
+        $discoveredContacts = array_values($discoveredContactsByCompanyEmail);
         $snapshotItems = array_values($snapshotItemsByHost);
 
         foreach ($verificationChanges as $change) {
@@ -357,10 +356,10 @@ final class ExistingProspectingDataRecoveryService
         ] <=> [
             $right['entity_type'], $right['entity_id'], $right['field'],
         ]);
-        usort($contactCandidates, static fn (array $left, array $right): int => [
-            $left['company_id'], $left['normalized_email'],
+        usort($discoveredContacts, static fn (array $left, array $right): int => [
+            $left['company_id'], $left['email'],
         ] <=> [
-            $right['company_id'], $right['normalized_email'],
+            $right['company_id'], $right['email'],
         ]);
         usort($snapshotItems, static fn (array $left, array $right): int => $left['host'] <=> $right['host']);
 
@@ -386,7 +385,7 @@ final class ExistingProspectingDataRecoveryService
             fingerprint: $fingerprint,
             verificationChanges: $verificationChanges,
             companyChanges: $companyChanges,
-            contactCandidates: $contactCandidates,
+            discoveredContacts: $discoveredContacts,
             snapshotItems: $snapshotItems,
             counts: $counts,
             sourceEvidenceHashes: $sourceEvidenceHashes,
@@ -464,44 +463,30 @@ final class ExistingProspectingDataRecoveryService
 
     private function stagePlan(ProspectBatch $batch, RecoveryPlan $plan): void
     {
-        $stagedCandidatesByCompany = [];
-        $currentContactEmails = [];
+        $contactsByCompany = [];
 
-        foreach (Contact::withTrashed()->pluck('email') as $contactEmail) {
-            $normalized = $this->normalizeEmail($contactEmail);
-
-            if ($normalized !== null) {
-                $currentContactEmails[$normalized] = true;
-            }
-        }
-
-        foreach ($plan->contactCandidates as $candidate) {
-            if (! is_array($candidate)) {
+        foreach ($plan->discoveredContacts as $contactRow) {
+            if (! is_array($contactRow)) {
                 continue;
             }
 
             $companyId = filter_var(
-                $candidate['company_id'] ?? null,
+                $contactRow['company_id'] ?? null,
                 FILTER_VALIDATE_INT,
                 ['options' => ['min_range' => 1]],
             );
-            $email = $this->normalizeEmail($candidate['normalized_email'] ?? $candidate['email'] ?? null);
-            $sourceHash = $this->validatedSourceHash($candidate['source_hash'] ?? null);
+            $email = $this->normalizeEmail($contactRow['email'] ?? null);
+            $sourceHash = $this->validatedSourceHash($contactRow['source_hash'] ?? null);
 
             if ($companyId === false || $email === null || $sourceHash === null) {
                 continue;
             }
 
-            if (isset($currentContactEmails[$email])) {
-                continue;
-            }
-
-            $stagedCandidatesByCompany[(int) $companyId][$email] = [
+            $contactsByCompany[(int) $companyId][$email] = [
                 'email' => $email,
                 'source' => 'hunter_company_enrichment',
                 'email_kind' => EmailKind::classify($email),
-                'decision_reason' => 'recovered_company_enrichment',
-                'metadata' => ['source_hash' => $sourceHash],
+                'source_hash' => $sourceHash,
             ];
         }
 
@@ -533,11 +518,11 @@ final class ExistingProspectingDataRecoveryService
             }
         }
 
-        foreach ($stagedCandidatesByCompany as $companyId => $candidates) {
+        foreach ($contactsByCompany as $companyId => $contacts) {
             $affectedCompanyIds[$companyId] = true;
 
-            foreach ($candidates as $candidate) {
-                $sourceHashesByCompany[$companyId][$candidate['metadata']['source_hash']] = true;
+            foreach ($contacts as $contactRow) {
+                $sourceHashesByCompany[$companyId][$contactRow['source_hash']] = true;
             }
         }
 
@@ -563,7 +548,7 @@ final class ExistingProspectingDataRecoveryService
                 ?? 'Entreprise #'.$companyId;
             $sourceHashes = array_keys($sourceHashesByCompany[$companyId] ?? []);
             sort($sourceHashes, SORT_STRING);
-            $candidateCount = count($stagedCandidatesByCompany[$companyId] ?? []);
+            $discoveredContactCount = count($contactsByCompany[$companyId] ?? []);
             $rowNumber++;
             $rows[] = [
                 'row_number' => $rowNumber,
@@ -574,8 +559,8 @@ final class ExistingProspectingDataRecoveryService
                 'source_metadata' => [
                     'source' => 'local_recovery',
                     'source_hashes' => $sourceHashes,
-                    'candidate_count' => $candidateCount,
-                    'high_volume' => $candidateCount >= 50,
+                    'discovered_contact_count' => $discoveredContactCount,
+                    'high_volume' => $discoveredContactCount >= 50,
                 ],
             ];
             $rowDetails[$rowNumber] = [
@@ -583,7 +568,7 @@ final class ExistingProspectingDataRecoveryService
                 'registrable_domain' => $canonical?->registrableDomain,
                 'domain_confidence' => $canonical === null ? null : 100,
                 'domain_reason' => 'recovered_local_payload',
-                'status' => $candidateCount > 0 ? 'review' : 'ready',
+                'status' => 'ready',
                 'company_id' => $companyId,
             ];
             $companyItems[$companyId] = $rowNumber;
@@ -664,7 +649,7 @@ final class ExistingProspectingDataRecoveryService
                 ->update($details + ['processed_at' => now(), 'updated_at' => now()]);
         }
 
-        foreach ($stagedCandidatesByCompany as $companyId => $candidates) {
+        foreach ($contactsByCompany as $companyId => $contacts) {
             $itemRow = $companyItems[$companyId] ?? null;
 
             if ($itemRow === null) {
@@ -680,7 +665,11 @@ final class ExistingProspectingDataRecoveryService
                 continue;
             }
 
-            $this->batches->stageContactCandidates($batch, $item, array_values($candidates));
+            $company = Company::withRejected()->find($companyId);
+
+            if ($company !== null) {
+                $this->contacts->import($company, array_values($contacts), $item);
+            }
         }
     }
 
@@ -872,7 +861,7 @@ final class ExistingProspectingDataRecoveryService
             'review_items' => (clone $items)->where('status', 'review')->count(),
             'failed_items' => (clone $items)->where('status', 'failed')->count(),
             'promoted_companies' => (clone $items)->where('status', 'promoted')->count(),
-            'candidate_contacts' => ProspectContactCandidate::query()
+            'imported_contacts' => ProspectBatchContact::query()
                 ->where('prospect_batch_id', $batch->getKey())
                 ->count(),
         ])->save();

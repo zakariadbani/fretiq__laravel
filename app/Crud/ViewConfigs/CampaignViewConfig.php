@@ -140,6 +140,7 @@ class CampaignViewConfig
                 ['label' => 'Segment',     'value' => $model->segment?->name,  'type' => 'text'],
                 ['label' => 'Modèle',      'value' => $model->template?->name, 'type' => 'text'],
                 ['label' => 'Expéditeur',  'value' => $model->senderIdentity?->name, 'type' => 'text'],
+                ['label' => 'Vérification email', 'value' => $model->emailVerificationPolicy(), 'type' => 'enum', 'configKey' => 'campaign_email_verification_policies'],
             ];
 
             if ($model->scheduled_at) {

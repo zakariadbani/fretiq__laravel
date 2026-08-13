@@ -5,6 +5,10 @@ use Illuminate\Support\Facades\Route;
 
 Route::controller(ProspectCriteriaController::class)->prefix('admin')->name('admin.')->group(function () {
     Route::get('/prospect_criteria', 'index')->name('prospect_criteria.index');
+    Route::get('/prospect_criteria/import', 'importForm')->name('prospect_criteria.import_form');
+    Route::post('/prospect_criteria/import/preview', 'importPreview')->name('prospect_criteria.import_preview');
+    Route::post('/prospect_criteria/import', 'importStore')->name('prospect_criteria.import_store');
+    Route::get('/prospect_criteria/import/template', 'downloadImportTemplate')->name('prospect_criteria.import_template');
     Route::get('/prospect_criteria/create', 'create')->name('prospect_criteria.create');
     Route::post('/prospect_criteria', 'store')->name('prospect_criteria.store');
     Route::post('/prospect_criteria/{id}/hunter-discover/preview', 'hunterDiscoverPreview')->middleware('throttle:5,1')->name('prospect_criteria.hunter_discover_preview');

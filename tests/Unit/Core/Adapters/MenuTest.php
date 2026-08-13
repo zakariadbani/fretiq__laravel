@@ -48,38 +48,67 @@ class MenuTest extends TestCase
         $this->assertSame([
             'Prospection & campagnes',
             'Zoho CRM — Lecture seule',
-        ], $main->pluck('content')->filter()->values()->take(2)->all());
+            'Administration',
+        ], $main->pluck('content')->filter()->values()->all());
+        $this->assertSame([
+            'Prospection & campagnes',
+            'Vue d’ensemble',
+            'Découverte',
+            'Répertoire',
+            'Campagnes & planning',
+            'Préparation des campagnes',
+            'Réponses & demandes',
+            'Conformité & consommation',
+            'Zoho CRM — Lecture seule',
+            'Tableau de bord Zoho',
+            'Données CRM',
+            'Synchronisation Zoho',
+            'Administration',
+            'Utilisateurs & accès',
+            'Configuration',
+            'Supervision',
+        ], $main->map(fn (array $item): string => $item['content'] ?? $item['title'])->all());
 
         $expectedAccordions = [
-            'Centre de prospection' => [
+            'Découverte' => [
                 ['Vue d’ensemble', 'view prospect_batches', 'admin/prospecting'],
                 ['Lots', 'view prospect_batches', 'admin/prospect_batches'],
                 ['À revoir', 'review prospect matches', 'admin/prospect-review'],
-                ['Entreprises', 'view companies', 'admin/companies'],
-                ['Contacts', 'view contacts', 'admin/contacts'],
                 ['Critères de découverte', 'view prospect_criteria', 'admin/prospect_criteria'],
             ],
-            'Campagnes' => [
+            'Répertoire' => [
+                ['Entreprises', 'view companies', 'admin/companies'],
+                ['Contacts', 'view contacts', 'admin/contacts'],
+            ],
+            'Campagnes & planning' => [
                 ['Campagnes', 'view campaigns', 'admin/campaigns'],
                 ['Planning', 'view campaigns', 'admin/planner'],
+            ],
+            'Préparation des campagnes' => [
                 ['Séquences', 'view sequences', 'admin/sequences'],
                 ['Segments', 'view segments', 'admin/segments'],
                 ['Modèles d’email', 'view campaign_templates', 'admin/campaign_templates'],
                 ['Identités d’expéditeur', 'view sender_identities', 'admin/sender_identities'],
             ],
-            'Suivi' => [
+            'Réponses & demandes' => [
                 ['Demandes', 'view demandes', 'admin/demandes'],
                 ['Boîte de réception', 'view inbox', 'admin/inbox'],
+            ],
+            'Conformité & consommation' => [
                 ['Suppressions', 'view suppressions', 'admin/suppressions'],
                 ['Consommation', 'view consumption', 'admin/consumption'],
             ],
-            'Administration' => [
+            'Utilisateurs & accès' => [
                 ['Utilisateurs', 'view users', 'admin/users'],
                 ['Rôles', 'manage roles', 'admin/user-management/roles'],
                 ['Permissions', 'manage permissions', 'admin/user-management/permissions'],
+            ],
+            'Configuration' => [
                 ['Paramètres', 'view settings', 'admin/settings'],
-                ['Observabilité', 'manage roles', 'admin/observability'],
                 ['Packs', 'manage packages', 'admin/packages'],
+            ],
+            'Supervision' => [
+                ['Observabilité', 'manage roles', 'admin/observability'],
                 ['Quota fournisseurs', 'view provider quota', 'admin/provider-quota'],
                 ['Activité fournisseurs', 'view provider activity', 'admin/provider-activity'],
             ],
@@ -106,12 +135,13 @@ class MenuTest extends TestCase
             ->values()
             ->all());
         $this->assertFalse($main->contains('title', 'Zoho'));
+        $this->assertFalse($main->contains('title', 'Administration'));
     }
 
     public function test_active_prefix_opens_descendant_accordions_without_matching_nearby_paths(): void
     {
         $main = collect(config('global.menu.main'));
-        $prospects = $main->firstWhere('title', 'Centre de prospection');
+        $prospects = $main->firstWhere('title', 'Répertoire');
 
         $descendantHtml = $this->renderMenuAt('/admin/companies/1/edit', [$prospects]);
         $this->assertStringContainsString('menu-item here show menu-accordion', $descendantHtml);

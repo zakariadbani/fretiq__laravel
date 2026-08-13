@@ -13,12 +13,15 @@ use App\Models\SequenceEnrollment;
 use App\Models\SequenceStep;
 use App\Models\SequenceStepSend;
 use App\Models\SenderIdentity;
+use App\Models\Setting;
 use App\Models\SmtpSendReservation;
 use App\Models\User;
 use App\Services\Campaign\CampaignDeliveryFence;
+use App\Services\Discovery\EmailVerificationSettings;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class CampaignDeliveryChannelTest extends TestCase
@@ -65,6 +68,99 @@ class CampaignDeliveryChannelTest extends TestCase
         ])->assertOk();
 
         $this->assertSame('zoho', Campaign::where('name', 'New explicit campaign')->firstOrFail()->delivery_channel);
+    }
+
+    public function test_new_campaign_inherits_the_global_email_verification_policy_once(): void
+    {
+        Setting::set(EmailVerificationSettings::DEFAULT_POLICY_KEY, Campaign::VERIFICATION_ALL_SENDABLE);
+        $data = $this->fixtureData();
+
+        $this->actingAs($this->user)->postJson(route('admin.campaigns.store'), [
+            'name' => 'Campaign policy default',
+            'segment_id' => $data['segment']->id,
+            'template_id' => $data['template']->id,
+            'sender_identity_id' => $data['sender']->id,
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+            'is_active' => false,
+        ])->assertOk();
+
+        $campaign = Campaign::where('name', 'Campaign policy default')->firstOrFail();
+        $this->assertSame(Campaign::VERIFICATION_ALL_SENDABLE, $campaign->email_verification_policy);
+
+        Setting::set(EmailVerificationSettings::DEFAULT_POLICY_KEY, Campaign::VERIFICATION_VERIFIED_ONLY);
+        $this->assertSame(Campaign::VERIFICATION_ALL_SENDABLE, $campaign->fresh()->email_verification_policy);
+    }
+
+    public function test_email_verification_policy_locks_after_first_delivery(): void
+    {
+        $campaign = $this->campaign([
+            'email_verification_policy' => Campaign::VERIFICATION_VERIFIED_ONLY,
+            'delivery_started_at' => now(),
+        ]);
+
+        $this->actingAs($this->user)->putJson(route('admin.campaigns.update', $campaign), [
+            'name' => $campaign->name,
+            'segment_id' => $campaign->segment_id,
+            'template_id' => $campaign->template_id,
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'email_verification_policy' => Campaign::VERIFICATION_ALL_SENDABLE,
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+        ])->assertStatus(422)
+            ->assertJsonValidationErrors('email_verification_policy');
+
+        $this->assertSame(Campaign::VERIFICATION_VERIFIED_ONLY, $campaign->fresh()->email_verification_policy);
+    }
+
+    public function test_campaign_form_exposes_both_email_verification_policies(): void
+    {
+        $this->actingAs($this->user)
+            ->get(route('admin.campaigns.create'))
+            ->assertOk()
+            ->assertSee('verified_only', false)
+            ->assertSee('all_sendable', false);
+    }
+
+    public function test_segment_preview_applies_the_selected_policy_without_external_verification(): void
+    {
+        Http::preventStrayRequests();
+        $segment = Segment::create(['name' => 'Policy preview', 'scope' => 'client']);
+        $company = Company::factory()->create(['relationship' => 'client']);
+        Contact::factory()->create([
+            'company_id' => $company->id,
+            'email' => 'verified-preview@example.test',
+            'email_verification_status' => 'valid',
+            'email_verification_source' => 'import',
+            'email_verification_checked_at' => now(),
+        ]);
+        Contact::factory()->create([
+            'company_id' => $company->id,
+            'email' => 'unverified-preview@example.test',
+        ]);
+        Contact::factory()->create([
+            'company_id' => $company->id,
+            'email' => 'pending-preview@example.test',
+            'email_verification_status' => 'pending',
+            'email_verification_source' => 'hunter',
+        ]);
+
+        $this->actingAs($this->user)
+            ->getJson(route('admin.campaigns.segmentCount', [
+                'id' => $segment->id,
+                'email_verification_policy' => Campaign::VERIFICATION_VERIFIED_ONLY,
+            ]))
+            ->assertOk()
+            ->assertJsonPath('count', 1);
+        $this->actingAs($this->user)
+            ->getJson(route('admin.campaigns.segmentCount', [
+                'id' => $segment->id,
+                'email_verification_policy' => Campaign::VERIFICATION_ALL_SENDABLE,
+            ]))
+            ->assertOk()
+            ->assertJsonPath('count', 3);
+
+        Http::assertNothingSent();
     }
 
     public function test_explicit_smtp_wins_over_the_global_zoho_driver(): void
@@ -619,7 +715,7 @@ class CampaignDeliveryChannelTest extends TestCase
     private function pacedSequenceCampaign(string $channel, $nextSendAt): array
     {
         $data = $this->fixtureData();
-        $sequence = Sequence::create(['name' => 'Sequence ' . uniqid(), 'is_active' => true, 'stop_on_reply' => false]);
+        $sequence = Sequence::create(['name' => 'Sequence ' . uniqid(), 'is_active' => true]);
         $step = SequenceStep::create([
             'sequence_id' => $sequence->id,
             'step_no' => 1,
@@ -651,9 +747,7 @@ class CampaignDeliveryChannelTest extends TestCase
             'company_id' => $company->id,
             'email' => uniqid('contact_') . '@example.test',
             'name' => 'Contact',
-            'status' => 'new',
             'source' => 'manual',
-            'legal_basis' => 'relationship',
             'email_kind' => 'role',
         ]);
         $enrollment = SequenceEnrollment::create([

@@ -171,7 +171,7 @@ final class ZohoOperationsDashboard
                 'checkpoint' => $checkpoint,
                 'reconciliation' => $reconciliation,
                 'manifest' => $manifest,
-                'active' => ! $definition->activationGated,
+                'active' => ! $definition->activationGated && $key !== 'quoted_items',
                 'note' => $definition->activationNote,
                 'sync_state' => $syncState,
                 'busy' => in_array($syncState, ['busy', 'retrying'], true),

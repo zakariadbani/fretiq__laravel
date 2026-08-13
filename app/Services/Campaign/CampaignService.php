@@ -7,6 +7,7 @@ use App\Jobs\SendSmtpReservationJob;
 use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
+use App\Models\Contact;
 use App\Models\EmailTrackingEvent;
 use App\Models\SequenceEnrollment;
 use App\Models\Suppression;
@@ -145,7 +146,7 @@ class CampaignService
                     // but queued work must still fail closed if eligibility or a
                     // suppression changes after the operator confirmed it.
                     $eligibleContactIds = $this->segmentService
-                        ->resolve($campaign->segment)
+                        ->resolve($campaign->segment, $campaign->emailVerificationPolicy())
                         ->pluck('id');
                     $contacts = $frozenContacts($run)
                         ->whereIn('id', $eligibleContactIds)
@@ -155,7 +156,7 @@ class CampaignService
                     // audience stable across later segment drift.
                     $contacts = $frozenContacts($run);
                 } else {
-                    $contacts = $this->segmentService->resolve($campaign->segment);
+                    $contacts = $this->segmentService->resolve($campaign->segment, $campaign->emailVerificationPolicy());
                 }
 
                 if ($contacts->isEmpty() && ! $allowEmptyAudience) {
@@ -174,7 +175,7 @@ class CampaignService
             : $resolvedDriver instanceof ZohoCampaignsDriver;
 
         if ($campaign->delivery_channel === 'smtp'
-            && app(\App\Services\Mail\SenderIdentitySmtpMailer::class)->usesSenderIdentityTransport()
+            && app(\App\Services\Mail\SmtpMailRouter::class)->usesSenderIdentityTransport()
             && ! $campaign->senderIdentity?->hasCompleteSmtpConfiguration()) {
             $messages[] = 'Configuration SMTP incomplète pour l’expéditeur sélectionné.';
         }
@@ -251,7 +252,7 @@ class CampaignService
         }
 
         // ── Resolve eligible contacts via compliance funnel ───────────────────
-        $contacts = $this->segmentService->resolve($campaign->segment);
+        $contacts = $this->segmentService->resolve($campaign->segment, $campaign->emailVerificationPolicy());
 
         if ($contacts->isEmpty()) {
             return ['enrolled' => 0, 'skipped' => 0];
@@ -470,6 +471,17 @@ class CampaignService
 
         $contacts = $preflight['contacts'];
 
+        if ($run->campaign->emailVerificationPolicy() === Campaign::VERIFICATION_ALL_SENDABLE
+            && $contacts->contains(fn (Contact $contact): bool => $contact->email_verification_status === 'pending')) {
+            $run->update(['status' => 'scheduled', 'started_at' => null, 'finished_at' => null]);
+            Log::info('[CampaignService] Send deferred while email verification is pending.', [
+                'run_id' => $run->id,
+                'campaign_id' => $run->campaign_id,
+            ]);
+
+            return;
+        }
+
         // ── Step 3: Insert recipient rows (idempotent via unique key) ─────────
         if ($run->campaign->schedule_type !== 'paced' && $run->source_run_id === null) {
             foreach ($contacts as $contact) {
@@ -546,17 +558,26 @@ class CampaignService
         }
         $contacts = $preflight['contacts'];
 
+        if ($run->campaign->emailVerificationPolicy() === Campaign::VERIFICATION_ALL_SENDABLE
+            && $contacts->contains(fn (Contact $contact): bool => $contact->email_verification_status === 'pending')) {
+            $run->update(['status' => 'scheduled', 'started_at' => null, 'finished_at' => null]);
+            Log::info('[CampaignService] Zoho send deferred after transport claim while email verification is pending.', [
+                'run_id' => $run->id,
+                'campaign_id' => $run->campaign_id,
+            ]);
+
+            return;
+        }
+
         $suppressed = Suppression::query()
             ->pluck('email')
             ->map(fn ($email) => strtolower(trim((string) $email)))
             ->flip();
-        $supportsBounceFeedback = $driver->supportsBounceFeedback($run->campaign);
-
         $contacts = $contacts
-            ->filter(function ($contact) use ($run, $suppressed, $supportsBounceFeedback): bool {
+            ->filter(function ($contact) use ($run, $suppressed): bool {
                 $reason = $this->contactEligibility->sendIneligibilityReason(
                     $contact,
-                    $supportsBounceFeedback,
+                    $run->campaign->emailVerificationPolicy(),
                     isset($suppressed[strtolower(trim((string) $contact->email))]),
                 );
 
@@ -666,8 +687,6 @@ class CampaignService
         // Prefetch the suppression list once instead of one query per recipient
         // (isSuppressed() is a plain normalized-equality lookup — see Suppression::isSuppressed()).
         $suppressed = Suppression::pluck('email')->map(fn ($e) => strtolower(trim($e)))->flip();
-        $supportsBounceFeedback = $driver->supportsBounceFeedback($run->campaign);
-
         // Count real send ATTEMPTS (recipients that pass the suppression re-check
         // and reach the try{} send below) — NOT $recipients->count(), which also
         // includes recipients skipped by the 4a suppression re-check. Using the
@@ -681,7 +700,7 @@ class CampaignService
             // ── 4a. Send-time suppression re-check ───────────────────────────
             $skipReason = $this->contactEligibility->sendIneligibilityReason(
                 $contact,
-                $supportsBounceFeedback,
+                $run->campaign->emailVerificationPolicy(),
                 isset($suppressed[strtolower(trim((string) $contact->email))]),
             );
 

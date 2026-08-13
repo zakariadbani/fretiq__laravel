@@ -62,13 +62,13 @@
                         <tr class="fw-bold text-muted">
                             <th class="min-w-140px">Nom</th>
                             <th class="min-w-120px">Email</th>
-                            <th class="min-w-80px">Statut</th>
+                            <th class="min-w-80px">État</th>
                             <th class="text-end">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="contacts_tbody">
                         @foreach($model->contacts as $contact)
-                            @php $cStatus = config('global.data.contact_statuses.' . $contact->status); @endphp
+                            @php $cStatus = config('global.data.contact_lifecycle_states.' . $contact->lifecycle_state); @endphp
                             <tr id="contact_row_{{ $contact->id }}">
                                 <td>
                                     <a href="{{ route('admin.contacts.view', $contact->id) }}"
@@ -113,9 +113,7 @@
                                                     data-contact-email="{{ $contact->email }}"
                                                     data-contact-position="{{ $contact->position }}"
                                                     data-contact-phone="{{ $contact->phone }}"
-                                                    data-contact-status="{{ $contact->status }}"
                                                     data-contact-source="{{ $contact->source }}"
-                                                    data-contact-legal-basis="{{ $contact->legal_basis }}"
                                                     data-contact-email-kind="{{ $contact->email_kind }}"
                                                     data-update-url="{{ route('admin.contacts.update', $contact->id) }}">
                                                 <i class="bi bi-pencil fs-4"></i>

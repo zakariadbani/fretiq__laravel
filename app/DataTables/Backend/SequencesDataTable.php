@@ -30,14 +30,6 @@ class SequencesDataTable extends BackendDataTable
             'typetoggle' => 'status',
             'raw'        => true,
         ],
-        'stop_on_reply' => [
-            'title'      => 'Stop si réponse',
-            'orderable'  => false,
-            'searchable' => false,
-            'switch'     => true,
-            'typetoggle' => 'status',
-            'raw'        => true,
-        ],
         'created_at' => [
             'title'      => 'Créé le',
             'orderable'  => true,
@@ -64,12 +56,6 @@ class SequencesDataTable extends BackendDataTable
             return '<span class="badge badge-light-primary">' . (int) $row->steps_count . '</span>';
         });
 
-        $this->datatables->editColumn('stop_on_reply', function (Sequence $row) {
-            if ($row->stop_on_reply) {
-                return '<span class="badge badge-light-success">Oui</span>';
-            }
-            return '<span class="badge badge-light-secondary">Non</span>';
-        });
     }
 
     protected function getEntityName(): string

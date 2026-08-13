@@ -298,7 +298,20 @@ class ProspectCriteria extends Model
     public function rules(): array
     {
         return [
-            'name' => 'required|string|max:100',
+            'name' => [
+                'required',
+                'string',
+                'max:100',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    $query = static::query()->whereRaw('LOWER(name) = ?', [mb_strtolower(trim((string) $value))]);
+                    if ($this->exists || $this->id !== null) {
+                        $query->where($this->getKeyName(), '!=', $this->id);
+                    }
+                    if ($query->exists()) {
+                        $fail('Ce nom de critère existe déjà.');
+                    }
+                },
+            ],
             'ai_target' => 'nullable|string|max:2000',
             'ai_exclude' => 'nullable|string|max:2000',
             // Discovery engines are selected globally in Settings. Criteria rows

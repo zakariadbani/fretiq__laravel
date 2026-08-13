@@ -15,7 +15,7 @@ Route::controller(CampaignController::class)->prefix('admin')->name('admin.')->g
     Route::get('/campaigns/{id}/dispatch-preview', 'dispatchPreview')->name('campaigns.dispatchPreview');
     Route::post('/campaigns/{id}/schedule', 'schedule')->name('campaigns.schedule');
     Route::post('/campaigns/{id}/send', 'sendNow')->name('campaigns.sendNow');
-    Route::post('/campaigns/{id}/test-send', 'testSend')->name('campaigns.testSend');
+    Route::post('/campaigns/{id}/test-send', 'testSend')->middleware('throttle:10,1')->name('campaigns.testSend');
     Route::put('/campaigns/{id}/sequence-auto-enroll', 'sequenceAutoEnroll')->name('campaigns.sequenceAutoEnroll');
     Route::post('/campaigns/{id}/sync-zoho-list', 'syncZohoList')->name('campaigns.syncZohoList');
     Route::post('/campaigns/{id}/sync-stats', 'syncStats')->name('campaigns.syncStats');

@@ -29,7 +29,7 @@ return [
     */
     'cold_send_enabled' => env('PROSPECTING_COLD_SEND_ENABLED', false),
 
-    'email_verification_ttl_days' => 90,
+    'email_verification_enabled_default' => env('EMAIL_VERIFICATION_ENABLED', true),
 
     'bounce' => [
         'soft_limit' => 2,
@@ -57,7 +57,6 @@ return [
     ],
 
     'smtp' => [
-        'mode' => env('PROSPECTING_SMTP_MODE', 'mailpit'),
         'quota_timezone' => env('PROSPECTING_SMTP_QUOTA_TIMEZONE', 'Europe/Paris'),
         'business_start' => env('PROSPECTING_SMTP_BUSINESS_START', '09:00'),
         'business_end' => env('PROSPECTING_SMTP_BUSINESS_END', '18:00'),

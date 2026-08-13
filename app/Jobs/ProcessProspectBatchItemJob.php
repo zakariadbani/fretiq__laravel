@@ -6,6 +6,7 @@ use App\Models\ProspectBatch;
 use App\Models\ProspectBatchItem;
 use App\Services\Prospecting\ProspectBatchService;
 use App\Services\Prospecting\ProspectItemProcessor;
+use App\Services\Providers\ProviderRequestException;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -57,13 +58,16 @@ final class ProcessProspectBatchItemJob implements ShouldBeUnique, ShouldQueue
 
         ProspectBatch::query()
             ->whereKey($item->prospect_batch_id)
-            ->where('status', 'queued')
+            ->whereIn('status', ['queued', 'review', 'failed'])
             ->update([
                 'status' => 'running',
                 'started_at' => now(),
+                'finished_at' => null,
+                'error' => null,
                 'updated_at' => now(),
             ]);
 
+        $released = false;
         try {
             $processor->process($item);
             $item->refresh();
@@ -76,8 +80,16 @@ final class ProcessProspectBatchItemJob implements ShouldBeUnique, ShouldQueue
                     }
                 }
             }
+        } catch (ProviderRequestException $exception) {
+            if (! $exception->retryable) {
+                throw $exception;
+            }
+            $released = true;
+            $this->release(min(86400, max(1, (int) ($exception->retryAfterSeconds ?? 30) + ($this->itemId % 11))));
         } finally {
-            $this->dispatchFinalizer((int) $item->prospect_batch_id);
+            if (! $released) {
+                $this->dispatchFinalizer((int) $item->prospect_batch_id);
+            }
         }
     }
 
@@ -93,11 +105,11 @@ final class ProcessProspectBatchItemJob implements ShouldBeUnique, ShouldQueue
         DB::transaction(function () use ($item): void {
             ProspectBatchItem::query()
                 ->whereKey($item->getKey())
-                ->where('status', 'processing')
+                ->whereIn('status', ['pending', 'processing'])
                 ->update([
-                    'status' => 'review',
-                    'domain_reason' => 'provider_outcome_uncertain',
-                    'error_code' => 'provider_outcome_uncertain',
+                    'status' => $item->status === 'pending' ? 'failed' : 'review',
+                    'domain_reason' => $item->status === 'pending' ? $item->domain_reason : 'provider_outcome_uncertain',
+                    'error_code' => $item->status === 'pending' ? ($item->error_code ?: 'provider_retry_exhausted') : 'provider_outcome_uncertain',
                     'error_message' => null,
                     'processed_at' => now(),
                     'updated_at' => now(),

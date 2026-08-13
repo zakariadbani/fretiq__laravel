@@ -6,13 +6,14 @@ use App\Mail\CampaignMailable;
 use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
-use Illuminate\Support\Facades\Mail;
+use App\Services\Mail\SmtpMailRouter;
 
 /**
  * LocalCampaignsDriver — development/test implementation of CampaignsClient.
  *
- * Sends via Laravel Mail, which in dev routes to Mailpit and in tests respects
- * Mail::fake(). Never uses Mail::raw() — a real CampaignMailable is always used.
+ * Sends through the application SMTP router, which selects the configured transport and
+ * respects Laravel mail fakes in tests. Never uses Mail::raw() — a real CampaignMailable
+ * is always used.
  *
  * Retry identity is stable per CampaignRecipient: both Message-ID and the local
  * provider reference derive from its database ID. SMTP/provider deduplication is
@@ -23,6 +24,7 @@ use Illuminate\Support\Facades\Mail;
  */
 class LocalCampaignsDriver implements CampaignsClient
 {
+    public function __construct(private readonly SmtpMailRouter $mailer) {}
     /**
      * Send the campaign email to one recipient and return a local message ID.
      *
@@ -63,7 +65,7 @@ class LocalCampaignsDriver implements CampaignsClient
             messageId:      $messageId,
         );
 
-        Mail::to($contact->email)->send($mailable);
+        $this->mailer->send($campaign->senderIdentity, $contact->email, $mailable);
 
         // Stable retry identity. Provider dedupe remains best-effort.
         return 'local-recipient-' . $recipient->id;
