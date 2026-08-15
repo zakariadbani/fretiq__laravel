@@ -5,9 +5,11 @@ namespace App\Services\Prospecting;
 use App\Models\Company;
 use App\Models\ProspectBatchItem;
 use App\Models\ProviderCall;
+use App\Models\Setting;
 use App\Services\Discovery\CanonicalDomain;
 use App\Services\Discovery\DiscoveredContactImportService;
 use App\Services\Discovery\DomainCanonicalizer;
+use App\Services\Scoring\LeadScoringService;
 use App\Services\Providers\Hunter\HunterClient;
 use App\Services\Providers\ProviderCallContext;
 use App\Services\Providers\ProviderCallLedger;
@@ -36,6 +38,7 @@ final class ProspectItemProcessor
         private readonly DiscoveredContactImportService $contacts,
         private readonly HunterVerificationStatusNormalizer $verification,
         private readonly HunterCompanySizeNormalizer $companySizes,
+        private readonly LeadScoringService $scoring,
     ) {}
 
     public function process(ProspectBatchItem $item): void
@@ -73,6 +76,7 @@ final class ProspectItemProcessor
             }
             $item->refresh()->loadMissing('batch', 'company');
 
+            $this->scoreCompanyForItem($item, $domain);
             $this->enrichCompany($item, $domain);
             $this->searchDomainContacts($item, $domain);
             $this->findNamedContact($item, $domain);
@@ -424,6 +428,57 @@ final class ProspectItemProcessor
             },
             consumedUnits: $data === [] ? 0 : $this->hunterUnits('company_enrichment'),
         );
+    }
+
+    private function scoreCompanyForItem(ProspectBatchItem $item, CanonicalDomain $domain): void
+    {
+        if (! Setting::get('decouverte.auto_scoring', true)) {
+            return;
+        }
+
+        $item->refresh()->loadMissing('batch', 'company');
+        if ($item->company_id === null || $item->batch?->prospect_criteria_id === null) {
+            return;
+        }
+        if ($item->batch === null || $item->batch->criteria === null) {
+            return;
+        }
+        if (data_get($this->itemMetadata($item), 'processing.company_scoring_done') === true) {
+            return;
+        }
+
+        $result = $this->scoring->score([
+            'domain' => $domain->host,
+            'url' => "https://{$domain->host}",
+            'title' => (string) $item->company_name,
+        ], $item->batch->criteria, 20);
+        $score = (int) ($result['score'] ?? 0);
+        $explanation = (string) ($result['explanation'] ?? '');
+
+        DB::transaction(function () use ($item, $score, $explanation): void {
+            $locked = ProspectBatchItem::query()->lockForUpdate()->findOrFail($item->getKey());
+            if ($locked->status !== 'processing') {
+                return;
+            }
+            if (data_get($this->itemMetadata($locked), 'processing.company_scoring_done') === true) {
+                return;
+            }
+
+            $company = Company::withRejected()
+                ->lockForUpdate()
+                ->find($locked->company_id);
+            if ($company === null) {
+                return;
+            }
+            $company->forceFill([
+                'ai_score' => $score,
+                'ai_explanation' => $explanation,
+            ])->save();
+
+            $metadata = $this->itemMetadata($locked);
+            data_set($metadata, 'processing.company_scoring_done', true);
+            $locked->forceFill(['source_metadata' => $metadata])->save();
+        });
     }
 
     private function searchDomainContacts(ProspectBatchItem $item, CanonicalDomain $domain): void

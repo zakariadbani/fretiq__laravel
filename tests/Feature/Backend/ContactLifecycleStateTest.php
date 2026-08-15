@@ -94,6 +94,20 @@ class ContactLifecycleStateTest extends TestCase
         $this->assertSame(['blocked', 'verified', 'needs_verification'], $ordered);
     }
 
+    public function test_relation_query_projects_lifecycle_state(): void
+    {
+        $company = Company::factory()->create(['relationship' => 'client']);
+        $contact = $this->contact(['company_id' => $company->id]);
+
+        $rows = app(ContactLifecycleService::class)
+            ->select($company->contacts())
+            ->get()
+            ->keyBy('id');
+
+        $this->assertCount(1, $rows);
+        $this->assertSame('needs_verification', $rows[$contact->id]->lifecycle_state);
+    }
+
     private function contact(array $attributes = []): Contact
     {
         return Contact::factory()->create(array_merge([

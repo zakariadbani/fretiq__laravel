@@ -6,6 +6,7 @@ namespace App\Services\Prospecting;
 
 use App\Models\Contact;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -19,7 +20,7 @@ final class ContactLifecycleService
         'contacted', 'verified', 'verification_pending', 'needs_verification',
     ];
 
-    public function select(Builder $query, string $alias = 'lifecycle_state'): Builder
+    public function select(Builder|Relation $query, string $alias = 'lifecycle_state'): Builder|Relation
     {
         return $query->addSelect('contacts.*')
             ->selectRaw($this->caseSql('contacts') . " as {$alias}");

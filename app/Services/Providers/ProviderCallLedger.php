@@ -7,6 +7,7 @@ use Carbon\CarbonInterface;
 use Closure;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 final class ProviderCallLedger
@@ -322,10 +323,11 @@ final class ProviderCallLedger
 
     private function recordFailure(int $callId, ProviderRequestException $exception): ProviderRequestException
     {
-        return DB::transaction(function () use ($callId, $exception): ProviderRequestException {
+        /** @var array{0: ProviderRequestException, 1: ?ProviderCall} $failure */
+        $failure = DB::transaction(function () use ($callId, $exception): array {
             $call = ProviderCall::query()->whereKey($callId)->lockForUpdate()->first();
             if ($call === null || $call->status !== 'running') {
-                return $exception;
+                return [$exception, null];
             }
 
             $retryAfter = $exception->retryAfterSeconds
@@ -343,13 +345,35 @@ final class ProviderCallLedger
                 'finished_at' => $retryable ? null : now(),
             ])->save();
 
-            return new ProviderRequestException(
-                $exception->safeCode,
-                $retryable,
-                $exception->httpStatus,
-                $retryable ? $retryAfter : null,
-            );
+            return [
+                new ProviderRequestException(
+                    $exception->safeCode,
+                    $retryable,
+                    $exception->httpStatus,
+                    $retryable ? $retryAfter : null,
+                ),
+                $call->fresh(),
+            ];
         });
+
+        [$effectiveException, $failedCall] = $failure;
+        if ($failedCall !== null) {
+            Log::warning('provider_call_failed', [
+                'provider_call_id' => $failedCall->id,
+                'provider' => $failedCall->provider,
+                'operation' => $failedCall->operation,
+                'prospect_batch_id' => $failedCall->prospect_batch_id,
+                'prospect_batch_item_id' => $failedCall->prospect_batch_item_id,
+                'status' => $failedCall->status,
+                'http_status' => $failedCall->http_status,
+                'error_code' => $effectiveException->safeCode,
+                'retryable' => $effectiveException->retryable,
+                'retry_after_seconds' => $effectiveException->retryAfterSeconds,
+                'attempt_count' => $failedCall->attempt_count,
+            ]);
+        }
+
+        return $effectiveException;
     }
 
     /** @param array<string, mixed> $responseMetadata @param array<string, mixed> $callerMetadata @return array<string, mixed> */

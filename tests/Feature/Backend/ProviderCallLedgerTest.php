@@ -12,6 +12,7 @@ use App\Services\Providers\ProviderResponse;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use PDOException;
 use ReflectionMethod;
 use Tests\TestCase;
@@ -61,6 +62,54 @@ class ProviderCallLedgerTest extends TestCase
         $this->assertLessThanOrEqual(91, $call->retry_at->diffInSeconds(now(), true));
         $this->assertSame('rate_limit', $call->metadata['error_code']);
         $this->assertSame(0.0, (float) $call->consumed_units);
+    }
+
+    public function test_provider_failure_logs_safe_structured_diagnostics_after_the_ledger_persists_it(): void
+    {
+        $batch = ProspectBatch::factory()->create();
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create();
+        $idempotencyKey = hash('sha256', 'safe-structured-provider-failure-log');
+        $context = new ProviderCallContext($idempotencyKey, 1, $batch->id, $item->id);
+        Log::spy();
+
+        try {
+            app(ProviderCallLedger::class)->execute($context, 'hunter', 'company_enrichment', function (): never {
+                throw ProviderRequestException::fromHttp(429, 'usage_limit', provider: 'hunter');
+            });
+            $this->fail('Expected terminal provider failure.');
+        } catch (ProviderRequestException $exception) {
+            $this->assertSame('usage_limit', $exception->safeCode);
+        }
+
+        $call = ProviderCall::query()->sole();
+        Log::shouldHaveReceived('warning')->once()->with('provider_call_failed', \Mockery::on(function (array $context) use ($call, $batch, $item, $idempotencyKey): bool {
+            $this->assertSame($call->id, $context['provider_call_id']);
+            $this->assertSame('hunter', $context['provider']);
+            $this->assertSame('company_enrichment', $context['operation']);
+            $this->assertSame($batch->id, $context['prospect_batch_id']);
+            $this->assertSame($item->id, $context['prospect_batch_item_id']);
+            $this->assertSame('failed', $context['status']);
+            $this->assertSame(429, $context['http_status']);
+            $this->assertSame('usage_limit', $context['error_code']);
+            $this->assertFalse($context['retryable']);
+            $this->assertNull($context['retry_after_seconds']);
+            $this->assertSame(1, $context['attempt_count']);
+            $this->assertSame([
+                'provider_call_id',
+                'provider',
+                'operation',
+                'prospect_batch_id',
+                'prospect_batch_item_id',
+                'status',
+                'http_status',
+                'error_code',
+                'retryable',
+                'retry_after_seconds',
+                'attempt_count',
+            ], array_keys($context));
+
+            return true;
+        }));
     }
 
     public function test_terminal_provider_errors_and_retryable_rate_limits_are_distinguished(): void

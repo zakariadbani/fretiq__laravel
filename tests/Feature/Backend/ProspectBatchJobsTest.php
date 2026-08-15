@@ -6,7 +6,9 @@ use App\Jobs\FinalizeProspectBatchJob;
 use App\Jobs\ProcessProspectBatchItemJob;
 use App\Models\ProspectBatch;
 use App\Models\ProspectBatchItem;
+use App\Models\Company;
 use App\Models\ProspectCriteria;
+use App\Models\Setting;
 use App\Models\User;
 use App\Services\Prospecting\ProspectBatchService;
 use App\Services\Prospecting\ProspectItemProcessor;
@@ -146,6 +148,44 @@ class ProspectBatchJobsTest extends TestCase
         $this->assertSame('promoted', $item->status);
         $this->assertNotNull($item->company_id);
         $this->assertDatabaseHas('companies', ['id' => $item->company_id, 'domain' => 'geodis.com']);
+    }
+
+    public function test_item_worker_scores_and_links_criterion_bound_company_with_expected_score(): void
+    {
+        config([
+            'services.hunter.driver' => 'local',
+            'services.serpapi.driver' => 'local',
+            'services.scoring.driver' => 'heuristic',
+            'services.gemini.api_key' => null,
+        ]);
+        Setting::set('decouverte.auto_scoring', true);
+
+        $criteria = $this->criteria();
+        $batch = ProspectBatch::factory()->create([
+            'status' => 'queued',
+            'prospect_criteria_id' => $criteria->id,
+        ]);
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create([
+            'company_name' => 'Geodis',
+            'normalized_name' => 'geodis',
+            'country' => 'FR',
+            'status' => 'pending',
+            'provided_domain' => 'geodis.com',
+        ]);
+
+        (new ProcessProspectBatchItemJob($item->id))->handle(
+            app(ProspectItemProcessor::class),
+            app(ProspectBatchService::class),
+        );
+
+        $item->refresh();
+        $this->assertSame('promoted', $item->status);
+        $this->assertNotNull($item->company_id);
+
+        $company = Company::query()->findOrFail((int) $item->company_id);
+        $this->assertSame(40, $company->ai_score);
+        $this->assertIsString($company->ai_explanation);
+        $this->assertNotEmpty(trim((string) $company->ai_explanation));
     }
 
     public function test_confirmation_only_queues_finalizer_and_never_calls_hunter_in_request(): void
