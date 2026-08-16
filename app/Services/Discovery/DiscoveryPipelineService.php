@@ -195,12 +195,7 @@ class DiscoveryPipelineService
 
         // Read scoring/enrichment settings once per run (avoids repeated DB/cache reads).
         $autoScoring = (bool) Setting::get('decouverte.auto_scoring', true);
-        // Product decision: enrichment is opted into PER CRITERIA. The global toggle is
-        // only the « Hérité » fallback, and its code-level default is false so a missing
-        // settings row can never silently turn Hunter on for every criteria.
-        $autoEnrich = $criteria->auto_enrich ?? (bool) Setting::get('decouverte.auto_enrich', false);
-        $minScore = (int) ($criteria->min_score_enrich ?? Setting::get('decouverte.min_score_enrich', 50));
-
+        $enrichmentRules = AutomaticEnrichmentDecision::resolveRules($criteria);
         // Resume cursor: $offset = number of candidates already processed (scanned, not just kept).
         $offset = ($run !== null) ? (int) $run->consumed : 0;
 
@@ -394,28 +389,27 @@ class DiscoveryPipelineService
                     $excludeFlag = $scoreResult['exclude'] ?? false;
                 }
 
-                $excluded = $autoScoring && $excludeFlag;
+                $decision = AutomaticEnrichmentDecision::fromResolvedRules(
+                    $enrichmentRules,
+                    $autoScoring,
+                    $score,
+                    $excludeFlag,
+                    $existingForDomain?->enrichment_status,
+                );
+                $excluded = $decision->excluded;
 
                 // ── Step 2: Enrichment decision ──────────────────────────────
                 // Enrich when: not excluded, auto_enrich is on, AND either scoring is off OR
                 // score passes the gate, AND the per-attempt contact budget has not been exhausted.
                 // Once contactBudget is spent, companies continue being discovered but Hunter is skipped.
                 $budgetExhausted = $contactSpent >= $contactBudget;
-                $alreadyEmpty = $existingForDomain?->enrichment_status === Company::ENRICHMENT_HUNTER_EMPTY;
-                $passesEnrichmentGate = ! $excluded
-                    && ! $alreadyEmpty
-                    && $autoEnrich
-                    && (! $autoScoring || $score >= $minScore);
+                $passesEnrichmentGate = $decision->allowsEnrichment();
                 $shouldEnrich = $passesEnrichmentGate
                     && ! $budgetExhausted
                     && ! $providerCircuitOpen;
 
                 $enrichmentStatus = $this->resolveEnrichmentStatus(
-                    $excluded,
-                    $autoEnrich,
-                    $autoScoring,
-                    $score,
-                    $minScore,
+                    $decision,
                     $budgetExhausted,
                     false,
                     null,
@@ -524,11 +518,7 @@ class DiscoveryPipelineService
                             'raw' => [],
                         ];
                         $directStatus = $this->resolveEnrichmentStatus(
-                            $excluded,
-                            $autoEnrich,
-                            $autoScoring,
-                            $score,
-                            $minScore,
+                            $decision,
                             false,
                             true,
                             $enrichment,
@@ -559,7 +549,7 @@ class DiscoveryPipelineService
                 // ── Step 5: Determine low-score flag ────────────────────────
                 // A candidate is "low score" when not excluded, auto_enrich is on, scoring is on,
                 // and the score is below the gate.
-                $isLowScore = ! $excluded && $autoEnrich && $autoScoring && ($score < $minScore);
+                $isLowScore = $decision->isLowScore();
 
                 // ── Step 6: CAS debit + incremental stats (AFTER upserts) ───
                 // Rejects do NOT increment companies_count/new_companies_count (they'd
@@ -873,11 +863,7 @@ class DiscoveryPipelineService
      * exact negation of $shouldEnrich), so branches 5–7 only ever run when
      * $hunterCalled is true.
      *
-     * @param  bool  $excluded  Scorer flagged the candidate as a competitor.
-     * @param  bool  $autoEnrich  Resolved per-criteria enrichment toggle.
-     * @param  bool  $autoScoring  Whether scoring ran.
-     * @param  int|null  $score  AI score (null when scoring disabled).
-     * @param  int  $minScore  Enrich threshold.
+     * @param  AutomaticEnrichmentDecision  $decision  Shared criterion/global gate result.
      * @param  bool  $budgetExhausted  Per-run contact budget was already spent.
      * @param  bool  $hunterCalled  Whether Hunter was actually invoked.
      * @param  array|null  $enrichment  Hunter payload (null = provider failure).
@@ -886,26 +872,14 @@ class DiscoveryPipelineService
      *                     while an eligible candidate is awaiting its claim.
      */
     private function resolveEnrichmentStatus(
-        bool $excluded,
-        bool $autoEnrich,
-        bool $autoScoring,
-        ?int $score,
-        int $minScore,
+        AutomaticEnrichmentDecision $decision,
         bool $budgetExhausted,
         bool $hunterCalled,
         ?array $enrichment,
         bool $providerUnavailable = false,
     ): ?string {
-        if ($excluded) {
-            return Company::ENRICHMENT_SKIPPED_EXCLUDED;
-        }
-
-        if (! $autoEnrich) {
-            return Company::ENRICHMENT_SKIPPED_ENRICH_OFF;
-        }
-
-        if ($autoScoring && $score < $minScore) {
-            return Company::ENRICHMENT_SKIPPED_LOW_SCORE;
+        if ($decision->skipStatus !== null) {
+            return $decision->skipStatus;
         }
 
         if ($providerUnavailable) {

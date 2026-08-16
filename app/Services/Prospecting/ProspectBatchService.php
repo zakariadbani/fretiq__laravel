@@ -393,6 +393,73 @@ final class ProspectBatchService
         });
     }
 
+    /**
+     * Reopen a discover batch stranded by FinalizeProspectBatchJob::failed()
+     * (open cursor, no more scheduled attempts) so a fresh finalizer can
+     * finish collecting it. Deliberately bypasses confirmAndDispatch() —
+     * that throws prospect_batch_already_confirmed once cost_confirmed_at is
+     * set, which every batch reaching this trap already has.
+     */
+    public function resumeDiscoverBatch(ProspectBatch $batch, User $actor): ProspectBatch
+    {
+        if (! $actor->can('run prospect resolution')) {
+            throw new AuthorizationException('prospect_batch_run_forbidden');
+        }
+
+        return DB::transaction(function () use ($batch): ProspectBatch {
+            $persisted = ProspectBatch::query()->lockForUpdate()->findOrFail($batch->getKey());
+
+            if ($persisted->source_type !== 'discover'
+                || $persisted->cost_confirmed_at === null
+                || $persisted->prospect_criteria_id === null) {
+                throw new LogicException('prospect_discover_not_resumable');
+            }
+
+            $cursor = is_array($persisted->source_cursor) ? $persisted->source_cursor : [];
+            if (($cursor['exhausted'] ?? false) === true) {
+                throw new LogicException('prospect_discover_not_resumable');
+            }
+
+            $criteria = ProspectCriteria::query()->lockForUpdate()->findOrFail($persisted->prospect_criteria_id);
+            $source = is_array($persisted->source_options) ? $persisted->source_options : [];
+            $promptHash = (string) ($source['prompt_hash'] ?? '');
+            $offset = filter_var(
+                $cursor['offset'] ?? null,
+                FILTER_VALIDATE_INT,
+                ['options' => ['min_range' => 0, 'max_range' => 10_000]],
+            );
+
+            // A fresh Discover confirm on this same criteria resets
+            // hunter_discover_offset/exhausted and overwrites the prompt
+            // hash (see confirmAndDispatch() above). If that happened after
+            // this batch stranded, its cursor is orphaned — refuse
+            // explicitly here rather than letting claimDiscoverPage() throw
+            // prospect_discover_cursor_stale deep inside the finalizer.
+            $cursorMatches = $offset !== false
+                && preg_match('/^[a-f0-9]{64}$/', $promptHash) === 1
+                && hash_equals($promptHash, (string) $criteria->hunter_discover_prompt_hash)
+                && hash_equals($promptHash, (string) ($cursor['prompt_hash'] ?? ''))
+                && (int) $criteria->hunter_discover_offset === $offset
+                && (bool) $criteria->hunter_discover_exhausted === false;
+
+            if (! $cursorMatches) {
+                throw new LogicException('prospect_discover_resume_criteria_stale');
+            }
+
+            $persisted->forceFill([
+                'status' => 'queued',
+                'error' => null,
+            ])->save();
+
+            $batchId = (int) $persisted->getKey();
+            DB::afterCommit(static function () use ($batchId): void {
+                FinalizeProspectBatchJob::dispatch($batchId);
+            });
+
+            return $persisted;
+        });
+    }
+
     public function collectDiscoverPage(ProspectBatch $batch): int
     {
         $lock = Cache::lock('prospect-discover-page:'.$batch->getKey(), 150);
@@ -609,6 +676,104 @@ final class ProspectBatchService
             $persisted = ProspectBatch::query()->lockForUpdate()->findOrFail($batch->getKey());
             $this->recomputeCounters($persisted);
         });
+    }
+
+    /**
+     * Single home for "must this batch's criterion be active before an item
+     * can be retried" — shared by ProspectReviewController::decideItem()
+     * (single item) and the retry-drain preview/job (bulk) so the rule and
+     * its French message can't drift between the two paths. Null means
+     * retry is not blocked by the criterion; $batch->criteria must already
+     * be eager-loaded by the caller (no query here).
+     */
+    public function retryBlockedByCriterion(?ProspectBatch $batch): ?string
+    {
+        if ($batch === null || $batch->prospect_criteria_id === null || ($batch->criteria?->is_active ?? false)) {
+            return null;
+        }
+
+        return $batch->criteria === null
+            ? 'Le critère lié à ce lot n’est plus disponible. Sélectionnez un critère actif avant de relancer cette entreprise.'
+            : 'Le critère « '.$batch->criteria->name.' » est inactif. Réactivez-le avant de relancer cette entreprise.';
+    }
+
+    /**
+     * Retry-drain preflight for a single item: the 3 skip reasons that don't
+     * require touching the provider-call ledger. Budget exhaustion is
+     * deliberately NOT decided here — authorizing a retry is inherently a
+     * "try it under lock and see" operation
+     * (ProviderCallLedger::authorizeKnownFailureRetryForItem), so the drain
+     * job attempts it directly and catches the exhausted exception, while
+     * the read-only preview asks ProviderCallLedger::retryHeadroomForItem()
+     * instead of duplicating the cap logic here.
+     *
+     * @return ?string one of 'provider_outcome_uncertain'|'criterion_inactive'|'retry_window_open', or null when nothing here blocks a retry
+     */
+    public function preflightRetrySkipReason(ProspectBatchItem $item): ?string
+    {
+        if ($item->error_code === 'provider_outcome_uncertain') {
+            // Requires a per-item confirm_provider_reissue checkbox
+            // (decideItem()'s other retry authorization path) — never swept
+            // into a blind bulk action.
+            return 'provider_outcome_uncertain';
+        }
+        if ($this->retryBlockedByCriterion($item->batch) !== null) {
+            return 'criterion_inactive';
+        }
+        if ($this->ledger->hasOpenRetryWindow((int) $item->getKey())) {
+            return 'retry_window_open';
+        }
+
+        return null;
+    }
+
+    /**
+     * Dry-run tally for the retry-drain confirm dialog: how many of the
+     * given (already filter-scoped, already capped) failed items would
+     * actually be retried right now, and why the rest would be skipped.
+     * Never mutates anything — the drain job re-checks every item under
+     * lock before touching it, since this count can go stale between
+     * preview and confirm (another admin action, a cleared rate limit, …).
+     *
+     * @param  iterable<int, ProspectBatchItem>  $items  each with batch.criteria eager-loaded
+     * @return array{total_matching:int,considered:int,eligible_count:int,skipped:array<string,int>,estimated_units:float,min_attempt_headroom:?int}
+     */
+    public function summarizeRetryDrain(iterable $items, int $totalMatching): array
+    {
+        $skipped = ['retry_window_open' => 0, 'budget_exhausted' => 0, 'provider_outcome_uncertain' => 0, 'criterion_inactive' => 0];
+        $eligible = 0;
+        $minHeadroom = null;
+        $considered = 0;
+
+        foreach ($items as $item) {
+            $considered++;
+            $reason = $this->preflightRetrySkipReason($item);
+
+            if ($reason === null) {
+                $headroom = $this->ledger->retryHeadroomForItem((int) $item->getKey(), (string) $item->error_code);
+                if ($headroom === 0) {
+                    $reason = 'budget_exhausted';
+                } else {
+                    $eligible++;
+                    if ($headroom !== null) {
+                        $minHeadroom = $minHeadroom === null ? $headroom : min($minHeadroom, $headroom);
+                    }
+                }
+            }
+
+            if ($reason !== null) {
+                $skipped[$reason]++;
+            }
+        }
+
+        return [
+            'total_matching' => $totalMatching,
+            'considered' => $considered,
+            'eligible_count' => $eligible,
+            'skipped' => $skipped,
+            'estimated_units' => round($eligible * (float) config('prospecting.provider_units.hunter.domain_search', 1), 2),
+            'min_attempt_headroom' => $minHeadroom,
+        ];
     }
 
     /** @return array<string, mixed>|null */
@@ -879,11 +1044,17 @@ final class ProspectBatchService
     /** @return array<string, mixed> */
     private function discoverEstimate(int $limit): array
     {
+        $attempts = min(20, $limit);
+        $hunterUnits = round($attempts * (
+            (float) config('prospecting.provider_units.hunter.domain_search', 1)
+            + (float) config('prospecting.provider_units.hunter.company_enrichment', 0.2)
+        ), 2);
+
         return [
             'items' => $limit,
             'free' => ['prompt' => 1, 'staging_max' => $limit],
-            'calls' => ['hunter_discover' => 1],
-            'reserved_units' => ['hunter' => 0.0, 'serpapi' => 0.0],
+            'calls' => ['hunter_discover' => 1, 'hunter_domain_search' => $attempts, 'hunter_company_enrichment' => $attempts],
+            'reserved_units' => ['hunter' => $hunterUnits, 'serpapi' => 0.0],
             'page_limit' => $limit,
         ];
     }

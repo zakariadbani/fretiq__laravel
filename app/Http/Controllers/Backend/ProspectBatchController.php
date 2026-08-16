@@ -8,7 +8,9 @@ use App\Http\Controllers\Traits\Datatableable;
 use App\Models\ProspectBatch;
 use App\Services\Prospecting\CompanyListParser;
 use App\Services\Prospecting\ProspectBatchService;
+use App\Services\Prospecting\ProspectReviewPresenter;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -27,7 +29,7 @@ class ProspectBatchController extends BackendController
         $this->middleware('permission:create prospect_batches')->only(['create', 'store']);
         $this->middleware('permission:edit prospect_batches')->only(['edit', 'update']);
         $this->middleware('permission:delete prospect_batches')->only(['delete']);
-        $this->middleware('permission:run prospect resolution')->only(['estimate', 'confirm']);
+        $this->middleware('permission:run prospect resolution')->only(['estimate', 'confirm', 'resumeDiscovery']);
 
         $this->listTitle = 'Lots de prospection';
         $this->title = 'name';
@@ -116,7 +118,7 @@ class ProspectBatchController extends BackendController
             ->with('success', $batch->total_items.' entreprise(s) ajoutée(s).');
     }
 
-    public function view($id)
+    public function view(ProspectReviewPresenter $presenter, $id)
     {
         $batch = ProspectBatch::query()->with('creator')->findOrFail((int) $id);
         $this->authorizeBatch($batch);
@@ -125,7 +127,39 @@ class ProspectBatchController extends BackendController
             'model' => $batch,
             'items' => $batch->items()->withCount('importedContacts')->orderBy('row_number')->paginate(25),
             'viewConfig' => \App\Crud\ViewConfigs\ProspectBatchViewConfig::make($batch),
+            'presenter' => $presenter,
+            'outcomeBreakdown' => $this->enrichmentOutcomeBreakdown($batch),
         ]);
+    }
+
+    /**
+     * Why do this batch's promoted companies have no contacts? Scoped to
+     * THIS batch's items (via company_id), not the criterion — grouping by
+     * criteria_id would also pull in companies discovered by the separate
+     * SerpAPI pipeline. One grouped query; never run per row.
+     *
+     * @return \Illuminate\Support\Collection<int, array{label:string,color:string,total:int}>
+     */
+    private function enrichmentOutcomeBreakdown(ProspectBatch $batch): \Illuminate\Support\Collection
+    {
+        return DB::table('prospect_batch_items')
+            ->join('companies', 'companies.id', '=', 'prospect_batch_items.company_id')
+            ->where('prospect_batch_items.prospect_batch_id', $batch->getKey())
+            ->selectRaw('companies.enrichment_status as status, count(*) as total')
+            ->groupBy('companies.enrichment_status')
+            ->orderByDesc('total')
+            ->get()
+            ->map(static function (object $row): array {
+                $config = $row->status !== null
+                    ? config('global.data.company_enrichment_statuses.'.$row->status)
+                    : config('global.data.company_enrichment_status_null');
+
+                return [
+                    'label' => $config['label'] ?? ($row->status ?? 'Non tenté'),
+                    'color' => $config['color'] ?? 'secondary',
+                    'total' => (int) $row->total,
+                ];
+            });
     }
 
     public function edit($id)
@@ -217,6 +251,32 @@ class ProspectBatchController extends BackendController
         ]);
     }
 
+    public function resumeDiscovery(Request $request, ProspectBatchService $batches, $id)
+    {
+        $batch = ProspectBatch::query()->findOrFail((int) $id);
+        $this->authorizeBatch($batch);
+
+        try {
+            $batch = $batches->resumeDiscoverBatch($batch, $request->user());
+        } catch (LogicException $exception) {
+            $code = preg_match('/^[a-z][a-z0-9_]{0,63}$/', $exception->getMessage()) === 1
+                ? $exception->getMessage()
+                : 'batch_resume_failed';
+
+            return response()->json(['message' => 'error', 'code' => $code], in_array($code, [
+                'prospect_discover_not_resumable',
+                'prospect_discover_resume_criteria_stale',
+            ], true) ? 409 : 422);
+        }
+
+        return response()->json([
+            'message' => 'success',
+            'status' => $batch->status,
+            'status_url' => route('admin.prospect_batches.status', $batch),
+            'view_url' => route('admin.prospect_batches.view', $batch),
+        ]);
+    }
+
     public function status($id)
     {
         $batch = ProspectBatch::query()->findOrFail((int) $id);
@@ -253,10 +313,14 @@ class ProspectBatchController extends BackendController
     {
         $batch = ProspectBatch::query()->findOrFail((int) $id);
         $this->authorizeBatch($batch);
-        abort_unless(in_array($batch->status, ['draft', 'cancelled'], true), 409);
+        abort_unless(
+            in_array($batch->status, ['draft', 'cancelled'], true),
+            409,
+            'Seuls les lots en brouillon ou annulés peuvent être supprimés.',
+        );
         $batch->delete();
 
-        return redirect()->route('admin.prospect_batches.index')->with('success', 'Lot supprimé.');
+        return response()->json(['success' => true, 'message' => 'Lot supprimé.']);
     }
 
     private function authorizeBatch(ProspectBatch $batch): void

@@ -73,7 +73,7 @@
     </div>
 
     <section class="mb-5" aria-labelledby="recommended-action-{{ $item->id }}" data-review-company-actions="{{ $item->id }}">
-        @unless($review['primary_action'] === 'retry' && ($review['contact_collection_resume'] || ($review['enrichment_resume'] ?? false)))
+        @unless($review['primary_action'] === 'retry' && ($review['retry_blocked'] || $review['contact_collection_resume'] || ($review['enrichment_resume'] ?? false)))
             <div class="mb-3">
                 <div class="text-primary fw-bold fs-8 text-uppercase mb-1">Prochaine action recommandée</div>
                 <h3 id="recommended-action-{{ $item->id }}" class="fs-3 mb-1">{{ $review['primary_label'] }}</h3>
@@ -104,6 +104,25 @@
                             Confirmer ce domaine
                         </button>
                     </form>
+                </div>
+            </div>
+        @elseif($review['primary_action'] === 'retry' && $review['retry_blocked'])
+            <div class="border border-warning rounded p-4 p-lg-5 bg-light-warning" data-review-retry-blocked>
+                <div class="d-flex align-items-start gap-3">
+                    <i class="bi bi-pause-circle fs-2 text-warning" aria-hidden="true"></i>
+                    <div>
+                        <div class="text-warning fw-bold fs-8 text-uppercase mb-2">Relance non disponible</div>
+                        <h3 id="recommended-action-{{ $item->id }}" class="fs-3 mb-2">Réactivez d’abord le critère</h3>
+                        <p class="mb-3">{{ $review['retry_blocked_message'] }}</p>
+                        <p class="text-muted mb-4">Aucune relance ne sera placée dans la file tant que ce critère reste inactif.</p>
+                        @if($review['retry_blocked_criteria_id'])
+                            @can('view prospect_criteria')
+                                <a class="btn btn-warning" href="{{ route('admin.prospect_criteria.view', $review['retry_blocked_criteria_id']) }}">
+                                    Ouvrir le critère <i class="bi bi-arrow-up-right ms-2" aria-hidden="true"></i>
+                                </a>
+                            @endcan
+                        @endif
+                    </div>
                 </div>
             </div>
         @elseif($review['primary_action'] === 'retry')

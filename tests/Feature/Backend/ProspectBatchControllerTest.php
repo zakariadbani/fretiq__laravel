@@ -2,7 +2,10 @@
 
 namespace Tests\Feature\Backend;
 
+use App\Models\Company;
 use App\Models\ProspectBatch;
+use App\Models\ProspectBatchItem;
+use App\Models\ProspectCriteria;
 use App\Models\User;
 use App\Services\Prospecting\ProspectBatchService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -210,5 +213,124 @@ class ProspectBatchControllerTest extends TestCase
             ->assertSee('d-md-none', false)
             ->assertSee('sticky-bottom', false)
             ->assertSee('data-mobile-company-preview', false);
+    }
+
+    public function test_delete_returns_json_for_a_draft_batch_and_blocks_a_running_one_with_a_french_reason(): void
+    {
+        $draft = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'status' => 'draft']);
+
+        $this->actingAs($this->user)
+            ->deleteJson(route('admin.prospect_batches.delete', $draft))
+            ->assertOk()
+            ->assertJson(['success' => true, 'message' => 'Lot supprimé.']);
+        $this->assertDatabaseMissing('prospect_batches', ['id' => $draft->id]);
+
+        $running = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'status' => 'running']);
+
+        $this->actingAs($this->user)
+            ->deleteJson(route('admin.prospect_batches.delete', $running))
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'Seuls les lots en brouillon ou annulés peuvent être supprimés.');
+        $this->assertDatabaseHas('prospect_batches', ['id' => $running->id]);
+    }
+
+    public function test_view_shows_enrichment_outcome_breakdown_scoped_to_this_batch_only(): void
+    {
+        $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'status' => 'completed']);
+        $otherBatch = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'status' => 'completed']);
+
+        $enriched = Company::factory()->create(['enrichment_status' => 'enriched']);
+        $lowScoreA = Company::factory()->create(['enrichment_status' => 'skipped_low_score']);
+        $lowScoreB = Company::factory()->create(['enrichment_status' => 'skipped_low_score']);
+        $otherBatchCompany = Company::factory()->create(['enrichment_status' => 'hunter_empty']);
+        $unlinkedItemCompany = null; // item with no company_id must not appear at all
+
+        ProspectBatchItem::factory()->create(['prospect_batch_id' => $batch->id, 'status' => 'promoted', 'company_id' => $enriched->id]);
+        ProspectBatchItem::factory()->create(['prospect_batch_id' => $batch->id, 'status' => 'promoted', 'company_id' => $lowScoreA->id]);
+        ProspectBatchItem::factory()->create(['prospect_batch_id' => $batch->id, 'status' => 'promoted', 'company_id' => $lowScoreB->id]);
+        ProspectBatchItem::factory()->create(['prospect_batch_id' => $batch->id, 'status' => 'pending', 'company_id' => $unlinkedItemCompany]);
+        // Belongs to a different batch — scoping by batch (not by criteria) must exclude it.
+        ProspectBatchItem::factory()->create(['prospect_batch_id' => $otherBatch->id, 'status' => 'promoted', 'company_id' => $otherBatchCompany->id]);
+
+        $response = $this->actingAs($this->user)
+            ->get(route('admin.prospect_batches.view', $batch))
+            ->assertOk()
+            ->assertSee('Résultat de l’enrichissement')
+            ->assertSee('1 Enrichi', false)
+            ->assertSee('2 Sous le seuil de contacts', false);
+
+        $response->assertDontSee('Aucun email trouvé');
+
+        // The other batch's own view must show only its own company, not the first batch's.
+        $this->actingAs($this->user)
+            ->get(route('admin.prospect_batches.view', $otherBatch))
+            ->assertOk()
+            ->assertSee('1 Aucun email trouvé', false)
+            ->assertDontSee('Sous le seuil de contacts');
+    }
+
+    public function test_interrupted_discover_batch_banner_shows_remaining_count_and_gates_resume_button_on_permission(): void
+    {
+        $criteria = ProspectCriteria::query()->create([
+            'name' => 'Critère Discover',
+            'ai_target' => 'Exportateurs',
+            'ai_exclude' => null,
+            'sectors' => ['Transport'],
+            'countries' => ['FR'],
+            'company_sizes' => ['11-50'],
+            'daily_limit' => 10,
+            'is_active' => true,
+        ]);
+        $batch = ProspectBatch::factory()->create([
+            'created_by' => $this->user->id,
+            'source_type' => 'discover',
+            'prospect_criteria_id' => $criteria->id,
+            'status' => 'review',
+            'error' => 'finalization_delayed',
+            'cost_confirmed_at' => now(),
+            'source_options' => ['prompt_hash' => str_repeat('a', 64)],
+            'source_cursor' => [
+                'offset' => 100,
+                'results' => 197,
+                'limit' => 100,
+                'exhausted' => false,
+                'initialized' => true,
+                'filters_hash' => hash('sha256', '[]'),
+                'prompt_hash' => str_repeat('a', 64),
+            ],
+        ]);
+
+        // Without the permission: the interruption is still disclosed, but no button to act on it.
+        $this->actingAs($this->user)
+            ->get(route('admin.prospect_batches.view', $batch))
+            ->assertOk()
+            ->assertSee('interrompue')
+            ->assertSee('97 entreprise')
+            ->assertDontSee('<button type="button" class="btn btn-sm btn-warning" data-discover-resume-button', false);
+
+        // With the permission: the same banner now offers the resume action.
+        $this->user->givePermissionTo('run prospect resolution');
+        $this->actingAs($this->user)
+            ->get(route('admin.prospect_batches.view', $batch))
+            ->assertOk()
+            ->assertSee('<button type="button" class="btn btn-sm btn-warning" data-discover-resume-button', false)
+            ->assertSee(route('admin.prospect_batches.resume_discovery', $batch), false);
+    }
+
+    public function test_view_does_not_show_interrupted_banner_for_a_batch_still_actively_running(): void
+    {
+        $batch = ProspectBatch::factory()->create([
+            'created_by' => $this->user->id,
+            'source_type' => 'discover',
+            'status' => 'running',
+            'cost_confirmed_at' => now(),
+            'source_cursor' => ['offset' => 0, 'results' => null, 'limit' => 100, 'exhausted' => false, 'initialized' => false],
+        ]);
+
+        $this->actingAs($this->user)
+            ->get(route('admin.prospect_batches.view', $batch))
+            ->assertOk()
+            ->assertDontSee('interrompue')
+            ->assertDontSee('<button type="button" class="btn btn-sm btn-warning" data-discover-resume-button', false);
     }
 }

@@ -60,10 +60,11 @@
             'auditMode'   => $auditMode ?? false,
         ])
         @include('backend.contents.prospect_criteria.partials._results-tab', [
-            'model'           => $model,
-            'resultCompanies' => $resultCompanies,
-            'resultsSort'     => $resultsSort ?? 'score',
-            'resultsDir'      => $resultsDir ?? 'desc',
+            'model'            => $model,
+            'resultCompanies'  => $resultCompanies,
+            'resultsSort'      => $resultsSort ?? 'score',
+            'resultsDir'       => $resultsDir ?? 'desc',
+            'outcomeBreakdown' => $outcomeBreakdown ?? collect(),
         ])
     </div>
     {{-- end Résultats --}}

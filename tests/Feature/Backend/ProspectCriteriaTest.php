@@ -475,6 +475,95 @@ class ProspectCriteriaTest extends TestCase
     }
 
     /**
+     * The enrichment-outcome strip is scoped to companies.criteria_id — not to
+     * prospect_batch_items — so it also counts companies that came from the
+     * discovery pipeline directly (never went through a batch), and it must
+     * include rejected companies so the buckets sum to the criterion's full
+     * company count.
+     */
+    public function test_results_tab_shows_enrichment_outcome_breakdown_summing_to_total(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name' => 'Critère Répartition Enrichissement',
+            'daily_limit' => 4,
+            'is_active' => true,
+        ]);
+
+        // A different criterion's company must never leak into this breakdown.
+        $otherCriteria = ProspectCriteria::create([
+            'name' => 'Autre Critère',
+            'daily_limit' => 4,
+            'is_active' => true,
+        ]);
+        Company::create([
+            'criteria_id' => $otherCriteria->id,
+            'name' => 'Entreprise Autre Critère',
+            'domain' => 'autre-critere.test',
+            'country' => 'FR',
+            'qualification_status' => 'pending',
+            'enrichment_status' => 'enriched',
+        ]);
+
+        Company::create([
+            'criteria_id' => $criteria->id,
+            'name' => 'Entreprise Enrichie',
+            'domain' => 'enrichie-breakdown.test',
+            'country' => 'FR',
+            'qualification_status' => 'pending',
+            'enrichment_status' => 'enriched',
+        ]);
+        Company::create([
+            'criteria_id' => $criteria->id,
+            'name' => 'Entreprise Sous Seuil 1',
+            'domain' => 'seuil1-breakdown.test',
+            'country' => 'FR',
+            'qualification_status' => 'pending',
+            'enrichment_status' => 'skipped_low_score',
+        ]);
+        Company::create([
+            'criteria_id' => $criteria->id,
+            'name' => 'Entreprise Sous Seuil 2',
+            'domain' => 'seuil2-breakdown.test',
+            'country' => 'FR',
+            'qualification_status' => 'pending',
+            'enrichment_status' => 'skipped_low_score',
+        ]);
+        Company::create([
+            'criteria_id' => $criteria->id,
+            'name' => 'Entreprise Non Tentée',
+            'domain' => 'nontentee-breakdown.test',
+            'country' => 'FR',
+            'qualification_status' => 'pending',
+            // enrichment_status stays null — never attempted.
+        ]);
+        Company::create([
+            'criteria_id' => $criteria->id,
+            'name' => 'Entreprise Exclue Mais Traitée',
+            'domain' => 'excluetraite-breakdown.test',
+            'country' => 'FR',
+            'qualification_status' => 'rejected',
+            'enrichment_status' => 'hunter_empty',
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/'.$criteria->id.'#criteria_resultats');
+
+        $response->assertStatus(200);
+        $response->assertSee('Résultat de l’enrichissement', false);
+        $response->assertSee('1 Enrichi', false);
+        $response->assertSee('2 Sous le seuil de contacts', false);
+        $response->assertSee('1 Aucun email trouvé', false);
+        $response->assertSee('1 Recherche de contacts non effectuée', false);
+
+        // Buckets must sum to the criterion's FULL company count (5) — which
+        // includes the 1 rejected company, and is one more than the "4 non
+        // exclues" count the sibling card on the same tab shows.
+        $totalForCriteria = Company::withRejected()->where('criteria_id', $criteria->id)->count();
+        $this->assertSame(5, $totalForCriteria);
+        $response->assertSee('Entreprises enregistrées non exclues (4)', false);
+    }
+
+    /**
      * Résultats tab table headers support ordering the kept companies table.
      */
     public function test_results_table_can_be_sorted_by_name(): void

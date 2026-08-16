@@ -48,13 +48,31 @@ test.describe('guided prospect review', () => {
     expect(await page.locator('body').innerText()).not.toMatch(/\b(domain_identity_conflict|hunter_perfect_match|rate_limit)\b/);
   });
 
-  test('shows and focuses the monitored retry outcome', async ({ page }) => {
+  test('shows and focuses the monitored retry outcome with readable contrast', async ({ page }) => {
     await page.goto('/admin/prospect-review?tab=companies&item=7&monitor_item=7');
     await expect(page).toHaveURL(/monitor_item=7/);
 
     const monitor = page.locator('[data-review-monitor]');
     await expect(monitor).toBeVisible();
     await expect(monitor).toBeFocused();
+    const contrast = await monitor.evaluate((element) => {
+      const parse = (value: string): [number, number, number] => {
+        const channels = value.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number) ?? [];
+        return [channels[0] ?? 0, channels[1] ?? 0, channels[2] ?? 0];
+      };
+      const luminance = ([red, green, blue]: [number, number, number]) => [red, green, blue]
+        .map((channel) => {
+          const normalized = channel / 255;
+          return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+        })
+        .reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+      const style = getComputedStyle(element);
+      const foreground = luminance(parse(style.color));
+      const background = luminance(parse(style.backgroundColor));
+      return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+    });
+
+    expect(contrast).toBeGreaterThanOrEqual(4.5);
     await expect(monitor).toContainText('Relance terminée · DEANTE MAROC');
     await expect(monitor.locator('[data-review-monitor-provider-results]')).toContainText('2');
     await expect(monitor.locator('[data-review-monitor-recorded-units]')).toContainText('1');
@@ -217,5 +235,100 @@ test.describe('guided prospect review', () => {
     await expect(page).toHaveURL(/\/admin\/prospect-review\?batch=2&tab=companies/);
     await expect(page.getByText('Les contacts sont désormais importés automatiquement', { exact: false })).toBeVisible();
     await expect(page.getByText('Décider des contacts')).toHaveCount(0);
+  });
+
+  // ── Default landing + pill/row consistency ──────────────────────────────
+
+  test('lands on the "À décider" pill by default, and each pill count matches its own filtered total', async ({ page }) => {
+    await page.goto('/admin/prospect-review');
+    await expect(page).toHaveURL(/\/admin\/prospect-review(\?.*)?$/);
+
+    const attentionPill = page.locator('[data-review-state-filter="attention"]');
+    const allPill = page.locator('[data-review-state-filter="all"]');
+    await expect(attentionPill).toHaveClass(/is-active/);
+    await expect(attentionPill).toHaveAttribute('aria-current', 'true');
+    await expect(allPill).not.toHaveClass(/is-active/);
+    await expect(page.locator('[data-review-state-filter="blocked"]')).not.toHaveClass(/is-active/);
+
+    // The queue header always renders $items->total() (the full filtered count,
+    // not just the current page) — a page-independent way to check the pill
+    // badge against "the rows shown for that pill" even when a state paginates.
+    for (const state of ['attention', 'blocked', 'all'] as const) {
+      await page.goto(`/admin/prospect-review?tab=companies&state=${state}`);
+
+      const pillText = await page.locator(`[data-review-state-filter="${state}"]`).textContent();
+      const pillCount = Number(pillText?.match(/\((\d+)\)/)?.[1]);
+      expect(Number.isInteger(pillCount)).toBe(true);
+
+      const headerText = await page.locator('.prospect-review-queue-header').getByText(/résultat\(s\) avec ces filtres/).textContent();
+      const headerTotal = Number(headerText?.match(/(\d+)/)?.[1]);
+      expect(headerTotal).toBe(pillCount);
+
+      // When the filtered set fits on one page, the DOM row count must match too.
+      if (pillCount > 0 && (await page.locator('.prospect-review-queue-pagination').count()) === 0) {
+        await expect(page.locator('[data-review-company-queue-entry]')).toHaveCount(pillCount);
+      }
+    }
+  });
+
+  // ── Pane swap without navigation (change 6) ─────────────────────────────
+
+  test('swaps the detail pane on a queue click without a full page navigation, and Back restores the previous item', async ({ page }) => {
+    await page.goto('/admin/prospect-review?tab=companies&state=blocked');
+    const entries = page.locator('[data-review-company-queue-entry]');
+    const entryCount = await entries.count();
+    test.skip(entryCount < 2, 'Needs at least two "À relancer" queue entries to prove the pane swap.');
+
+    const firstItemId = new URL((await entries.nth(0).getAttribute('href'))!, page.url()).searchParams.get('item');
+    const secondItemId = new URL((await entries.nth(1).getAttribute('href'))!, page.url()).searchParams.get('item');
+
+    // A full navigation wipes window state — surviving this sentinel proves
+    // the click was handled by fetch()+innerHTML swap, not a page reload.
+    await page.evaluate(() => { (window as typeof window & { __e2eSentinel?: string }).__e2eSentinel = 'alive'; });
+
+    await entries.nth(1).click();
+    await expect(page).toHaveURL(new RegExp(`item=${secondItemId}`));
+    await expect(page.locator('[data-review-company-card]')).toHaveAttribute('data-review-company-card', String(secondItemId));
+    expect(await page.evaluate(() => (window as typeof window & { __e2eSentinel?: string }).__e2eSentinel)).toBe('alive');
+
+    await page.goBack();
+    await expect(page).not.toHaveURL(new RegExp(`item=${secondItemId}`));
+    await expect(page.locator('[data-review-company-card]')).toHaveAttribute('data-review-company-card', String(firstItemId));
+  });
+
+  // ── Pagination preserved across a decision (the companies_page trap) ────
+
+  test('preserves the current queue page across a decision via return_companies_page', async ({ page }) => {
+    await page.goto('/admin/prospect-review?tab=companies&state=blocked&companies_page=2');
+    const entries = page.locator('[data-review-company-queue-entry]');
+    const entryCount = await entries.count();
+    test.skip(entryCount === 0, 'The "À relancer" queue does not currently have a second page.');
+
+    await entries.nth(entryCount > 1 ? 1 : 0).click();
+    await expect(page).toHaveURL(/companies_page=2/);
+
+    const returnPageInput = page.locator('[data-review-company-detail] input[name="return_companies_page"]').first();
+    await expect(returnPageInput).toHaveValue('2');
+  });
+
+  // ── Inactive-criterion banner ────────────────────────────────────────────
+
+  test('shows the inactive-criterion explanatory banner on "À relancer" with no enabled bulk-retry button', async ({ page }) => {
+    await page.goto('/admin/prospect-review?tab=companies&state=blocked');
+
+    const drainBar = page.locator('[data-drain-bar]');
+    if ((await drainBar.count()) === 0) {
+      test.skip(true, 'No blocked items under these filters right now — the bulk bar is not rendered at all.');
+    }
+
+    const openButton = page.locator('[data-drain-open]');
+    if ((await openButton.count()) > 0) {
+      test.skip(true, 'At least one criterion is active — the inactive-criterion banner scenario no longer applies.');
+    }
+
+    const blockedBanner = page.locator('[data-drain-blocked]');
+    await expect(blockedBanner).toBeVisible();
+    await expect(blockedBanner).toContainText('critère inactif');
+    await expect(openButton).toHaveCount(0);
   });
 });

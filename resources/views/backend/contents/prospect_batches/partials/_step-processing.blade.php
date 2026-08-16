@@ -8,7 +8,7 @@
             <div class="progress h-8px mw-500px mx-auto my-6"><div class="progress-bar bg-primary" data-processing-bar style="width: 0%"></div></div>
             <div class="fw-semibold" aria-live="polite" data-processing-progress>0 %</div>
             <div class="alert alert-warning d-none mt-6 text-start" data-worker-waiting>
-                Le lot attend un worker. Vérifiez que la file « prospecting » est démarrée.
+                Le lot attend un worker. Vérifiez que la file « default » est démarrée.
             </div>
             <div class="d-flex flex-wrap justify-content-center gap-3 mt-7">
                 <a href="{{ $model->exists ? route('admin.prospect_batches.view', $model) : '#' }}" class="btn btn-light-primary" data-batch-view>Voir le lot</a>

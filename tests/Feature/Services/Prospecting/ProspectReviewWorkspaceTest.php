@@ -70,6 +70,8 @@ class ProspectReviewWorkspaceTest extends TestCase
         $this->assertSame([
             'handled' => 1,
             'companies_pending' => 1,
+            'companies_attention' => 1,
+            'companies_blocked' => 0,
             'imported_contacts' => 1,
             'batches' => 1,
         ], $data['summary']);
@@ -88,6 +90,41 @@ class ProspectReviewWorkspaceTest extends TestCase
 
         $this->assertSame([$attention->id], $attentionData['items']->pluck('id')->all());
         $this->assertSame([$blocked->id], $blockedData['items']->pluck('id')->all());
+        $this->assertSame(['all' => 2, 'attention' => 1, 'blocked' => 1], $attentionData['stateCounts']);
+        $this->assertSame(['all' => 2, 'attention' => 1, 'blocked' => 1], $blockedData['stateCounts']);
+    }
+
+    public function test_next_queued_item_returns_the_filter_respecting_visible_neighbour(): void
+    {
+        $user = User::factory()->create();
+        $batch = ProspectBatch::factory()->create(['created_by' => $user->id, 'status' => 'review']);
+
+        // Ascending creation order (ascending id): older, blockedBetween, active, newest.
+        $older = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'review']);
+        ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'failed']);
+        $active = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'review']);
+        ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'review']);
+
+        $data = app(ProspectReviewWorkspace::class)->build($user, $this->filters([
+            'item' => $active->id,
+            'state' => 'attention',
+        ]));
+
+        // Not the "newest" item (what the old whereKeyNot()->latest('id') logic would have
+        // returned — a jump backward in the visible, descending-id-ordered list) and not the
+        // failed item sitting between them (state=attention only shows 'review' items).
+        $this->assertSame($older->id, $data['nextItem']->id);
+    }
+
+    public function test_next_queued_item_is_null_at_the_end_of_the_filtered_list(): void
+    {
+        $user = User::factory()->create();
+        $batch = ProspectBatch::factory()->create(['created_by' => $user->id, 'status' => 'review']);
+        $only = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'review']);
+
+        $data = app(ProspectReviewWorkspace::class)->build($user, $this->filters(['item' => $only->id]));
+
+        $this->assertNull($data['nextItem']);
     }
 
     public function test_workspace_returns_no_data_for_an_unauthorized_selected_batch(): void
@@ -101,6 +138,8 @@ class ProspectReviewWorkspaceTest extends TestCase
         $this->assertSame([
             'handled' => 0,
             'companies_pending' => 0,
+            'companies_attention' => 0,
+            'companies_blocked' => 0,
             'imported_contacts' => 0,
             'batches' => 0,
         ], $data['summary']);

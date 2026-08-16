@@ -247,18 +247,7 @@ final class ProviderCallLedger
             throw new \InvalidArgumentException('provider_item_invalid');
         }
 
-        $canonicalCode = $itemErrorCode === 'too_many_requests' ? 'usage_limit' : $itemErrorCode;
-        $allowedCodes = match ($canonicalCode) {
-            'usage_limit' => ['usage_limit', 'too_many_requests'],
-            'rate_limit' => ['rate_limit'],
-            'pagination_error' => ['pagination_error'],
-            'provider_unavailable' => ['provider_unavailable', 'provider_transport_failed', 'provider_http_error'],
-            'provider_call_not_replayable' => [
-                'usage_limit', 'too_many_requests', 'rate_limit', 'pagination_error',
-                'provider_unavailable', 'provider_transport_failed', 'provider_http_error',
-            ],
-            default => [],
-        };
+        $allowedCodes = $this->allowedFailureCodesFor($itemErrorCode);
         if ($allowedCodes === []) {
             return 0;
         }
@@ -299,6 +288,76 @@ final class ProviderCallLedger
 
             return $authorized;
         });
+    }
+
+    /**
+     * True when this item has a provider_call still inside its own backoff
+     * window. Deliberately item-wide, not scoped to the operation that
+     * failed: a bulk drain must never nudge an item back to 'pending' while
+     * any of its calls are mid-backoff, or the resulting job just re-hits
+     * execute()'s 'provider_call_retry_not_due' guard immediately and burns
+     * one of the job's own tries on a guaranteed rejection.
+     */
+    public function hasOpenRetryWindow(int $itemId): bool
+    {
+        return ProviderCall::query()
+            ->where('prospect_batch_item_id', $itemId)
+            ->where('retry_at', '>', now())
+            ->exists();
+    }
+
+    /**
+     * Read-only sibling of authorizeKnownFailureRetryForItem() for preview /
+     * reporting only — never authorizes anything. Mirrors that method's
+     * "every matching call must be maxed out to be exhausted" rule via the
+     * MAX remaining headroom across matching calls (matching its use of
+     * every() plus continue-on-maxed-calls in the authorize loop).
+     *
+     * Null means "not gated by the ledger" (no matching failed call, or an
+     * error code the ledger doesn't recognise) — callers should treat that
+     * as "proceed", matching authorizeKnownFailureRetryForItem() returning 0
+     * without throwing in the same situation.
+     */
+    public function retryHeadroomForItem(int $itemId, string $itemErrorCode): ?int
+    {
+        $allowedCodes = $this->allowedFailureCodesFor($itemErrorCode);
+        if ($allowedCodes === []) {
+            return null;
+        }
+
+        $calls = ProviderCall::query()
+            ->where('prospect_batch_item_id', $itemId)
+            ->where('status', 'failed')
+            ->get()
+            ->filter(fn (ProviderCall $call): bool => in_array(
+                data_get($call->metadata, 'error_code'),
+                $allowedCodes,
+                true,
+            ));
+
+        if ($calls->isEmpty()) {
+            return null;
+        }
+
+        return (int) $calls->max(fn (ProviderCall $call): int => max(0, self::MAX_ATTEMPTS - $call->attempt_count));
+    }
+
+    /** @return list<string> */
+    private function allowedFailureCodesFor(string $itemErrorCode): array
+    {
+        $canonicalCode = $itemErrorCode === 'too_many_requests' ? 'usage_limit' : $itemErrorCode;
+
+        return match ($canonicalCode) {
+            'usage_limit' => ['usage_limit', 'too_many_requests'],
+            'rate_limit' => ['rate_limit'],
+            'pagination_error' => ['pagination_error'],
+            'provider_unavailable' => ['provider_unavailable', 'provider_transport_failed', 'provider_http_error'],
+            'provider_call_not_replayable' => [
+                'usage_limit', 'too_many_requests', 'rate_limit', 'pagination_error',
+                'provider_unavailable', 'provider_transport_failed', 'provider_http_error',
+            ],
+            default => [],
+        };
     }
 
     private function validateOperation(string $provider, string $operation): void

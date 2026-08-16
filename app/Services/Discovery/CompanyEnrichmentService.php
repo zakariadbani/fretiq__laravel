@@ -5,8 +5,10 @@ namespace App\Services\Discovery;
 use App\Exceptions\InvalidEnrichmentDomainException;
 use App\Models\Company;
 use App\Models\DiscoveryRun;
+use App\Models\ProspectBatchItem;
 use App\Models\ProspectCriteria;
 use App\Services\Quota\DiscoveryQuotaService;
+use App\Services\Providers\ProviderCallContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -45,6 +47,8 @@ class CompanyEnrichmentService
         ?string $batchId = null,
         int $approvedAttempts = 1,
         int $successTarget = 1,
+        ?ProspectBatchItem $item = null,
+        ?ProviderCallContext $context = null,
     ): array {
         [$company, $run] = $this->quota->reserveCriteriaEnrichment(
             $companyId,
@@ -54,7 +58,7 @@ class CompanyEnrichmentService
             $successTarget,
         );
 
-        return $this->enrichClaimed($company, $run);
+        return $this->enrichClaimed($company, $run, item: $item, context: $context);
     }
 
     /**
@@ -71,12 +75,15 @@ class CompanyEnrichmentService
         DiscoveryRun $run,
         ?int $timeoutSeconds = null,
         ?string $fallbackCountry = null,
+        ?ProspectBatchItem $item = null,
+        ?ProviderCallContext $context = null,
     ): array {
         try {
             $hunterResult = $this->hunter->domainSearchResult(
                 (string) $company->domain,
                 10,
                 $timeoutSeconds,
+                $context,
             );
             $enrichment = $hunterResult['data'];
 
@@ -103,7 +110,7 @@ class CompanyEnrichmentService
                 ? Company::ENRICHMENT_ENRICHED
                 : Company::ENRICHMENT_HUNTER_EMPTY;
 
-            $persisted = $this->persistOwnedOutcome($company, $run, $requestedStatus, $enrichment, $fallbackCountry);
+            $persisted = $this->persistOwnedOutcome($company, $run, $requestedStatus, $enrichment, $fallbackCountry, $item);
             $this->completeManualRun($run);
 
             return [
@@ -134,8 +141,9 @@ class CompanyEnrichmentService
         string $status,
         ?array $enrichment,
         ?string $fallbackCountry = null,
+        ?ProspectBatchItem $item = null,
     ): array {
-        return DB::transaction(function () use ($company, $run, $status, $enrichment, $fallbackCountry): array {
+        return DB::transaction(function () use ($company, $run, $status, $enrichment, $fallbackCountry, $item): array {
             // Criteria-owned claims serialize on criterion -> run -> company.
             // Standalone manual claims have no criterion row, so their stable
             // order is company -> run. Mirroring both admission paths prevents
@@ -193,7 +201,7 @@ class CompanyEnrichmentService
                 : $this->contacts->import($ownedCompany, array_map(
                     static fn (array $row): array => $row + ['source_url' => (string) $ownedCompany->domain, 'source' => 'hunter_company_enrichment'],
                     $enrichment['emails'] ?? [],
-                ));
+                ), $item);
             $created = $import->created;
 
             // Hunter can return an address already owned by another company (or
@@ -213,7 +221,7 @@ class CompanyEnrichmentService
             if ($successful) {
                 $ownedRun->successful_enrichments = (int) $ownedRun->successful_enrichments + 1;
             }
-            if ($ownedRun->type === 'discovery') {
+            if ($ownedRun->type === 'discovery' || $ownedRun->enrichment_batch_id !== null) {
                 if ($status === Company::ENRICHMENT_HUNTER_FAILED) {
                     // Persist the circuit on the owning parent in the same
                     // transaction as the provider-failure outcome. A worker

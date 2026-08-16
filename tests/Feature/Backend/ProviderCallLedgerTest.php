@@ -308,6 +308,88 @@ class ProviderCallLedgerTest extends TestCase
         $this->assertSame('operator_retry_authorized', $safe->fresh()->metadata['reason']);
     }
 
+    public function test_retry_headroom_reports_max_remaining_attempts_across_matching_failed_calls(): void
+    {
+        $batch = ProspectBatch::factory()->create();
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create();
+        // attempt_count=1 of 4 — matches the live-state fact this feature was built
+        // against (3 attempts of headroom remaining).
+        ProviderCall::query()->create([
+            'prospect_batch_id' => $batch->id,
+            'prospect_batch_item_id' => $item->id,
+            'provider' => 'hunter',
+            'operation' => 'domain_search',
+            'idempotency_key' => hash('sha256', 'headroom-fresh'),
+            'status' => 'failed',
+            'attempt_count' => 1,
+            'metadata' => ['error_code' => 'usage_limit'],
+        ]);
+
+        $ledger = app(ProviderCallLedger::class);
+
+        $this->assertSame(3, $ledger->retryHeadroomForItem($item->id, 'too_many_requests'));
+        // Unknown / unrecognised error codes are not ledger-gated at all.
+        $this->assertNull($ledger->retryHeadroomForItem($item->id, 'missing_domain'));
+    }
+
+    public function test_retry_headroom_is_zero_only_when_every_matching_call_is_maxed_out(): void
+    {
+        $batch = ProspectBatch::factory()->create();
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create();
+        ProviderCall::query()->create([
+            'prospect_batch_id' => $batch->id,
+            'prospect_batch_item_id' => $item->id,
+            'provider' => 'hunter',
+            'operation' => 'domain_search',
+            'idempotency_key' => hash('sha256', 'headroom-maxed'),
+            'status' => 'failed',
+            'attempt_count' => 4,
+            'metadata' => ['error_code' => 'usage_limit'],
+        ]);
+        $ledger = app(ProviderCallLedger::class);
+
+        $this->assertSame(0, $ledger->retryHeadroomForItem($item->id, 'usage_limit'));
+
+        // A second matching call that still has headroom flips the item back
+        // to retryable, mirroring authorizeKnownFailureRetryForItem()'s own
+        // every()-must-all-be-maxed exhaustion rule.
+        ProviderCall::query()->create([
+            'prospect_batch_id' => $batch->id,
+            'prospect_batch_item_id' => $item->id,
+            'provider' => 'hunter',
+            'operation' => 'domain_search',
+            'idempotency_key' => hash('sha256', 'headroom-fresh-sibling'),
+            'status' => 'failed',
+            'attempt_count' => 2,
+            'metadata' => ['error_code' => 'usage_limit'],
+        ]);
+
+        $this->assertSame(2, $ledger->retryHeadroomForItem($item->id, 'usage_limit'));
+    }
+
+    public function test_open_retry_window_is_detected_regardless_of_call_status_and_clears_once_retry_at_passes(): void
+    {
+        $batch = ProspectBatch::factory()->create();
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create();
+        $call = ProviderCall::query()->create([
+            'prospect_batch_id' => $batch->id,
+            'prospect_batch_item_id' => $item->id,
+            'provider' => 'hunter',
+            'operation' => 'domain_search',
+            'idempotency_key' => hash('sha256', 'open-window'),
+            'status' => 'retryable',
+            'attempt_count' => 1,
+            'retry_at' => now()->addMinutes(5),
+        ]);
+        $ledger = app(ProviderCallLedger::class);
+
+        $this->assertTrue($ledger->hasOpenRetryWindow($item->id));
+
+        $call->update(['retry_at' => now()->subSecond()]);
+
+        $this->assertFalse($ledger->hasOpenRetryWindow($item->id));
+    }
+
     public function test_pending_logical_call_can_be_polled_under_the_same_key_without_a_second_reservation(): void
     {
         $ledger = app(ProviderCallLedger::class);

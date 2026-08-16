@@ -42,7 +42,7 @@ final class ProspectReviewPresenter
         ];
     }
 
-    /** @return array{status:string,terminal:bool,level:string,title:string,message:string} */
+    /** @return array{status:string,terminal:bool,level:string,title:string,message:string,result:?string,next_step:?string} */
     public function retryOutcome(ProspectBatchItem $item): array
     {
         $status = in_array($item->status, ProspectBatchItem::STATUSES, true)
@@ -56,6 +56,8 @@ final class ProspectReviewPresenter
                 'level' => 'primary',
                 'title' => 'Relance en cours · '.$item->company_name,
                 'message' => $item->company_name.' attend son traitement en arrière-plan.',
+                'result' => null,
+                'next_step' => 'Vous pouvez quitter cette page : le résultat s’affichera ici dès qu’il sera disponible.',
             ];
         }
 
@@ -66,6 +68,8 @@ final class ProspectReviewPresenter
                 'level' => 'primary',
                 'title' => 'Relance en cours · '.$item->company_name,
                 'message' => $item->company_name.' est en cours de traitement.',
+                'result' => null,
+                'next_step' => 'Attendez la fin du traitement ; ne relancez pas cette entreprise une seconde fois.',
             ];
         }
 
@@ -76,6 +80,8 @@ final class ProspectReviewPresenter
                 'level' => 'success',
                 'title' => 'Relance terminée · '.$item->company_name,
                 'message' => 'Le traitement de '.$item->company_name.' est terminé.',
+                'result' => null,
+                'next_step' => 'Continuez avec l’entreprise suivante dans la file.',
             ];
         }
 
@@ -88,15 +94,76 @@ final class ProspectReviewPresenter
                 'level' => $status === 'failed' ? 'danger' : 'warning',
                 'title' => $issue['label'].' · '.$item->company_name,
                 'message' => $item->company_name.' : '.$issue['description'],
+                'result' => 'Le traitement reste interrompu ; aucune étape suivante n’a été lancée.',
+                'next_step' => 'Ouvrez le détail pour vérifier le blocage et choisir l’action adaptée.',
             ];
         }
+
+        return $this->skippedOutcome($item, $status);
+    }
+
+    /** @return array{status:string,terminal:bool,level:string,title:string,message:string,result:string,next_step:string} */
+    private function skippedOutcome(ProspectBatchItem $item, string $status): array
+    {
+        $reason = (string) ($item->domain_reason ?: $item->error_code);
+        $criterionName = $item->batch?->criteria?->name;
+        $criterionLabel = is_string($criterionName) && $criterionName !== ''
+            ? ' Le critère concerné est « '.$criterionName.' ».'
+            : '';
+
+        [$title, $message, $result, $nextStep] = match ($reason) {
+            'criterion_inactive' => [
+                'Relance non effectuée · '.$item->company_name,
+                'Le critère est inactif.'.$criterionLabel,
+                'Aucun score, enrichissement ni recherche de contacts n’a été lancé.',
+                'Réactivez le critère puis relancez la découverte.',
+            ],
+            'same_criterion_rejected' => [
+                'Entreprise déjà exclue · '.$item->company_name,
+                'Cette entreprise avait déjà été rejetée pour ce même critère.',
+                'Aucun nouveau score, enrichissement ni recherche de contacts n’a été lancé.',
+                'Aucune action n’est requise, sauf si vous souhaitez réexaminer l’exclusion dans le lot.',
+            ],
+            'excluded_by_criteria' => [
+                'Entreprise hors critère · '.$item->company_name,
+                'Le score de cette entreprise n’atteint pas le seuil demandé.',
+                'L’entreprise a été scorée puis exclue avant l’enrichissement et la recherche de contacts.',
+                'Aucune action n’est requise. Ajustez le critère uniquement si le seuil doit changer.',
+            ],
+            'quota_exhausted' => [
+                'Recherche non effectuée · '.$item->company_name,
+                'Le quota de recherche disponible ne permettait pas de poursuivre.',
+                'Le traitement s’est arrêté avant la collecte de nouvelles données.',
+                'Vérifiez le quota de recherche, puis relancez si nécessaire.',
+            ],
+            'provider_unavailable' => [
+                'Recherche interrompue · '.$item->company_name,
+                'Le service externe nécessaire était indisponible.',
+                'Le traitement n’a pas pu aller jusqu’à son résultat final.',
+                'Réessayez lorsque le service de recherche est de nouveau disponible.',
+            ],
+            'reviewer_rejected', 'not_a_match', 'not_relevant', 'bad_data' => [
+                'Entreprise exclue du lot · '.$item->company_name,
+                'Une décision manuelle a exclu cette entreprise du lot.',
+                'Aucun traitement supplémentaire n’a été lancé après cette décision.',
+                'Aucune action n’est requise. Consultez le lot si cette exclusion doit être réexaminée.',
+            ],
+            default => [
+                'Traitement arrêté · '.$item->company_name,
+                'Cette entreprise a quitté le flux avant la fin du traitement.',
+                'Aucun traitement supplémentaire n’est en cours pour cette entreprise.',
+                'Consultez le lot pour vérifier la raison enregistrée avant toute nouvelle action.',
+            ],
+        };
 
         return [
             'status' => $status,
             'terminal' => true,
-            'level' => 'secondary',
-            'title' => 'Relance terminée · '.$item->company_name,
-            'message' => $item->company_name.' ne nécessite plus de traitement.',
+            'level' => 'warning',
+            'title' => $title,
+            'message' => $message,
+            'result' => $result,
+            'next_step' => $nextStep,
         ];
     }
 
@@ -117,7 +184,11 @@ final class ProspectReviewPresenter
      *     selected_domain:?string,
      *     imported_contacts_count:int,
      *     domains_read_only:bool,
-     *     retry_cost_note:?string
+     *     retry_cost_note:?string,
+     *     retry_blocked:bool,
+     *     retry_blocked_message:?string,
+     *     retry_blocked_criteria_id:?int,
+     *     retry_blocked_criteria_name:?string
      * }
      */
     public function companyDecision(ProspectBatchItem $item): array
@@ -180,6 +251,19 @@ final class ProspectReviewPresenter
             $primaryLabel = 'Confirmer '.$primaryCandidate['domain'];
         }
 
+        $batch = $item->batch;
+        $criteria = $batch?->criteria;
+        $retryBlocked = $primaryAction === 'retry'
+            && $batch?->prospect_criteria_id !== null
+            && ! ($criteria?->is_active ?? false);
+        $retryBlockedMessage = null;
+        if ($retryBlocked) {
+            $retryBlockedMessage = $criteria === null
+                ? 'Le critère lié à ce lot n’est plus disponible. Sélectionnez un critère actif avant de relancer cette entreprise.'
+                : 'Le critère « '.$criteria->name.' » est inactif. Réactivez-le avant de relancer cette entreprise.';
+            $primaryLabel = 'Relance indisponible';
+        }
+
         $checks = $this->companyChecks($item, $issue['code'], $primaryCandidate);
         [$correct, $missing, $next] = $this->decisionSummary($item, $issue['code'], $primaryAction);
         if ($contactCollectionResume) {
@@ -221,6 +305,10 @@ final class ProspectReviewPresenter
             'domains_read_only' => $contactCollectionResume || $enrichmentResume,
             'retry_cost_note' => $limitedRecovery ? 'Jusqu’à 10 adresses · 0 à 1 unité' : null,
             'enrichment_resume' => $enrichmentResume,
+            'retry_blocked' => $retryBlocked,
+            'retry_blocked_message' => $retryBlockedMessage,
+            'retry_blocked_criteria_id' => $criteria?->getKey() === null ? null : (int) $criteria->getKey(),
+            'retry_blocked_criteria_name' => $criteria?->name,
         ];
     }
 

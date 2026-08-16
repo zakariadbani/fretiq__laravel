@@ -7,9 +7,12 @@
         $resultCompanies  — LengthAwarePaginator (companies()->with('contacts'), 25/page, 'results_page')
         $resultsSort      — current table sort key (score/created_at/recent/name/sector/country/size/contacts)
         $resultsDir       — current table sort direction (asc/desc)
+        $outcomeBreakdown — Collection<array{label,color,total}>, companies.enrichment_status
+                             grouped for this criterion (ProspectCriteriaController::enrichmentOutcomeBreakdown()).
+                             Sums to the criterion's full company count, including rejected ones.
 
     Permissions:
-        @can('view companies')  — gates the entire data table
+        @can('view companies')  — gates the entire data table + the outcome strip
         @can('view contacts')   — gates the contacts sub-table
         @can('run discovery')   — gates the empty-state CTA
 --}}
@@ -35,6 +38,21 @@
         ? 'text-primary fw-bold text-decoration-none'
         : 'text-muted text-hover-primary text-decoration-none';
 @endphp
+
+@can('view companies')
+    @if(($outcomeBreakdown ?? collect())->isNotEmpty())
+        <div class="card mb-5">
+            <div class="card-header border-0"><h3 class="card-title">Résultat de l’enrichissement</h3></div>
+            <div class="card-body pt-0">
+                <div class="d-flex flex-wrap gap-3">
+                    @foreach($outcomeBreakdown as $outcome)
+                        <span class="badge badge-light-{{ $outcome['color'] }} fs-7 py-2 px-3">{{ $outcome['total'] }} {{ $outcome['label'] }}</span>
+                    @endforeach
+                </div>
+            </div>
+        </div>
+    @endif
+@endcan
 
 <div class="card">
     <div class="card-header border-0 pt-5">

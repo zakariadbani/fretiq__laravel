@@ -34,20 +34,20 @@ class HunterEnrichmentService
     /**
      * @return array{organization: ?string, industry: ?string, country: ?string, emails: list<mixed>, raw: array}|null
      */
-    public function domainSearch(string $domain, int $limit = 10, ?int $timeoutSeconds = null): ?array
+    public function domainSearch(string $domain, int $limit = 10, ?int $timeoutSeconds = null, ?ProviderCallContext $context = null): ?array
     {
         if ($this->isLocal()) {
-            return $this->domainSearchFromClientFixture($domain, $limit);
+            return $this->domainSearchFromClientFixture($domain, $limit, $context);
         }
 
-        return $this->domainSearchFromHunter($domain, $limit, $timeoutSeconds);
+        return $this->domainSearchFromHunter($domain, $limit, $timeoutSeconds, $context);
     }
 
     /** @return array{status:'ok'|'empty'|'provider_failed',data:?array} */
-    public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null): array
+    public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null, ?ProviderCallContext $context = null): array
     {
         $this->lastSearchSystemicFailure = false;
-        $data = $this->domainSearch($domain, $limit, $timeoutSeconds);
+        $data = $this->domainSearch($domain, $limit, $timeoutSeconds, $context);
 
         if ($this->lastSearchSystemicFailure) {
             return ['status' => 'provider_failed', 'data' => $data];
@@ -139,11 +139,11 @@ class HunterEnrichmentService
         return null;
     }
 
-    private function domainSearchFromClientFixture(string $domain, int $limit): ?array
+    private function domainSearchFromClientFixture(string $domain, int $limit, ?ProviderCallContext $context = null): ?array
     {
         try {
             $execution = $this->client->domainSearch(
-                $this->legacyContext('domain_search', 1),
+                $context ?? $this->legacyContext('domain_search', 1),
                 $domain,
                 limit: $limit,
             );
@@ -173,10 +173,10 @@ class HunterEnrichmentService
         return null;
     }
 
-    private function domainSearchFromHunter(string $domain, int $limit, ?int $timeoutSeconds = null): ?array
+    private function domainSearchFromHunter(string $domain, int $limit, ?int $timeoutSeconds = null, ?ProviderCallContext $context = null): ?array
     {
-        $domainSearchData = $this->attemptDomainSearch($domain, $limit, $timeoutSeconds);
-        $companyData = $this->attemptCompanyEnrichment($domain, $timeoutSeconds);
+        $domainSearchData = $this->attemptDomainSearch($domain, $limit, $timeoutSeconds, $context);
+        $companyData = $this->attemptCompanyEnrichment($domain, $timeoutSeconds, $context === null ? null : new ProviderCallContext(hash('sha256', $context->idempotencyKey.'|company_enrichment'), (float) config('prospecting.provider_units.hunter.company_enrichment', 0.2), batchId: $context->batchId, itemId: $context->itemId, engine: 'company_enrichment'));
 
         if ($domainSearchData === null && $companyData === null) {
             return null;
@@ -196,11 +196,11 @@ class HunterEnrichmentService
     }
 
     /** @return array<string, mixed>|null */
-    private function attemptDomainSearch(string $domain, int $limit, ?int $timeoutSeconds = null): ?array
+    private function attemptDomainSearch(string $domain, int $limit, ?int $timeoutSeconds = null, ?ProviderCallContext $context = null): ?array
     {
         try {
             $execution = $this->client->domainSearch(
-                $this->legacyContext('domain_search', 1),
+                $context ?? $this->legacyContext('domain_search', 1),
                 $domain,
                 limit: $limit,
                 timeoutSeconds: $timeoutSeconds,
@@ -223,11 +223,11 @@ class HunterEnrichmentService
     }
 
     /** @return array<string, mixed>|null */
-    private function attemptCompanyEnrichment(string $domain, ?int $timeoutSeconds = null): ?array
+    private function attemptCompanyEnrichment(string $domain, ?int $timeoutSeconds = null, ?ProviderCallContext $context = null): ?array
     {
         try {
             $execution = $this->client->companyEnrichment(
-                $this->legacyContext('company_enrichment', 1),
+                $context ?? $this->legacyContext('company_enrichment', 1),
                 $domain,
                 $timeoutSeconds,
             );

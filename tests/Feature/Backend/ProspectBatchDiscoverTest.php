@@ -50,7 +50,9 @@ class ProspectBatchDiscoverTest extends TestCase
             ->assertJsonPath('draft.target', 'Exportateurs industriels')
             ->assertJsonPath('draft.exclude', 'Concurrents locaux')
             ->assertJsonPath('estimate.calls.hunter_discover', 1)
-            ->assertJsonPath('estimate.reserved_units.hunter', 0);
+            ->assertJsonPath('estimate.calls.hunter_domain_search', 20)
+            ->assertJsonPath('estimate.calls.hunter_company_enrichment', 20)
+            ->assertJsonPath('estimate.reserved_units.hunter', 24);
         $this->assertStringContainsString('Cible: Exportateurs industriels.', $response->json('prompt'));
         $this->assertDatabaseCount('prospect_batches', 0);
         $this->assertDatabaseCount('provider_calls', 0);
@@ -73,7 +75,7 @@ class ProspectBatchDiscoverTest extends TestCase
 
     public function test_import_endpoint_creates_or_reuses_a_draft_without_companies_or_provider_calls(): void
     {
-        $user = $this->actorWithPermissions('backend.access', 'run discovery');
+        $user = $this->actorWithPermissions('backend.access', 'run discovery', 'run prospect resolution');
         $criteria = $this->criteria();
         $payload = [
             'target' => 'Exportateurs industriels',
@@ -96,6 +98,26 @@ class ProspectBatchDiscoverTest extends TestCase
         );
         $this->assertDatabaseCount('prospect_batches', 1);
         $this->assertDatabaseCount('companies', 0);
+        $this->assertDatabaseCount('provider_calls', 0);
+        Http::assertNothingSent();
+    }
+
+    public function test_import_endpoint_refuses_without_run_prospect_resolution_permission(): void
+    {
+        // hunterDiscoverImport only authorizes `run discovery`; confirm()
+        // requires `run prospect resolution`. Without this pre-check a user
+        // with just `run discovery` could create a draft they can never
+        // launch — orphaning it. The check must fire before any draft exists.
+        $user = $this->actorWithPermissions('backend.access', 'run discovery');
+        $criteria = $this->criteria();
+
+        $this->actingAs($user)
+            ->postJson(route('admin.prospect_criteria.hunter_discover_import', $criteria), [
+                'target' => 'Exportateurs industriels',
+            ])
+            ->assertForbidden();
+
+        $this->assertDatabaseCount('prospect_batches', 0);
         $this->assertDatabaseCount('provider_calls', 0);
         Http::assertNothingSent();
     }
@@ -382,6 +404,99 @@ class ProspectBatchDiscoverTest extends TestCase
         $this->assertSame(50, $batch->fresh()->source_cursor['offset']);
         $this->assertSame('succeeded', ProviderCall::query()->sole()->status);
         $this->assertSame('0.00', ProviderCall::query()->sole()->consumed_units);
+    }
+
+    public function test_resume_reopens_review_batch_and_collects_the_final_page(): void
+    {
+        $actor = $this->actorWithPermissions('run prospect resolution');
+        $criteria = $this->criteria();
+        $service = app(ProspectBatchService::class);
+        $batch = $service->createDiscoverBatch($actor, $criteria, 'Exportateurs', null, ['limit' => 100]);
+        $filters = ['industry' => ['include' => ['Logistics']]];
+        $page = 0;
+
+        // A single fake with a page counter, not two Http::fake() calls: the
+        // second registration doesn't replace the first catch-all closure
+        // (proven pattern already used by test_ai_prompt_is_sent_once_...
+        // above), so the second HTTP call would otherwise still see page 1.
+        Http::fake(function () use (&$page, $filters) {
+            $response = $page++ === 0
+                ? ['data' => $this->discoverRows(0, 100), 'meta' => ['filters' => $filters, 'limit' => 100, 'offset' => 0, 'results' => 197]]
+                : ['data' => $this->discoverRows(100, 97), 'meta' => ['filters' => $filters, 'limit' => 100, 'offset' => 100, 'results' => 197]];
+
+            return Http::response($response);
+        });
+        $this->confirmAndRunFirstDiscoverPage($service, $batch, $actor);
+
+        // Batch 2's real trap: page-1 items already resolved, the finalizer's
+        // own pending-item gate isn't what re-blocks discovery below — the
+        // forced status='review' write is. Simulate the pre-fix stranding.
+        $batch->items()->update(['status' => 'ready']);
+        $batch->fresh()->forceFill(['status' => 'review', 'error' => 'finalization_delayed'])->save();
+
+        $resumed = $service->resumeDiscoverBatch($batch->fresh(), $actor);
+
+        $this->assertSame('queued', $resumed->status);
+        $this->assertNull($resumed->error);
+        Queue::assertPushed(FinalizeProspectBatchJob::class, fn (FinalizeProspectBatchJob $job): bool => $job->batchId === $batch->id);
+
+        (new FinalizeProspectBatchJob($batch->id))->handle($service);
+
+        $this->assertSame('running', $batch->fresh()->status);
+        $this->assertTrue($batch->fresh()->source_cursor['exhausted']);
+        $this->assertSame(197, $batch->items()->count());
+    }
+
+    public function test_resume_refuses_an_exhausted_cursor(): void
+    {
+        $actor = $this->actorWithPermissions('run prospect resolution');
+        $criteria = $this->criteria();
+        $service = app(ProspectBatchService::class);
+        $batch = $service->createDiscoverBatch($actor, $criteria, 'Exportateurs', null);
+        $batch->forceFill([
+            'status' => 'review',
+            'error' => 'finalization_delayed',
+            'cost_confirmed_at' => now(),
+            'source_cursor' => [
+                'offset' => 100,
+                'limit' => 100,
+                'exhausted' => true,
+                'initialized' => true,
+                'filters_hash' => hash('sha256', '[]'),
+                'prompt_hash' => $batch->source_options['prompt_hash'],
+            ],
+        ])->save();
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('prospect_discover_not_resumable');
+
+        $service->resumeDiscoverBatch($batch->fresh(), $actor);
+    }
+
+    public function test_resume_refuses_an_orphaned_criterion_cursor(): void
+    {
+        $actor = $this->actorWithPermissions('run prospect resolution');
+        $criteria = $this->criteria();
+        $service = app(ProspectBatchService::class);
+        $batch = $service->createDiscoverBatch($actor, $criteria, 'Exportateurs', null, ['limit' => 100]);
+
+        Http::fake(fn () => Http::response([
+            'data' => $this->discoverRows(0, 100),
+            'meta' => ['filters' => ['industry' => ['include' => ['Logistics']]], 'limit' => 100, 'offset' => 0, 'results' => 197],
+        ]));
+        $this->confirmAndRunFirstDiscoverPage($service, $batch, $actor);
+        $batch->fresh()->forceFill(['status' => 'review', 'error' => 'finalization_delayed'])->save();
+
+        // A fresh Discover confirm on the same criteria (possible once change
+        // 4 ships) resets its offset/exhausted and overwrites the prompt
+        // hash, orphaning batch's still-open cursor.
+        $second = $service->createDiscoverBatch($actor, $criteria, 'Fabricants', null);
+        $service->confirmAndDispatch($second, $actor);
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('prospect_discover_resume_criteria_stale');
+
+        $service->resumeDiscoverBatch($batch->fresh(), $actor);
     }
 
     private function confirmAndRunFirstDiscoverPage(

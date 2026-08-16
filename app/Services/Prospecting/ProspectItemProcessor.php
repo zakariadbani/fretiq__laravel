@@ -3,13 +3,20 @@
 namespace App\Services\Prospecting;
 
 use App\Models\Company;
+use App\Models\ProspectBatch;
+use App\Models\DiscoveryRun;
 use App\Models\ProspectBatchItem;
 use App\Models\ProviderCall;
 use App\Models\Setting;
 use App\Services\Discovery\CanonicalDomain;
+use App\Services\Discovery\AutomaticEnrichmentDecision;
+use App\Services\Discovery\CompanyEnrichmentService;
 use App\Services\Discovery\DiscoveredContactImportService;
 use App\Services\Discovery\DomainCanonicalizer;
 use App\Services\Scoring\LeadScoringService;
+use App\Exceptions\QuotaExhaustedException;
+use App\Exceptions\CriteriaCompanyNoLongerEligibleException;
+use App\Exceptions\EnrichmentInFlightException;
 use App\Services\Providers\Hunter\HunterClient;
 use App\Services\Providers\ProviderCallContext;
 use App\Services\Providers\ProviderCallLedger;
@@ -39,6 +46,7 @@ final class ProspectItemProcessor
         private readonly HunterVerificationStatusNormalizer $verification,
         private readonly HunterCompanySizeNormalizer $companySizes,
         private readonly LeadScoringService $scoring,
+        private readonly CompanyEnrichmentService $criteriaEnrichment,
     ) {}
 
     public function process(ProspectBatchItem $item): void
@@ -49,6 +57,11 @@ final class ProspectItemProcessor
 
         try {
             $item->refresh()->loadMissing('batch');
+            if ($this->criterionIsInactive($item)) {
+                $this->markSkipped($item, 'criterion_inactive');
+
+                return;
+            }
             $domain = $this->resolveDomain($item);
             if ($domain === null) {
                 return;
@@ -76,7 +89,57 @@ final class ProspectItemProcessor
             }
             $item->refresh()->loadMissing('batch', 'company');
 
-            $this->scoreCompanyForItem($item, $domain);
+            if ($this->sameCriterionRejected($item)) {
+                $this->markSkipped($item, 'same_criterion_rejected');
+
+                return;
+            }
+            $this->assignCurrentCriterion($item);
+
+            $decision = $this->scoreCompanyForItem($item, $domain);
+            if ($decision !== null) {
+                if ($this->companyAlreadyHasContacts($item)) {
+                    $this->markReady($item);
+
+                    return;
+                }
+                if (! $decision->allowsEnrichment()) {
+                    $this->persistDecisionSkip($item, $decision);
+
+                    return;
+                }
+                $batchKey = data_get($item->batch->source_options, 'criteria_enrichment_batch_id');
+                if (is_string($batchKey) && DiscoveryRun::query()
+                    ->where('enrichment_batch_id', $batchKey)
+                    ->where('hunter_circuit_open', true)
+                    ->exists()) {
+                    Company::withRejected()->whereKey($item->company_id)->update([
+                        'enrichment_status' => Company::ENRICHMENT_SKIPPED_PROVIDER_UNAVAILABLE,
+                        'updated_at' => now(),
+                    ]);
+                    $this->markSkipped($item, 'provider_unavailable');
+
+                    return;
+                }
+                try {
+                    $this->enrichThroughCriteriaReservation($item);
+                } catch (QuotaExhaustedException) {
+                    Company::withRejected()->whereKey($item->company_id)->update([
+                        'enrichment_status' => Company::ENRICHMENT_SKIPPED_BUDGET,
+                        'updated_at' => now(),
+                    ]);
+                    $this->markSkipped($item, 'quota_exhausted');
+
+                    return;
+                } catch (CriteriaCompanyNoLongerEligibleException|EnrichmentInFlightException) {
+                    $this->markReady($item);
+
+                    return;
+                }
+                $this->markReady($item);
+
+                return;
+            }
             $this->enrichCompany($item, $domain);
             $this->searchDomainContacts($item, $domain);
             $this->findNamedContact($item, $domain);
@@ -430,21 +493,22 @@ final class ProspectItemProcessor
         );
     }
 
-    private function scoreCompanyForItem(ProspectBatchItem $item, CanonicalDomain $domain): void
+    private function scoreCompanyForItem(ProspectBatchItem $item, CanonicalDomain $domain): ?AutomaticEnrichmentDecision
     {
-        if (! Setting::get('decouverte.auto_scoring', true)) {
-            return;
-        }
-
         $item->refresh()->loadMissing('batch', 'company');
         if ($item->company_id === null || $item->batch?->prospect_criteria_id === null) {
-            return;
+            return null;
         }
         if ($item->batch === null || $item->batch->criteria === null) {
-            return;
+            return null;
         }
+        $autoScoring = (bool) Setting::get('decouverte.auto_scoring', true);
         if (data_get($this->itemMetadata($item), 'processing.company_scoring_done') === true) {
-            return;
+            return $this->automaticEnrichmentDecision($item, $autoScoring);
+        }
+
+        if (! $autoScoring) {
+            return $this->automaticEnrichmentDecision($item, false);
         }
 
         $result = $this->scoring->score([
@@ -454,8 +518,9 @@ final class ProspectItemProcessor
         ], $item->batch->criteria, 20);
         $score = (int) ($result['score'] ?? 0);
         $explanation = (string) ($result['explanation'] ?? '');
+        $exclude = ($result['exclude'] ?? false) === true;
 
-        DB::transaction(function () use ($item, $score, $explanation): void {
+        DB::transaction(function () use ($item, $score, $explanation, $exclude): void {
             $locked = ProspectBatchItem::query()->lockForUpdate()->findOrFail($item->getKey());
             if ($locked->status !== 'processing') {
                 return;
@@ -473,12 +538,122 @@ final class ProspectItemProcessor
             $company->forceFill([
                 'ai_score' => $score,
                 'ai_explanation' => $explanation,
+                'qualification_status' => $exclude
+                    ? 'rejected'
+                    : ($company->relationship !== 'client' && $company->qualification_status === 'rejected'
+                        ? 'pending'
+                        : $company->qualification_status),
             ])->save();
 
             $metadata = $this->itemMetadata($locked);
             data_set($metadata, 'processing.company_scoring_done', true);
+            data_set($metadata, 'processing.company_scoring_score', $score);
+            data_set($metadata, 'processing.company_scoring_exclude', $exclude);
             $locked->forceFill(['source_metadata' => $metadata])->save();
         });
+
+        $item->refresh()->loadMissing('batch', 'company');
+
+        return $this->automaticEnrichmentDecision($item, true);
+    }
+
+    private function automaticEnrichmentDecision(ProspectBatchItem $item, bool $autoScoring): AutomaticEnrichmentDecision
+    {
+        $metadata = $this->itemMetadata($item);
+        $company = Company::withRejected()->findOrFail($item->company_id);
+
+        return AutomaticEnrichmentDecision::for(
+            $item->batch->criteria,
+            $autoScoring,
+            $autoScoring ? (int) data_get($metadata, 'processing.company_scoring_score', $company->ai_score) : null,
+            $autoScoring && data_get($metadata, 'processing.company_scoring_exclude') === true,
+            $company->enrichment_status,
+        );
+    }
+
+    private function criterionIsInactive(ProspectBatchItem $item): bool
+    {
+        $item->loadMissing('batch.criteria');
+
+        return $item->batch?->prospect_criteria_id !== null && $item->batch?->criteria?->is_active !== true;
+    }
+
+    private function sameCriterionRejected(ProspectBatchItem $item): bool
+    {
+        $company = Company::withRejected()->find($item->company_id);
+
+        return $item->batch?->prospect_criteria_id !== null
+            && $company?->qualification_status === 'rejected'
+            && (int) $company->criteria_id === (int) $item->batch->prospect_criteria_id;
+    }
+
+    private function assignCurrentCriterion(ProspectBatchItem $item): void
+    {
+        if ($item->batch?->prospect_criteria_id === null || $item->company_id === null) {
+            return;
+        }
+
+        Company::withRejected()->whereKey($item->company_id)->update([
+            'criteria_id' => $item->batch->prospect_criteria_id,
+            'updated_at' => now(),
+        ]);
+        $item->refresh()->loadMissing('batch', 'company');
+    }
+
+    private function companyAlreadyHasContacts(ProspectBatchItem $item): bool
+    {
+        return $item->batch?->prospect_criteria_id !== null
+            && $item->company_id !== null
+            && Company::withRejected()->find($item->company_id)?->contacts()->exists() === true;
+    }
+
+    private function enrichThroughCriteriaReservation(ProspectBatchItem $item): void
+    {
+        $criteria = $item->batch?->criteria;
+        if ($criteria === null) {
+            return;
+        }
+        $batchId = DB::transaction(function () use ($item): string {
+            $batch = ProspectBatch::query()->lockForUpdate()->findOrFail($item->prospect_batch_id);
+            $options = is_array($batch->source_options) ? $batch->source_options : [];
+            $id = $options['criteria_enrichment_batch_id'] ?? null;
+            if (! is_string($id) || ! Str::isUuid($id)) {
+                $id = (string) Str::uuid();
+                $options['criteria_enrichment_batch_id'] = $id;
+                $batch->forceFill(['source_options' => $options])->save();
+            }
+
+            return $id;
+        });
+        $attempts = max(1, min(20, $item->batch->items()->count()));
+        $target = $criteria->contact_limit === null ? $attempts : max(1, min(20, (int) $criteria->contact_limit));
+        $this->criteriaEnrichment->enrichForCriteria(
+            (int) $item->company_id, $criteria, $batchId, $attempts, $target, $item,
+            $this->context($item, 'domain_search', (string) $item->selected_domain),
+        );
+    }
+
+    private function persistDecisionSkip(ProspectBatchItem $item, AutomaticEnrichmentDecision $decision): void
+    {
+        DB::transaction(function () use ($item, $decision): void {
+            $locked = ProspectBatchItem::query()->lockForUpdate()->findOrFail($item->getKey());
+            if ($locked->status !== 'processing') {
+                return;
+            }
+            $company = Company::withRejected()->lockForUpdate()->find($locked->company_id);
+            if ($company === null) {
+                return;
+            }
+            if ($decision->skipStatus !== null) {
+                $company->forceFill(['enrichment_status' => $decision->skipStatus])->save();
+            }
+        });
+        if (data_get($this->itemMetadata($item), 'processing.company_scoring_exclude') === true) {
+            $this->markSkipped($item, 'excluded_by_criteria');
+
+            return;
+        }
+        $this->markReady($item);
     }
 
     private function searchDomainContacts(ProspectBatchItem $item, CanonicalDomain $domain): void
@@ -854,6 +1029,16 @@ final class ProspectItemProcessor
         $item->refresh();
     }
 
+    private function markSkipped(ProspectBatchItem $item, string $reason): void
+    {
+        ProspectBatchItem::query()->whereKey($item->getKey())->where('status', 'processing')->update([
+            'status' => 'skipped', 'domain_reason' => $reason, 'error_code' => null,
+            'error_message' => null, 'processed_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->batches->refreshCounters($item->batch);
+        $item->refresh();
+    }
+
     private function markDomainSearchDone(ProspectBatchItem $item, int $offset): void
     {
         DB::transaction(function () use ($item, $offset): void {
@@ -1204,6 +1389,9 @@ final class ProspectItemProcessor
                 'google_done' => ($metadata['processing']['google_done'] ?? false) === true,
                 'maps_done' => ($metadata['processing']['maps_done'] ?? false) === true,
                 'company_enrichment_done' => ($metadata['processing']['company_enrichment_done'] ?? false) === true,
+                'company_scoring_done' => ($metadata['processing']['company_scoring_done'] ?? false) === true,
+                'company_scoring_score' => $this->boundedInteger($metadata['processing']['company_scoring_score'] ?? null, 0, 100),
+                'company_scoring_exclude' => ($metadata['processing']['company_scoring_exclude'] ?? false) === true,
                 'domain_search_done' => ($metadata['processing']['domain_search_done'] ?? false) === true,
                 'domain_search_offset' => max(0, min(10_000, (int) ($metadata['processing']['domain_search_offset'] ?? 0))),
                 'domain_search_limit_cap' => (int) ($metadata['processing']['domain_search_limit_cap'] ?? 0) === self::FREE_PLAN_PAGE_LIMIT

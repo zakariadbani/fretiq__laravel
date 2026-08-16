@@ -584,6 +584,16 @@ return [
         'cancelled' => ['label' => 'Annulé', 'color' => 'secondary'],
     ],
 
+    'prospect_batch_item_statuses' => [
+        'pending' => ['label' => 'En attente', 'color' => 'secondary'],
+        'processing' => ['label' => 'En cours', 'color' => 'primary'],
+        'review' => ['label' => 'À revoir', 'color' => 'warning'],
+        'ready' => ['label' => 'Prêt', 'color' => 'success'],
+        'promoted' => ['label' => 'Promu', 'color' => 'success'],
+        'failed' => ['label' => 'Échec', 'color' => 'danger'],
+        'skipped' => ['label' => 'Ignoré', 'color' => 'secondary'],
+    ],
+
     'prospect_review_reasons' => [
         'ambiguous_domain' => ['label' => 'Plusieurs domaines possibles', 'description' => 'Plusieurs sites peuvent correspondre à cette entreprise. Choisissez seulement celui dont l’identité est certaine.', 'color' => 'warning'],
         'domain_identity_conflict' => ['label' => 'Identité du domaine à confirmer', 'description' => 'Le domaine trouvé peut appartenir à une autre entreprise portant un nom proche.', 'color' => 'warning'],
@@ -591,6 +601,7 @@ return [
         'registrable_domain_collision' => ['label' => 'Domaine déjà associé', 'description' => 'Ce domaine ou un domaine parent est déjà rattaché à une autre entreprise dans Fretiq.', 'color' => 'warning'],
         'missing_domain' => ['label' => 'Aucun domaine fiable', 'description' => 'L’analyse automatique n’a pas trouvé de site officiel suffisamment fiable.', 'color' => 'secondary'],
         'provider_outcome_uncertain' => ['label' => 'Résultat fournisseur incertain', 'description' => 'Le fournisseur a peut-être traité la demande sans confirmer le résultat. Une relance exige votre confirmation.', 'color' => 'danger'],
+        'provider_retry_exhausted' => ['label' => 'Nombre maximal de tentatives atteint', 'description' => 'Le traitement automatique a échoué à plusieurs reprises sans réponse exploitable du fournisseur. Vous pouvez relancer manuellement cette entreprise.', 'color' => 'danger'],
         'rate_limit' => ['label' => 'Fournisseur temporairement limité', 'description' => 'Le fournisseur a demandé de ralentir. Vous pouvez relancer uniquement cette entreprise.', 'color' => 'warning'],
         'usage_limit' => ['label' => 'Limite d’utilisation du fournisseur atteinte', 'description' => 'Vérifiez le quota avant de relancer manuellement cette entreprise.', 'color' => 'warning'],
         'pagination_error' => ['label' => 'Recherche de contacts interrompue', 'description' => 'Le domaine a bien été enregistré, mais la recherche de contacts s’est arrêtée avant la fin. Vous pouvez relancer uniquement cette entreprise.', 'color' => 'warning'],

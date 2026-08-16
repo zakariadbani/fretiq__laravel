@@ -41,12 +41,21 @@ final class ProcessProspectBatchItemJob implements ShouldBeUnique, ShouldQueue
     /** @return array<int, WithoutOverlapping> */
     public function middleware(): array
     {
-        return [
+        $middleware = [
             (new WithoutOverlapping($this->uniqueId()))
                 ->shared()
                 ->releaseAfter(10)
                 ->expireAfter($this->timeout + 60),
         ];
+        $batchId = ProspectBatchItem::query()->whereKey($this->itemId)
+            ->whereHas('batch', fn ($query) => $query->whereNotNull('prospect_criteria_id'))
+            ->value('prospect_batch_id');
+        if ($batchId !== null) {
+            $middleware[] = (new WithoutOverlapping("prospect-criterion-batch:{$batchId}"))
+                ->shared()->releaseAfter(10)->expireAfter($this->timeout + 60);
+        }
+
+        return $middleware;
     }
 
     public function handle(ProspectItemProcessor $processor, ProspectBatchService $batches): void

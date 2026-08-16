@@ -1672,4 +1672,69 @@ test.describe('ProspectCriteria module', () => {
 
 });
 
+/**
+ * Live dev data checks — criteria id 2, NOT the seeded E2E_FIXTURE.
+ * Read-only; never triggers discover() or the launch-confirm checkbox.
+ */
+test.describe('ProspectCriteria — Résultats yield strip and Discover IA preview (criteria id=2, live dev data)', () => {
+  test('the enrichment-outcome strip badges sum to the page total company count', async ({ page }) => {
+    // ?audit=1 makes the header's $resultCompanies->total() include rejected
+    // companies, matching outcomeBreakdown — which is deliberately unscoped
+    // (see ProspectCriteriaController::enrichmentOutcomeBreakdown()). Without
+    // audit=1 the header total excludes rejected companies while the
+    // breakdown does not, so the two would not sum to the same value by design.
+    await page.goto('/admin/prospect_criteria/2?audit=1#criteria_resultats');
+
+    const pane = page.locator('#criteria_resultats');
+    await expect(pane).toBeVisible();
+
+    const breakdownCard = pane.locator('.card', { hasText: 'Résultat de l’enrichissement' }).first();
+    if ((await breakdownCard.count()) === 0) {
+      test.skip(true, 'No enrichment outcomes recorded for criteria 2 right now.');
+    }
+
+    const badges = breakdownCard.locator('.card-body .badge');
+    const badgeCount = await badges.count();
+    let sum = 0;
+    for (let index = 0; index < badgeCount; index++) {
+      const text = await badges.nth(index).textContent();
+      sum += Number(text?.trim().match(/^\d+/)?.[0] ?? 0);
+    }
+
+    const heading = pane.locator('h3.card-title.fw-bolder');
+    const headingText = await heading.textContent();
+    const total = Number(headingText?.match(/\((\d+)\)/)?.[1]);
+
+    expect(sum).toBe(total);
+  });
+
+  test('Vérifier la cible previews in place — never teleports into the batch wizard', async ({ page }) => {
+    await page.goto('/admin/prospect_criteria/2');
+
+    const discoverTab = page.locator('#tab_criteria_hunter_discover');
+    if ((await discoverTab.count()) === 0) {
+      test.skip(true, 'Admin lacks "run discovery" permission on this environment — Discover IA tab not rendered.');
+    }
+    await discoverTab.click();
+    await expect(page.locator('#criteria_hunter_discover')).toBeVisible();
+
+    // Free — preview does no provider I/O (confirmed by Http::assertNothingSent()
+    // in ProspectBatchDiscoverTest). Never click "Continuer vers la confirmation"
+    // or the launch-confirm checkbox — those create a draft batch / spend credits.
+    const previewButton = page.locator('#hunter-discover-form [data-hunter-preview]');
+    await previewButton.click();
+
+    // Whichever way the preview call resolves — the target-ready results panel,
+    // or the "activate this criterion first" guard (criteria 2 may be inactive
+    // on dev) — it renders IN PLACE. Either is a valid "stayed put" outcome.
+    await expect.poll(async () => {
+      const resultsShown = await page.locator('[data-hunter-results]').isVisible();
+      const errorText = (await page.locator('#hunter-discover-form [data-hunter-error]').textContent())?.trim() ?? '';
+      return resultsShown || errorText !== '';
+    }, { timeout: 15000 }).toBe(true);
+
+    await expect(page).toHaveURL(/\/admin\/prospect_criteria\/2(\?|#|$)/);
+  });
+});
+
 // <<<

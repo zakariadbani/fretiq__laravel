@@ -8,6 +8,7 @@ use App\Models\Contact;
 use App\Models\ProspectBatch;
 use App\Models\ProspectBatchContact;
 use App\Models\ProspectBatchItem;
+use App\Models\ProspectCriteria;
 use App\Models\ProviderCall;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -206,5 +207,186 @@ class ProspectReviewTest extends TestCase
 
         $this->assertDatabaseHas('provider_calls', ['id' => $call->id, 'status' => 'retryable']);
         Queue::assertPushed(ProcessProspectBatchItemJob::class);
+    }
+
+    public function test_retry_of_an_item_linked_to_an_inactive_criterion_is_rejected_without_changing_its_state(): void
+    {
+        Queue::fake();
+        $criteria = ProspectCriteria::create([
+            'name' => 'Critère arrêté',
+            'is_active' => false,
+        ]);
+        $this->batch->update(['prospect_criteria_id' => $criteria->id]);
+        $item = ProspectBatchItem::factory()->for($this->batch, 'batch')->create([
+            'status' => 'failed',
+            'domain_reason' => 'provider_unavailable',
+            'error_code' => 'provider_unavailable',
+            'source_metadata' => ['existing' => 'must-stay'],
+        ]);
+
+        $this->actingAs($this->user)
+            ->get(route('admin.prospect_review.index', [
+                'tab' => 'companies',
+                'batch' => $this->batch->id,
+                'item' => $item->id,
+            ]))
+            ->assertOk()
+            ->assertSee('data-review-retry-blocked', false)
+            ->assertSee('Critère arrêté')
+            ->assertDontSee('data-review-primary-action="retry"', false);
+
+        $this->actingAs($this->user)
+            ->postJson(route('admin.prospect_review.items.decide', $item), ['action' => 'retry'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('action')
+            ->assertJsonPath('errors.action.0', 'Le critère « Critère arrêté » est inactif. Réactivez-le avant de relancer cette entreprise.');
+
+        $this->assertDatabaseHas('prospect_batch_items', [
+            'id' => $item->id,
+            'status' => 'failed',
+            'error_code' => 'provider_unavailable',
+        ]);
+        $this->assertSame(['existing' => 'must-stay'], $item->fresh()->source_metadata);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_retry_of_an_item_linked_to_an_active_criterion_is_still_queued(): void
+    {
+        Queue::fake();
+        $criteria = ProspectCriteria::create([
+            'name' => 'Critère actif',
+            'is_active' => true,
+        ]);
+        $this->batch->update(['prospect_criteria_id' => $criteria->id]);
+        $item = ProspectBatchItem::factory()->for($this->batch, 'batch')->create([
+            'status' => 'failed',
+            'domain_reason' => 'provider_unavailable',
+            'error_code' => 'provider_unavailable',
+        ]);
+
+        $this->actingAs($this->user)
+            ->postJson(route('admin.prospect_review.items.decide', $item), ['action' => 'retry'])
+            ->assertOk()
+            ->assertJsonPath('status', 'pending');
+
+        $this->assertDatabaseHas('prospect_batch_items', [
+            'id' => $item->id,
+            'status' => 'pending',
+            'error_code' => null,
+        ]);
+        Queue::assertPushed(
+            ProcessProspectBatchItemJob::class,
+            fn (ProcessProspectBatchItemJob $job): bool => $job->itemId === $item->id,
+        );
+    }
+
+    public function test_partial_request_returns_only_the_detail_card_and_preserves_the_current_page(): void
+    {
+        $item = ProspectBatchItem::factory()->for($this->batch, 'batch')->create([
+            'status' => 'review',
+            'domain_reason' => 'missing_domain',
+        ]);
+
+        $response = $this->actingAs($this->user)->get(route('admin.prospect_review.index', [
+            'tab' => 'companies',
+            'batch' => $this->batch->id,
+            'item' => $item->id,
+            'companies_page' => 2,
+            'partial' => 1,
+        ]));
+
+        $response->assertOk()
+            ->assertSee('data-review-company-card="'.$item->id.'"', false)
+            ->assertSee('name="return_companies_page" value="2"', false)
+            ->assertDontSee('id="review-queue"', false)
+            ->assertDontSee('File de vérification');
+    }
+
+    public function test_partial_request_falls_back_to_the_empty_state_when_the_item_is_no_longer_selectable(): void
+    {
+        $item = ProspectBatchItem::factory()->for($this->batch, 'batch')->create([
+            'status' => 'ready',
+        ]);
+
+        $response = $this->actingAs($this->user)->get(route('admin.prospect_review.index', [
+            'tab' => 'companies',
+            'batch' => $this->batch->id,
+            'item' => $item->id,
+            'partial' => 1,
+        ]));
+
+        $response->assertOk()
+            ->assertSee('data-review-empty', false)
+            ->assertDontSee('data-review-company-card', false);
+    }
+
+    public function test_deep_link_to_a_failed_item_renders_its_card_under_the_default_state_filter(): void
+    {
+        $item = ProspectBatchItem::factory()->for($this->batch, 'batch')->create([
+            'status' => 'failed',
+            'domain_reason' => 'provider_unavailable',
+            'error_code' => 'provider_unavailable',
+        ]);
+
+        // No ?state= at all — the general "À décider" default must not
+        // silently hide a deep-linked failed item; the default should
+        // resolve to "blocked" for this item so its card actually renders.
+        $this->actingAs($this->user)
+            ->get(route('admin.prospect_review.index', [
+                'tab' => 'companies',
+                'batch' => $this->batch->id,
+                'item' => $item->id,
+            ]))
+            ->assertOk()
+            ->assertSee('data-review-company-card="'.$item->id.'"', false)
+            ->assertSee('<input type="hidden" name="state" value="blocked">', false)
+            ->assertDontSee('data-review-empty', false);
+
+        // An explicit ?state= is never overridden by the item-based default.
+        $this->actingAs($this->user)
+            ->get(route('admin.prospect_review.index', [
+                'tab' => 'companies',
+                'batch' => $this->batch->id,
+                'item' => $item->id,
+                'state' => 'attention',
+            ]))
+            ->assertOk()
+            ->assertSee('<input type="hidden" name="state" value="attention">', false);
+    }
+
+    public function test_historical_inactive_criterion_skip_explains_what_happened_and_the_safe_next_step(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name' => 'Critère arrêté',
+            'is_active' => false,
+        ]);
+        $this->batch->update(['prospect_criteria_id' => $criteria->id]);
+        $item = ProspectBatchItem::factory()->for($this->batch, 'batch')->create([
+            'company_name' => 'CSTransfo',
+            'status' => 'skipped',
+            'domain_reason' => 'criterion_inactive',
+        ]);
+
+        $this->actingAs($this->user)
+            ->get(route('admin.prospect_review.index', [
+                'tab' => 'companies',
+                'batch' => $this->batch->id,
+                'item' => $item->id,
+                'monitor_item' => $item->id,
+            ]))
+            ->assertOk()
+            ->assertSee('Pourquoi')
+            ->assertSee('Critère arrêté')
+            ->assertSee('Le critère est inactif.')
+            ->assertSee('Aucun score, enrichissement ni recherche de contacts n’a été lancé.')
+            ->assertSee('Réactivez le critère puis relancez la découverte.')
+            ->assertDontSee('CSTransfo ne nécessite plus de traitement.');
+
+        $this->actingAs($this->user)
+            ->getJson(route('admin.prospect_review.items.status', $item))
+            ->assertOk()
+            ->assertJsonPath('title', 'Relance non effectuée · CSTransfo')
+            ->assertJsonPath('result', 'Aucun score, enrichissement ni recherche de contacts n’a été lancé.')
+            ->assertJsonPath('next_step', 'Réactivez le critère puis relancez la découverte.');
     }
 }

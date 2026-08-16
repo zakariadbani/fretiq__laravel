@@ -365,9 +365,47 @@ class ProspectCriteriaController extends BackendController
             ->with('resultsSort', $resultsSort)
             ->with('resultsDir', $resultsDir)
             ->with('queryGroups', $queryGroups)
-            ->with('auditMode', $auditMode);
+            ->with('auditMode', $auditMode)
+            ->with('outcomeBreakdown', $this->enrichmentOutcomeBreakdown($model));
 
         return $view;
+    }
+
+    /**
+     * Why do most of this criterion's companies have no contacts? Scoped
+     * directly to companies.criteria_id — NOT via prospect_batch_items,
+     * which only covers companies that went through a batch (see the
+     * sibling ProspectBatchController::enrichmentOutcomeBreakdown(), which
+     * is batch-scoped). Most of a criterion's companies come from the
+     * separate discovery pipeline (DiscoveryPipelineService::upsertCompany()),
+     * which writes companies directly and never creates a batch item.
+     *
+     * One grouped query; never run per row. Uses DB::table() (not the
+     * Company model) so the Company::notRejected global scope doesn't
+     * silently drop rejected companies from the total — the breakdown must
+     * sum to the criterion's full company count.
+     *
+     * @return \Illuminate\Support\Collection<int, array{label:string,color:string,total:int}>
+     */
+    private function enrichmentOutcomeBreakdown(ProspectCriteria $model): \Illuminate\Support\Collection
+    {
+        return DB::table('companies')
+            ->where('criteria_id', $model->id)
+            ->selectRaw('enrichment_status as status, count(*) as total')
+            ->groupBy('enrichment_status')
+            ->orderByDesc('total')
+            ->get()
+            ->map(static function (object $row): array {
+                $config = $row->status !== null
+                    ? config('global.data.company_enrichment_statuses.'.$row->status)
+                    : config('global.data.company_enrichment_status_null');
+
+                return [
+                    'label' => $config['label'] ?? ($row->status ?? 'Non tenté'),
+                    'color' => $config['color'] ?? 'secondary',
+                    'total' => (int) $row->total,
+                ];
+            });
     }
 
     /**
@@ -820,6 +858,14 @@ class ProspectCriteriaController extends BackendController
     public function hunterDiscoverImport(Request $request, $id, ProspectBatchService $batches)
     {
         $this->authorize('run discovery');
+        // hunterDiscoverImport only requires `run discovery`, but the batch it
+        // creates can only be launched via admin.prospect_batches.confirm,
+        // which requires `run prospect resolution` — a different permission.
+        // Check it here, before the draft exists, so a user who can create but
+        // not launch never ends up with an orphaned, unconfirmable draft batch.
+        if (! $request->user()->can('run prospect resolution')) {
+            return response()->json(['message' => 'Vous n’avez pas la permission de lancer ce traitement.'], 403);
+        }
         $criteria = ProspectCriteria::findOrFail((int) $id);
         if (! $criteria->is_active) {
             return response()->json(['message' => 'Activez ce critère avant l’import.'], 422);

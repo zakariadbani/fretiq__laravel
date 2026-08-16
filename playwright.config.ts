@@ -1,4 +1,16 @@
 import { defineConfig, devices } from '@playwright/test';
+import fs from 'fs';
+import path from 'path';
+
+// Load .env so ADMIN_PASSWORD (see auth.setup.ts) can live in the gitignored
+// .env file instead of being passed inline on the command line. Uses Node's
+// built-in loader (no `dotenv` dependency — it's only a transitive package,
+// not in package.json). Never overrides a var already set in the shell/CI
+// env — process.loadEnvFile() leaves existing process.env values alone.
+const envPath = path.resolve(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  process.loadEnvFile(envPath);
+}
 
 export default defineConfig({
   testDir: './tests/e2e',

@@ -52,7 +52,75 @@ final class FinalizeProspectBatchJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(ProspectBatchService $batches): void
     {
-        $action = DB::transaction(function (): string {
+        $action = $this->evaluateBatch();
+
+        if ($action === 'wait') {
+            // Terminal item jobs dispatch a fresh finalizer. Polling here burns
+            // attempts while a provider retry is deliberately delayed.
+            return;
+        }
+        if ($action !== 'discover') {
+            return;
+        }
+
+        // The claim/HTTP/settlement sequence is deliberately outside the short
+        // finalization transaction. Its own cache lock makes a replay harmless.
+        $batch = ProspectBatch::query()->find($this->batchId);
+        if ($batch === null) {
+            return;
+        }
+
+        $collected = $batches->collectDiscoverPage($batch);
+        if ($collected === 0) {
+            // No page arrived this pass (claim refused, a settled replay, or
+            // an empty/duplicate page). Releasing would burn one of $tries on
+            // a page that isn't coming — re-run the terminalize check instead
+            // so a now-exhausted cursor resolves immediately, and an open one
+            // just waits for the next attempt without spending one.
+            $this->evaluateBatch();
+
+            return;
+        }
+
+        // ponytail: release() reuses this job instance, so $tries=8 is a
+        // ceiling on total pages (~700 results at 100/page), not on
+        // failures — a criterion returning more strands the same way batch 2
+        // did. The real fix is a fresh job dispatch per page, but that
+        // collides with ShouldBeUnique's uniqueFor=300 dropping a dispatch
+        // made while collectDiscoverPage()'s own lock is still held.
+        $this->release(10);
+    }
+
+    public function failed(Throwable $exception): void
+    {
+        $batch = ProspectBatch::query()->whereKey($this->batchId)->first(['id', 'source_type', 'source_cursor']);
+        if ($batch === null) {
+            return;
+        }
+
+        $cursor = is_array($batch->source_cursor) ? $batch->source_cursor : [];
+        $strandedDiscover = $batch->source_type === 'discover' && ($cursor['exhausted'] ?? false) !== true;
+
+        // A discover batch with an open cursor must not be force-terminalized
+        // to 'review' here: claimDiscoverPage() only accepts queued|running,
+        // so that write would make it permanently unresumable (the batch 2
+        // trap). Leave its status alone — it's already queued or running —
+        // and only record the diagnostic marker; resumeDiscoverBatch() is the
+        // one path that reopens it.
+        $attributes = ['error' => 'finalization_delayed', 'updated_at' => now()];
+        if (! $strandedDiscover) {
+            $attributes['status'] = 'review';
+        }
+
+        ProspectBatch::query()
+            ->whereKey($this->batchId)
+            ->whereNotIn('status', ['completed', 'failed', 'cancelled'])
+            ->update($attributes);
+    }
+
+    private function evaluateBatch(): string
+    {
+        return DB::transaction(function (): string {
             $batch = ProspectBatch::query()->lockForUpdate()->find($this->batchId);
             if ($batch === null || in_array($batch->status, ['draft', 'cancelled', 'completed', 'failed'], true)) {
                 return 'done';
@@ -95,36 +163,6 @@ final class FinalizeProspectBatchJob implements ShouldBeUnique, ShouldQueue
 
             return 'done';
         });
-
-        if ($action === 'wait') {
-            // Terminal item jobs dispatch a fresh finalizer. Polling here burns
-            // attempts while a provider retry is deliberately delayed.
-            return;
-        }
-        if ($action !== 'discover') {
-            return;
-        }
-
-        // The claim/HTTP/settlement sequence is deliberately outside the short
-        // finalization transaction. Its own cache lock makes a replay harmless.
-        $batch = ProspectBatch::query()->find($this->batchId);
-        if ($batch === null) {
-            return;
-        }
-        $batches->collectDiscoverPage($batch);
-        $this->release(10);
-    }
-
-    public function failed(Throwable $exception): void
-    {
-        ProspectBatch::query()
-            ->whereKey($this->batchId)
-            ->whereNotIn('status', ['completed', 'failed', 'cancelled'])
-            ->update([
-                'status' => 'review',
-                'error' => 'finalization_delayed',
-                'updated_at' => now(),
-            ]);
     }
 
     private function recomputeCounters(ProspectBatch $batch): void
