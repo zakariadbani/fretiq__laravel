@@ -2,66 +2,59 @@
     $allPermissions = \Spatie\Permission\Models\Permission::all()->sortBy('name');
 
     /*
-     * Category grouping rebuilt for fretiq's real permission set.
-     * Source: database/seeders/acl/PermissionsSeeder.php
-     *
-     * Entities (CRUD: view/create/edit/delete):
-     *   companies, contacts, segments, campaigns, campaign_templates,
-     *   sequences, demandes, prospect_criteria, sender_identities, suppressions, users
-     *
-     * Keyword perms:
-     *   backend.access, send campaigns, manage roles, manage permissions,
-     *   view zoho, sync zoho, run discovery
+     * Category grouping mirrors the sidebar order in config/global/menu.php.
+     * Patterns are first-match-wins; entities appear in the order listed here,
+     * and actions are ranked view / create / edit / delete inside each pattern.
      */
     $categoryPatterns = [
-        'Entreprises'          => ['*companies*'],
-        'Contacts'             => ['*contacts*'],
-        'Segments'             => ['*segments*'],
-        'Campagnes'            => ['*campaigns*'],
-        'Modèles de campagne'  => ['*campaign_templates*'],
-        'Séquences'            => ['*sequences*'],
-        'Demandes'             => ['*demandes*'],
-        'Critères de prospect' => ['*prospect_criteria*'],
-        'Identités expéditeur' => ['*sender_identities*'],
-        'Suppressions'         => ['*suppressions*'],
-        'Utilisateurs'         => ['*users*'],
-        'Système & Accès'      => [
-            'backend.access',
-            'send campaigns',
-            'manage roles',
-            'manage permissions',
-            'view zoho',
-            'sync zoho',
-            'run discovery',
-        ],
+        // Prospection & campagnes
+        'Accès général'             => ['backend.access'],
+        'Découverte'                => ['*prospect_criteria*', '*prospect_batches*',
+                                        'run discovery', 'run prospect resolution',
+                                        'review prospect matches'],
+        'Répertoire'                => ['*companies*', '*contacts*'],
+        'Préparation des campagnes' => ['*segments*', '*campaign_templates*',
+                                        '*sequences*', '*sender_identities*'],
+        'Campagnes & planning'      => ['*campaigns*'],
+        'Réponses & demandes'       => ['*inbox*', '*demandes*'],
+        'Conformité & consommation' => ['*suppressions*', '*consumption*'],
+        // Zoho CRM
+        'Zoho CRM'                  => ['*marketing dashboard*', '*zoho*'],
+        // Administration
+        'Utilisateurs & accès'      => ['*users*', 'manage roles', 'manage permissions'],
+        'Configuration'             => ['*settings*', '*packages*'],
+        'Supervision'               => ['*provider quota*', '*provider activity*'],
     ];
+
+    $actionRank = ['view' => 0, 'create' => 1, 'edit' => 2, 'delete' => 3];
 
     $permissionsByGroup = [];
     $assigned = [];
 
     foreach ($categoryPatterns as $category => $patterns) {
-        foreach ($allPermissions as $permission) {
-            if (in_array($permission->id, $assigned)) continue;
-            foreach ($patterns as $pattern) {
-                if (\Illuminate\Support\Str::is($pattern, $permission->name)) {
-                    $permissionsByGroup[$category][] = $permission;
-                    $assigned[] = $permission->id;
-                    break;
-                }
+        foreach ($patterns as $pattern) {
+            $matched = $allPermissions
+                ->filter(fn ($p) => !isset($assigned[$p->id])
+                    && \Illuminate\Support\Str::is($pattern, $p->name))
+                ->sortBy(fn ($p) => $actionRank[explode(' ', $p->name, 2)[0]] ?? 9);
+
+            foreach ($matched as $p) {
+                $permissionsByGroup[$category][] = $p;
+                $assigned[$p->id] = true;
             }
         }
     }
 
-    // Catch any unmatched permissions in "Autres"
+    // Safety net: any permission seeded later that matches no pattern still shows up.
     foreach ($allPermissions as $permission) {
-        if (!in_array($permission->id, $assigned)) {
+        if (!isset($assigned[$permission->id])) {
             $permissionsByGroup['Autres'][] = $permission;
         }
     }
 @endphp
 
 <div class="modal fade" id="kt_modal_update_role" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered mw-750px">
+    <div class="modal-dialog modal-dialog-centered mw-1000px">
         <div class="modal-content">
             <div class="modal-header">
                 <h2 class="fw-bold" id="role-modal-title">Ajouter un rôle</h2>

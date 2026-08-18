@@ -449,6 +449,10 @@ if (!function_exists('permission_label')) {
             'sync' => 'Synchroniser',
             'run' => 'Lancer',
             'enrich' => 'Enrichir',
+            'backfill' => 'Réimporter',
+            'export' => 'Exporter',
+            'verify' => 'Vérifier',
+            'review' => 'Examiner',
         ];
 
         $entities = [
@@ -471,6 +475,15 @@ if (!function_exists('permission_label')) {
             'settings' => 'paramètres',
             'consumption' => 'consommation',
             'provider quota' => 'quotas fournisseurs',
+            'prospect_batches' => 'lots de découverte',
+            'marketing dashboard' => 'tableau de bord marketing',
+            'zoho records' => 'données CRM Zoho',
+            'zoho mappings' => 'correspondances de champs Zoho',
+            'zoho raw payload' => 'données brutes Zoho',
+            'inbox' => 'boîte de réception',
+            'prospect resolution' => 'la résolution de prospects',
+            'prospect matches' => 'les correspondances de prospects',
+            'provider activity' => 'activité fournisseurs',
         ];
 
         [$action, $entity] = array_pad(explode(' ', $permission, 2), 2, '');
