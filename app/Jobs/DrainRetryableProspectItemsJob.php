@@ -17,20 +17,29 @@ use Illuminate\Support\Facades\DB;
 use Throwable;
 
 /**
- * Background half of the "À relancer" bulk drain. The controller only
- * selects and caps the item ids and enqueues this job — everything that can
- * fail, race, or exhaust a retry budget happens here, one item at a time,
- * each under its own short lock (never one giant transaction across the
- * whole batch of items).
+ * Background half of the "À relancer" / "Reprendre les lignes en attente"
+ * bulk drains. The controller only selects and caps the item ids (either
+ * `failed` items via blockedItemsQuery(), or stalled `pending` items an
+ * operator's own retry click orphaned via stalledItemsQuery()) and enqueues
+ * this job — everything that can fail, race, or exhaust a retry budget
+ * happens here, one item at a time, each under its own short lock (never one
+ * giant transaction across the whole batch of items).
  */
 final class DrainRetryableProspectItemsJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    // Every item transition is guarded by `status === 'failed'`, so a re-run
-    // (whole job retried after an infra hiccup) just finds already-flipped
-    // items no longer 'failed' and skips them as already_handled — safe by
-    // construction. Nothing here needs Laravel-level retries on top of that.
+    // `failed` items flip status inside this job, so a re-run of the whole
+    // job (infra hiccup) just finds them no longer 'failed' and skips them
+    // as already_handled. `pending` items get NO flip here — they're
+    // already the target status — so that reasoning alone can't cover them.
+    // The actual safety net for both branches is
+    // ProspectItemProcessor::claim()'s atomic
+    // whereIn('status',['pending','failed'])->update(...): only one
+    // dispatched ProcessProspectBatchItemJob per item can win the claim, so
+    // a duplicate dispatch (this job re-running, or a drain firing twice) is
+    // a wasted job, never a double-processed item. Nothing here needs
+    // Laravel-level retries on top of that.
     public int $tries = 1;
 
     public int $timeout = 300;
@@ -78,7 +87,7 @@ final class DrainRetryableProspectItemsJob implements ShouldQueue
                     ->with(['batch:id,status,created_by,prospect_criteria_id', 'batch.criteria:id,name,is_active'])
                     ->find($itemId);
 
-                if ($locked === null || $locked->status !== 'failed') {
+                if ($locked === null || ! in_array($locked->status, ['failed', 'pending'], true)) {
                     return ['code' => 'already_handled', 'itemId' => null];
                 }
 
@@ -87,21 +96,33 @@ final class DrainRetryableProspectItemsJob implements ShouldQueue
                     return ['code' => $reason, 'itemId' => null];
                 }
 
+                // Mandatory on both branches, not just `failed`: this is a
+                // MAX_ATTEMPTS gate (plus the failed → retryable flip
+                // execute() requires), and it's a safe no-op for a genuinely
+                // stalled `pending` item (error_code null →
+                // allowedFailureCodesFor('') → [] → returns 0 without a
+                // query). Skipping it on the `pending` branch would let an
+                // attempt-exhausted item re-dispatch straight into
+                // provider_call_not_replayable.
                 try {
                     $ledger->authorizeKnownFailureRetryForItem((int) $locked->getKey(), (string) $locked->error_code);
                 } catch (ProviderRequestException) {
                     return ['code' => 'budget_exhausted', 'itemId' => null];
                 }
 
-                // Same retry transition decideItem() applies — never a second
-                // retry mechanism for the same state change.
-                $locked->forceFill([
-                    'status' => 'pending',
-                    'error_code' => null,
-                    'error_message' => null,
-                    'processing_started_at' => null,
-                    'processed_at' => null,
-                ])->save();
+                if ($locked->status === 'failed') {
+                    // Same retry transition decideItem() applies — never a
+                    // second retry mechanism for the same state change.
+                    $locked->forceFill([
+                        'status' => 'pending',
+                        'error_code' => null,
+                        'error_message' => null,
+                        'processing_started_at' => null,
+                        'processed_at' => null,
+                    ])->save();
+                }
+                // `pending` items are already the target status — nothing to
+                // flip, just dispatch below.
 
                 if ($locked->batch !== null) {
                     $touchedBatches[(int) $locked->batch->getKey()] = $locked->batch;

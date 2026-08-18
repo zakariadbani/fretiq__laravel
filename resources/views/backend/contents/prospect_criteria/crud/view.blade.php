@@ -72,6 +72,9 @@
     @can('run discovery')
         <div class="tab-pane fade" id="criteria_hunter_discover" role="tabpanel">
             @include('backend.contents.prospect_criteria.partials._hunter-discover', ['model' => $model])
+            <div class="mt-10">
+                @include('backend.contents.prospect_criteria.partials._discover-history', ['model' => $model])
+            </div>
         </div>
     @endcan
 

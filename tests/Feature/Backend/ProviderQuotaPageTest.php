@@ -4,6 +4,7 @@ namespace Tests\Feature\Backend;
 
 use App\Models\DiscoveryRun;
 use App\Models\ProspectCriteria;
+use App\Models\ProviderCall;
 use App\Models\User;
 use App\Services\Discovery\CompanyDiscoveryService;
 use App\Services\Discovery\HunterEnrichmentService;
@@ -12,6 +13,7 @@ use Carbon\Carbon;
 use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Mockery;
 use Tests\TestCase;
 
@@ -72,7 +74,7 @@ class ProviderQuotaPageTest extends TestCase
         $response = $this->actingAs($this->superadmin)->get(route('admin.provider-quota.index'));
 
         $response->assertStatus(200);
-        $response->assertSee('SerpAPI');
+        $response->assertSee('Quota découverte');
         $response->assertSee('Quota contacts');
         $response->assertSee('Non disponible');
         $response->assertSeeText('Utilisation des quotas');
@@ -109,7 +111,6 @@ class ProviderQuotaPageTest extends TestCase
             'this_month_usage' => 257,
             'searches_per_month' => 1000,
             'plan_name' => 'Starter',
-            'account_email' => 'ops@tcl.test',
         ]);
         $this->instance(CompanyDiscoveryService::class, $serp);
 
@@ -131,8 +132,9 @@ class ProviderQuotaPageTest extends TestCase
         $response->assertSeeText('120 / 500');
         $response->assertSeeText('30 / 100');
         $response->assertSeeText('Disponible / Total : 380 / 500');
-        $response->assertSeeText('Quota contacts réservé aujourd’hui : 0');
+        $response->assertSeeText('0 / 500');
         $response->assertSee('Starter');
+        $response->assertSeeText('01/08/2026');
         $response->assertSee('Utilisé / Total', false);
         $response->assertSee('Réservé / Total', false);
         $response->assertSee('Restant / Total', false);
@@ -151,7 +153,10 @@ class ProviderQuotaPageTest extends TestCase
         string $expectedSearchesAvailable,
         int $verificationsUsed,
         int $verificationsAvailable,
-        string $expectedVerifications
+        string $expectedVerifications,
+        string $expectedReserved,
+        string $expectedRemaining,
+        int $expectedOverbooked
     ): void {
         $this->reserveProviderQuota(hunterSearches: $searchesReserved);
 
@@ -177,11 +182,17 @@ class ProviderQuotaPageTest extends TestCase
         $response->assertSee('Vérifications - Utilisé / Total', false);
         $response->assertSeeText($expectedSearches);
         $response->assertSeeText('Disponible / Total : '.$expectedSearchesAvailable);
-        $response->assertSeeText('Quota contacts réservé aujourd’hui : '.$searchesReserved);
         $response->assertSeeText($expectedVerifications);
-        $response->assertDontSeeText('Réservé / Total');
-        $response->assertDontSeeText('Restant / Total');
-        $response->assertDontSeeText('Surquota');
+        $response->assertSee('Réservé / Total', false);
+        $response->assertSee('Restant / Total', false);
+        $response->assertSeeText($expectedReserved);
+        $response->assertSeeText($expectedRemaining);
+
+        if ($expectedOverbooked > 0) {
+            $response->assertSeeText("Surquota {$expectedOverbooked} au-delà du disponible");
+        } else {
+            $response->assertDontSeeText('Surquota');
+        }
 
         if ($searchesAvailable < 0) {
             $response->assertDontSeeText($searchesUsed.' / '.$searchesAvailable);
@@ -195,11 +206,12 @@ class ProviderQuotaPageTest extends TestCase
     public static function hunterQuotaCases(): array
     {
         return [
-            'empty quota' => [0, 500, 0, '0 / 500', '500 / 500', 0, 100, '0 / 100'],
-            'full quota' => [500, 0, 0, '500 / 500', '0 / 500', 100, 0, '100 / 100'],
-            'reserved bundles' => [120, 380, 25, '120 / 500', '380 / 500', 30, 70, '30 / 100'],
-            'bundles exceed provider availability' => [120, 20, 50, '120 / 140', '20 / 140', 30, 5, '30 / 35'],
-            'exceeded provider quota' => [520, -20, 0, '520 / 500', '0 / 500', 130, -30, '130 / 100'],
+            'empty quota' => [0, 500, 0, '0 / 500', '500 / 500', 0, 100, '0 / 100', '0 / 500', '500 / 500', 0],
+            'full quota' => [500, 0, 0, '500 / 500', '0 / 500', 100, 0, '100 / 100', '0 / 500', '0 / 500', 0],
+            'reserved bundles' => [120, 380, 25, '120 / 500', '380 / 500', 30, 70, '30 / 100', '25 / 500', '355 / 500', 0],
+            'bundles exceed provider availability' => [120, 20, 50, '120 / 140', '20 / 140', 30, 5, '30 / 35', '50 / 140', '0 / 140', 30],
+            'exceeded provider quota' => [520, -20, 0, '520 / 500', '0 / 500', 130, -30, '130 / 100', '0 / 500', '0 / 500', 0],
+            'exceeded provider quota with reservations' => [520, -20, 10, '520 / 500', '0 / 500', 130, -30, '130 / 100', '10 / 500', '0 / 500', 10],
         ];
     }
 
@@ -226,9 +238,9 @@ class ProviderQuotaPageTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertSeeText('Disponible / Total : —');
-        $response->assertSeeText('Quota contacts réservé aujourd’hui : 7');
-        $response->assertDontSeeText('Réservé / Total');
-        $response->assertDontSeeText('Restant / Total');
+        $response->assertSee('Réservé / Total', false);
+        $response->assertSee('Restant / Total', false);
+        $response->assertSeeText('7 / —');
         $response->assertDontSeeText('Surquota');
     }
 
@@ -243,7 +255,6 @@ class ProviderQuotaPageTest extends TestCase
             'this_month_usage' => 997,
             'searches_per_month' => 1000,
             'plan_name' => 'Starter',
-            'account_email' => 'ops@tcl.test',
         ]);
         $this->instance(CompanyDiscoveryService::class, $serp);
 
@@ -262,6 +273,120 @@ class ProviderQuotaPageTest extends TestCase
         $response->assertSeeText('0 / 1000');
         $response->assertSeeText('Surquota 2 au-delà du disponible');
         $response->assertDontSeeText('Restant / Total -');
+    }
+
+    public function test_refresh_forgets_the_provider_caches_and_redirects(): void
+    {
+        Cache::put('provider.serpapi.account.v2', true, now()->addMinutes(10));
+        Cache::put('provider.hunter.account.v2', true, now()->addMinutes(10));
+
+        $response = $this->actingAs($this->superadmin)->post(route('admin.provider-quota.refresh'));
+
+        $response->assertRedirect(route('admin.provider-quota.index'));
+        $response->assertSessionHas('success');
+        $this->assertFalse(Cache::has('provider.serpapi.account.v2'));
+        $this->assertFalse(Cache::has('provider.hunter.account.v2'));
+    }
+
+    public function test_refresh_is_rate_limited(): void
+    {
+        $this->actingAs($this->superadmin)->post(route('admin.provider-quota.refresh'));
+
+        Cache::put('provider.serpapi.account.v2', true, now()->addMinutes(10));
+        Cache::put('provider.hunter.account.v2', true, now()->addMinutes(10));
+
+        $response = $this->actingAs($this->superadmin)->post(route('admin.provider-quota.refresh'));
+
+        $response->assertSessionHas('warning');
+        $this->assertTrue(Cache::has('provider.serpapi.account.v2'));
+        $this->assertTrue(Cache::has('provider.hunter.account.v2'));
+    }
+
+    public function test_refresh_is_forbidden_for_admin(): void
+    {
+        $response = $this->actingAs($this->admin)->post(route('admin.provider-quota.refresh'));
+
+        $response->assertStatus(403);
+    }
+
+    public function test_freshness_timestamp_renders(): void
+    {
+        $serp = Mockery::mock(CompanyDiscoveryService::class);
+        $serp->shouldReceive('accountUsage')->andReturn([
+            'plan_searches_left' => 700,
+            'total_searches_left' => 743,
+            'this_month_usage' => 257,
+            'searches_per_month' => 1000,
+            'plan_name' => 'Starter',
+            'fetched_at' => '2026-08-18T14:32:00+02:00',
+        ]);
+        $this->instance(CompanyDiscoveryService::class, $serp);
+
+        $hunter = Mockery::mock(HunterEnrichmentService::class);
+        $hunter->shouldReceive('accountUsage')->andReturn([
+            'searches_used' => 120,
+            'searches_available' => 380,
+            'verifications_used' => 30,
+            'verifications_available' => 70,
+            'plan_name' => 'Starter',
+            'reset_date' => '2026-08-01',
+            'fetched_at' => '2026-08-18T14:32:00+02:00',
+        ]);
+        $this->instance(HunterEnrichmentService::class, $hunter);
+
+        $response = $this->actingAs($this->superadmin)->get(route('admin.provider-quota.index'));
+
+        $response->assertStatus(200);
+        $response->assertSeeText('Données du 18/08/2026 14:32');
+    }
+
+    public function test_consumption_panel_reports_calls_by_outcome(): void
+    {
+        ProviderCall::query()->create([
+            'provider' => 'hunter',
+            'operation' => 'domain_search',
+            'engine' => 'hunter',
+            'idempotency_key' => str_repeat('a', 64),
+            'status' => 'succeeded',
+            'http_status' => 200,
+            'reserved_units' => 1,
+            'consumed_units' => 1,
+            'attempt_count' => 1,
+        ]);
+        ProviderCall::query()->create([
+            'provider' => 'hunter',
+            'operation' => 'domain_search',
+            'engine' => 'hunter',
+            'idempotency_key' => str_repeat('b', 64),
+            'status' => 'failed',
+            'http_status' => 429,
+            'reserved_units' => 1,
+            'attempt_count' => 1,
+        ]);
+        ProviderCall::query()->create([
+            'provider' => 'hunter',
+            'operation' => 'domain_search',
+            'engine' => 'hunter',
+            'idempotency_key' => str_repeat('c', 64),
+            'status' => 'failed',
+            'http_status' => 429,
+            'reserved_units' => 1,
+            'attempt_count' => 1,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)->get(route('admin.provider-quota.index'));
+
+        $response->assertStatus(200);
+        $response->assertSeeText('Capacité contacts');
+        $response->assertSeeTextInOrder(['Recherche de contacts', '3', '1', '0', '2', '1']);
+    }
+
+    public function test_consumption_panel_shows_no_fake_zeros_without_ledger_rows(): void
+    {
+        $response = $this->actingAs($this->superadmin)->get(route('admin.provider-quota.index'));
+
+        $response->assertStatus(200);
+        $response->assertSeeText('Aucun appel enregistré sur la période.');
     }
 
     private function reserveProviderQuota(int $serpapiSearches = 0, int $hunterSearches = 0): void

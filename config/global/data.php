@@ -213,7 +213,7 @@ return [
         'manual' => ['label' => 'Manuel',   'color' => 'secondary'],
         'zoho' => ['label' => 'Zoho Campaigns', 'color' => 'info'],
         'dsn' => ['label' => 'Notification DSN', 'color' => 'info'],
-        'hunter' => ['label' => 'Hunter', 'color' => 'info'],
+        'hunter' => ['label' => 'Vérification e-mail', 'color' => 'info'],
     ],
 
     //---------------------------------------------------------------------------
@@ -610,6 +610,20 @@ return [
         'recovered_failed_snapshot' => ['label' => 'Domaine récupéré à confirmer', 'description' => 'Ce domaine provient d’un ancien traitement interrompu et doit être confirmé avant promotion.', 'color' => 'warning'],
         'recovered_registrable_collision' => ['label' => 'Collision récupérée à vérifier', 'description' => 'Une donnée locale récupérée partage un domaine avec une autre entreprise.', 'color' => 'warning'],
         'recovered_local_payload' => ['label' => 'Donnée locale récupérée', 'description' => 'Cette proposition vient des données locales existantes et nécessite une confirmation.', 'color' => 'info'],
+
+        // Terminal / decided codes — reached only on promoted or skipped items (never on a
+        // review/failed row, where the blocker-framed codes above are the correct read).
+        'reviewer_selected' => ['label' => 'Domaine confirmé manuellement', 'description' => 'Un relecteur a sélectionné ce domaine.', 'color' => 'success'],
+        'provided_domain' => ['label' => 'Domaine fourni à l’import', 'description' => 'Le domaine provient du fichier importé.', 'color' => 'info'],
+        'reviewer_rejected' => ['label' => 'Exclu par le relecteur', 'description' => 'Une décision manuelle a exclu cette entreprise du lot.', 'color' => 'secondary'],
+        'not_a_match' => ['label' => 'Exclu par le relecteur', 'description' => 'Une décision manuelle a exclu cette entreprise du lot.', 'color' => 'secondary'],
+        'not_relevant' => ['label' => 'Exclu par le relecteur', 'description' => 'Une décision manuelle a exclu cette entreprise du lot.', 'color' => 'secondary'],
+        'bad_data' => ['label' => 'Donnée incorrecte', 'description' => 'La ligne importée contenait une donnée inexploitable.', 'color' => 'secondary'],
+        'criterion_inactive' => ['label' => 'Critère inactif', 'description' => 'Le critère est inactif ; aucun traitement n’a été lancé.', 'color' => 'secondary'],
+        'same_criterion_rejected' => ['label' => 'Déjà exclue pour ce critère', 'description' => 'Cette entreprise avait déjà été rejetée pour ce même critère.', 'color' => 'secondary'],
+        'excluded_by_criteria' => ['label' => 'Hors critère', 'description' => 'Le score de cette entreprise n’atteint pas le seuil demandé.', 'color' => 'secondary'],
+        'quota_exhausted' => ['label' => 'Quota épuisé', 'description' => 'Le quota disponible ne permettait pas de poursuivre.', 'color' => 'warning'],
+        'provider_unavailable' => ['label' => 'Service indisponible', 'description' => 'Le service externe nécessaire était indisponible.', 'color' => 'warning'],
     ],
 
     'provider_call_statuses' => [

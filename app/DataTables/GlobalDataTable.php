@@ -439,10 +439,19 @@ class GlobalDataTable extends DataTable
      * Get the table ID used by LaravelDataTables
      * Override in child classes if the table ID differs from model name
      *
+     * Must derive from the same source as the rendered DOM id in html()
+     * (setTableId($model->getName() . '-table')) so the JS getDataTable()
+     * lookup finds an exact match instead of relying on the "exactly one
+     * table on the page" fallback.
+     *
      * @return string
      */
     protected function getTableId(): string
     {
+        if ($this->currentModel !== null && method_exists($this->currentModel, 'getName')) {
+            return $this->currentModel->getName();
+        }
+
         return strtolower(class_basename($this->currentModel));
     }
 

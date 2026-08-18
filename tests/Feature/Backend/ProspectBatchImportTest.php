@@ -148,7 +148,20 @@ class ProspectBatchImportTest extends TestCase
         $estimate = app(ProspectBatchService::class)->estimate($batch);
 
         $this->assertSame(0, ProviderCall::query()->count());
-        $this->assertSame($estimate, $batch->fresh()->estimate);
+
+        $sortDeep = static function (array $value) use (&$sortDeep): array {
+            ksort($value);
+            foreach ($value as $key => $item) {
+                if (is_array($item)) {
+                    $value[$key] = $sortDeep($item);
+                }
+            }
+
+            return $value;
+        };
+
+        // MySQL json columns normalise object key order; compare canonically, still type-strict.
+        $this->assertSame($sortDeep($estimate), $sortDeep($batch->fresh()->estimate));
     }
 
     public function test_estimate_breaks_down_operations_and_requires_explicit_confirmation(): void

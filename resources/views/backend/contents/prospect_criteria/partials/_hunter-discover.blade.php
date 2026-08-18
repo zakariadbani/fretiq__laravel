@@ -17,7 +17,7 @@
             <p class="text-gray-700 mb-3" data-hunter-prompt></p>
             <div class="d-flex flex-wrap gap-3 small text-gray-600">
                 <span><strong data-hunter-call-count>0</strong> appel Discover au lancement</span>
-                <span><strong data-hunter-credit-count>0</strong> crédit Hunter estimé pour Discover</span>
+                <span><strong data-hunter-credit-count>0</strong> crédit de découverte estimé</span>
             </div>
         </div>
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
@@ -35,9 +35,10 @@
     <div class="mt-8 d-none" data-hunter-confirm>
         <div class="border border-dashed border-success rounded p-5" aria-live="polite">
             <h4 class="mb-3"><i class="bi bi-rocket-takeoff text-success me-2"></i>Lancer le traitement Discover IA</h4>
+            {{-- ponytail: `items` from discoverEstimate() is the provider page size (DISCOVER_LIMIT=100), not the run total — FinalizeProspectBatchJob paginates past it. --}}
             <div class="row g-5 mb-5">
-                <div class="col-6 col-md-4"><div class="card bg-light h-100"><div class="card-body"><div class="text-muted fs-7">Entreprises (jusqu’à)</div><div class="fs-2 fw-bold" data-hunter-confirm-items>—</div></div></div></div>
-                <div class="col-6 col-md-4"><div class="card bg-light h-100"><div class="card-body"><div class="text-muted fs-7">Crédit Hunter estimé</div><div class="fs-2 fw-bold" data-hunter-confirm-credits>—</div></div></div></div>
+                <div class="col-6 col-md-4"><div class="card bg-light h-100"><div class="card-body"><div class="text-muted fs-7">Entreprises par page</div><div class="fs-2 fw-bold" data-hunter-confirm-items>—</div></div></div></div>
+                <div class="col-6 col-md-4"><div class="card bg-light h-100"><div class="card-body"><div class="text-muted fs-7">Crédits estimés (1er appel)</div><div class="fs-2 fw-bold" data-hunter-confirm-credits>—</div></div></div></div>
             </div>
             <label class="form-check form-check-custom form-check-solid p-4 border rounded mb-5">
                 <input class="form-check-input" type="checkbox" data-hunter-confirm-checkbox>

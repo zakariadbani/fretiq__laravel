@@ -255,9 +255,9 @@ class CompanyDiscoveryService
     /**
      * Fetch live SerpAPI account balance/usage for the superadmin quota page.
      *
-     * Verified live 2026-07-04 (STATUS 200): SerpAPI /account returns plan_searches_left, total_searches_left, this_month_usage, searches_per_month, plan_name, account_email.
+     * Verified live 2026-07-04 (STATUS 200): SerpAPI /account returns plan_searches_left, total_searches_left, this_month_usage, searches_per_month, plan_name.
      *
-     * @return array{plan_searches_left: ?int, total_searches_left: ?int, this_month_usage: ?int, searches_per_month: ?int, plan_name: ?string, account_email: null}|null
+     * @return array{plan_searches_left: ?int, total_searches_left: ?int, this_month_usage: ?int, searches_per_month: ?int, plan_name: ?string}|null
      */
     public function accountUsage(): ?array
     {
@@ -271,9 +271,7 @@ class CompanyDiscoveryService
             return null;
         }
 
-        // ponytail: cached null-on-failure for 10 min is acceptable here — this is a
-        // low-traffic admin page, not a hot path; a stuck failure self-heals in 10 min.
-        return Cache::remember('provider.serpapi.account', now()->addMinutes(10), function () {
+        $fetch = function (): ?array {
             try {
                 $execution = $this->serpApi->account(new ProviderCallContext(
                     hash('sha256', 'serpapi:legacy:account:'.Str::uuid()),
@@ -294,9 +292,6 @@ class CompanyDiscoveryService
                     'this_month_usage' => $json['this_month_usage'] ?? null,
                     'searches_per_month' => $json['searches_per_month'] ?? null,
                     'plan_name' => $json['plan_name'] ?? null,
-                    // Account identity is deliberately not returned by the
-                    // centralized provider transport.
-                    'account_email' => null,
                 ];
             } catch (ProviderRequestException $exception) {
                 Log::warning('[CompanyDiscoveryService] SerpAPI account request failed', [
@@ -312,7 +307,20 @@ class CompanyDiscoveryService
 
                 return null;
             }
-        });
+        };
+
+        // ponytail: the cached value is always an array so a failed fetch actually caches —
+        // Cache::remember treats a stored null as a miss and would re-hit the vendor on every
+        // page load. Key is versioned because the cached SHAPE changed; a pre-existing entry
+        // under the old key would be read as a malformed payload after deploy.
+        $cached = Cache::remember('provider.serpapi.account.v2', now()->addMinutes(10), fn (): array => [
+            'payload' => $fetch(),
+            'fetched_at' => now()->toIso8601String(),
+        ]);
+
+        return $cached['payload'] === null
+            ? null
+            : $cached['payload'] + ['fetched_at' => $cached['fetched_at']];
     }
     // ── Helpers ───────────────────────────────────────────────────────────────
 

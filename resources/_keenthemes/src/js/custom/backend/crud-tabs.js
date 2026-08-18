@@ -249,4 +249,19 @@
 
     });
 
+    // ── Back/forward + hash-only navigation ─────────────────────────────────
+    //
+    // A page can push/replace history entries whose hash names one of these
+    // tabs without going through the click handler above (e.g. a review
+    // workspace hosted in a pane pushes state for its own in-pane navigation,
+    // and a plain `<a href="#pane_id">` changes the hash without a SPA
+    // router). Re-run the same activation on both events so the visible pane
+    // always matches the address bar after Back/Forward or a hash-only link.
+    window.addEventListener('hashchange', function () {
+        if (window.location.hash) activateTabById(window.location.hash);
+    });
+    window.addEventListener('popstate', function () {
+        if (window.location.hash) activateTabById(window.location.hash);
+    });
+
 })();

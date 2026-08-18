@@ -7,8 +7,8 @@ import { DataTablePage } from './DataTablePage';
  * Table ID: `sender_identity-table`
  *   Model: SenderIdentity → getName() converts CamelCase to snake_case
  *   → 'sender_identity' → html() builder → setTableId('sender_identity-table')
- *   NOTE: SenderIdentitiesDataTable::getTableId() returns 'senderidentity' (used in JS config),
- *   but the actual DOM table id comes from GlobalDataTable::html() which calls getName().
+ *   SenderIdentitiesDataTable no longer overrides getTableId() — it inherits
+ *   GlobalDataTable's default, which now matches the rendered DOM id.
  *
  * Form field names (from form.blade.php):
  *   name (required), email (required), reply_to (optional), signature_html (optional),

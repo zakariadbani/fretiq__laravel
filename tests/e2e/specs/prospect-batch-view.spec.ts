@@ -24,12 +24,20 @@ test.describe('Prospect batch view — batch 2 (live dev data)', () => {
     await expect(resumeButton).toBeEnabled();
     await expect(resumeButton).toContainText('Continuer la découverte');
 
-    const itemLinks = page.locator('table a[href*="/admin/prospect-review"]');
+    // The "À vérifier" tab is now a pane on this same view page (no more
+    // separate /review route) — Résultats-tab item links point back to this
+    // URL with ?item=... and the #prospect_batch_review fragment
+    // (ProspectReviewPresenter::workspaceUrl() hosted branch).
+    const itemLinks = page.locator('table a[href*="#prospect_batch_review"]');
     const linkCount = await itemLinks.count();
+    // Data-dependent: batch 2 is live dev data, so once it's fully reviewed
+    // there may be no actionable rows left. Assert the href shape only when
+    // there's something to assert against — a data change must not fail
+    // this spec.
     if (linkCount > 0) {
       const hrefs = await itemLinks.evaluateAll((anchors) => anchors.map((a) => a.getAttribute('href')));
       for (const href of hrefs) {
-        expect(href).toMatch(/\/admin\/prospect-review\?.*\bitem=\d+\b/);
+        expect(href).toMatch(/\/admin\/prospect_batches\/2\?.*\bitem=\d+\b.*#prospect_batch_review$/);
       }
     }
 

@@ -609,7 +609,7 @@ class DiscoveryQuotaService
     /**
      * Current provider reservations held by in-flight runs for today's quota day.
      *
-     * @return array{serpapi_searches: int, hunter_searches: int, hunter_verifications: null}
+     * @return array{serpapi_searches: int, hunter_searches: int}
      */
     public function providerReservationsToday(): array
     {
@@ -637,7 +637,6 @@ class DiscoveryQuotaService
         return [
             'serpapi_searches' => (int) ($row?->serpapi_searches_reserved ?? 0),
             'hunter_searches' => (int) ($row?->hunter_searches_reserved ?? 0),
-            'hunter_verifications' => null,
         ];
     }
 

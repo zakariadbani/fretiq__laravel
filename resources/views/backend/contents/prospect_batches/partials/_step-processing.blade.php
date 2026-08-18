@@ -12,8 +12,8 @@
             </div>
             <div class="d-flex flex-wrap justify-content-center gap-3 mt-7">
                 <a href="{{ $model->exists ? route('admin.prospect_batches.view', $model) : '#' }}" class="btn btn-light-primary" data-batch-view>Voir le lot</a>
-                @if(Route::has('admin.prospect_review.index'))
-                    <a href="{{ route('admin.prospect_review.index', array_filter(['tab' => 'companies', 'batch' => $model->exists ? $model->id : null])) }}" class="btn btn-warning d-none" data-review-link>À revoir</a>
+                @if($model->exists)
+                    <a href="{{ route('admin.prospect_batches.view', ['id' => $model->id]) }}#prospect_batch_review" class="btn btn-warning d-none" data-review-link>À revoir</a>
                 @endif
             </div>
         </div>

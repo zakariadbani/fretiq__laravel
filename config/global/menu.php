@@ -25,7 +25,7 @@ return [
         ],
         [
             'title' => 'Découverte',
-            'permission' => ['view prospect_batches', 'review prospect matches', 'view prospect_criteria'],
+            'permission' => ['view prospect_criteria', 'view prospect_batches'],
             'classes' => ['item' => 'menu-accordion'],
             'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
             'icon' => [
@@ -33,10 +33,8 @@ return [
                 'font' => '<i class="bi bi-building fs-2"></i>',
             ],
             'sub' => [
-                ['title' => 'Vue d’ensemble', 'permission' => 'view prospect_batches', 'path' => 'admin/prospecting'],
-                ['title' => 'Lots', 'permission' => 'view prospect_batches', 'path' => 'admin/prospect_batches', 'active_prefix' => 'admin/prospect_batches'],
-                ['title' => 'À revoir', 'permission' => 'review prospect matches', 'path' => 'admin/prospect-review', 'active_prefix' => 'admin/prospect-review'],
                 ['title' => 'Critères de découverte', 'permission' => 'view prospect_criteria', 'path' => 'admin/prospect_criteria', 'active_prefix' => 'admin/prospect_criteria'],
+                ['title' => 'Lots', 'permission' => 'view prospect_batches', 'path' => 'admin/prospect_batches', 'active_prefix' => 'admin/prospect_batches'],
             ],
         ],
         [
@@ -54,6 +52,22 @@ return [
             ],
         ],
         [
+            'title' => 'Préparation des campagnes',
+            'permission' => ['view segments', 'view campaign_templates', 'view sequences', 'view sender_identities'],
+            'classes' => ['item' => 'menu-accordion'],
+            'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
+            'icon' => [
+                'svg' => 'abstract-14',
+                'font' => '<i class="bi bi-list-ol fs-2"></i>',
+            ],
+            'sub' => [
+                ['title' => 'Segments', 'permission' => 'view segments', 'path' => 'admin/segments', 'active_prefix' => 'admin/segments'],
+                ['title' => 'Modèles d’email', 'permission' => 'view campaign_templates', 'path' => 'admin/campaign_templates', 'active_prefix' => 'admin/campaign_templates'],
+                ['title' => 'Séquences', 'permission' => 'view sequences', 'path' => 'admin/sequences', 'active_prefix' => 'admin/sequences'],
+                ['title' => 'Identités d’expéditeur', 'permission' => 'view sender_identities', 'path' => 'admin/sender_identities', 'active_prefix' => 'admin/sender_identities'],
+            ],
+        ],
+        [
             'title' => 'Campagnes & planning',
             'permission' => ['view campaigns'],
             'classes' => ['item' => 'menu-accordion'],
@@ -68,24 +82,8 @@ return [
             ],
         ],
         [
-            'title' => 'Préparation des campagnes',
-            'permission' => ['view sequences', 'view segments', 'view campaign_templates', 'view sender_identities'],
-            'classes' => ['item' => 'menu-accordion'],
-            'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
-            'icon' => [
-                'svg' => 'abstract-14',
-                'font' => '<i class="bi bi-list-ol fs-2"></i>',
-            ],
-            'sub' => [
-                ['title' => 'Séquences', 'permission' => 'view sequences', 'path' => 'admin/sequences', 'active_prefix' => 'admin/sequences'],
-                ['title' => 'Segments', 'permission' => 'view segments', 'path' => 'admin/segments', 'active_prefix' => 'admin/segments'],
-                ['title' => 'Modèles d’email', 'permission' => 'view campaign_templates', 'path' => 'admin/campaign_templates', 'active_prefix' => 'admin/campaign_templates'],
-                ['title' => 'Identités d’expéditeur', 'permission' => 'view sender_identities', 'path' => 'admin/sender_identities', 'active_prefix' => 'admin/sender_identities'],
-            ],
-        ],
-        [
             'title' => 'Réponses & demandes',
-            'permission' => ['view demandes', 'view inbox'],
+            'permission' => ['view inbox', 'view demandes'],
             'classes' => ['item' => 'menu-accordion'],
             'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
             'icon' => [
@@ -93,8 +91,8 @@ return [
                 'font' => '<i class="bi bi-file-earmark-text fs-2"></i>',
             ],
             'sub' => [
-                ['title' => 'Demandes', 'permission' => 'view demandes', 'path' => 'admin/demandes', 'active_prefix' => 'admin/demandes'],
                 ['title' => 'Boîte de réception', 'permission' => 'view inbox', 'path' => 'admin/inbox', 'active_prefix' => 'admin/inbox'],
+                ['title' => 'Demandes', 'permission' => 'view demandes', 'path' => 'admin/demandes', 'active_prefix' => 'admin/demandes'],
             ],
         ],
         [

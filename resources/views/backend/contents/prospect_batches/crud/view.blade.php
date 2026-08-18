@@ -13,150 +13,27 @@
     @include('backend.elements.form-actions', ['variant' => 'toolbar', 'backRoute' => 'admin.prospect_batches.index'])
 @endsection
 
-@include('backend.partials.crud._tabbar', [
-    'model' => $model,
-    'currentPage' => 'view',
-    'config' => $viewConfig,
-    'actions' => '',
-])
-
-<div class="tab-content">
-    <div class="tab-pane fade show active" id="prospect_batch_apercu" role="tabpanel">
-        @include('backend.partials.crud._apercu', ['model' => $model, 'config' => $viewConfig])
-
-        @if($model->status === 'review')
-            <div class="alert alert-warning d-flex align-items-center mt-6">
-                <i class="bi bi-exclamation-triangle fs-2 me-3"></i>
-                <div class="flex-grow-1">Certaines entreprises ou certains domaines demandent votre choix.</div>
-                @if(Route::has('admin.prospect_review.index'))
-                    <a href="{{ route('admin.prospect_review.index', ['tab' => 'companies', 'batch' => $model->id]) }}" class="btn btn-sm btn-warning">Ouvrir À revoir</a>
-                @endif
-            </div>
-        @elseif($model->status === 'failed')
-            <div class="alert alert-danger mt-6">Le traitement n’a pas pu se terminer. Aucun détail fournisseur sensible n’est affiché ici.</div>
-        @endif
-
-        @php
-            $discoverCursor = is_array($model->source_cursor) ? $model->source_cursor : [];
-            $discoverInterrupted = $model->source_type === 'discover'
-                && $model->cost_confirmed_at !== null
-                && ! in_array($model->status, ['queued', 'running'], true)
-                && ($discoverCursor['exhausted'] ?? false) !== true;
-            $discoverResults = is_int($discoverCursor['results'] ?? null) ? $discoverCursor['results'] : null;
-            $discoverRemaining = $discoverResults !== null ? max(0, $discoverResults - (int) ($discoverCursor['offset'] ?? 0)) : null;
-        @endphp
-        @if($discoverInterrupted)
-            <div
-                class="alert alert-warning d-flex align-items-center mt-6"
-                data-discover-resume-banner
-                data-resume-url="{{ route('admin.prospect_batches.resume_discovery', $model) }}"
-            >
-                <i class="bi bi-exclamation-triangle fs-2 me-3" aria-hidden="true"></i>
-                <div class="flex-grow-1">
-                    <div class="fw-bold">La recherche d’entreprises a été interrompue</div>
-                    <div>
-                        @if($discoverRemaining !== null)
-                            Il reste environ {{ $discoverRemaining }} entreprise{{ $discoverRemaining > 1 ? 's' : '' }} à découvrir.
-                        @else
-                            La recherche ne s’est pas terminée normalement.
-                        @endif
-                    </div>
-                    <div class="fs-8 text-danger mt-1 d-none" data-discover-resume-error></div>
-                </div>
-                @can('run prospect resolution')
-                    <button type="button" class="btn btn-sm btn-warning" data-discover-resume-button data-csrf-token="{{ csrf_token() }}">Continuer la découverte</button>
-                @endcan
-            </div>
-        @endif
-
-        @if($outcomeBreakdown->isNotEmpty())
-            <div class="card mt-6">
-                <div class="card-header border-0"><h3 class="card-title">Résultat de l’enrichissement</h3></div>
-                <div class="card-body pt-0">
-                    <div class="d-flex flex-wrap gap-3">
-                        @foreach($outcomeBreakdown as $outcome)
-                            <span class="badge badge-light-{{ $outcome['color'] }} fs-7 py-2 px-3">{{ $outcome['total'] }} {{ $outcome['label'] }}</span>
-                        @endforeach
-                    </div>
-                </div>
-            </div>
-        @endif
-
-        <div class="card mt-6">
-            <div class="card-header border-0"><h3 class="card-title">Entreprises du lot</h3></div>
-            <div class="card-body pt-0">
-                @if($items->isEmpty())
-                    <div class="text-center py-10">
-                        <i class="bi bi-building-slash fs-3x text-muted"></i>
-                        <p class="text-muted mt-4 mb-0">Aucune entreprise dans ce lot.</p>
-                    </div>
-                @else
-                    @php
-                        $itemStatuses = config('global.data.prospect_batch_item_statuses', []);
-                        $canOpenDecisions = Route::has('admin.prospect_review.index') && (auth()->user()?->can('review prospect matches') ?? false);
-                        $itemDecisionUrl = static fn ($item) => route('admin.prospect_review.index', [
-                            'tab' => 'companies',
-                            'batch' => $model->id,
-                            'item' => $item->id,
-                            'state' => $item->status === 'failed' ? 'blocked' : 'attention',
-                        ]);
-                    @endphp
-                    <div class="table-responsive d-none d-md-block">
-                        <table class="table table-row-dashed align-middle">
-                            <thead><tr><th>Entreprise</th><th>Domaine</th><th>Statut</th><th>Contacts importés</th><th>Motif</th></tr></thead>
-                            <tbody>
-                            @foreach($items as $item)
-                                @php $itemIsActionable = $canOpenDecisions && in_array($item->status, ['review', 'failed'], true); @endphp
-                                <tr>
-                                    <td>
-                                        @if($itemIsActionable)
-                                            <a href="{{ $itemDecisionUrl($item) }}" class="fw-semibold text-gray-900 text-hover-primary">{{ $item->company_name }}</a>
-                                        @else
-                                            <div class="fw-semibold">{{ $item->company_name }}</div>
-                                        @endif
-                                        <div class="text-muted fs-8">{{ collect([$item->city, $item->country])->filter()->join(', ') }}</div>
-                                    </td>
-                                    <td>{{ $item->selected_domain ?: $item->provided_domain ?: '—' }}</td>
-                                    <td><span class="badge badge-light-{{ $itemStatuses[$item->status]['color'] ?? 'secondary' }}">{{ $itemStatuses[$item->status]['label'] ?? $item->status }}</span></td>
-                                    <td>{{ $item->imported_contacts_count }}</td>
-                                    <td>{{ $presenter->itemIssue($item)['label'] }}</td>
-                                </tr>
-                            @endforeach
-                            </tbody>
-                        </table>
-                    </div>
-                    <div class="d-md-none vstack gap-3">
-                        @foreach($items as $item)
-                            @php $itemIsActionable = $canOpenDecisions && in_array($item->status, ['review', 'failed'], true); @endphp
-                            <article class="card border">
-                                <div class="card-body py-4">
-                                    <div class="d-flex justify-content-between gap-3">
-                                        @if($itemIsActionable)
-                                            <a href="{{ $itemDecisionUrl($item) }}" class="text-gray-900 text-hover-primary fw-bold">{{ $item->company_name }}</a>
-                                        @else
-                                            <strong>{{ $item->company_name }}</strong>
-                                        @endif
-                                        <span class="badge badge-light-{{ $itemStatuses[$item->status]['color'] ?? 'secondary' }}">{{ $itemStatuses[$item->status]['label'] ?? $item->status }}</span>
-                                    </div>
-                                    <div class="text-muted fs-7 mt-2">{{ $item->selected_domain ?: $item->provided_domain ?: 'Domaine à revoir' }}</div>
-                                    <div class="fs-8 mt-2">{{ $item->imported_contacts_count }} contact(s) importé(s)</div>
-                                </div>
-                            </article>
-                        @endforeach
-                    </div>
-                    <p class="text-muted fs-8 mt-4 mb-3">Importer un contact ne déclenche aucun email. Les règles d’éligibilité restent appliquées au moment de préparer un envoi.</p>
-                    <div class="mt-5">{{ $items->links('pagination::bootstrap-5') }}</div>
-                @endif
-            </div>
-        </div>
-    </div>
-</div>
-
+{{--
+    ProspectBatch view — hero + tabbar + Aperçu/Résultats/À vérifier panes, all
+    on this one page (no more separate /review route). $canReview + the review
+    tab are both gated server-side (ProspectBatchController::view()) — the tab
+    simply doesn't exist in the markup for a user without the permission.
+--}}
 @php
+    $hasReviewPane = ($workspace !== null);
     $liveStatusPercent = $model->total_items > 0 ? (int) floor(($model->processed_items / $model->total_items) * 100) : 0;
+    $discoverCursor = is_array($model->source_cursor) ? $model->source_cursor : [];
+    $discoverInterrupted = $model->source_type === 'discover'
+        && $model->cost_confirmed_at !== null
+        && ! in_array($model->status, ['queued', 'running'], true)
+        && ($discoverCursor['exhausted'] ?? false) !== true;
+    $discoverResults = is_int($discoverCursor['results'] ?? null) ? $discoverCursor['results'] : null;
+    $discoverRemaining = $discoverResults !== null ? max(0, $discoverResults - (int) ($discoverCursor['offset'] ?? 0)) : null;
 @endphp
+
+{{-- Permanent banners stay visible above the tabs, regardless of the selected pane. --}}
 @if(in_array($model->status, ['queued', 'running'], true))
-    <div id="prospect-batch-live-status" class="alert alert-primary d-flex align-items-center mt-6" data-status-url="{{ route('admin.prospect_batches.status', $model) }}" aria-live="polite">
+    <div id="prospect-batch-live-status" class="alert alert-primary d-flex align-items-center mb-6" data-status-url="{{ route('admin.prospect_batches.status', $model) }}" aria-live="polite">
         <i class="bi bi-arrow-repeat fs-2 me-3" aria-hidden="true"></i>
         <div class="flex-grow-1">
             <div class="fw-bold">Traitement en cours</div>
@@ -167,10 +44,123 @@
     </div>
 @endif
 
+@if($discoverInterrupted)
+    <div
+        class="alert alert-warning d-flex align-items-center mb-6"
+        data-discover-resume-banner
+        data-resume-url="{{ route('admin.prospect_batches.resume_discovery', $model) }}"
+    >
+        <i class="bi bi-exclamation-triangle fs-2 me-3" aria-hidden="true"></i>
+        <div class="flex-grow-1">
+            <div class="fw-bold">La recherche d’entreprises a été interrompue</div>
+            <div>
+                @if($discoverRemaining !== null)
+                    Il reste environ {{ $discoverRemaining }} entreprise{{ $discoverRemaining > 1 ? 's' : '' }} à découvrir.
+                @else
+                    La recherche ne s’est pas terminée normalement.
+                @endif
+            </div>
+            <div class="fs-8 text-danger mt-1 d-none" data-discover-resume-error></div>
+        </div>
+        @can('run prospect resolution')
+            <button type="button" class="btn btn-sm btn-warning" data-discover-resume-button data-csrf-token="{{ csrf_token() }}">Continuer la découverte</button>
+        @endcan
+    </div>
+@endif
+
+@include('backend.contents.prospect_batches.partials._header-with-tabs', [
+    'model' => $model,
+    'currentPage' => 'view',
+    'actions' => view('backend.contents.prospect_batches.partials._header-actions', ['model' => $model, 'companyCount' => $companyCount])->render(),
+])
+
+<div class="tab-content" data-crud-tab-content>
+
+    {{-- ── Tab 1: Aperçu (default active) ─────────────────────────────────── --}}
+    <div class="tab-pane fade show active" id="prospect_batch_apercu" role="tabpanel">
+        @include('backend.partials.crud._apercu', ['model' => $model, 'config' => $viewConfig])
+
+        @if($reviewItemsCount > 0)
+            <div class="alert alert-warning d-flex align-items-center mt-6">
+                <i class="bi bi-exclamation-triangle fs-2 me-3"></i>
+                <div class="flex-grow-1">Certaines entreprises ou certains domaines demandent votre choix.</div>
+                @if($hasReviewPane)
+                    <a href="#prospect_batch_review" class="btn btn-sm btn-warning">Ouvrir À revoir</a>
+                @endif
+            </div>
+        @elseif($model->status === 'failed')
+            <div class="alert alert-danger mt-6">Le traitement n’a pas pu se terminer. Aucun détail fournisseur sensible n’est affiché ici.</div>
+        @endif
+    </div>
+    {{-- end Aperçu --}}
+
+    {{-- ── Tab 2: Résultats (items table, moved out of Aperçu) ────────────── --}}
+    <div class="tab-pane fade" id="prospect_batch_resultats" role="tabpanel">
+        @include('backend.contents.prospect_batches.partials._results-tab', [
+            'model' => $model,
+            'items' => $items,
+            'resultsSort' => $resultsSort,
+            'resultsDir' => $resultsDir,
+            'outcomeBreakdown' => $outcomeBreakdown,
+            'presenter' => $presenter,
+            'stalledCount' => $stalledCount,
+        ])
+    </div>
+    {{-- end Résultats --}}
+
+    {{-- ── Tab 3: À vérifier (the review workspace, hosted inline) ─────────── --}}
+    @if($hasReviewPane)
+        <div class="tab-pane fade" id="prospect_batch_review" role="tabpanel">
+            @include('backend.contents.prospect_review.partials._workspace', [
+                ...$workspace['data'],
+                'hostBatchId' => $model->id,
+                'reviewPresenter' => $presenter,
+                'blockedDrainReady' => $workspace['blockedDrainReady'],
+                'stateExplicit' => $workspace['stateExplicit'],
+                'model' => $model,
+            ])
+        </div>
+    @endif
+
+</div>
+{{-- end tab-content --}}
+
 @push('scripts')
     <script src="{{ asset('assets/js/custom/backend/crud-tabs.js') }}"></script>
+    @include('backend.contents.prospect_batches.partials._actions-script')
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            // A-4: a running-batch/discover-resume banner must never blow away an
+            // in-progress review session with a full reload. Only suppress the
+            // reload while the review pane is the ACTIVE one at call time — a
+            // reviewer sitting on Aperçu or Résultats still gets the reload;
+            // pane existence alone isn't enough (checked live, not once at load,
+            // since the reviewer can switch tabs after the page loads).
+            const announceRefreshNeeded = (message) => {
+                const reviewPane = document.getElementById('prospect_batch_review');
+                const reviewPaneActive = reviewPane !== null && reviewPane.hidden === false;
+                if (!reviewPaneActive) {
+                    window.location.reload();
+                    return;
+                }
+
+                let banner = document.getElementById('prospect-batch-refresh-banner');
+                if (!banner) {
+                    banner = document.createElement('div');
+                    banner.id = 'prospect-batch-refresh-banner';
+                    banner.className = 'alert alert-success d-flex align-items-center mb-6';
+                    banner.setAttribute('role', 'status');
+                    banner.setAttribute('aria-live', 'polite');
+                    banner.innerHTML = '<i class="bi bi-check-circle fs-2 me-3" aria-hidden="true"></i>'
+                        + '<div class="flex-grow-1" data-refresh-banner-message></div>'
+                        + '<button type="button" class="btn btn-sm btn-light-success text-nowrap" data-refresh-banner-action>Actualiser</button>';
+                    const anchor = document.querySelector('[data-crud-tab-content]');
+                    anchor?.parentNode?.insertBefore(banner, anchor);
+                    banner.querySelector('[data-refresh-banner-action]').addEventListener('click', () => window.location.reload());
+                }
+                banner.querySelector('[data-refresh-banner-message]').textContent = message;
+            };
+
             const liveStatus = document.getElementById('prospect-batch-live-status');
             if (liveStatus) {
                 const statusUrl = liveStatus.dataset.statusUrl;
@@ -193,7 +183,7 @@
                         if (progressText) progressText.textContent = percent + ' % — ' + Number(payload.progress?.processed || 0) + '/' + Number(payload.progress?.total || 0);
                         waitingNode?.classList.toggle('d-none', payload.worker_waiting !== true);
                         if (payload.terminal) {
-                            window.location.reload();
+                            announceRefreshNeeded('Traitement terminé — actualisez pour voir les derniers résultats.');
                             return;
                         }
                         attempt += 1;
@@ -249,7 +239,7 @@
                             resumeButton.textContent = originalLabel;
                             return;
                         }
-                        window.location.reload();
+                        announceRefreshNeeded('Reprise de la découverte lancée — actualisez pour suivre l’avancement.');
                     } catch (error) {
                         if (errorNode) {
                             errorNode.textContent = 'La reprise n’a pas pu être lancée. Réessayez plus tard.';

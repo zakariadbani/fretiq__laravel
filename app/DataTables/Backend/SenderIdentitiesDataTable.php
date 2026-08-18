@@ -125,9 +125,4 @@ class SenderIdentitiesDataTable extends BackendDataTable
             'deleteSuccess' => 'Identité supprimée avec succès',
         ];
     }
-
-    protected function getTableId(): string
-    {
-        return 'senderidentity';
-    }
 }

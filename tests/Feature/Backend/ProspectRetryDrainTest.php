@@ -14,6 +14,7 @@ use App\Services\Providers\ProviderCallLedger;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -37,6 +38,12 @@ class ProspectRetryDrainTest extends TestCase
             'is_active' => true,
         ]);
         $this->user->givePermissionTo(['backend.access', 'review prospect matches']);
+    }
+
+    private function grantViewProspectBatches(): void
+    {
+        Permission::findOrCreate('view prospect_batches', 'web');
+        $this->user->givePermissionTo('view prospect_batches');
     }
 
     public function test_preview_classifies_every_skip_reason_and_reports_headroom_and_cost(): void
@@ -205,8 +212,9 @@ class ProspectRetryDrainTest extends TestCase
 
     public function test_bulk_bar_shows_the_button_when_at_least_one_blocked_item_has_an_active_criterion(): void
     {
+        $this->grantViewProspectBatches();
         $criteria = ProspectCriteria::create(['name' => 'Actif', 'is_active' => true]);
-        $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'prospect_criteria_id' => $criteria->id]);
+        $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'status' => 'review', 'prospect_criteria_id' => $criteria->id]);
         ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'failed']);
 
         // Asserts on visible copy, not the raw data-* attribute names: those
@@ -216,7 +224,7 @@ class ProspectRetryDrainTest extends TestCase
         // for the attribute name alone can't distinguish "markup present"
         // from "markup absent but the script tag still mentions it".
         $this->actingAs($this->user)
-            ->get(route('admin.prospect_review.index', ['tab' => 'companies', 'state' => 'blocked']))
+            ->get(route('admin.prospect_batches.view', ['id' => $batch->id, 'state' => 'blocked']))
             ->assertOk()
             ->assertSee('Relancer les entreprises éligibles')
             ->assertDontSee('Toutes les entreprises sont bloquées par un critère inactif');
@@ -224,12 +232,13 @@ class ProspectRetryDrainTest extends TestCase
 
     public function test_bulk_bar_shows_the_inactive_criterion_reason_instead_of_a_dead_button_when_every_blocked_item_is_stuck(): void
     {
+        $this->grantViewProspectBatches();
         $criteria = ProspectCriteria::create(['name' => 'Critère arrêté', 'is_active' => false]);
-        $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'prospect_criteria_id' => $criteria->id]);
+        $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'status' => 'review', 'prospect_criteria_id' => $criteria->id]);
         ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'failed']);
 
         $this->actingAs($this->user)
-            ->get(route('admin.prospect_review.index', ['tab' => 'companies', 'state' => 'blocked']))
+            ->get(route('admin.prospect_batches.view', ['id' => $batch->id, 'state' => 'blocked']))
             ->assertOk()
             ->assertSee('Toutes les entreprises sont bloquées par un critère inactif')
             ->assertDontSee('Relancer les entreprises éligibles');
@@ -237,17 +246,18 @@ class ProspectRetryDrainTest extends TestCase
 
     public function test_bulk_bar_is_absent_outside_the_blocked_pill_and_when_nothing_is_blocked(): void
     {
-        $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id]);
+        $this->grantViewProspectBatches();
+        $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'status' => 'review']);
         ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'review']);
 
         $this->actingAs($this->user)
-            ->get(route('admin.prospect_review.index', ['tab' => 'companies', 'state' => 'attention']))
+            ->get(route('admin.prospect_batches.view', ['id' => $batch->id, 'state' => 'attention']))
             ->assertOk()
             ->assertDontSee('Relancer les entreprises éligibles')
             ->assertDontSee('Toutes les entreprises sont bloquées par un critère inactif');
 
         $this->actingAs($this->user)
-            ->get(route('admin.prospect_review.index', ['tab' => 'companies', 'state' => 'blocked']))
+            ->get(route('admin.prospect_batches.view', ['id' => $batch->id, 'state' => 'blocked']))
             ->assertOk()
             ->assertDontSee('Relancer les entreprises éligibles')
             ->assertDontSee('Toutes les entreprises sont bloquées par un critère inactif');
@@ -260,6 +270,117 @@ class ProspectRetryDrainTest extends TestCase
 
         $this->actingAs($unprivileged)->postJson(route('admin.prospect_review.retry_drain.preview'))->assertForbidden();
         $this->actingAs($unprivileged)->postJson(route('admin.prospect_review.retry_drain.store'))->assertForbidden();
+    }
+
+    public function test_stalled_pending_item_past_the_staleness_window_is_selected_and_dispatched_through_the_existing_job(): void
+    {
+        Queue::fake();
+        $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'status' => 'review']);
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'pending', 'error_code' => null]);
+        // Backdate past the query threshold via a raw update — Eloquent's own
+        // save() would just re-touch updated_at back to now().
+        DB::table('prospect_batch_items')->where('id', $item->id)->update(['updated_at' => now()->subMinutes(20)]);
+
+        $response = $this->actingAs($this->user)->postJson(route('admin.prospect_review.retry_drain.store', ['batch' => $batch->id, 'state' => 'stalled']));
+
+        $response->assertOk();
+        Queue::assertPushed(DrainRetryableProspectItemsJob::class, fn (DrainRetryableProspectItemsJob $job): bool => $job->itemIds === [$item->id]);
+
+        // Reuses the existing job exactly as the 'blocked' path does — run it
+        // synchronously (Queue::fake() intercepts the dispatch, not handle())
+        // and confirm it still reaches ProcessProspectBatchItemJob.
+        Queue::pushed(DrainRetryableProspectItemsJob::class)->first()
+            ->handle(app(ProspectBatchService::class), app(ProviderCallLedger::class));
+
+        Queue::assertPushed(ProcessProspectBatchItemJob::class, fn (ProcessProspectBatchItemJob $job): bool => $job->itemId === $item->id);
+        $this->assertSame('pending', $item->fresh()->status);
+    }
+
+    public function test_pending_item_mid_backoff_with_an_error_code_is_not_selected_as_stalled(): void
+    {
+        Queue::fake();
+        $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'status' => 'review']);
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'pending', 'error_code' => 'usage_limit']);
+        DB::table('prospect_batch_items')->where('id', $item->id)->update(['updated_at' => now()->subMinutes(20)]);
+
+        // The credit-burn guard: a non-null error_code means this pending
+        // item is mid-provider-backoff (markRetryPending()), not an
+        // operator-orphaned retry (decideItem() always nulls error_code) —
+        // stalledItemsQuery() must never touch it.
+        $this->actingAs($this->user)
+            ->postJson(route('admin.prospect_review.retry_drain.store', ['batch' => $batch->id, 'state' => 'stalled']))
+            ->assertUnprocessable()
+            ->assertJsonPath('code', 'prospect_retry_drain_empty');
+
+        Queue::assertNothingPushed();
+    }
+
+    public function test_pending_item_on_a_completed_batch_is_not_selected_as_stalled(): void
+    {
+        Queue::fake();
+        $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'status' => 'completed']);
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'pending', 'error_code' => null]);
+        DB::table('prospect_batch_items')->where('id', $item->id)->update(['updated_at' => now()->subMinutes(20)]);
+
+        $this->actingAs($this->user)
+            ->postJson(route('admin.prospect_review.retry_drain.store', ['batch' => $batch->id, 'state' => 'stalled']))
+            ->assertUnprocessable()
+            ->assertJsonPath('code', 'prospect_retry_drain_empty');
+
+        Queue::assertNothingPushed();
+    }
+
+    public function test_state_stalled_without_batch_is_rejected(): void
+    {
+        $this->actingAs($this->user)
+            ->postJson(route('admin.prospect_review.retry_drain.store', ['state' => 'stalled']))
+            ->assertUnprocessable();
+    }
+
+    public function test_pending_path_still_calls_the_ledger_authorization_and_skips_a_budget_exhausted_item(): void
+    {
+        Queue::fake();
+        $criteria = ProspectCriteria::create(['name' => 'Actif', 'is_active' => true]);
+        $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'prospect_criteria_id' => $criteria->id]);
+        // error_code is deliberately non-null here (unlike a real
+        // stalledItemsQuery() selection) — this exercises the job's own
+        // defense-in-depth, not the controller's selection filter: dropping
+        // authorizeKnownFailureRetryForItem() on the pending branch would let
+        // this attempt-exhausted item re-dispatch straight into
+        // provider_call_not_replayable instead of being skipped.
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'pending', 'error_code' => 'usage_limit']);
+        $this->providerCall($item, 'usage_limit', 4, 'failed');
+
+        (new DrainRetryableProspectItemsJob([$item->id], 'pending-budget-token', $this->user->id))
+            ->handle(app(ProspectBatchService::class), app(ProviderCallLedger::class));
+
+        Queue::assertNothingPushed();
+        $this->assertSame('pending', $item->fresh()->status);
+        $this->assertSame('usage_limit', $item->fresh()->error_code);
+
+        $result = Cache::get(DrainRetryableProspectItemsJob::cacheKeyFor('pending-budget-token'));
+        $this->assertTrue($result['terminal']);
+        $this->assertSame(0, $result['retried']);
+        $this->assertSame(1, $result['skipped']['budget_exhausted']);
+    }
+
+    public function test_state_blocked_is_still_the_default_selection_and_is_unaffected_by_the_stalled_addition(): void
+    {
+        Queue::fake();
+        $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id]);
+        $items = ProspectBatchItem::factory()->for($batch, 'batch')->count(105)->create(['status' => 'failed']);
+        $expectedIds = $items->sortBy('id')->take(100)->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
+
+        // Explicit state=blocked must select exactly what the implicit
+        // (no state param) default already selects today — a regression
+        // guard for test_store_selects_and_caps_items_then_dispatches_the_queued_drain_job().
+        $response = $this->actingAs($this->user)->postJson(route('admin.prospect_review.retry_drain.store', ['state' => 'blocked']));
+
+        $response->assertOk()->assertJsonPath('considered', 100);
+        Queue::assertPushed(
+            DrainRetryableProspectItemsJob::class,
+            fn (DrainRetryableProspectItemsJob $job): bool => count($job->itemIds) === 100 && $job->itemIds === $expectedIds,
+        );
     }
 
     /** @return list<ProspectBatchItem> [eligible, retry_window_open, budget_exhausted, provider_outcome_uncertain, criterion_inactive] */

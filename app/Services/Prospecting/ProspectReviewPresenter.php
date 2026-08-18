@@ -26,6 +26,26 @@ final class ProspectReviewPresenter
 
     public function __construct(private readonly DomainCanonicalizer $domains) {}
 
+    /**
+     * Single URL builder for the review workspace — the batch-hosted
+     * "À vérifier" tab (a pane on the batch view page). 'tab' and 'batch' are
+     * stripped from the query: the batch is implied by the route, and a GET
+     * filter form replacing the query string must never re-inject a param
+     * this builder deliberately left out. The URL always carries the
+     * '#prospect_batch_review' pane fragment so a full page load (redirect,
+     * bookmark, shared link) lands directly on the review tab instead of the
+     * default Aperçu pane.
+     *
+     * @param array<string, mixed> $query
+     */
+    public function workspaceUrl(int $hostBatchId, array $query = [], bool $absolute = true): string
+    {
+        $filtered = array_filter($query, static fn (mixed $value): bool => $value !== null && $value !== '');
+        unset($filtered['tab'], $filtered['batch']);
+
+        return route('admin.prospect_batches.view', ['id' => $hostBatchId] + $filtered, $absolute).'#prospect_batch_review';
+    }
+
     /** @return array{code:string,label:string,description:string,color:string,kind:string} */
     public function itemIssue(ProspectBatchItem $item): array
     {

@@ -471,7 +471,7 @@ class ProspectCriteriaTest extends TestCase
         $response->assertSee('Détails', false);
         $response->assertSee('Entreprises enregistrées non exclues (2)', false);
         $response->assertSee('Voir les entreprises enregistrées', false);
-        $response->assertSee('Les résultats bruts SerpAPI ne sont pas affichés', false);
+        $response->assertSee('Les résultats bruts de découverte ne sont pas affichés', false);
     }
 
     /**
@@ -799,12 +799,12 @@ class ProspectCriteriaTest extends TestCase
         $response->assertSee('Historique des lancements (1)', false);
         $response->assertSee('1 lancement(s) · 4 recherche(s) d’entreprises consommée(s)', false);
         $response->assertSee('0 tentative(s) d’enrichissement consommée(s)', false);
-        $response->assertSee('0 contact(s) créé(s).', false);
+        $response->assertSee('0 contact(s) importé(s).', false);
         $response->assertSee('Recherches d’entreprises', false);
         $response->assertSee('Domaines exploitables', false);
         $response->assertSee('Domaines analysés par l’IA', false);
         $response->assertSee('Tentatives d’enrichissement', false);
-        $response->assertSee('Contacts créés', false);
+        $response->assertSee('Contacts importés', false);
         $response->assertSee('>4</span>', false);
         $response->assertSee('/ 4</span>', false);
         $response->assertDontSee('href="#criteria_historique"', false);

@@ -77,12 +77,16 @@ class HunterEnrichmentService
             return null;
         }
 
-        return Cache::remember('provider.hunter.account', now()->addMinutes(10), function (): ?array {
+        $fetch = function (): ?array {
             try {
                 $execution = $this->client->accountUsage($this->legacyContext('account_usage', 0));
                 $data = $execution->response?->data ?? [];
                 $this->settle($execution, $data === [] ? 0 : 1, 0);
 
+                // ponytail: falls back to credits when searches is absent — verified live
+                // 2026-08-18 that Hunter reports credits and searches identically on this
+                // plan (same used/available/remaining), so this isn't a guessed stand-in.
+                // Add a distinct credits meter only if the two ever diverge.
                 $credits = data_get($data, 'requests.credits');
                 $searches = data_get($data, 'requests.searches', is_array($credits) ? $credits : []);
                 $verifications = data_get($data, 'requests.verifications', []);
@@ -109,7 +113,20 @@ class HunterEnrichmentService
 
                 return null;
             }
-        });
+        };
+
+        // ponytail: the cached value is always an array so a failed fetch actually caches —
+        // Cache::remember treats a stored null as a miss and would re-hit the vendor on every
+        // page load. Key is versioned because the cached SHAPE changed; a pre-existing entry
+        // under the old key would be read as a malformed payload after deploy.
+        $cached = Cache::remember('provider.hunter.account.v2', now()->addMinutes(10), fn (): array => [
+            'payload' => $fetch(),
+            'fetched_at' => now()->toIso8601String(),
+        ]);
+
+        return $cached['payload'] === null
+            ? null
+            : $cached['payload'] + ['fetched_at' => $cached['fetched_at']];
     }
 
     /**

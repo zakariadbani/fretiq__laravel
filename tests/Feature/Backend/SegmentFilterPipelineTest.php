@@ -2,10 +2,16 @@
 
 namespace Tests\Feature\Backend;
 
+use App\Models\Campaign;
+use App\Models\CampaignRecipient;
+use App\Models\CampaignRun;
+use App\Models\CampaignTemplate;
 use App\Models\Company;
 use App\Models\Contact;
+use App\Models\InboxEmail;
 use App\Models\ProspectCriteria;
 use App\Models\Segment;
+use App\Models\SenderIdentity;
 use App\Models\Suppression;
 use App\Services\Campaign\SegmentService;
 use Database\Seeders\Acl\PermissionsSeeder;
@@ -75,9 +81,7 @@ class SegmentFilterPipelineTest extends TestCase
             'company_id'  => $co->id,
             'email'       => $email,
             'name'        => 'Test Contact',
-            'status'      => 'new',
             'source'      => 'manual',
-            'legal_basis' => $co->relationship === 'client' ? 'relationship' : 'legitimate_interest',
             'email_kind'  => 'role',
             'email_verification_status' => 'valid',
             'email_verification_source' => 'hunter',
@@ -284,6 +288,90 @@ class SegmentFilterPipelineTest extends TestCase
         $this->assertSame($statsNoFilter['final'], $statsEmpty['final']);
     }
 
+    // ── Stage 2: position filter (D3.new) ──────────────────────────────────────
+
+    public function test_filter_position_case_insensitive_like_match(): void
+    {
+        $this->makeContact($this->companyA, 'buyer@acme.test', ['position' => 'Purchasing Manager']);
+        $this->makeContact($this->companyA, 'other@acme.test', ['position' => 'Sales Director']);
+
+        $stats = $this->service->resolveWithStats('client', ['position' => ['manager']]);
+
+        $this->assertSame(1, $stats['matched'], 'Only the case-insensitive LIKE match on position must be counted');
+        $this->assertSame(1, $stats['final']);
+    }
+
+    public function test_filter_position_no_match_returns_zero(): void
+    {
+        $this->makeContact($this->companyA, 'buyer@acme.test', ['position' => 'Purchasing Manager']);
+
+        $stats = $this->service->resolveWithStats('client', ['position' => ['nonexistent-title']]);
+
+        $this->assertSame(0, $stats['matched']);
+        $this->assertSame(0, $stats['final']);
+    }
+
+    // ── Stage 2: exclude_contacted filter ──────────────────────────────────────
+
+    private function campaignRun(): CampaignRun
+    {
+        $segment = Segment::create(['name' => 'Pipeline Run', 'scope' => 'client']);
+        $template = CampaignTemplate::create(['name' => 'Pipeline', 'subject' => 'Hello', 'html_content' => '<p>Hello</p>']);
+        $sender = SenderIdentity::create(['name' => 'Pipeline', 'email' => 'sender@example.test']);
+        $campaign = Campaign::create([
+            'segment_id' => $segment->id,
+            'template_id' => $template->id,
+            'sender_identity_id' => $sender->id,
+            'name' => 'Pipeline',
+            'email_verification_policy' => Campaign::VERIFICATION_VERIFIED_ONLY,
+        ]);
+
+        return CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => uniqid('pipeline-', true),
+            'run_at' => now(),
+        ]);
+    }
+
+    public function test_filter_exclude_contacted_excludes_contacted_and_replied(): void
+    {
+        $this->makeContact($this->companyA, 'normal@acme.test');
+        $contacted = $this->makeContact($this->companyA, 'contacted@acme.test');
+        $replied   = $this->makeContact($this->companyA, 'replied@acme.test');
+
+        $run = $this->campaignRun();
+        CampaignRecipient::create([
+            'campaign_run_id' => $run->id,
+            'contact_id'      => $contacted->id,
+            'status'          => 'sent',
+            'sent_at'         => now(),
+        ]);
+        InboxEmail::create([
+            'message_id'  => 'reply-' . uniqid() . '@example.test',
+            'from_email'  => $replied->email,
+            'contact_id'  => $replied->id,
+            'received_at' => now(),
+        ]);
+
+        $stats = $this->service->resolveWithStats('client', ['exclude_contacted' => true]);
+
+        $this->assertSame(1, $stats['matched'], 'Only the never-contacted contact must remain — both contacted and replied are excluded');
+        $this->assertSame(1, $stats['final']);
+    }
+
+    // ── Stage 2: exclude_generic_mailbox filter ────────────────────────────────
+
+    public function test_filter_exclude_generic_mailbox_excludes_role_local_parts(): void
+    {
+        $this->makeContact($this->companyA, 'info@acme.test');
+        $this->makeContact($this->companyA, 'jane.doe@acme.test');
+
+        $stats = $this->service->resolveWithStats('client', ['exclude_generic_mailbox' => true]);
+
+        $this->assertSame(1, $stats['matched'], 'Generic role-mailbox local-part must be excluded, named contact kept');
+        $this->assertSame(1, $stats['final']);
+    }
+
     public function test_unknown_filter_keys_ignored(): void
     {
 
@@ -321,9 +409,7 @@ class SegmentFilterPipelineTest extends TestCase
             'company_id'   => $this->companyA->id,
             'email'        => '',
             'name'         => 'Empty Email',
-            'status'       => 'new',
             'source'       => 'manual',
-            'legal_basis'  => 'relationship',
             'email_kind'   => 'role',
             'created_at'   => now(),
             'updated_at'   => now(),
@@ -342,9 +428,7 @@ class SegmentFilterPipelineTest extends TestCase
             'company_id'   => $this->companyA->id,
             'email'        => '   ',
             'name'         => 'Whitespace Email',
-            'status'       => 'new',
             'source'       => 'manual',
-            'legal_basis'  => 'relationship',
             'email_kind'   => 'role',
             'created_at'   => now(),
             'updated_at'   => now(),
@@ -380,9 +464,7 @@ class SegmentFilterPipelineTest extends TestCase
                 'company_id'  => $this->companyA->id,
                 'email'       => 'alice@corp.com',
                 'name'        => 'Alice Trimmed',
-                'status'      => 'new',
                 'source'      => 'manual',
-                'legal_basis' => 'relationship',
                 'email_kind'  => 'role',
                 'email_verification_status' => 'valid',
                 'email_verification_source' => 'hunter',
@@ -394,9 +476,7 @@ class SegmentFilterPipelineTest extends TestCase
                 'company_id'  => $this->companyA->id,
                 'email'       => ' alice@corp.com ',
                 'name'        => 'Alice Padded',
-                'status'      => 'new',
                 'source'      => 'manual',
-                'legal_basis' => 'relationship',
                 'email_kind'  => 'role',
                 'email_verification_status' => 'valid',
                 'email_verification_source' => 'hunter',
@@ -423,9 +503,7 @@ class SegmentFilterPipelineTest extends TestCase
                 'company_id'  => $this->companyA->id,
                 'email'       => 'bob@corp.com',
                 'name'        => 'Bob Clean',
-                'status'      => 'new',
                 'source'      => 'manual',
-                'legal_basis' => 'relationship',
                 'email_kind'  => 'role',
                 'email_verification_status' => 'valid',
                 'email_verification_source' => 'hunter',
@@ -437,9 +515,7 @@ class SegmentFilterPipelineTest extends TestCase
                 'company_id'  => $this->companyA->id,
                 'email'       => ' bob@corp.com ',
                 'name'        => 'Bob Padded',
-                'status'      => 'new',
                 'source'      => 'manual',
-                'legal_basis' => 'relationship',
                 'email_kind'  => 'role',
                 'email_verification_status' => 'valid',
                 'email_verification_source' => 'hunter',
@@ -555,9 +631,7 @@ class SegmentFilterPipelineTest extends TestCase
                 'company_id' => $this->companyA->id,
                 'email' => "quality-{$i}@example.test",
                 'name' => "Quality {$i}",
-                'status' => 'new',
                 'source' => 'manual',
-                'legal_basis' => 'relationship',
                 'email_kind' => 'role',
                 'email_verification_status' => $i === 999 ? 'invalid' : 'valid',
                 'email_verification_source' => 'hunter',

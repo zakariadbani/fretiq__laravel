@@ -363,11 +363,24 @@ class Menu
             }
         }
 
-        if (isset($item['active_prefix']) && is_string($item['active_prefix'])) {
-            $activePrefix = trim($item['active_prefix'], '/');
+        if (isset($item['active_prefix'])) {
+            // Supports a single prefix (string, most items) or several
+            // (array) — e.g. a "Lots" entry that should also stay
+            // highlighted while the reviewer is on the review queue, which
+            // has no menu entry of its own.
+            $prefixes = is_array($item['active_prefix']) ? $item['active_prefix'] : [$item['active_prefix']];
 
-            return $activePrefix !== ''
-                && ($currentPath === $activePrefix || str_starts_with($currentPath, $activePrefix.'/'));
+            foreach ($prefixes as $prefix) {
+                if (! is_string($prefix)) {
+                    continue;
+                }
+                $activePrefix = trim($prefix, '/');
+                if ($activePrefix !== '' && ($currentPath === $activePrefix || str_starts_with($currentPath, $activePrefix.'/'))) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         return false;

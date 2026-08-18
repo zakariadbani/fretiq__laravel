@@ -58,6 +58,21 @@ class SettingsModuleTest extends TestCase
             ->assertStatus(200);
     }
 
+    public function test_admin_settings_page_hides_disabled_tab_nav_and_panes_by_identifier(): void
+    {
+        $response = $this->actingAs($this->admin)->get('/admin/settings');
+
+        $response->assertOk()
+            ->assertSee('nav-decouverte-tab', false)
+            ->assertSee('kt_tab_decouverte', false)
+            ->assertDontSee('nav-envoi_identites-tab', false)
+            ->assertDontSee('kt_tab_envoi_identites', false)
+            ->assertDontSee('nav-envoi_permissions-tab', false)
+            ->assertDontSee('kt_tab_envoi_permissions', false)
+            ->assertDontSee('nav-conformite-tab', false)
+            ->assertDontSee('kt_tab_conformite', false);
+    }
+
     public function test_zoho_settings_tab_renders_the_safe_automation_defaults(): void
     {
         $this->actingAs($this->admin)

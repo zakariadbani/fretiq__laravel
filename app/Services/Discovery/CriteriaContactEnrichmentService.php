@@ -4,6 +4,7 @@ namespace App\Services\Discovery;
 
 use App\Models\Company;
 use App\Models\DiscoveryRun;
+use App\Models\ProspectBatch;
 use App\Models\ProspectCriteria;
 use App\Models\Setting;
 use App\Services\Quota\DiscoveryQuotaService;
@@ -24,9 +25,16 @@ class CriteriaContactEnrichmentService
         return (int) ($criteria->min_score_enrich ?? Setting::get('decouverte.min_score_enrich', 50));
     }
 
-    public function query(ProspectCriteria $criteria): Builder
+    /**
+     * Optional $batch narrows to companies promoted into that batch only
+     * (distinct non-null prospect_batch_items.company_id) — used by the
+     * ProspectBatchController "Chercher les contacts manquants" action so it
+     * never pulls in sibling companies discovered under the same criteria by
+     * the separate SerpAPI pipeline.
+     */
+    public function query(ProspectCriteria $criteria, ?ProspectBatch $batch = null): Builder
     {
-        return Company::query()
+        $query = Company::query()
             ->where('criteria_id', $criteria->id)
             ->whereNotNull('domain')
             ->whereNotNull('ai_score')
@@ -36,6 +44,19 @@ class CriteriaContactEnrichmentService
                     ->orWhere('enrichment_status', '!=', Company::ENRICHMENT_HUNTER_EMPTY);
             })
             ->whereDoesntHave('contacts');
+
+        return $batch !== null ? $this->scopeToBatch($query, $batch) : $query;
+    }
+
+    private function scopeToBatch(Builder $query, ProspectBatch $batch): Builder
+    {
+        return $query->whereIn('companies.id', function ($sub) use ($batch): void {
+            $sub->select('company_id')
+                ->from('prospect_batch_items')
+                ->where('prospect_batch_id', $batch->getKey())
+                ->whereNotNull('company_id')
+                ->distinct();
+        });
     }
 
     /**
@@ -156,11 +177,14 @@ class CriteriaContactEnrichmentService
      *     limit_note:string
      * }
      */
-    public function snapshot(ProspectCriteria $criteria): array
+    public function snapshot(ProspectCriteria $criteria, ?ProspectBatch $batch = null): array
     {
-        $eligible = $this->eligibleIds($criteria)->count();
-        $companies = $criteria->companies()->count();
-        $withContacts = $criteria->companies()->whereHas('contacts')->count();
+        $eligible = $this->eligibleIds($criteria, $batch)->count();
+        $companiesQuery = fn () => $batch !== null
+            ? $this->scopeToBatch(Company::query()->where('criteria_id', $criteria->id), $batch)
+            : $criteria->companies();
+        $companies = $companiesQuery()->count();
+        $withContacts = $companiesQuery()->whereHas('contacts')->count();
         $withoutContacts = $companies - $withContacts;
         $quotaCaps = ['eligible' => $eligible];
         $daily = $this->quota->contactRemainingTodayForDisplay();
@@ -202,9 +226,9 @@ class CriteriaContactEnrichmentService
     }
 
     /** @return \Illuminate\Support\Collection<int,int> */
-    public function eligibleIds(ProspectCriteria $criteria)
+    public function eligibleIds(ProspectCriteria $criteria, ?ProspectBatch $batch = null)
     {
-        return $this->query($criteria)
+        return $this->query($criteria, $batch)
             ->get(['id', 'domain'])
             ->reject(fn (Company $company) => $this->discovery->isBlockedDomain($company->domain))
             ->pluck('id');

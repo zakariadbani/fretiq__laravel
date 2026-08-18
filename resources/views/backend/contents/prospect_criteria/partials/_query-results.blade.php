@@ -32,7 +32,7 @@
                 {{ number_format($totalFound) }} entreprise(s) enregistrée(s) · {{ number_format($totalKept) }} non exclue(s) · {{ number_format($totalExcluded) }} exclue(s) par l'IA.
             </div>
             <div class="text-muted fs-8 mt-1">
-                Les résultats bruts SerpAPI ne sont pas affichés : seuls les domaines exploitables enregistrés après normalisation apparaissent ici.
+                Les résultats bruts de découverte ne sont pas affichés : seuls les domaines exploitables enregistrés après normalisation apparaissent ici.
             </div>
         </div>
         <div class="card-toolbar">

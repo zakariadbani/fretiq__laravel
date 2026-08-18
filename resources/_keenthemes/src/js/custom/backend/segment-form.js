@@ -21,10 +21,14 @@ var KTSegmentForm = function () {
     };
 
     var SEL = {
-        scope:   'select[name="scope"]',
-        sector:  'select[name="filter[sector][]"]',
-        country: 'select[name="filter[country][]"]',
-        status:  'select[name="filter[status]"]',
+        scope:          'select[name="scope"]',
+        sector:         'select[name="filter[sector][]"]',
+        country:        'select[name="filter[country][]"]',
+        lifecycleState: 'select[name="filter[lifecycle_state]"]',
+        position:       'select[name="filter[position][]"]',
+        criteriaId:     'select[name="filter[criteria_id][]"]',
+        excludeContacted:      'input[name="filter[exclude_contacted]"]',
+        excludeGenericMailbox: 'input[name="filter[exclude_generic_mailbox]"]',
         mode:    'input[name="is_manual"]',
     };
 
@@ -38,6 +42,7 @@ var KTSegmentForm = function () {
         { key: 'manually_included',   label: 'dont épinglés',            alwaysShow: false, bold: false, variant: 'primary',  prefix: '+' },
         { key: 'suppressed',          label: '− suppression',             alwaysShow: false, bold: false, variant: 'danger'   },
         { key: 'duplicates_excluded', label: '− doublons',                alwaysShow: false, bold: false, variant: 'secondary'},
+        { key: 'verification_excluded', label: '− email non vérifié',     alwaysShow: false, bold: false, variant: 'danger'   },
         { key: 'manually_excluded',   label: '− exclus manuellement',     alwaysShow: false, bold: false, variant: 'danger'   },
         { key: 'final',               label: 'destinataires éligibles',             alwaysShow: true,  bold: true,  variant: 'primary'  },
     ];
@@ -110,9 +115,13 @@ var KTSegmentForm = function () {
             _token: csrf,
             scope:  $(SEL.scope).val()  || '',
             filter: {
-                sector:  $(SEL.sector).val()  || [],
-                country: $(SEL.country).val() || [],
-                status:  $(SEL.status).val()  || '',
+                sector:                  $(SEL.sector).val()  || [],
+                country:                 $(SEL.country).val() || [],
+                lifecycle_state:         $(SEL.lifecycleState).val() || '',
+                position:                $(SEL.position).val() || [],
+                criteria_id:             $(SEL.criteriaId).val() || [],
+                exclude_contacted:       $(SEL.excludeContacted).is(':checked') ? 1 : 0,
+                exclude_generic_mailbox: $(SEL.excludeGenericMailbox).is(':checked') ? 1 : 0,
             },
         };
     }
@@ -297,7 +306,11 @@ var KTSegmentForm = function () {
         });
         $(SEL.sector).on('change', refreshPreview);
         $(SEL.country).on('change', refreshPreview);
-        $(SEL.status).on('change', refreshPreview);
+        $(SEL.lifecycleState).on('change', refreshPreview);
+        $(SEL.position).on('change', refreshPreview);
+        $(SEL.criteriaId).on('change', refreshPreview);
+        $(SEL.excludeContacted).on('change', refreshPreview);
+        $(SEL.excludeGenericMailbox).on('change', refreshPreview);
     }
 
     /* ── Point d'entrée public ──────────────────────────────────────────── */

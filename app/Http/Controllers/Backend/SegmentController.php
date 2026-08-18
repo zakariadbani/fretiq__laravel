@@ -7,6 +7,7 @@ use App\DataTables\Backend\SegmentsDataTable;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
 use App\Models\Company;
+use App\Models\ProspectCriteria;
 use App\Models\Segment;
 use App\Services\Campaign\SegmentService;
 use Illuminate\Http\Request;
@@ -163,6 +164,9 @@ class SegmentController extends BackendController
      *   filter.sector array    nullable, max 20, chaque entrée string max 100
      *   filter.country array   nullable, max 20, chaque entrée string size:2 in company_countries keys
      *   filter.lifecycle_state string nullable, in calculated lifecycle keys
+     *   filter.position array   nullable, max 20, chaque entrée string max 100
+     *   filter.exclude_contacted boolean nullable
+     *   filter.exclude_generic_mailbox boolean nullable
      *
      * Réponse 200 :
      *   matched, suppressed, duplicates_excluded, final, sample[],
@@ -194,6 +198,10 @@ class SegmentController extends BackendController
             'filter.criteria_id'   => ['nullable', 'array'],
             'filter.criteria_id.*' => ['integer', 'exists:prospect_criteria,id'],
             'filter.lifecycle_state' => 'nullable|string|in:' . implode(',', $lifecycleStates),
+            'filter.position'       => 'nullable|array|max:20',
+            'filter.position.*'     => 'string|max:100',
+            'filter.exclude_contacted'       => 'nullable|boolean',
+            'filter.exclude_generic_mailbox' => 'nullable|boolean',
         ]);
 
         return [
@@ -259,6 +267,8 @@ class SegmentController extends BackendController
             'sectors'        => $sectors,
             'countries'      => $countries,
             'lifecycleStates' => config('global.data.contact_lifecycle_states', []),
+            'positionGroups' => config('global.data.prospect_positions', []),
+            'criteriaOptions' => ProspectCriteria::query()->orderBy('name')->pluck('name', 'id')->all(),
         ];
     }
 
@@ -302,6 +312,29 @@ class SegmentController extends BackendController
         $status = trim((string) ($rawFilter['lifecycle_state'] ?? ''));
         if ($status !== '') {
             $filter['lifecycle_state'] = $status;
+        }
+
+        // filter.criteria_id — tableau d'ids de prospect_criteria, castés en int.
+        $criteriaId = array_values(array_map(
+            fn ($v) => (int) $v,
+            array_filter((array) ($rawFilter['criteria_id'] ?? []), fn ($v) => $v !== null && $v !== '')
+        ));
+        if (! empty($criteriaId)) {
+            $filter['criteria_id'] = $criteriaId;
+        }
+
+        // filter.position — tableau de tags libres, on supprime les valeurs vides.
+        $position = array_values(array_filter((array) ($rawFilter['position'] ?? []), fn ($v) => $v !== null && $v !== ''));
+        if (! empty($position)) {
+            $filter['position'] = $position;
+        }
+
+        if ($this->boolInputSet($rawFilter['exclude_contacted'] ?? null)) {
+            $filter['exclude_contacted'] = true;
+        }
+
+        if ($this->boolInputSet($rawFilter['exclude_generic_mailbox'] ?? null)) {
+            $filter['exclude_generic_mailbox'] = true;
         }
 
         $attributes['is_manual'] = $this->currentRequest->boolean('is_manual');
@@ -545,7 +578,8 @@ class SegmentController extends BackendController
      *   « Cible : contacts clients et prospects des secteurs Transport ou Logistique »
      *
      * @param string $scope   One of: 'client', 'prospect', 'mixed'
-     * @param array  $filter  Normalized filter array (keys: sector, country, status)
+     * @param array  $filter  Normalized filter array (keys: sector, country, lifecycle_state,
+     *                        criteria_id, position, exclude_contacted, exclude_generic_mailbox)
      * @return string
      */
     private function buildSummary(string $scope, array $filter): string
@@ -557,7 +591,8 @@ class SegmentController extends BackendController
         ];
         $scopeLabel = $scopeLabels[$scope] ?? $scope;
 
-        $hasFilter = ! empty($filter['sector']) || ! empty($filter['country']) || ! empty($filter['lifecycle_state']);
+        $hasFilter = ! empty($filter['sector']) || ! empty($filter['country']) || ! empty($filter['lifecycle_state'])
+            || ! empty($filter['position']) || ! empty($filter['exclude_contacted']) || ! empty($filter['exclude_generic_mailbox']);
 
         if (! $hasFilter) {
             return "Cible : tous les contacts {$scopeLabel}";
@@ -591,6 +626,24 @@ class SegmentController extends BackendController
             $statusConfig = config('global.data.contact_lifecycle_states.' . $filter['lifecycle_state'], null);
             $statusLabel  = $statusConfig['label'] ?? $filter['lifecycle_state'];
             $parts[] = 'à l’état ' . $statusLabel;
+        }
+
+        // Postes ciblés
+        if (! empty($filter['position'])) {
+            $positions = $filter['position'];
+            if (count($positions) === 1) {
+                $parts[] = 'au poste ' . $positions[0];
+            } else {
+                $parts[] = 'aux postes ' . implode(' ou ', $positions);
+            }
+        }
+
+        // Exclusions
+        if (! empty($filter['exclude_contacted'])) {
+            $parts[] = 'hors contacts déjà sollicités';
+        }
+        if (! empty($filter['exclude_generic_mailbox'])) {
+            $parts[] = 'hors boîtes génériques';
         }
 
         return implode(' ', $parts);
@@ -632,6 +685,34 @@ class SegmentController extends BackendController
             $filter['lifecycle_state'] = $status;
         }
 
+        $position = array_values(array_filter((array) ($rawFilter['position'] ?? []), fn ($v) => $v !== null && $v !== ''));
+        if (! empty($position)) {
+            $filter['position'] = $position;
+        }
+
+        if ($this->boolInputSet($rawFilter['exclude_contacted'] ?? null)) {
+            $filter['exclude_contacted'] = true;
+        }
+
+        if ($this->boolInputSet($rawFilter['exclude_generic_mailbox'] ?? null)) {
+            $filter['exclude_generic_mailbox'] = true;
+        }
+
         return $filter;
+    }
+
+    /**
+     * True when a raw boolean-ish input value is present AND truthy.
+     * Absent/false must not be persisted as filter noise — only a real "on" is kept.
+     *
+     * @param  mixed  $value
+     */
+    private function boolInputSet(mixed $value): bool
+    {
+        if ($value === null) {
+            return false;
+        }
+
+        return filter_var($value, FILTER_VALIDATE_BOOLEAN);
     }
 }

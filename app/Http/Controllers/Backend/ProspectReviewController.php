@@ -30,75 +30,6 @@ class ProspectReviewController extends BackendController
         $this->middleware('permission:review prospect matches');
     }
 
-    public function index(Request $request, ProspectReviewWorkspace $workspace, ProspectReviewPresenter $presenter)
-    {
-        $validated = $request->validate([
-            'batch' => ['nullable', 'integer', 'min:1'],
-            'tab' => ['nullable', Rule::in(['companies', 'contacts'])],
-            'reason' => ['nullable', 'string', 'max:64', 'regex:/^[a-z][a-z0-9_]{0,63}$/'],
-            'state' => ['nullable', Rule::in(['all', 'attention', 'blocked'])],
-            'q' => ['nullable', 'string', 'max:100'],
-            'item' => ['nullable', 'integer', 'min:1'],
-            'monitor_item' => ['nullable', 'integer', 'min:1'],
-        ]);
-        if (($validated['tab'] ?? null) === 'contacts') {
-            return redirect()->route('admin.prospect_review.index', array_filter([
-                'batch' => $validated['batch'] ?? null,
-                'tab' => 'companies',
-                'state' => $validated['state'] ?? null,
-                'q' => $validated['q'] ?? null,
-            ]))->with('info', 'Les contacts sont désormais importés automatiquement ; cette file ne contient que les entreprises à vérifier.');
-        }
-        $itemId = isset($validated['item']) ? (int) $validated['item'] : null;
-
-        // An explicit ?state= always wins. Only the *default* (no state param
-        // at all) is item-aware: a deep link to one item — bookmark, email,
-        // notification — must land on the pill that actually contains it, or
-        // the item silently falls off the default "À décider" queue and its
-        // card renders empty. A failed item defaults to "blocked", a review
-        // item to "attention"; anything else (already decided, wrong owner)
-        // keeps the general "attention" default.
-        $state = $validated['state']
-            ?? ($itemId !== null ? $workspace->defaultStateForItem($request->user(), $itemId) : 'attention');
-
-        $filters = [
-            'batch' => isset($validated['batch']) ? (int) $validated['batch'] : null,
-            'tab' => 'companies',
-            'reason' => $validated['reason'] ?? null,
-            'state' => $state,
-            'q' => trim((string) ($validated['q'] ?? '')),
-            'item' => $itemId,
-            'monitor_item' => isset($validated['monitor_item']) ? (int) $validated['monitor_item'] : null,
-        ];
-
-        $data = $workspace->build($request->user(), $filters);
-
-        // Selecting a queue item is not a decision — it shouldn't cost a full page load.
-        // The fetch-driven pane swap in index.blade.php requests this same route with
-        // `partial=1` and the full current query string, and gets back just the detail
-        // pane markup (`_review-detail`), built from the exact same $data as the full page.
-        if ($request->boolean('partial')) {
-            return view('backend.contents.prospect_review.partials._review-detail', [
-                ...$data,
-                'reviewPresenter' => $presenter,
-            ]);
-        }
-
-        // null = bulk bar not shown at all (not on the "À relancer" pill, or
-        // nothing blocked to act on); true = show the drain button; false =
-        // every blocked item is structurally stuck on an inactive criterion,
-        // so show the reason instead of a button that cannot work.
-        $blockedDrainReady = $filters['state'] === 'blocked' && $data['stateCounts']['blocked'] > 0
-            ? $workspace->hasRetryableBlockedItem($request->user(), $filters)
-            : null;
-
-        return view('backend.contents.prospect_review.index', [
-            ...$data,
-            'reviewPresenter' => $presenter,
-            'blockedDrainReady' => $blockedDrainReady,
-        ]);
-    }
-
     /**
      * Dry-run for the "À relancer" bulk drain confirm dialog. Read-only —
      * scores the same (filter-scoped, ownership-scoped, capped-at-100) set
@@ -127,7 +58,10 @@ class ProspectReviewController extends BackendController
     public function drainRetryable(Request $request, ProspectReviewWorkspace $workspace)
     {
         $filters = $this->drainFilters($request);
-        $itemIds = $workspace->blockedItemsQuery($request->user(), $filters)
+        $query = $filters['state'] === 'stalled'
+            ? $workspace->stalledItemsQuery($request->user(), $filters)
+            : $workspace->blockedItemsQuery($request->user(), $filters);
+        $itemIds = $query
             ->oldest('id')
             ->limit(self::DRAIN_ITEM_CAP)
             ->pluck('id')
@@ -136,6 +70,18 @@ class ProspectReviewController extends BackendController
 
         if ($itemIds === []) {
             return response()->json(['message' => 'error', 'code' => 'prospect_retry_drain_empty'], 422);
+        }
+
+        // Belt-and-suspenders: drainFilters() already makes `batch` required
+        // for state=stalled and the query above is already batch-scoped, but
+        // an unpinned admin sweep across batches/owners is exactly the leak
+        // this feature must never reopen — assert it rather than trust the
+        // query alone.
+        if ($filters['state'] === 'stalled') {
+            abort_if(
+                ProspectBatchItem::query()->whereIn('id', $itemIds)->where('prospect_batch_id', '!=', $filters['batch'])->exists(),
+                500,
+            );
         }
 
         $token = Str::random(40);
@@ -184,12 +130,15 @@ class ProspectReviewController extends BackendController
             'message' => $outcome['message'],
             'result' => $outcome['result'],
             'next_step' => $outcome['next_step'],
-            'review_url' => route('admin.prospect_review.index', [
-                'tab' => 'companies',
-                'batch' => $item->prospect_batch_id,
-                'item' => $item->getKey(),
-                'monitor_item' => $item->getKey(),
-            ], false),
+            'review_url' => $presenter->workspaceUrl(
+                $item->prospect_batch_id,
+                [
+                    'batch' => $item->prospect_batch_id,
+                    'item' => $item->getKey(),
+                    'monitor_item' => $item->getKey(),
+                ],
+                false,
+            ),
             'batch_url' => route('admin.prospect_batches.view', ['id' => $item->prospect_batch_id], false),
             'company_name' => $item->company_name,
             'imported_contacts_count' => $facts['imported_contacts_count'],
@@ -204,6 +153,8 @@ class ProspectReviewController extends BackendController
         DomainCanonicalizer $domains,
         ProspectBatchService $batches,
         ProviderCallLedger $providerCalls,
+        ProspectReviewWorkspace $workspace,
+        ProspectReviewPresenter $presenter,
     ) {
         $validated = $request->validate([
             'action' => ['required', Rule::in(['approve_domain', 'reject', 'retry'])],
@@ -317,7 +268,7 @@ class ProspectReviewController extends BackendController
             });
         } catch (HttpExceptionInterface $exception) {
             if ($exception->getStatusCode() === 409 && ! $request->expectsJson()) {
-                return $this->reviewRedirect($validated, 'warning', 'Cette décision a déjà été traitée ; la file a été actualisée.');
+                return $this->reviewRedirect($presenter, $validated, 'warning', 'Cette décision a déjà été traitée ; la file a été actualisée.', [], $item->prospect_batch_id);
             }
             throw $exception;
         }
@@ -331,19 +282,42 @@ class ProspectReviewController extends BackendController
             return response()->json(['message' => 'success', 'id' => $persisted->id, 'status' => $persisted->status]);
         }
 
+        $persisted->batch->loadMissing('criteria');
+        $criteriaName = $persisted->batch->criteria?->name;
+
         $message = match ($validated['action']) {
-            'approve_domain' => 'Domaine enregistré ; cette entreprise reprend son traitement.',
-            'retry' => 'Relance demandée. Cette entreprise peut réapparaître ici si une étape échoue de nouveau.',
-            'reject' => 'Entreprise exclue de ce lot.',
+            'approve_domain' => $criteriaName !== null
+                ? "Domaine enregistré — le traitement de « {$persisted->company_name} » reprend. Elle apparaîtra dans les Résultats du critère « {$criteriaName} » une fois traitée."
+                : "Domaine enregistré — le traitement de « {$persisted->company_name} » reprend. Elle apparaîtra dans le lot une fois traitée.",
+            'retry' => "Relance demandée pour « {$persisted->company_name} » — suivez son avancement dans le bandeau ci-dessous.",
+            'reject' => "Entreprise « {$persisted->company_name} » exclue de ce lot.",
         };
 
-        return $this->reviewRedirect(
-            $validated,
-            'success',
-            $message,
-            $validated['action'] === 'retry' ? ['monitor_item' => $persisted->id] : [],
-            $validated['action'] !== 'retry',
-        );
+        // Auto-advance the redirect to the next reviewable item for a
+        // completed decision (approve_domain/reject) so the reviewer isn't
+        // left staring at their own just-decided card. Retry deliberately
+        // stays on the same item — the monitor poller below can replace
+        // this page up to 120s later, and auto-advancing would yank the
+        // user off the next card mid-review if that fires late. The item
+        // itself flips to 'pending' and no longer resolves in the
+        // ['review','failed'] scope, so the workspace suppresses its usual
+        // "fall back to another item" behaviour whenever item === monitor_item
+        // (ProspectReviewWorkspace::build) — the pane shows the monitored
+        // placeholder/empty state instead of a different company's card.
+        if ($validated['action'] === 'retry') {
+            $extraQuery = ['item' => $persisted->id, 'monitor_item' => $persisted->id];
+        } else {
+            $returnFilters = [
+                'batch' => isset($validated['return_batch']) ? (int) $validated['return_batch'] : null,
+                'reason' => $validated['return_reason'] ?? null,
+                'state' => $validated['return_state'] ?? 'all',
+                'q' => trim((string) ($validated['return_q'] ?? '')),
+            ];
+            $next = $workspace->nextQueuedItem($request->user(), $returnFilters, (int) $persisted->id);
+            $extraQuery = ['item' => $next?->id];
+        }
+
+        return $this->reviewRedirect($presenter, $validated, 'success', $message, $extraQuery, $persisted->prospect_batch_id);
     }
 
     private function authorizeBatch(ProspectBatch $batch): void
@@ -358,23 +332,31 @@ class ProspectReviewController extends BackendController
 
     /**
      * Same batch/reason/q scope the "À relancer" pill already filters on —
-     * deliberately excludes state/item/tab, which don't apply to a bulk
-     * action against the blocked set.
+     * deliberately excludes item/tab, which don't apply to a bulk action.
+     * `state` selects which drain query drainRetryable() targets
+     * (blockedItemsQuery vs stalledItemsQuery); 'blocked' is the default so
+     * every caller before this widened keeps behaving byte-identically.
+     * `batch` becomes required when state=stalled — it's nullable and
+     * admins are unscoped, so an unpinned stalled drain would otherwise
+     * sweep the 100 oldest matching items across every batch and owner
+     * while the button's own count is batch-scoped.
      *
-     * @return array{batch:?int,reason:?string,q:string}
+     * @return array{batch:?int,reason:?string,q:string,state:string}
      */
     private function drainFilters(Request $request): array
     {
         $validated = $request->validate([
-            'batch' => ['nullable', 'integer', 'min:1'],
+            'batch' => ['nullable', 'integer', 'min:1', 'required_if:state,stalled'],
             'reason' => ['nullable', 'string', 'max:64', 'regex:/^[a-z][a-z0-9_]{0,63}$/'],
             'q' => ['nullable', 'string', 'max:100'],
+            'state' => ['nullable', Rule::in(['blocked', 'stalled'])],
         ]);
 
         return [
             'batch' => isset($validated['batch']) ? (int) $validated['batch'] : null,
             'reason' => $validated['reason'] ?? null,
             'q' => trim((string) ($validated['q'] ?? '')),
+            'state' => $validated['state'] ?? 'blocked',
         ];
     }
 
@@ -383,7 +365,6 @@ class ProspectReviewController extends BackendController
     {
         return [
             'return_batch' => ['nullable', 'integer', 'min:1'],
-            'return_tab' => ['nullable', Rule::in(['companies'])],
             'return_reason' => ['nullable', 'string', 'max:64', 'regex:/^[a-z][a-z0-9_]{0,63}$/'],
             'return_state' => ['nullable', Rule::in(['all', 'attention', 'blocked'])],
             'return_q' => ['nullable', 'string', 'max:100'],
@@ -392,23 +373,25 @@ class ProspectReviewController extends BackendController
         ];
     }
 
-    /** @param array<string, mixed> $extraQuery */
-    private function reviewRedirect(array $validated, string $level, string $message, array $extraQuery = [], bool $withFeedback = true)
+    /**
+     * Builds the post-decision redirect via the shared workspaceUrl() builder —
+     * null/'' entries are filtered inside it, so this only needs to assemble the
+     * raw return_* values. $batchId is always the host batch — every review
+     * item is reached from (and returns to) its batch's "À vérifier" tab.
+     *
+     * @param array<string, mixed> $extraQuery
+     */
+    private function reviewRedirect(ProspectReviewPresenter $presenter, array $validated, string $level, string $message, array $extraQuery, int $batchId)
     {
-        $query = array_filter([
+        $query = array_replace([
             'batch' => $validated['return_batch'] ?? null,
-            'tab' => 'companies',
             'reason' => $validated['return_reason'] ?? null,
             'state' => $validated['return_state'] ?? null,
-            'q' => trim((string) ($validated['return_q'] ?? '')) ?: null,
+            'q' => trim((string) ($validated['return_q'] ?? '')),
             'item' => $validated['return_item'] ?? null,
             'companies_page' => $validated['return_companies_page'] ?? null,
-        ], static fn ($value): bool => $value !== null && $value !== '');
+        ], $extraQuery);
 
-        $query = array_replace($query, $extraQuery);
-
-        $redirect = redirect()->route('admin.prospect_review.index', $query);
-
-        return $withFeedback ? $redirect->with($level, $message) : $redirect;
+        return redirect()->to($presenter->workspaceUrl($batchId, $query))->with($level, $message);
     }
 }

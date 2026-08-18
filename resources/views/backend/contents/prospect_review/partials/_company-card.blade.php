@@ -26,9 +26,6 @@
                 {{ collect([$item->city, $item->country])->filter()->join(', ') ?: 'Localisation non précisée' }}
             </div>
         </div>
-        <a class="btn btn-sm btn-light" href="{{ route('admin.prospect_batches.view', ['id' => $item->prospect_batch_id]) }}">
-            Voir le lot <i class="bi bi-arrow-up-right ms-1" aria-hidden="true"></i>
-        </a>
     </header>
 
     <section aria-labelledby="company-checks-{{ $item->id }}" class="mb-5">
@@ -162,7 +159,7 @@
                 @if($review['contact_collection_resume'] || ($review['enrichment_resume'] ?? false))
                     <a
                         class="btn btn-link text-muted text-decoration-underline d-block p-0 mt-3 text-start"
-                        href="{{ isset($nextItem) && $nextItem ? route('admin.prospect_review.index', ['tab' => 'companies', 'batch' => $nextItem->prospect_batch_id, 'item' => $nextItem->id]) : route('admin.prospect_review.index', ['tab' => 'companies', 'batch' => $item->prospect_batch_id]) }}"
+                        href="{{ isset($nextItem) && $nextItem ? $reviewPresenter->workspaceUrl($hostBatchId, ['batch' => $nextItem->prospect_batch_id, 'item' => $nextItem->id]) : $reviewPresenter->workspaceUrl($hostBatchId, ['batch' => $item->prospect_batch_id]) }}"
                         data-review-defer
                     >Décider plus tard</a>
                 @endif

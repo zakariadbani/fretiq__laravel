@@ -158,6 +158,16 @@ final class HunterClient
         });
     }
 
+    /**
+     * Fetch live Hunter account usage for the superadmin quota page.
+     *
+     * Verified live 2026-08-18 (STATUS 200): Hunter GET /usage data keys are
+     * only reset_date, requests — no plan name. GET /account data keys are
+     * first_name, last_name, email, plan_name, plan_level, reset_date,
+     * team_id, requests, calls, with the same requests.{credits,searches,
+     * verifications} meters as /usage — a strict superset for everything
+     * this app consumes, and the only endpoint that carries plan_name.
+     */
     public function accountUsage(ProviderCallContext $context): ProviderExecution
     {
         return $this->execute($context, 'account_usage', function (): ProviderResponse {
@@ -168,7 +178,10 @@ final class HunterClient
                 ], ['source' => 'local']);
             }
 
-            $response = $this->request('GET', 'usage');
+            // /account, not /usage: /usage never returns plan_name. /account's
+            // response also carries account PII (name, email, team_id) that
+            // sanitizeUsageData() below deliberately allowlists away.
+            $response = $this->request('GET', 'account');
 
             return new ProviderResponse(
                 $response->httpStatus,

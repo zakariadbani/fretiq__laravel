@@ -7,6 +7,7 @@ use App\Exceptions\EnrichmentInFlightException;
 use App\Exceptions\QuotaExhaustedException;
 use App\Exceptions\QuotaLockUnavailableException;
 use App\Models\DiscoveryRun;
+use App\Models\ProspectBatch;
 use App\Models\ProspectCriteria;
 use App\Services\Discovery\CompanyEnrichmentService;
 use App\Services\Discovery\CriteriaContactEnrichmentService;
@@ -39,6 +40,13 @@ class EnrichCriteriaContactsJob implements ShouldBeUnique, ShouldQueue
 
     public readonly string $admissionOwner;
 
+    // Nullable + no default: kept uninitialized when an already-queued payload
+    // (serialized before this property existed) is unserialized, since
+    // SerializesModels bypasses the constructor. Read ONLY via batchId() —
+    // isset() on an uninitialized typed property returns false instead of
+    // throwing, `?? null` does not help on an uninitialized property.
+    public readonly ?int $prospectBatchId;
+
     public function __construct(
         public readonly int $criteriaId,
         int $approvedAttempts = CriteriaContactEnrichmentService::BATCH_SAFETY_MAX,
@@ -47,6 +55,7 @@ class EnrichCriteriaContactsJob implements ShouldBeUnique, ShouldQueue
         ?int $successTarget = null,
         ?string $batchId = null,
         ?int $approvedMax = null,
+        ?int $prospectBatchId = null,
     ) {
         // approvedMax/batchStartedAt are accepted only so already-queued payloads
         // from the previous job shape can be deserialized safely during deploy.
@@ -62,16 +71,29 @@ class EnrichCriteriaContactsJob implements ShouldBeUnique, ShouldQueue
             ? $batchId
             : (string) Str::uuid();
         $this->admissionOwner = $admissionOwner;
+        $this->prospectBatchId = $prospectBatchId;
     }
 
-    public static function admissionKey(int $criteriaId): string
+    /** Batch-scoped when dispatched from ProspectBatchController; null for the criteria-wide button. */
+    private function prospectBatchIdOrNull(): ?int
     {
-        return "criteria-contact-enrichment:admission:{$criteriaId}";
+        return isset($this->prospectBatchId) ? $this->prospectBatchId : null;
+    }
+
+    public static function admissionKey(int $criteriaId, ?int $prospectBatchId = null): string
+    {
+        return $prospectBatchId !== null
+            ? "criteria-contact-enrichment:admission:{$criteriaId}:batch:{$prospectBatchId}"
+            : "criteria-contact-enrichment:admission:{$criteriaId}";
     }
 
     public function uniqueId(): string
     {
-        return "criteria-contact-enrichment:{$this->criteriaId}";
+        $prospectBatchId = $this->prospectBatchIdOrNull();
+
+        return $prospectBatchId !== null
+            ? "criteria-contact-enrichment:{$this->criteriaId}:batch:{$prospectBatchId}"
+            : "criteria-contact-enrichment:{$this->criteriaId}";
     }
 
     public function middleware(): array
@@ -94,16 +116,22 @@ class EnrichCriteriaContactsJob implements ShouldBeUnique, ShouldQueue
                 return;
             }
 
+            $prospectBatchId = $this->prospectBatchIdOrNull();
+            $batch = $prospectBatchId !== null ? ProspectBatch::find($prospectBatchId) : null;
+            if ($prospectBatchId !== null && $batch === null) {
+                return;
+            }
+
             $batchRuns = $this->batchRuns();
             $alreadyAttempted = $batchRuns->pluck('company_id')->map(fn ($id): int => (int) $id);
             $remainingApproved = max(0, $this->approvedAttempts - $batchRuns->count());
             $remainingSuccesses = max(0, $this->successTarget - (int) $batchRuns->sum('successful_enrichments'));
-            $callable = min($remainingApproved, $eligibility->snapshot($criteria)['callable_count']);
+            $callable = min($remainingApproved, $eligibility->snapshot($criteria, $batch)['callable_count']);
             if ($callable <= 0 || $remainingSuccesses <= 0) {
                 return;
             }
 
-            $candidateIds = $eligibility->eligibleIds($criteria)
+            $candidateIds = $eligibility->eligibleIds($criteria, $batch)
                 ->reject(fn ($companyId): bool => $alreadyAttempted->contains((int) $companyId));
             foreach ($candidateIds as $companyId) {
                 try {
@@ -168,7 +196,7 @@ class EnrichCriteriaContactsJob implements ShouldBeUnique, ShouldQueue
     private function clearAdmission(): void
     {
         if ($this->admissionOwner !== '') {
-            Cache::restoreLock(self::admissionKey($this->criteriaId), $this->admissionOwner)->release();
+            Cache::restoreLock(self::admissionKey($this->criteriaId, $this->prospectBatchIdOrNull()), $this->admissionOwner)->release();
         }
     }
 

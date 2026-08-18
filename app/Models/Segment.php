@@ -87,6 +87,18 @@ class Segment extends Model
 
             // filter.lifecycle_state: optional calculated contact-state value
             'filter.lifecycle_state'   => 'nullable|string|in:' . $lifecycleStates,
+
+            // filter.criteria_id: optional array of up to 20 prospect_criteria ids
+            'filter.criteria_id'   => 'nullable|array|max:20',
+            'filter.criteria_id.*' => 'integer|exists:prospect_criteria,id',
+
+            // filter.position: optional array of up to 20 free-text position tags
+            'filter.position'   => 'nullable|array|max:20',
+            'filter.position.*' => 'string|max:100',
+
+            // filter.exclude_contacted / filter.exclude_generic_mailbox: booleans
+            'filter.exclude_contacted'        => 'nullable|boolean',
+            'filter.exclude_generic_mailbox'  => 'nullable|boolean',
         ];
     }
 

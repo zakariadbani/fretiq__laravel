@@ -281,7 +281,7 @@ class DiscoveryProgressUiContractTest extends TestCase
         $results = file_get_contents($this->views.'/partials/_results-tab.blade.php');
 
         foreach ([$queryResults, $results] as $source) {
-            $this->assertStringContainsString('Les résultats bruts SerpAPI ne sont pas affichés', $source);
+            $this->assertStringContainsString('Les résultats bruts de découverte ne sont pas affichés', $source);
         }
 
         $this->assertStringContainsString('entreprise(s) enregistrée(s)', $queryResults);

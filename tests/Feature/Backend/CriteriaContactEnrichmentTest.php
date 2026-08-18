@@ -831,7 +831,7 @@ class CriteriaContactEnrichmentTest extends TestCase
 
         $this->app->instance(HunterEnrichmentService::class, new class extends HunterEnrichmentService
         {
-            public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null): array
+            public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null, ?\App\Services\Providers\ProviderCallContext $context = null): array
             {
                 return ['status' => 'ok', 'data' => [
                     'organization' => 'Réponse tardive',
@@ -878,7 +878,7 @@ class CriteriaContactEnrichmentTest extends TestCase
 
         $this->app->instance(HunterEnrichmentService::class, new class extends HunterEnrichmentService
         {
-            public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null): array
+            public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null, ?\App\Services\Providers\ProviderCallContext $context = null): array
             {
                 throw new \RuntimeException('provider transport exploded');
             }

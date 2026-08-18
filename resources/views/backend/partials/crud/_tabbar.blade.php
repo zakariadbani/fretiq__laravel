@@ -33,8 +33,6 @@
 --}}
 
 @php
-    $isView = ($currentPage ?? 'view') === 'view';
-    $isEdit = !$isView;
     $hasId  = isset($model) && $model && $model->id;
 
     // Merge heroProps overrides into config-derived props
@@ -57,14 +55,13 @@
     $tabs        = $config['tabs']          ?? [];
 
     // Determine which tab is the "first native" on this page (the active tab).
-    // On view page: first tab with mode 'view' or 'both' is active.
-    // On edit page: first tab with mode 'edit' or 'both' is active.
+    // A tab is native when its mode matches $currentPage exactly (or mode is
+    // 'both'). $currentPage must equal one of the tab mode values; unknown
+    // values make every tab a route-link.
     $activeKey = null;
     foreach ($tabs as $tab) {
         $mode   = $tab['mode'] ?? 'view';
-        $native = ($mode === 'both')
-            ? true
-            : ($mode === 'view' ? $isView : $isEdit);
+        $native = ($mode === 'both') || ($mode === ($currentPage ?? 'view'));
         if ($native) {
             $activeKey = $tab['key'];
             break;
@@ -99,21 +96,14 @@
                 $icon   = $tab['icon']  ?? '';
                 $count  = $tab['count'] ?? null;
 
-                $native = ($mode === 'both')
-                    ? true
-                    : ($mode === 'view' ? $isView : $isEdit);
+                $native = ($mode === 'both') || ($mode === ($currentPage ?? 'view'));
 
                 $isActive = ($key === $activeKey);
 
-                // Deep-link destination when NOT native on this page
+                // Deep-link destination when NOT native on this page — append the pane
+                // hash so the target page opens on the right tab.
                 if (!$native) {
-                    if ($mode === 'view') {
-                        // Append pane hash so the target page opens on the right tab
-                        $linkRoute = $hasId ? (route($routeBase . '.view', $model->id) . '#' . $paneId) : '#';
-                    } else {
-                        // mode 'edit' or unreachable 'both' branch
-                        $linkRoute = $hasId ? (route($routeBase . '.edit', $model->id) . '#' . $paneId) : '#';
-                    }
+                    $linkRoute = $hasId ? (route($routeBase . '.' . $mode, $model->id) . '#' . $paneId) : '#';
                 }
 
                 // Skip view-only tabs on create (no model id yet)

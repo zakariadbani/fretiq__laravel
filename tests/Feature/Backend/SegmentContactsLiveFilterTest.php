@@ -19,8 +19,8 @@ use Tests\TestCase;
  *    (differs from the segment's saved filter audience)
  *  - Pins from the saved segment apply on the live path (includeIds / excludeIds are always saved)
  *  - Absent/empty scope → falls back to the saved audience
- *  - ?filter[status]= (empty string) normalises to same audience as omitting status
- *  - Out-of-enum filter[country][]/filter[status] → 422 (identical to preview endpoint)
+ *  - ?filter[lifecycle_state]= (empty string) normalises to same audience as omitting it
+ *  - Out-of-enum filter[country][]/filter[lifecycle_state] → 422 (identical to preview endpoint)
  *  - Missing scope with non-empty filter → falls back to saved audience (scope absent)
  *  - Response returns HTML fragment (text/html) on 200
  */
@@ -89,13 +89,12 @@ class SegmentContactsLiveFilterTest extends TestCase
     private function makeContact(Company $company, string $email, array $extra = []): Contact
     {
         return Contact::create(array_merge([
-            'company_id'  => $company->id,
-            'email'       => $email,
-            'name'        => 'Test Contact ' . $email,
-            'status'      => 'new',
-            'source'      => 'manual',
-            'legal_basis' => 'relationship',
-            'email_kind'  => 'role',
+            'company_id'                 => $company->id,
+            'email'                      => $email,
+            'name'                       => 'Test Contact ' . $email,
+            'source'                     => 'manual',
+            'email_kind'                 => 'role',
+            'email_verification_status'  => 'valid',
         ], $extra));
     }
 
@@ -280,20 +279,23 @@ class SegmentContactsLiveFilterTest extends TestCase
     // ── Normalization parity ───────────────────────────────────────────────────
 
     /**
-     * ?filter[status]= (empty string) yields same audience as omitting status entirely.
-     * normalizeFilter() strips empty status → both calls resolve identically.
+     * ?filter[lifecycle_state]= (empty string) yields same audience as omitting it entirely.
+     * normalizeFilter() strips empty lifecycle_state → both calls resolve identically.
+     *
+     * Renamed from the dead filter.status key (2026-08-16): the form and both
+     * server-side validators only ever accepted filter.lifecycle_state.
      */
     public function test_empty_status_filter_is_normalized_same_as_omitted(): void
     {
 
-        // Two IT contacts with different statuses
-        $this->makeContact($this->clientCompanyIT, 'status-new@test.test',       ['status' => 'new']);
-        $this->makeContact($this->clientCompanyIT, 'status-qualified@test.test',  ['status' => 'qualified']);
+        // Two IT contacts
+        $this->makeContact($this->clientCompanyIT, 'status-new@test.test');
+        $this->makeContact($this->clientCompanyIT, 'status-qualified@test.test');
 
-        // With explicit empty status
+        // With explicit empty lifecycle_state
         $withEmpty = $this->getContacts([
             'scope'  => 'client',
-            'filter' => ['sector' => ['IT'], 'status' => ''],
+            'filter' => ['sector' => ['IT'], 'lifecycle_state' => ''],
         ]);
         $withEmpty->assertStatus(200);
 
@@ -339,20 +341,23 @@ class SegmentContactsLiveFilterTest extends TestCase
     }
 
     /**
-     * An out-of-enum filter[status] → 422 (identical rule as preview).
+     * An out-of-enum filter[lifecycle_state] → 422 (identical rule as preview).
+     *
+     * Renamed from the dead filter.status key (2026-08-16): the form and both
+     * server-side validators only ever accepted filter.lifecycle_state.
      */
     public function test_invalid_status_in_live_filter_returns_422(): void
     {
         $url = $this->contactsUrl() . '?' . http_build_query([
             'scope'  => 'client',
-            'filter' => ['status' => 'not_a_real_status'],
+            'filter' => ['lifecycle_state' => 'not_a_real_status'],
         ]);
 
         $response = $this->actingAs($this->superadmin)
             ->getJson($url);
 
         $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['filter.status']);
+        $response->assertJsonValidationErrors(['filter.lifecycle_state']);
     }
 
     /**

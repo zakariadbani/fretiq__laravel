@@ -173,10 +173,18 @@
             @php
                 $storedSectors   = (array) old('filter.sector',  $model->filter['sector']  ?? []);
                 $storedCountries = (array) old('filter.country', $model->filter['country'] ?? []);
+                $storedPositions = (array) old('filter.position', $model->filter['position'] ?? []);
+                $storedCriteria  = (array) old('filter.criteria_id', $model->filter['criteria_id'] ?? []);
 
                 /* scalar-safe: legacy rows may have stored a plain string */
                 if (is_string($storedSectors))   { $storedSectors   = $storedSectors   ? [$storedSectors]   : []; }
                 if (is_string($storedCountries)) { $storedCountries = $storedCountries ? [$storedCountries] : []; }
+                if (is_string($storedPositions)) { $storedPositions = $storedPositions ? [$storedPositions] : []; }
+                if (is_string($storedCriteria))  { $storedCriteria  = $storedCriteria  ? [$storedCriteria]  : []; }
+                $storedCriteria = array_map('intval', $storedCriteria);
+
+                $excludeContacted       = (bool) old('filter.exclude_contacted', $model->filter['exclude_contacted'] ?? false);
+                $excludeGenericMailbox  = (bool) old('filter.exclude_generic_mailbox', $model->filter['exclude_generic_mailbox'] ?? false);
             @endphp
 
             <div class="card mb-5" data-segment-dynamic-fields data-segment-targeting-fields {{ $isManual ? 'hidden' : '' }}>
@@ -227,6 +235,47 @@
                                     </option>
                                 @endforeach
                             </select>
+                        </div>
+
+                        {{-- Postes ciblés --}}
+                        <div class="col-md-6 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">Postes ciblés</label>
+                            <x-crud.select-multi
+                                name="filter[position]"
+                                :options="$positionGroups"
+                                :selected="$storedPositions"
+                                :tags="true"
+                                placeholder="Tous les postes" />
+                        </div>
+
+                        {{-- Familles de prospection --}}
+                        <div class="col-md-6 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">Familles de prospection</label>
+                            <x-crud.select-multi
+                                name="filter[criteria_id]"
+                                :options="$criteriaOptions"
+                                :selected="$storedCriteria"
+                                placeholder="Toutes les familles" />
+                            <div class="form-text text-muted mt-1">
+                                Combiné avec les secteurs en OU (l'un ou l'autre suffit) &middot; combiné avec le pays en ET.
+                            </div>
+                        </div>
+
+                        {{-- Exclusions --}}
+                        <div class="col-md-12 fv-row">
+                            <label class="fw-semibold fs-6 mb-2 d-block">Exclusions</label>
+                            <div class="d-flex flex-wrap gap-6">
+                                <label class="form-check form-check-custom form-check-solid">
+                                    <input class="form-check-input" type="checkbox" name="filter[exclude_contacted]" value="1"
+                                           {{ $excludeContacted ? 'checked' : '' }} />
+                                    <span class="form-check-label">Exclure les contacts déjà sollicités</span>
+                                </label>
+                                <label class="form-check form-check-custom form-check-solid">
+                                    <input class="form-check-input" type="checkbox" name="filter[exclude_generic_mailbox]" value="1"
+                                           {{ $excludeGenericMailbox ? 'checked' : '' }} />
+                                    <span class="form-check-label">Exclure les boîtes génériques (contact@, info@, ...)</span>
+                                </label>
+                            </div>
                         </div>
 
                     </div>

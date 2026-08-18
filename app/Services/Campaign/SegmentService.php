@@ -365,6 +365,9 @@ class SegmentService
      *   criteria_id → companies.criteria_id (exact match; scalar or array of ints)
      *   country     → companies.country     (exact match, 2-char ISO; scalar or array)
      *   lifecycle_state → calculated contact state (scalar or array)
+     *   position    → contacts.position     (case-insensitive LIKE OR match; array of free-text tags)
+     *   exclude_contacted → bool; excludes contacts already contacted (lifecycle 'contacted'/'replied')
+     *   exclude_generic_mailbox → bool; excludes role-mailbox local-parts (info@, contact@, ...)
      *
      * Boolean semantics inside the company whereHas:
      *   sector OR criteria_id  — when BOTH are present they are ORed with each other,
@@ -373,6 +376,9 @@ class SegmentService
      *                            discovery criteria found" in a single filter.
      *   AND country            — country is always ANDed with the sector/criteria group.
      *   When only one of sector / criteria_id is present it is applied directly (AND).
+     *
+     * position / exclude_contacted / exclude_generic_mailbox apply directly on $query
+     * (contacts is the base table — no join needed) and are always ANDed.
      *
      * Unknown keys are silently ignored to be defensive against future schema changes.
      * Multi-value upgrade (D3.4): arrays are passed as whereIn; scalars as where.
@@ -411,6 +417,36 @@ class SegmentService
 
         if (! empty($filter['lifecycle_state'])) {
             $this->lifecycle->applyState($query, $filter['lifecycle_state']);
+        }
+
+        $position = $this->cleanFilterValue($filter['position'] ?? null);
+        if ($position !== null) {
+            $keywords = is_array($position) ? $position : [$position];
+            $query->where(function (Builder $q) use ($keywords) {
+                foreach ($keywords as $kw) {
+                    $q->orWhere('contacts.position', 'LIKE', '%' . $kw . '%');
+                }
+            });
+        }
+
+        if (! empty($filter['exclude_contacted'])) {
+            // ponytail: excludes 'contacted' and 'replied' (replied outranks contacted in
+            // the CASE priority — excluding only 'contacted' would let replied contacts
+            // through). Ceiling: a sent-then-bounced contact projects as 'bounced' and
+            // slips through this exclusion; the suppression stage catches those.
+            $query->whereNotIn(DB::raw($this->lifecycle->caseSql('contacts')), ['contacted', 'replied']);
+        }
+
+        if (! empty($filter['exclude_generic_mailbox'])) {
+            $genericLocalParts = [
+                'contact', 'info', 'infos', 'commercial', 'support', 'sav', 'admin',
+                'sales', 'ventes', 'direction', 'recrutement', 'emploi', 'marketing',
+                'contacto', 'hello', 'bonjour',
+            ];
+            $query->whereRaw(
+                'LOWER(SUBSTRING_INDEX(contacts.email, \'@\', 1)) NOT IN (' . implode(',', array_fill(0, count($genericLocalParts), '?')) . ')',
+                $genericLocalParts
+            );
         }
     }
 

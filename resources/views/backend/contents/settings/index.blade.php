@@ -25,33 +25,25 @@
         {{-- Card body --}}
         <div class="card-body">
 
+            @php
+                $enabledTabs = collect($tabs)->filter(fn (array $tabConfig): bool => $tabConfig['enabled'] ?? false);
+            @endphp
+
             {{-- ── Nav tabs ──────────────────────────────────────────────────── --}}
             <ul class="nav nav-tabs nav-line-tabs mb-5 fs-6" id="settingsNav" role="tablist">
-                @foreach ($tabs as $tabKey => $tabConfig)
+                @foreach ($enabledTabs as $tabKey => $tabConfig)
                     <li class="nav-item" role="presentation">
-                        @if ($tabConfig['enabled'] ?? false)
-                            <a
-                                class="nav-link {{ $loop->first ? 'active' : '' }}"
-                                id="nav-{{ $tabKey }}-tab"
-                                data-bs-toggle="tab"
-                                href="#kt_tab_{{ $tabKey }}"
-                                role="tab"
-                                aria-controls="kt_tab_{{ $tabKey }}"
-                                aria-selected="{{ $loop->first ? 'true' : 'false' }}"
-                            >
-                                {{ $tabConfig['label'] }}
-                            </a>
-                        @else
-                            <a
-                                class="nav-link disabled text-muted"
-                                tabindex="-1"
-                                aria-disabled="true"
-                                href="#"
-                            >
-                                {{ $tabConfig['label'] }}
-                                <span class="badge badge-light-secondary ms-1 fs-9">À venir</span>
-                            </a>
-                        @endif
+                        <a
+                            class="nav-link {{ $loop->first ? 'active' : '' }}"
+                            id="nav-{{ $tabKey }}-tab"
+                            data-bs-toggle="tab"
+                            href="#kt_tab_{{ $tabKey }}"
+                            role="tab"
+                            aria-controls="kt_tab_{{ $tabKey }}"
+                            aria-selected="{{ $loop->first ? 'true' : 'false' }}"
+                        >
+                            {{ $tabConfig['label'] }}
+                        </a>
                     </li>
                 @endforeach
             </ul>
@@ -59,67 +51,51 @@
 
             {{-- ── Tab panes ─────────────────────────────────────────────────── --}}
             <div class="tab-content" id="settingsTabContent">
-                @foreach ($tabs as $tabKey => $tabConfig)
+                @foreach ($enabledTabs as $tabKey => $tabConfig)
                     <div
-                        class="tab-pane fade {{ ($tabConfig['enabled'] ?? false) && $loop->first ? 'show active' : '' }}"
+                        class="tab-pane fade {{ $loop->first ? 'show active' : '' }}"
                         id="kt_tab_{{ $tabKey }}"
                         role="tabpanel"
                         aria-labelledby="nav-{{ $tabKey }}-tab"
                     >
-                        @if ($tabConfig['enabled'] ?? false)
+                        {{-- Description --}}
+                        @if (! empty($tabConfig['description']))
+                            <p class="text-muted mb-6">{{ $tabConfig['description'] }}</p>
+                        @endif
 
-                            {{-- Description --}}
-                            @if (! empty($tabConfig['description']))
-                                <p class="text-muted mb-6">{{ $tabConfig['description'] }}</p>
-                            @endif
+                        {{-- Fields --}}
+                        @foreach ($tabConfig['fields'] as $fieldKey => $fieldDef)
+                            @php
+                                $storedValue = $settings["{$tabKey}.{$fieldKey}"] ?? ($fieldDef['default'] ?? null);
+                            @endphp
+                            @include(
+                                'backend.contents.settings.fields.' . $fieldDef['type'],
+                                [
+                                    'group' => $tabKey,
+                                    'key'   => $fieldKey,
+                                    'field' => $fieldDef,
+                                    'value' => $storedValue,
+                                ]
+                            )
+                        @endforeach
 
-                            {{-- Fields --}}
-                            @foreach ($tabConfig['fields'] as $fieldKey => $fieldDef)
-                                @php
-                                    $storedValue = $settings["{$tabKey}.{$fieldKey}"] ?? ($fieldDef['default'] ?? null);
-                                @endphp
-                                @include(
-                                    'backend.contents.settings.fields.' . $fieldDef['type'],
-                                    [
-                                        'group' => $tabKey,
-                                        'key'   => $fieldKey,
-                                        'field' => $fieldDef,
-                                        'value' => $storedValue,
-                                    ]
-                                )
-                            @endforeach
-
-                            @if($tabKey === 'delivrabilite')
-                                @can('edit settings')
-                                    @can('verify contacts')
-                                        <div class="separator my-8"></div>
-                                        <div class="rounded border border-dashed border-gray-300 p-6" data-email-verification-batch>
-                                            <h3 class="fs-5 mb-2">Première vérification groupée</h3>
-                                            <p class="text-muted mb-4">L'estimation est locale et ne déclenche aucun appel externe. Seuls les contacts jamais vérifiés seront mis en file après confirmation.</p>
-                                            <div class="alert alert-light-primary d-none" data-email-verification-estimate></div>
-                                            <button type="button" class="btn btn-light-primary me-2" data-email-verification-estimate-button>
-                                                Estimer
-                                            </button>
-                                            <button type="button" class="btn btn-primary d-none" data-email-verification-run-button>
-                                                Confirmer et mettre en file
-                                            </button>
-                                        </div>
-                                    @endcan
+                        @if($tabKey === 'delivrabilite')
+                            @can('edit settings')
+                                @can('verify contacts')
+                                    <div class="separator my-8"></div>
+                                    <div class="rounded border border-dashed border-gray-300 p-6" data-email-verification-batch>
+                                        <h3 class="fs-5 mb-2">Première vérification groupée</h3>
+                                        <p class="text-muted mb-4">L'estimation est locale et ne déclenche aucun appel externe. Seuls les contacts jamais vérifiés seront mis en file après confirmation.</p>
+                                        <div class="alert alert-light-primary d-none" data-email-verification-estimate></div>
+                                        <button type="button" class="btn btn-light-primary me-2" data-email-verification-estimate-button>
+                                            Estimer
+                                        </button>
+                                        <button type="button" class="btn btn-primary d-none" data-email-verification-run-button>
+                                            Confirmer et mettre en file
+                                        </button>
+                                    </div>
                                 @endcan
-                            @endif
-
-                        @else
-
-                            {{-- Placeholder for disabled tabs --}}
-                            <div class="alert alert-info">
-                                <i class="bi bi-clock me-2"></i>
-                                @if (! empty($tabConfig['description']))
-                                    {{ $tabConfig['description'] }}
-                                @else
-                                    Cette section sera disponible dans une prochaine version.
-                                @endif
-                            </div>
-
+                            @endcan
                         @endif
                     </div>
                 @endforeach

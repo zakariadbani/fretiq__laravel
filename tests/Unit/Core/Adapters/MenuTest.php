@@ -55,8 +55,8 @@ class MenuTest extends TestCase
             'Vue d’ensemble',
             'Découverte',
             'Répertoire',
-            'Campagnes & planning',
             'Préparation des campagnes',
+            'Campagnes & planning',
             'Réponses & demandes',
             'Conformité & consommation',
             'Zoho CRM — Lecture seule',
@@ -71,10 +71,8 @@ class MenuTest extends TestCase
 
         $expectedAccordions = [
             'Découverte' => [
-                ['Vue d’ensemble', 'view prospect_batches', 'admin/prospecting'],
-                ['Lots', 'view prospect_batches', 'admin/prospect_batches'],
-                ['À revoir', 'review prospect matches', 'admin/prospect-review'],
                 ['Critères de découverte', 'view prospect_criteria', 'admin/prospect_criteria'],
+                ['Lots', 'view prospect_batches', 'admin/prospect_batches'],
             ],
             'Répertoire' => [
                 ['Entreprises', 'view companies', 'admin/companies'],
@@ -85,14 +83,14 @@ class MenuTest extends TestCase
                 ['Planning', 'view campaigns', 'admin/planner'],
             ],
             'Préparation des campagnes' => [
-                ['Séquences', 'view sequences', 'admin/sequences'],
                 ['Segments', 'view segments', 'admin/segments'],
                 ['Modèles d’email', 'view campaign_templates', 'admin/campaign_templates'],
+                ['Séquences', 'view sequences', 'admin/sequences'],
                 ['Identités d’expéditeur', 'view sender_identities', 'admin/sender_identities'],
             ],
             'Réponses & demandes' => [
-                ['Demandes', 'view demandes', 'admin/demandes'],
                 ['Boîte de réception', 'view inbox', 'admin/inbox'],
+                ['Demandes', 'view demandes', 'admin/demandes'],
             ],
             'Conformité & consommation' => [
                 ['Suppressions', 'view suppressions', 'admin/suppressions'],

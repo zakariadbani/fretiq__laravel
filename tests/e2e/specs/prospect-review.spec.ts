@@ -1,14 +1,16 @@
 import { expect, test } from '../fixtures/console-guard';
 
+// Review is per-lot only — the workspace is hosted inline on the batch view
+// page as the "À vérifier" tab (#prospect_batch_review), never a standalone
+// /admin/prospect-review page. Batch 1 is live dev data (see
+// prospect-batch-view.spec.ts's batch-2 convention) that owns items 6
+// (COMAREV) and 7 (DEANTE MAROC), the fixture companies the monitor/polling
+// specs below assert against.
 test.describe('guided prospect review', () => {
   test('shows one company decision with checks and one recommended action', async ({ page }) => {
-    await page.goto('/admin/prospect-review?tab=companies');
-    await expect(page).toHaveURL(/\/admin\/prospect-review\?tab=companies/);
-    await expect(page.getByRole('heading', { level: 1, name: 'À revoir' })).toBeVisible();
-    await expect(page.getByRole('heading', { level: 2, name: 'Vérifier les entreprises' })).toBeVisible();
-    await expect(page.getByText('Concentrez-vous sur le premier point orange ou rouge', { exact: false })).toBeVisible();
+    await page.goto('/admin/prospect_batches/1#prospect_batch_review');
+    await expect(page).toHaveURL(/\/admin\/prospect_batches\/1/);
     await expect(page.locator('[data-review-stepper]')).toContainText(/Traitement interrompu|Vérification requise/);
-    await expect(page.getByText('Progression des lots')).toHaveCount(0);
 
     const queueEntries = page.locator('[data-review-company-queue-entry]');
     if (await queueEntries.count()) {
@@ -49,7 +51,7 @@ test.describe('guided prospect review', () => {
   });
 
   test('shows and focuses the monitored retry outcome with readable contrast', async ({ page }) => {
-    await page.goto('/admin/prospect-review?tab=companies&item=7&monitor_item=7');
+    await page.goto('/admin/prospect_batches/1?item=7&monitor_item=7#prospect_batch_review');
     await expect(page).toHaveURL(/monitor_item=7/);
 
     const monitor = page.locator('[data-review-monitor]');
@@ -113,19 +115,19 @@ test.describe('guided prospect review', () => {
           level: 'success',
           title: 'Relance terminée · COMAREV',
           message: 'Le traitement de COMAREV est terminé.',
-          review_url: '/admin/prospect-review?poll_result=complete',
+          review_url: '/admin/prospect_batches/1?poll_result=complete#prospect_batch_review',
           provider_result_count: 0,
           recorded_units: 0,
           imported_contacts_count: 0,
         },
       });
     });
-    await page.route(/\/admin\/prospect-review\?poll_result=complete$/, async (route) => {
+    await page.route(/\/admin\/prospect_batches\/1\?poll_result=complete$/, async (route) => {
       resultNavigations += 1;
       await route.fulfill({ contentType: 'text/html', body: '<main data-poll-result>Résultat actualisé</main>' });
     });
 
-    await page.goto('/admin/prospect-review?tab=companies&item=6&monitor_item=6');
+    await page.goto('/admin/prospect_batches/1?item=6&monitor_item=6#prospect_batch_review');
     await expect(page.locator('[data-poll-result]')).toBeVisible({ timeout: 7_000 });
     await page.waitForTimeout(2_500);
 
@@ -173,17 +175,17 @@ test.describe('guided prospect review', () => {
       await route.abort();
     });
 
-    await page.goto('/admin/prospect-review?tab=companies&item=6&monitor_item=6');
+    await page.goto('/admin/prospect_batches/1?item=6&monitor_item=6#prospect_batch_review');
     await expect(page.locator('[data-review-monitor]')).toContainText('Le traitement de COMAREV reste interrompu.', { timeout: 7_000 });
 
-    await expect(page).toHaveURL(/\/admin\/prospect-review\?tab=companies&item=6&monitor_item=6$/);
+    await expect(page).toHaveURL(/\/admin\/prospect_batches\/1\?item=6&monitor_item=6#prospect_batch_review$/);
     expect(statusRequests).toBe(1);
     expect(crossOriginRequests).toBe(0);
   });
 
   test('shows immediate pending feedback without submitting a retry twice', async ({ page }) => {
-    await page.goto('/admin/prospect-review?tab=companies&item=6');
-    await expect(page).toHaveURL(/\/admin\/prospect-review\?tab=companies&item=6/);
+    await page.goto('/admin/prospect_batches/1?item=6#prospect_batch_review');
+    await expect(page).toHaveURL(/\/admin\/prospect_batches\/1\?item=6/);
 
     const form = page.locator('form[data-review-primary-form]');
     const button = form.locator('[data-review-primary-action="retry"]');
@@ -206,8 +208,8 @@ test.describe('guided prospect review', () => {
 
   test('keeps review actions inside a 390px viewport', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto('/admin/prospect-review?tab=companies');
-    await expect(page).toHaveURL(/\/admin\/prospect-review\?tab=companies/);
+    await page.goto('/admin/prospect_batches/1#prospect_batch_review');
+    await expect(page).toHaveURL(/\/admin\/prospect_batches\/1/);
     const widths = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: document.documentElement.clientWidth }));
     expect(widths.document).toBeLessThanOrEqual(widths.viewport + 1);
 
@@ -230,18 +232,11 @@ test.describe('guided prospect review', () => {
     }
   });
 
-  test('redirects the legacy contacts tab to company review while preserving the batch', async ({ page }) => {
-    await page.goto('/admin/prospect-review?tab=contacts&batch=2');
-    await expect(page).toHaveURL(/\/admin\/prospect-review\?batch=2&tab=companies/);
-    await expect(page.getByText('Les contacts sont désormais importés automatiquement', { exact: false })).toBeVisible();
-    await expect(page.getByText('Décider des contacts')).toHaveCount(0);
-  });
-
   // ── Default landing + pill/row consistency ──────────────────────────────
 
   test('lands on the "À décider" pill by default, and each pill count matches its own filtered total', async ({ page }) => {
-    await page.goto('/admin/prospect-review');
-    await expect(page).toHaveURL(/\/admin\/prospect-review(\?.*)?$/);
+    await page.goto('/admin/prospect_batches/1#prospect_batch_review');
+    await expect(page).toHaveURL(/\/admin\/prospect_batches\/1/);
 
     const attentionPill = page.locator('[data-review-state-filter="attention"]');
     const allPill = page.locator('[data-review-state-filter="all"]');
@@ -254,7 +249,7 @@ test.describe('guided prospect review', () => {
     // not just the current page) — a page-independent way to check the pill
     // badge against "the rows shown for that pill" even when a state paginates.
     for (const state of ['attention', 'blocked', 'all'] as const) {
-      await page.goto(`/admin/prospect-review?tab=companies&state=${state}`);
+      await page.goto(`/admin/prospect_batches/1?state=${state}#prospect_batch_review`);
 
       const pillText = await page.locator(`[data-review-state-filter="${state}"]`).textContent();
       const pillCount = Number(pillText?.match(/\((\d+)\)/)?.[1]);
@@ -274,7 +269,7 @@ test.describe('guided prospect review', () => {
   // ── Pane swap without navigation (change 6) ─────────────────────────────
 
   test('swaps the detail pane on a queue click without a full page navigation, and Back restores the previous item', async ({ page }) => {
-    await page.goto('/admin/prospect-review?tab=companies&state=blocked');
+    await page.goto('/admin/prospect_batches/1?state=blocked#prospect_batch_review');
     const entries = page.locator('[data-review-company-queue-entry]');
     const entryCount = await entries.count();
     test.skip(entryCount < 2, 'Needs at least two "À relancer" queue entries to prove the pane swap.');
@@ -299,7 +294,7 @@ test.describe('guided prospect review', () => {
   // ── Pagination preserved across a decision (the companies_page trap) ────
 
   test('preserves the current queue page across a decision via return_companies_page', async ({ page }) => {
-    await page.goto('/admin/prospect-review?tab=companies&state=blocked&companies_page=2');
+    await page.goto('/admin/prospect_batches/1?state=blocked&companies_page=2#prospect_batch_review');
     const entries = page.locator('[data-review-company-queue-entry]');
     const entryCount = await entries.count();
     test.skip(entryCount === 0, 'The "À relancer" queue does not currently have a second page.');
@@ -314,7 +309,7 @@ test.describe('guided prospect review', () => {
   // ── Inactive-criterion banner ────────────────────────────────────────────
 
   test('shows the inactive-criterion explanatory banner on "À relancer" with no enabled bulk-retry button', async ({ page }) => {
-    await page.goto('/admin/prospect-review?tab=companies&state=blocked');
+    await page.goto('/admin/prospect_batches/1?state=blocked#prospect_batch_review');
 
     const drainBar = page.locator('[data-drain-bar]');
     if ((await drainBar.count()) === 0) {

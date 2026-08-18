@@ -30,7 +30,7 @@ class ProspectingPermissionsTest extends TestCase
 
         $this->actingAs($commercial)->get(route('admin.prospect_batches.create'))->assertOk();
         $this->actingAs($commercial)->postJson(route('admin.prospect_batches.confirm', $batch), ['confirm_cost' => true])->assertOk();
-        $this->actingAs($commercial)->get(route('admin.prospect_review.index'))->assertOk();
+        $this->actingAs($commercial)->get(route('admin.prospect_batches.view', ['id' => $batch->id]))->assertOk();
         $this->actingAs($commercial)->delete(route('admin.prospect_batches.delete', $batch))->assertForbidden();
         $this->actingAs($commercial)->get(route('admin.provider_activity.index'))->assertForbidden();
 

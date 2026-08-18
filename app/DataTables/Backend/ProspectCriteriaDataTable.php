@@ -469,18 +469,6 @@ class ProspectCriteriaDataTable extends BackendDataTable
         });
     }
 
-    /**
-     * Return the JS tableId that matches the HTML table id set by html().
-     * html() calls setTableId(getName() . '-table') → 'prospect_criteria-table'.
-     * getDataTable() appends '-table', so we return 'prospect_criteria' here.
-     * The base class default (strtolower(class_basename(model))) gives
-     * 'prospectcriteria' which does NOT match — hence this override.
-     */
-    protected function getTableId(): string
-    {
-        return 'prospect_criteria';
-    }
-
     protected function getEntityName(): string
     {
         return 'critère';

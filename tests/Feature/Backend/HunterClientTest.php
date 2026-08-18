@@ -330,7 +330,13 @@ class HunterClientTest extends TestCase
 
             return Http::response([
                 'data' => [
+                    'first_name' => 'Ada',
+                    'last_name' => 'Lovelace',
+                    'email' => 'ops@example.test',
+                    'plan_name' => 'Growth',
+                    'plan_level' => 2,
                     'reset_date' => '2026-08-18',
+                    'team_id' => 4242,
                     'requests' => ['credits' => ['used' => 12, 'available' => 100, 'remaining' => 88]],
                     'api_key' => self::API_KEY,
                     'unknown_raw' => ['authorization' => 'Bearer '.self::API_KEY],
@@ -350,10 +356,16 @@ class HunterClientTest extends TestCase
 
         $this->assertSame([
             'reset_date' => '2026-08-18',
+            'plan_name' => 'Growth',
             'requests' => [
                 'credits' => ['used' => 12, 'available' => 100, 'remaining' => 88],
             ],
         ], $usage->response?->data);
+        // Regression guard: /account (unlike /usage) returns account PII —
+        // confirm sanitizeUsageData() drops it before it reaches the caller.
+        foreach (['first_name', 'last_name', 'email', 'team_id', 'plan_level'] as $piiKey) {
+            $this->assertArrayNotHasKey($piiKey, $usage->response?->data ?? []);
+        }
         $this->assertSame([], $usage->response?->meta);
         $this->assertSame([
             'id' => 9,
@@ -368,6 +380,8 @@ class HunterClientTest extends TestCase
             app(ProviderCallLedger::class)->settle($usage, 1, 0);
             app(ProviderCallLedger::class)->settle($history, 1, 0);
         });
+
+        Http::assertSent(fn (Request $request): bool => parse_url($request->url(), PHP_URL_PATH) === '/v2/account');
 
         foreach (Http::recorded() as [$request]) {
             $this->assertTrue($request->hasHeader('Authorization', 'Bearer '.self::API_KEY));

@@ -72,7 +72,7 @@
                     Liste des entreprises enregistrées qui ne sont pas exclues par le filtrage IA.
                 @endif
                 Cliquez sur un en-tête pour trier la table. Les exclusions se consultent dans « Résultats par requête de découverte ».
-                Les résultats bruts SerpAPI ne sont pas affichés dans cette liste.
+                Les résultats bruts de découverte ne sont pas affichés dans cette liste.
             </div>
         </div>
         <div class="card-toolbar">

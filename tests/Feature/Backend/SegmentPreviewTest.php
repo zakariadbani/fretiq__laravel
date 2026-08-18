@@ -75,13 +75,12 @@ class SegmentPreviewTest extends TestCase
         ]);
 
         $ct = Contact::create([
-            'company_id'  => $co->id,
-            'email'       => $email,
-            'name'        => $name,
-            'status'      => 'new',
-            'source'      => 'manual',
-            'legal_basis' => 'relationship',
-            'email_kind'  => $emailKind,
+            'company_id'                 => $co->id,
+            'email'                      => $email,
+            'name'                       => $name,
+            'source'                     => 'manual',
+            'email_kind'                 => $emailKind,
+            'email_verification_status'  => 'valid',
         ]);
 
         return [$co, $ct];
@@ -102,13 +101,12 @@ class SegmentPreviewTest extends TestCase
         ]);
 
         $ct = Contact::create([
-            'company_id'  => $co->id,
-            'email'       => $email,
-            'name'        => 'Pierre Martin',
-            'status'      => 'new',
-            'source'      => 'manual',
-            'legal_basis' => 'legitimate_interest',
-            'email_kind'  => $emailKind,
+            'company_id'                 => $co->id,
+            'email'                      => $email,
+            'name'                       => 'Pierre Martin',
+            'source'                     => 'manual',
+            'email_kind'                 => $emailKind,
+            'email_verification_status'  => 'valid',
         ]);
 
         return [$co, $ct];
@@ -265,15 +263,19 @@ class SegmentPreviewTest extends TestCase
         $response->assertJsonValidationErrors(['filter.sector']);
     }
 
+    /**
+     * Renamed from the dead filter.status key (2026-08-16): the form and both
+     * server-side validators only ever accepted filter.lifecycle_state.
+     */
     public function test_invalid_contact_status_returns_422(): void
     {
         $response = $this->postPreview([
             'scope'  => 'client',
-            'filter' => ['status' => 'not_a_real_status'],
+            'filter' => ['lifecycle_state' => 'not_a_real_status'],
         ]);
 
         $response->assertStatus(422);
-        $response->assertJsonValidationErrors(['filter.status']);
+        $response->assertJsonValidationErrors(['filter.lifecycle_state']);
     }
 
     // ── Sample ─────────────────────────────────────────────────────────────────
@@ -291,13 +293,12 @@ class SegmentPreviewTest extends TestCase
 
         for ($i = 1; $i <= 12; $i++) {
             Contact::create([
-                'company_id'  => $co->id,
-                'email'       => "bulk{$i}@bulk.test",
-                'name'        => "Bulk {$i}",
-                'status'      => 'new',
-                'source'      => 'manual',
-                'legal_basis' => 'relationship',
-                'email_kind'  => 'role',
+                'company_id'                 => $co->id,
+                'email'                      => "bulk{$i}@bulk.test",
+                'name'                       => "Bulk {$i}",
+                'source'                     => 'manual',
+                'email_kind'                 => 'role',
+                'email_verification_status'  => 'valid',
             ]);
         }
 

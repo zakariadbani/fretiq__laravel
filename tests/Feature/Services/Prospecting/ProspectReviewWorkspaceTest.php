@@ -35,15 +35,41 @@ class ProspectReviewWorkspaceTest extends TestCase
             'status' => 'review',
         ]);
 
-        $selectedData = app(ProspectReviewWorkspace::class)->build($user, $this->filters(['item' => $selected->id]));
-        $foreignData = app(ProspectReviewWorkspace::class)->build($user, $this->filters(['item' => $foreignItem->id]));
+        $selectedData = app(ProspectReviewWorkspace::class)->build($user, $this->filters(['batch' => $owned->id, 'item' => $selected->id]));
+        $foreignData = app(ProspectReviewWorkspace::class)->build($user, $this->filters(['batch' => $owned->id, 'item' => $foreignItem->id]));
 
         $this->assertSame($selected->id, $selectedData['activeItem']->id);
         $this->assertSame('selected-company.com', $selectedData['activeReview']['primary_candidate']['domain']);
-        $this->assertNull($foreignData['activeItem']);
+        // Requesting an item that isn't in the caller's authorized queue no
+        // longer resolves to an empty pane — it falls back to the caller's
+        // own first visible item (Bug A structural fix: same fallback that
+        // covers already-decided/409/stale-bookmark items).
+        $this->assertSame($selected->id, $foreignData['activeItem']->id);
         $this->assertStringNotContainsString('Foreign Company', $foreignData['items']->pluck('company_name')->join(' '));
         $this->assertArrayNotHasKey('candidates', $selectedData);
         $this->assertArrayNotHasKey('contactItem', $selectedData);
+    }
+
+    public function test_workspace_suppresses_the_fallback_when_the_requested_item_is_the_monitored_item(): void
+    {
+        $user = User::factory()->create();
+        $batch = ProspectBatch::factory()->create(['created_by' => $user->id, 'status' => 'review']);
+        // Simulates the state right after a retry decision: the retried item has
+        // already flipped to 'pending' and no longer resolves in the
+        // ['review','failed'] scope. A second, genuinely reviewable item exists,
+        // which is exactly the situation that made the unconditional fallback
+        // silently swap in the wrong company's card.
+        $retried = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'pending']);
+        ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'review']);
+
+        $data = app(ProspectReviewWorkspace::class)->build($user, $this->filters([
+            'batch' => $batch->id,
+            'item' => $retried->id,
+            'monitor_item' => $retried->id,
+        ]));
+
+        $this->assertNull($data['activeItem']);
+        $this->assertNull($data['activeReview']);
     }
 
     public function test_workspace_counts_only_authorized_company_decisions_and_imported_provenance(): void
@@ -65,7 +91,7 @@ class ProspectReviewWorkspaceTest extends TestCase
             'imported_at' => now(),
         ]);
 
-        $data = app(ProspectReviewWorkspace::class)->build($user, $this->filters());
+        $data = app(ProspectReviewWorkspace::class)->build($user, $this->filters(['batch' => $owned->id]));
 
         $this->assertSame([
             'handled' => 1,
@@ -85,8 +111,8 @@ class ProspectReviewWorkspaceTest extends TestCase
         $attention = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'review']);
         $blocked = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'failed', 'error_code' => 'pagination_error']);
 
-        $attentionData = app(ProspectReviewWorkspace::class)->build($user, $this->filters(['state' => 'attention']));
-        $blockedData = app(ProspectReviewWorkspace::class)->build($user, $this->filters(['state' => 'blocked']));
+        $attentionData = app(ProspectReviewWorkspace::class)->build($user, $this->filters(['batch' => $batch->id, 'state' => 'attention']));
+        $blockedData = app(ProspectReviewWorkspace::class)->build($user, $this->filters(['batch' => $batch->id, 'state' => 'blocked']));
 
         $this->assertSame([$attention->id], $attentionData['items']->pluck('id')->all());
         $this->assertSame([$blocked->id], $blockedData['items']->pluck('id')->all());
@@ -106,6 +132,7 @@ class ProspectReviewWorkspaceTest extends TestCase
         ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'review']);
 
         $data = app(ProspectReviewWorkspace::class)->build($user, $this->filters([
+            'batch' => $batch->id,
             'item' => $active->id,
             'state' => 'attention',
         ]));
@@ -122,28 +149,33 @@ class ProspectReviewWorkspaceTest extends TestCase
         $batch = ProspectBatch::factory()->create(['created_by' => $user->id, 'status' => 'review']);
         $only = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'review']);
 
-        $data = app(ProspectReviewWorkspace::class)->build($user, $this->filters(['item' => $only->id]));
+        $data = app(ProspectReviewWorkspace::class)->build($user, $this->filters(['batch' => $batch->id, 'item' => $only->id]));
 
         $this->assertNull($data['nextItem']);
     }
 
-    public function test_workspace_returns_no_data_for_an_unauthorized_selected_batch(): void
+    public function test_build_trusts_the_caller_supplied_host_batch_without_its_own_ownership_check(): void
     {
-        $user = User::factory()->create();
-        $foreign = ProspectBatch::factory()->create(['created_by' => User::factory(), 'status' => 'review']);
-        ProspectBatchItem::factory()->for($foreign, 'batch')->create(['status' => 'review']);
+        // build() no longer branches on ownership itself (Phase A dropped the
+        // cross-batch / unauthorized-batch path along with $hostScoped) — every
+        // real caller (ProspectReviewWorkspace::buildFromRequest(), always given
+        // a host batch id) is only ever reached after
+        // ProspectBatchController::authorizeBatch() has already checked
+        // ownership, using the same created_by/admin rule authorizedItems()
+        // applies below. Calling build() directly with a non-owning, non-admin
+        // user (as this test deliberately does) skips that upstream check, so
+        // batchProgress() — no longer ownership-scoped — still returns the
+        // batch's progress row, while the item-level authorizedItems() filter
+        // (unchanged by Phase A) still excludes its items. build() itself is
+        // not the ownership boundary; the controller is.
+        $owner = User::factory()->create();
+        $caller = User::factory()->create();
+        $batch = ProspectBatch::factory()->create(['created_by' => $owner->id, 'status' => 'review']);
+        ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'review']);
 
-        $data = app(ProspectReviewWorkspace::class)->build($user, $this->filters(['batch' => $foreign->id]));
+        $data = app(ProspectReviewWorkspace::class)->build($caller, $this->filters(['batch' => $batch->id]));
 
-        $this->assertSame([
-            'handled' => 0,
-            'companies_pending' => 0,
-            'companies_attention' => 0,
-            'companies_blocked' => 0,
-            'imported_contacts' => 0,
-            'batches' => 0,
-        ], $data['summary']);
-        $this->assertCount(0, $data['batches']);
+        $this->assertSame(1, $data['summary']['batches']);
         $this->assertCount(0, $data['items']);
     }
 
