@@ -72,6 +72,41 @@ class ProspectPromotionTest extends TestCase
         $this->assertSame('rejected', $promoted->fresh()->qualification_status);
     }
 
+    public function test_description_is_written_onto_the_company_on_promotion(): void
+    {
+        $batch = ProspectBatch::factory()->create();
+        $item = $this->readyItem($batch, 1, [
+            'source_metadata' => [
+                'description' => 'Leader du transport et de la logistique.',
+            ],
+        ]);
+
+        $company = app(ProspectBatchService::class)->promoteItem($item);
+
+        $this->assertSame('Leader du transport et de la logistique.', $company->fresh()->description);
+    }
+
+    public function test_existing_companys_description_is_never_overwritten(): void
+    {
+        $existing = Company::factory()->create([
+            'name' => 'Acme Logistics',
+            'domain' => 'acme.fr',
+            'registrable_domain' => 'acme.fr',
+            'description' => 'Description existante.',
+        ]);
+        $batch = ProspectBatch::factory()->create();
+        $item = $this->readyItem($batch, 1, [
+            'source_metadata' => [
+                'description' => 'Nouvelle description venue du batch.',
+            ],
+        ]);
+
+        $promoted = app(ProspectBatchService::class)->promoteItem($item);
+
+        $this->assertSame($existing->id, $promoted->id);
+        $this->assertSame('Description existante.', $promoted->fresh()->description);
+    }
+
     /** @param array<string, mixed> $overrides */
     private function readyItem(
         ProspectBatch $batch,

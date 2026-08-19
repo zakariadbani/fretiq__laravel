@@ -23,13 +23,64 @@
         const spinner = wizard.querySelector('[data-next-spinner]');
         const alert = document.getElementById('prospect-wizard-alert');
         const batchId = wizard.dataset.batchId || '';
-        let step = Math.max(1, Math.min(4, Number(wizard.dataset.initialStep || 1)));
+        // 3 internal panels: 1 Ajouter, 2 Vérifier et lancer, 3 Traitement.
+        // Traitement has no stepper-nav entry — it's a polling state entered
+        // only after confirm() succeeds, never a page-load target (A4).
+        let step = Math.max(1, Math.min(3, Number(wizard.dataset.initialStep || 1)));
         let pollAttempt = 0;
         let polling = false;
 
         const csrf = function () {
             return form.querySelector('input[name="_token"]')?.value || '';
         };
+
+        const cleanupButton = document.getElementById('prospect_cleanup_button');
+        if (cleanupButton && !cleanupButton.dataset.bound) {
+            cleanupButton.dataset.bound = '1';
+            const cleanupTextarea = document.getElementById('companies_text');
+            const cleanupSpinner = cleanupButton.querySelector('[data-cleanup-spinner]');
+            const cleanupResult = document.getElementById('prospect_cleanup_result');
+
+            cleanupButton.addEventListener('click', async function () {
+                const raw = cleanupTextarea ? cleanupTextarea.value : '';
+                if (!raw.trim()) return;
+
+                cleanupButton.disabled = true;
+                cleanupSpinner?.classList.remove('d-none');
+                cleanupResult?.classList.add('d-none');
+
+                try {
+                    const response = await fetch(cleanupButton.dataset.cleanupUrl, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': csrf(),
+                        },
+                        body: JSON.stringify({ text: raw }),
+                    });
+                    let payload = {};
+                    try { payload = await response.json(); } catch (error) { payload = {}; }
+                    if (!response.ok) {
+                        throw new Error(payload.message || 'cleanup_failed');
+                    }
+                    if (cleanupTextarea) cleanupTextarea.value = payload.text || '';
+                    if (cleanupResult) {
+                        cleanupResult.textContent = Number(payload.count || 0) + ' entreprise(s) reconnue(s).';
+                        cleanupResult.classList.remove('d-none');
+                    }
+                } catch (error) {
+                    if (cleanupResult) {
+                        cleanupResult.textContent = 'Le nettoyage a échoué, réessayez ou collez au format simple.';
+                        cleanupResult.classList.remove('d-none');
+                    }
+                } finally {
+                    cleanupButton.disabled = false;
+                    cleanupSpinner?.classList.add('d-none');
+                }
+            });
+        }
 
         const setBusy = function (busy) {
             next.disabled = busy;
@@ -62,11 +113,11 @@
                 item.classList.toggle('completed', itemStep < step);
                 item.setAttribute('aria-current', itemStep === step ? 'step' : 'false');
             });
-            back.classList.toggle('invisible', step === 1 || step === 4);
-            next.classList.toggle('d-none', step === 4);
+            back.classList.toggle('invisible', step === 1 || step === 3);
+            next.classList.toggle('d-none', step === 3);
             nextLabel.textContent = step === 1
-                ? (batchId ? 'Choisir la qualité' : 'Importer la liste')
-                : (step === 2 ? 'Vérifier le lot' : 'Lancer le traitement');
+                ? (batchId ? 'Vérifier le lot' : 'Importer la liste')
+                : 'Lancer le traitement';
             clearAlert();
             panels.find(function (panel) { return Number(panel.dataset.prospectStep) === step; })
                 ?.querySelector('input, textarea, button')?.focus({ preventScroll: true });
@@ -120,14 +171,37 @@
             text('[data-estimate="preset"]', labels[selectedQuality()] || selectedQuality());
         };
 
-        const estimate = async function () {
-            const max = form.querySelector('[name="domain_search_max_results"]')?.value;
-            const data = { quality_preset: selectedQuality() };
-            if (max) data.domain_search_max_results = Number(max);
-            const payload = await request(wizard.dataset.estimateUrl, data);
-            renderEstimate(payload.estimate || {});
-            step = 3;
-            renderStep();
+        const showEstimateLoading = function (loading) {
+            wizard.querySelector('#prospect-estimate-loading')?.classList.toggle('d-none', !loading);
+            wizard.querySelector('#prospect-estimate-panel')?.classList.toggle('d-none', loading);
+        };
+
+        // Fires on entering écran 2 and again whenever the preset (or the
+        // advanced max-results field) changes — re-estimates IN PLACE, never
+        // navigates. Never throws: failures render into #prospect-estimate-error
+        // so a bad re-estimate doesn't strand the user mid-panel.
+        const runEstimate = async function () {
+            if (!wizard.dataset.estimateUrl) return;
+            const errorBox = wizard.querySelector('#prospect-estimate-error');
+            if (errorBox) {
+                errorBox.textContent = '';
+                errorBox.classList.add('d-none');
+            }
+            showEstimateLoading(true);
+            try {
+                const max = form.querySelector('[name="domain_search_max_results"]')?.value;
+                const data = { quality_preset: selectedQuality() };
+                if (max) data.domain_search_max_results = Number(max);
+                const payload = await request(wizard.dataset.estimateUrl, data);
+                renderEstimate(payload.estimate || {});
+            } catch (error) {
+                if (errorBox) {
+                    errorBox.textContent = friendlyFailure(error);
+                    errorBox.classList.remove('d-none');
+                }
+            } finally {
+                showEstimateLoading(false);
+            }
         };
 
         const updateProcessing = function (payload) {
@@ -184,7 +258,7 @@
             }
             const payload = await request(wizard.dataset.confirmUrl, { confirm_cost: true });
             if (payload.status_url) wizard.dataset.statusUrl = payload.status_url;
-            step = 4;
+            step = 3;
             renderStep();
             polling = true;
             pollAttempt = 0;
@@ -201,12 +275,14 @@
             if (step === 1) {
                 step = 2;
                 renderStep();
+                setBusy(true);
+                await runEstimate();
+                setBusy(false);
                 return;
             }
             setBusy(true);
             try {
-                if (step === 2) await estimate();
-                else if (step === 3) await confirm();
+                await confirm();
             } catch (error) {
                 showAlert(friendlyFailure(error), 'danger');
             } finally {
@@ -215,14 +291,46 @@
         });
 
         back.addEventListener('click', function () {
-            if (step > 1 && step < 4) {
+            if (step > 1 && step < 3) {
                 step -= 1;
                 renderStep();
             }
         });
 
+        // Preset (or advanced max-results) change re-estimates in place —
+        // only while écran 2 is showing, never triggers a navigation.
+        form.querySelectorAll('input[name="quality_preset"]').forEach(function (radio) {
+            radio.addEventListener('change', function () {
+                if (step === 2) runEstimate();
+            });
+        });
+        form.querySelector('[name="domain_search_max_results"]')?.addEventListener('change', function () {
+            if (step === 2) runEstimate();
+        });
+
+        const discardButton = wizard.querySelector('[data-wizard-discard]');
+        discardButton?.addEventListener('click', function () {
+            if (!discardButton.dataset.deleteUrl) return;
+            if (!window.confirm('Supprimer ce brouillon ? Cette action est définitive.')) return;
+            discardButton.disabled = true;
+            fetch(discardButton.dataset.deleteUrl, {
+                method: 'DELETE',
+                credentials: 'same-origin',
+                headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrf() },
+            }).then(function (response) {
+                if (!response.ok) throw new Error('delete_failed');
+                window.location.href = discardButton.dataset.indexUrl || '/';
+            }).catch(function () {
+                discardButton.disabled = false;
+                showAlert('La suppression a échoué. Réessayez.', 'danger');
+            });
+        });
+
         renderStep();
-        if (step === 4 && wizard.dataset.statusUrl) {
+        if (step === 2 && wizard.dataset.estimateUrl) {
+            runEstimate();
+        }
+        if (step === 3 && wizard.dataset.statusUrl) {
             polling = true;
             poll();
         }

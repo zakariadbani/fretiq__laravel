@@ -49,6 +49,22 @@ class ProspectBatchImportTest extends TestCase
         ], $result['rows']);
     }
 
+    public function test_csv_with_description_header_lands_description_in_source_metadata(): void
+    {
+        $file = UploadedFile::fake()->createWithContent(
+            'entreprises.csv',
+            "company,country,city,description\nACME,France,Lyon,\"Leader du transport et de la logistique.\"",
+        );
+
+        $result = app(CompanyListParser::class)->parseCsv($file);
+
+        $this->assertSame([], $result['errors']);
+        $this->assertSame(
+            ['description' => 'Leader du transport et de la logistique.'],
+            $result['rows'][0]['source_metadata'],
+        );
+    }
+
     public function test_csv_header_aliases_are_normalized_and_invalid_rows_are_reported(): void
     {
         $file = UploadedFile::fake()->createWithContent(

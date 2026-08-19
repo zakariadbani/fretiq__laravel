@@ -14,6 +14,8 @@ final class CompanyListParser
 
     private const MAX_ORIGINAL_INPUT_BYTES = 4 * 1024;
 
+    private const MAX_DESCRIPTION = 2000;
+
     /** @var list<string> */
     private const DELIMITERS = [',', ';', "\t", '|'];
 
@@ -60,6 +62,8 @@ final class CompanyListParser
         'site' => 'provided_domain',
         'site_web' => 'provided_domain',
         'url' => 'provided_domain',
+        'description' => 'description',
+        'descriptif' => 'description',
     ];
 
     public function __construct(private readonly DomainCanonicalizer $domains) {}
@@ -116,6 +120,7 @@ final class CompanyListParser
             $countryInput = $this->normalizeText($fields['country'] ?? '');
             $city = $this->nullableText($fields['city'] ?? null);
             $domainInput = $this->normalizeText($fields['provided_domain'] ?? '');
+            $description = $this->nullableText($fields['description'] ?? null);
             $fatal = false;
 
             if ($companyName === '') {
@@ -163,7 +168,7 @@ final class CompanyListParser
                 continue;
             }
 
-            $rows[] = [
+            $row = [
                 'row_number' => $rowNumber,
                 'original_input' => $originalInput,
                 'company_name' => $companyName,
@@ -171,6 +176,12 @@ final class CompanyListParser
                 'city' => $city,
                 'provided_domain' => $providedDomain,
             ];
+
+            if ($description !== null) {
+                $row['source_metadata'] = ['description' => mb_substr($description, 0, self::MAX_DESCRIPTION)];
+            }
+
+            $rows[] = $row;
         }
 
         return ['rows' => $rows, 'errors' => $errors];

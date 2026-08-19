@@ -1331,6 +1331,7 @@ final class ProspectBatchService
             'registrable_domain' => $domain->registrableDomain,
             'name' => $item->company_name,
             'sector' => $company['sector'] ?? null,
+            'description' => $company['description'] ?? null,
             'country' => $item->country ?? ($company['country'] ?? null),
             'estimated_size' => $company['estimated_size'] ?? null,
             'phone' => $company['phone'] ?? null,
@@ -1351,6 +1352,7 @@ final class ProspectBatchService
             'criteria_id' => $item->batch->prospect_criteria_id,
             'registrable_domain' => $domain->registrableDomain,
             'sector' => $metadata['sector'] ?? null,
+            'description' => $metadata['description'] ?? null,
             'country' => $item->country ?? ($metadata['country'] ?? null),
             'estimated_size' => $metadata['estimated_size'] ?? null,
             'phone' => $metadata['phone'] ?? null,
@@ -1388,6 +1390,14 @@ final class ProspectBatchService
         $country = strtoupper(trim((string) ($company['country'] ?? '')));
         if (preg_match('/^[A-Z]{2}$/', $country) === 1) {
             $safe['country'] = $country;
+        }
+
+        // description lives at the TOP level of source_metadata (not under
+        // 'company') — it contains URLs, so it can't go through the foreach
+        // above, which rejects '://'.
+        $description = $this->boundedNullable($metadata['description'] ?? null, 2000);
+        if ($description !== null && preg_match('/[\x00-\x1F\x7F]/', $description) !== 1) {
+            $safe['description'] = $description;
         }
 
         return $safe;

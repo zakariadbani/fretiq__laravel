@@ -239,6 +239,19 @@
                             </div>
 
                         </div>
+
+                        <div class="col-lg-12">
+
+                            {{-- Description --}}
+                            <div class="fv-row mb-7">
+                                <label class="fw-semibold fs-6 mb-2">Description</label>
+                                <textarea name="description"
+                                          class="form-control form-control-solid"
+                                          rows="4"
+                                          placeholder="Ex : présentation de l'entreprise">{{ old('description', $model->description ?? '') }}</textarea>
+                            </div>
+
+                        </div>
                     </div>
                 </div>
             </div>

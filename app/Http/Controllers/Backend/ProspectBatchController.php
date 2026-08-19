@@ -9,6 +9,8 @@ use App\Jobs\EnrichCriteriaContactsJob;
 use App\Jobs\RescoreProspectBatchCompaniesJob;
 use App\Models\ProspectBatch;
 use App\Services\Discovery\CriteriaContactEnrichmentService;
+use App\Services\Gemini\GeminiClient;
+use App\Services\Prospecting\CompanyListCleanupService;
 use App\Services\Prospecting\CompanyListParser;
 use App\Services\Prospecting\ContactLifecycleService;
 use App\Services\Prospecting\ProspectBatchService;
@@ -34,7 +36,7 @@ class ProspectBatchController extends BackendController
 
         $this->viewConfigClass = \App\Crud\ViewConfigs\ProspectBatchViewConfig::class;
         $this->middleware('permission:view prospect_batches')->only(['index', 'view', 'status', 'rescoreStatus']);
-        $this->middleware('permission:create prospect_batches')->only(['create', 'store']);
+        $this->middleware('permission:create prospect_batches')->only(['create', 'store', 'cleanupCompanies']);
         $this->middleware('permission:edit prospect_batches')->only(['edit', 'update']);
         $this->middleware('permission:delete prospect_batches')->only(['delete']);
         $this->middleware('permission:run prospect resolution')->only(['estimate', 'confirm', 'resumeDiscovery', 'rescoreDispatch']);
@@ -68,7 +70,7 @@ class ProspectBatchController extends BackendController
         ]);
     }
 
-    public function create()
+    public function create(GeminiClient $gemini)
     {
         return view('backend.contents.prospect_batches.crud.form', [
             'model' => new ProspectBatch(['quality_preset' => 'balanced']),
@@ -76,7 +78,37 @@ class ProspectBatchController extends BackendController
             'method' => 'POST',
             'page' => 'create',
             'initialStep' => 1,
+            'hasGeminiApiKey' => $gemini->hasApiKey(),
         ]);
+    }
+
+    /**
+     * Stateless "Nettoyer avec l'IA" — reformats whatever the user pasted
+     * (any shape) into clean CSV via Gemini, and returns it for the textarea
+     * to be replaced client-side. Persists nothing, charges nothing.
+     */
+    public function cleanupCompanies(Request $request, CompanyListCleanupService $cleanup)
+    {
+        $validated = $request->validate([
+            'text' => ['required', 'string', 'max:200000'],
+        ]);
+
+        $result = $cleanup->cleanup($validated['text']);
+
+        if (! $result['ok']) {
+            $messages = [
+                'empty' => 'Collez une liste d’entreprises avant de nettoyer.',
+                'too_long' => 'Liste trop longue, découpez-la en plusieurs envois.',
+                'no_api_key' => 'Le nettoyage IA n’est pas disponible.',
+            ];
+
+            return response()->json([
+                'message' => $messages[$result['error']] ?? 'Le nettoyage a échoué, réessayez ou collez au format simple.',
+                'code' => $result['error'],
+            ], 422);
+        }
+
+        return response()->json(['text' => $result['text'], 'count' => $result['count']]);
     }
 
     public function store(Request $request, CompanyListParser $parser, ProspectBatchService $batches)
@@ -288,7 +320,7 @@ class ProspectBatchController extends BackendController
             });
     }
 
-    public function edit($id)
+    public function edit($id, GeminiClient $gemini)
     {
         $batch = ProspectBatch::query()->findOrFail((int) $id);
         $this->authorizeBatch($batch);
@@ -307,7 +339,19 @@ class ProspectBatchController extends BackendController
             'route' => route('admin.prospect_batches.update', $batch),
             'method' => 'PUT',
             'page' => 'edit',
-            'initialStep' => max(1, min(4, (int) request('step', 2))),
+            // Traitement is a client-side polling state entered only after a
+            // successful confirm() — it is never a page-load target, so the
+            // wizard's own two rendered screens are the only valid bounds here.
+            'initialStep' => max(1, min(2, (int) request('step', 2))),
+            'hasGeminiApiKey' => $gemini->hasApiKey(),
+            // Écran 2 spend gate (plan A5): first 15 staged rows so the user
+            // can catch a bad paste before any provider credit is spent.
+            'previewItems' => $batch->items()
+                ->select(['row_number', 'company_name', 'country', 'city', 'source_metadata'])
+                ->orderBy('row_number')
+                ->take(15)
+                ->get(),
+            'previewTotal' => $batch->total_items,
         ]);
     }
 

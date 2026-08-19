@@ -1,4 +1,4 @@
-<div data-kt-stepper-element="content" data-prospect-step="4">
+<div data-kt-stepper-element="content" data-prospect-step="3">
     <div class="card border">
         <div class="card-body text-center py-10">
             <div class="spinner-border text-primary mb-5" data-processing-spinner role="status"><span class="visually-hidden">Traitement en cours</span></div>

@@ -1375,6 +1375,9 @@ final class ProspectItemProcessor
                 $safe[$key] = $value;
             }
         }
+        if (($description = $this->safeLongText($metadata['description'] ?? null, 2000)) !== null) {
+            $safe['description'] = $description;
+        }
         if (is_array($metadata['emails_count'] ?? null)) {
             $safe['emails_count'] = array_filter([
                 'personal' => $this->boundedInteger($metadata['emails_count']['personal'] ?? null, 0, 1_000_000),
@@ -1568,6 +1571,23 @@ final class ProspectItemProcessor
         }
         $value = trim((string) preg_replace('/\s+/u', ' ', trim((string) $value)));
         if ($value === '' || preg_match('/[\x00-\x1F\x7F]/', $value) === 1 || str_contains($value, '://')) {
+            return null;
+        }
+
+        return mb_substr($value, 0, $limit);
+    }
+
+    /**
+     * Same as safeText() but allows '://' — long-form blurbs (e.g. exhibitor
+     * descriptions) legitimately contain URLs.
+     */
+    private function safeLongText(mixed $value, int $limit): ?string
+    {
+        if (! is_string($value) && ! is_numeric($value)) {
+            return null;
+        }
+        $value = trim((string) preg_replace('/\s+/u', ' ', trim((string) $value)));
+        if ($value === '' || preg_match('/[\x00-\x1F\x7F]/', $value) === 1) {
             return null;
         }
 

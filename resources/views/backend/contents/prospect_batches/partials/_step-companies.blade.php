@@ -24,6 +24,16 @@
                                   class="form-control form-control-solid @error('companies_text') is-invalid @enderror"
                                   placeholder="ACME | FR | Paris | acme.fr">{{ old('companies_text') }}</textarea>
                         @error('companies_text')<div class="invalid-feedback">{{ $message }}</div>@enderror
+                        @if($hasGeminiApiKey ?? false)
+                            <div class="mt-3">
+                                <button type="button" id="prospect_cleanup_button" class="btn btn-sm btn-light-primary"
+                                        data-cleanup-url="{{ route('admin.prospect_batches.cleanup_companies') }}">
+                                    <i class="bi bi-magic me-1"></i>Nettoyer avec l'IA
+                                    <span class="spinner-border spinner-border-sm ms-2 d-none" data-cleanup-spinner></span>
+                                </button>
+                                <div id="prospect_cleanup_result" class="fs-8 text-muted mt-2 d-none" role="status" aria-live="polite"></div>
+                            </div>
+                        @endif
                     </div>
                 </div>
             </div>

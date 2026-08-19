@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\Prospecting\ProspectBatchService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -53,15 +54,13 @@ class ProspectBatchControllerTest extends TestCase
         ]);
     }
 
-    public function test_wizard_renders_four_steps_and_balanced_default(): void
+    public function test_wizard_renders_two_screens_and_balanced_default(): void
     {
         $this->actingAs($this->user)
             ->get(route('admin.prospect_batches.create'))
             ->assertOk()
             ->assertSee('Ajouter les entreprises')
-            ->assertSee('Choisir la qualité')
             ->assertSee('Vérifier et lancer')
-            ->assertSee('Traitement')
             ->assertSee('value="balanced"', false)
             ->assertSee('checked', false);
     }
@@ -113,6 +112,149 @@ class ProspectBatchControllerTest extends TestCase
             ])
             ->assertRedirect(route('admin.prospect_batches.create'))
             ->assertSessionHasErrors('companies_text');
+    }
+
+    /**
+     * "Nettoyer avec l'IA" reformats a pasted list via Gemini and returns it
+     * for the textarea — it must not persist anything.
+     */
+    public function test_cleanup_companies_returns_normalized_csv_from_gemini(): void
+    {
+        config(['services.gemini.api_key' => 'test-gemini-key']);
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response([
+                'candidates' => [[
+                    'content' => [
+                        'parts' => [[
+                            'text' => "{\"csv\":\"company,country,city,domain,description\\nABA TECHNOLOGY,Maroc,,,\\nOther Co,France,Paris,other.fr,\"}",
+                        ]],
+                    ],
+                    'finishReason' => 'STOP',
+                ]],
+            ], 200),
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->postJson(route('admin.prospect_batches.cleanup_companies'), [
+                'text' => "ABA TECHNOLOGY\n\nStand No- 14D-60A, Hall 13\n\nMaroc\n\nOther Co, France, Paris, other.fr",
+            ]);
+
+        $response->assertOk();
+        $response->assertJson(['count' => 2]);
+        $this->assertStringContainsString('ABA TECHNOLOGY', (string) $response->json('text'));
+        $this->assertStringContainsString('company,country,city,domain,description', (string) $response->json('text'));
+
+        $this->assertSame(0, ProspectBatch::query()->count());
+        $this->assertSame(0, ProspectBatchItem::query()->count());
+    }
+
+    /**
+     * A malformed Gemini response must not throw — the caller gets a neutral
+     * failure with a French retry message, and the textarea is left untouched
+     * (the endpoint never returns partial/garbage text).
+     */
+    public function test_cleanup_companies_returns_neutral_result_on_malformed_json(): void
+    {
+        config(['services.gemini.api_key' => 'test-gemini-key']);
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response([
+                'candidates' => [[
+                    'content' => [
+                        'parts' => [['text' => 'this is not json']],
+                    ],
+                    'finishReason' => 'STOP',
+                ]],
+            ], 200),
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->postJson(route('admin.prospect_batches.cleanup_companies'), ['text' => 'ACME']);
+
+        $response->assertStatus(422);
+        $response->assertJson(['message' => 'Le nettoyage a échoué, réessayez ou collez au format simple.']);
+    }
+
+    /**
+     * Oversized input is rejected by the service's own bound BEFORE any
+     * Gemini call is made — the cap is the only cost control since Gemini
+     * is unmetered here.
+     */
+    public function test_cleanup_companies_rejects_oversized_input_before_gemini_call(): void
+    {
+        config(['services.gemini.api_key' => 'test-gemini-key']);
+
+        Http::fake();
+
+        $response = $this->actingAs($this->user)
+            ->postJson(route('admin.prospect_batches.cleanup_companies'), [
+                'text' => str_repeat('A', 60000),
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJson(['code' => 'too_long']);
+        Http::assertNothingSent();
+    }
+
+    public function test_cleanup_companies_requires_create_permission(): void
+    {
+        $noCreateUser = User::factory()->create([
+            'email_verified_at' => now(),
+            'is_active' => true,
+        ]);
+        $noCreateUser->givePermissionTo(['backend.access', 'view prospect_batches']);
+
+        $response = $this->actingAs($noCreateUser)
+            ->postJson(route('admin.prospect_batches.cleanup_companies'), ['text' => 'ACME']);
+
+        $response->assertForbidden();
+    }
+
+    /**
+     * A4/A5 — the parsed-row preview is the spend-gate safety net on écran 2.
+     * Assert the staged company name is actually IN the rendered HTML, not
+     * merely that the view received the previewItems data.
+     */
+    public function test_edit_screen_renders_staged_company_preview(): void
+    {
+        $batch = app(ProspectBatchService::class)->createListBatch($this->user, [[
+            'row_number' => 1,
+            'original_input' => 'ACME Corp',
+            'company_name' => 'ACME Corp',
+            'country' => 'FR',
+        ]]);
+
+        $this->actingAs($this->user)
+            ->get(route('admin.prospect_batches.edit', $batch))
+            ->assertOk()
+            ->assertSee('ACME Corp');
+    }
+
+    /**
+     * commercial has create/edit but not delete (PermissionsSeeder) — the
+     * discard-draft link must not render for such a user, or they hit a 403
+     * exactly when they need the escape hatch (A5 permission gap).
+     */
+    public function test_discard_draft_link_is_absent_without_delete_permission(): void
+    {
+        $noDeleteUser = User::factory()->create([
+            'email_verified_at' => now(),
+            'is_active' => true,
+        ]);
+        $noDeleteUser->givePermissionTo(['backend.access', 'view prospect_batches', 'create prospect_batches', 'edit prospect_batches']);
+
+        $batch = app(ProspectBatchService::class)->createListBatch($noDeleteUser, [[
+            'row_number' => 1,
+            'original_input' => 'ACME Corp',
+            'company_name' => 'ACME Corp',
+            'country' => 'FR',
+        ]]);
+
+        $this->actingAs($noDeleteUser)
+            ->get(route('admin.prospect_batches.edit', $batch))
+            ->assertOk()
+            ->assertDontSee('Supprimer ce brouillon');
     }
 
     public function test_confirm_requires_fresh_estimate_explicit_checkbox_and_run_permission(): void

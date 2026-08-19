@@ -194,7 +194,9 @@ class CompaniesDataTable extends BackendDataTable
             $query->where(function ($q) use ($kw) {
                 $q->whereRaw('LOWER(companies.name) LIKE ?', [$kw])
                   ->orWhereRaw('LOWER(companies.domain) LIKE ?', [$kw])
-                  ->orWhereRaw('LOWER(companies.sector) LIKE ?', [$kw]);
+                  ->orWhereRaw('LOWER(companies.sector) LIKE ?', [$kw])
+                  // ponytail: full scan on description; FULLTEXT index if the search box gets slow
+                  ->orWhereRaw('LOWER(companies.description) LIKE ?', [$kw]);
             });
         });
 

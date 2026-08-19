@@ -103,6 +103,7 @@ class CompanyViewConfig
             $detailRows = [
                 ['label' => 'Actif',           'value' => $model->is_active,             'type' => 'boolean'],
                 ['label' => 'Secteur',         'value' => $model->sector,                'type' => 'text'],
+                ['label' => 'Description',     'value' => $model->description,           'type' => 'text'],
                 ['label' => 'Pays',            'value' => $model->country ? strtoupper($model->country) : null, 'type' => 'text'],
                 ['label' => 'Taille estimée',  'value' => $model->estimated_size,        'type' => 'text'],
                 ['label' => 'Téléphone',       'value' => $model->phone,                 'type' => 'text'],

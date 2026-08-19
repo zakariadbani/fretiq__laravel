@@ -9,6 +9,7 @@ Route::controller(ProspectBatchController::class)->prefix('admin')->name('admin.
     Route::get('/prospect_batches', 'index')->name('prospect_batches.index');
     Route::get('/prospect_batches/create', 'create')->name('prospect_batches.create');
     Route::post('/prospect_batches', 'store')->name('prospect_batches.store');
+    Route::post('/prospect_batches/cleanup-companies', 'cleanupCompanies')->middleware('throttle:5,1')->name('prospect_batches.cleanup_companies');
     Route::post('/prospect_batches/{id}/estimate', 'estimate')->name('prospect_batches.estimate');
     Route::post('/prospect_batches/{id}/confirm', 'confirm')->name('prospect_batches.confirm');
     Route::post('/prospect_batches/{id}/resume-discovery', 'resumeDiscovery')->name('prospect_batches.resume_discovery');

@@ -56,12 +56,16 @@
 
                 <div class="card mb-7">
                     <div class="card-body py-6">
+                        {{--
+                            Only the two real decision screens get a stepper-nav
+                            entry. Traitement (data-prospect-step="3") is a
+                            client-side polling state entered after confirm(),
+                            never a step the user picks — see A4.
+                        --}}
                         <div class="stepper-nav flex-center flex-wrap gap-4" aria-label="Étapes de l’import">
                             @foreach([
                                 1 => ['Ajouter les entreprises', 'bi-building-add'],
-                                2 => ['Choisir la qualité', 'bi-sliders'],
-                                3 => ['Vérifier et lancer', 'bi-check2-circle'],
-                                4 => ['Traitement', 'bi-hourglass-split'],
+                                2 => ['Vérifier et lancer', 'bi-check2-circle'],
                             ] as $number => [$label, $icon])
                                 <div class="stepper-item mx-2 my-2" data-kt-stepper-element="nav" data-step-nav="{{ $number }}">
                                     <div class="stepper-wrapper d-flex align-items-center">
@@ -78,7 +82,6 @@
                     <div class="card-body p-6 p-lg-10">
                         <div id="prospect-wizard-alert" class="alert d-none" role="alert" aria-live="assertive"></div>
                         @include('backend.contents.prospect_batches.partials._step-companies')
-                        @include('backend.contents.prospect_batches.partials._step-quality')
                         @include('backend.contents.prospect_batches.partials._step-cost')
                         @include('backend.contents.prospect_batches.partials._step-processing')
                     </div>
