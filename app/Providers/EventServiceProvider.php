@@ -2,9 +2,12 @@
 
 namespace App\Providers;
 
+use App\Listeners\LogOutgoingHttpCall;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Listeners\SendEmailVerificationNotification;
 use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvider;
+use Illuminate\Http\Client\Events\ConnectionFailed;
+use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Support\Facades\Event;
 
 class EventServiceProvider extends ServiceProvider
@@ -17,6 +20,14 @@ class EventServiceProvider extends ServiceProvider
     protected $listen = [
         Registered::class => [
             SendEmailVerificationNotification::class,
+        ],
+        // Universal API call logging — covers every Http:: call site, no
+        // per-integration wiring needed (see App\Listeners\LogOutgoingHttpCall).
+        ResponseReceived::class => [
+            LogOutgoingHttpCall::class . '@handleResponseReceived',
+        ],
+        ConnectionFailed::class => [
+            LogOutgoingHttpCall::class . '@handleConnectionFailed',
         ],
     ];
 

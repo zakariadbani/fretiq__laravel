@@ -6,6 +6,7 @@ use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Exceptions\InvalidSignatureException;
 use Illuminate\Session\TokenMismatchException;
+use Psr\Log\LogLevel;
 use Throwable;
 
 class Handler extends ExceptionHandler
@@ -16,7 +17,9 @@ class Handler extends ExceptionHandler
      * @var array<class-string<\Throwable>, \Psr\Log\LogLevel::*>
      */
     protected $levels = [
-        //
+        // Expected/benign domain exceptions — no stack-trace spam at 'error'.
+        QuotaExhaustedException::class => LogLevel::WARNING,
+        DiscoveryRunInFlightException::class => LogLevel::WARNING,
     ];
 
     /**

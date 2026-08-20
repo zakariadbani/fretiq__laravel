@@ -5,6 +5,7 @@ namespace App\Services\Zoho;
 use App\Models\CampaignTemplate;
 use App\Models\CampaignTemplateTranslation;
 use App\Models\ZohoSyncLog;
+use App\Support\ApiLog;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -278,7 +279,7 @@ class ZohoCampaignsTemplatesService
 
         if ($response->failed()) {
             throw new \RuntimeException(
-                "[ZohoCampaignsTemplatesService] HTTP {$response->status()} on GET {$path}: " . $response->body(),
+                "[ZohoCampaignsTemplatesService] HTTP {$response->status()} on GET {$path}: " . ApiLog::excerpt($response->body(), 300),
             );
         }
 

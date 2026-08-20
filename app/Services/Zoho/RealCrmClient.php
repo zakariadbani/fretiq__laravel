@@ -2,6 +2,8 @@
 
 namespace App\Services\Zoho;
 
+use App\Support\ApiLog;
+
 /**
  * RealCrmClient — live Zoho CRM API client.
  *
@@ -38,7 +40,7 @@ class RealCrmClient implements CrmClient
 
         if ($response->failed()) {
             throw new \RuntimeException(
-                "[RealCrmClient] HTTP {$response->status()} on GET {$module}: " . $response->body()
+                "[RealCrmClient] HTTP {$response->status()} on GET {$module}: " . ApiLog::excerpt($response->body(), 300)
             );
         }
 

@@ -3,6 +3,7 @@
 namespace App\Services\Zoho;
 
 use App\Exceptions\ZohoInvalidRecipientException;
+use App\Support\ApiLog;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -146,7 +147,7 @@ class ZohoCampaignsClient
 
         if ($response->failed()) {
             throw new \RuntimeException(
-                '[ZohoCampaignsClient] addListSubscribers échoué (HTTP ' . $response->status() . '): ' . $response->body()
+                '[ZohoCampaignsClient] addListSubscribers échoué (HTTP ' . $response->status() . '): ' . ApiLog::excerpt($response->body(), 300)
             );
         }
 
@@ -154,7 +155,7 @@ class ZohoCampaignsClient
 
         if (($payload['status'] ?? null) === 'error' || (string) ($payload['code'] ?? '0') !== '0') {
             throw new \RuntimeException(
-                '[ZohoCampaignsClient] addListSubscribers erreur API Zoho : ' . $response->body()
+                '[ZohoCampaignsClient] addListSubscribers erreur API Zoho : ' . ApiLog::excerpt($response->body(), 300)
             );
         }
 
@@ -224,7 +225,7 @@ class ZohoCampaignsClient
 
         if ($response->failed()) {
             throw new \RuntimeException(
-                '[ZohoCampaignsClient] subscribeContactWithTopic échoué (HTTP ' . $response->status() . ') pour ' . $email . ' : ' . $response->body()
+                '[ZohoCampaignsClient] subscribeContactWithTopic échoué (HTTP ' . $response->status() . ') pour ' . ApiLog::maskEmails($email) . ' : ' . ApiLog::excerpt($response->body(), 300)
             );
         }
 
@@ -418,13 +419,13 @@ class ZohoCampaignsClient
         array $acceptedCodes = ['0'],
     ): array {
         if ($response->failed()) {
-            throw new \RuntimeException('[ZohoCampaignsClient] ' . $operation . ' échoué (HTTP ' . $response->status() . ') : ' . $response->body());
+            throw new \RuntimeException('[ZohoCampaignsClient] ' . $operation . ' échoué (HTTP ' . $response->status() . ') : ' . ApiLog::excerpt($response->body(), 300));
         }
 
         $payload = $response->json() ?? [];
         if (($payload['status'] ?? null) === 'error'
             || ! in_array((string) ($payload['code'] ?? '0'), $acceptedCodes, true)) {
-            throw new \RuntimeException('[ZohoCampaignsClient] ' . $operation . ' erreur API Zoho : ' . $response->body());
+            throw new \RuntimeException('[ZohoCampaignsClient] ' . $operation . ' erreur API Zoho : ' . ApiLog::excerpt($response->body(), 300));
         }
 
         return $payload;
@@ -523,7 +524,7 @@ class ZohoCampaignsClient
 
         if ($response->failed()) {
             throw new \RuntimeException(
-                '[ZohoCampaignsClient] sendCampaign échoué (HTTP ' . $response->status() . '): ' . $response->body()
+                '[ZohoCampaignsClient] sendCampaign échoué (HTTP ' . $response->status() . '): ' . ApiLog::excerpt($response->body(), 300)
             );
         }
 
@@ -532,7 +533,7 @@ class ZohoCampaignsClient
         Log::info('[ZohoCampaignsClient] sendCampaign', [
             'campaign_key' => $campaignKey,
             'status'       => $response->status(),
-            'body'         => $response->body(),
+            'body'         => ApiLog::excerpt($response->body(), 300),
         ]);
 
         return $payload;
@@ -566,7 +567,7 @@ class ZohoCampaignsClient
 
         if ($response->failed()) {
             throw new \RuntimeException(
-                '[ZohoCampaignsClient] getCampaignReport échoué (HTTP ' . $response->status() . '): ' . $response->body()
+                '[ZohoCampaignsClient] getCampaignReport échoué (HTTP ' . $response->status() . '): ' . ApiLog::excerpt($response->body(), 300)
             );
         }
 
@@ -578,7 +579,7 @@ class ZohoCampaignsClient
             || ! isset($payload['campaign-reports'][0])
             || ! is_array($payload['campaign-reports'][0])
         ) {
-            throw new \RuntimeException('[ZohoCampaignsClient] getCampaignReport malformed or application error: ' . $response->body());
+            throw new \RuntimeException('[ZohoCampaignsClient] getCampaignReport malformed or application error: ' . ApiLog::excerpt($response->body(), 300));
         }
 
 
@@ -620,13 +621,13 @@ class ZohoCampaignsClient
 
         if ($response->failed()) {
             throw new \RuntimeException(
-                '[ZohoCampaignsClient] getCampaignRecipientsData failed (HTTP ' . $response->status() . '): ' . $response->body()
+                '[ZohoCampaignsClient] getCampaignRecipientsData failed (HTTP ' . $response->status() . '): ' . ApiLog::excerpt($response->body(), 300)
             );
         }
 
         $payload = $response->json();
         if (! is_array($payload)) {
-            throw new \RuntimeException('[ZohoCampaignsClient] getCampaignRecipientsData malformed response: ' . $response->body());
+            throw new \RuntimeException('[ZohoCampaignsClient] getCampaignRecipientsData malformed response: ' . ApiLog::excerpt($response->body(), 300));
         }
 
         $code = (string) ($payload['code'] ?? '');
@@ -640,7 +641,7 @@ class ZohoCampaignsClient
             || ! array_key_exists('list_of_details', $payload)
             || ! is_array($payload['list_of_details'])
         ) {
-            throw new \RuntimeException('[ZohoCampaignsClient] getCampaignRecipientsData Zoho API error: ' . $response->body());
+            throw new \RuntimeException('[ZohoCampaignsClient] getCampaignRecipientsData Zoho API error: ' . ApiLog::excerpt($response->body(), 300));
         }
 
         return $payload['list_of_details'];

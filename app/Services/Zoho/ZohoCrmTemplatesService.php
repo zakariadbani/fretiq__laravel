@@ -301,6 +301,10 @@ class ZohoCrmTemplatesService
         }
 
         if ($response->failed()) {
+            // NOT truncated via ApiLog::excerpt() on purpose — the full raw message
+            // is consumed downstream by isInvalidEmailTemplateModule() (str_contains
+            // match on INVALID_DATA/param_name/module); truncating could silently
+            // break that control flow. See that method's docblock.
             throw new \RuntimeException(
                 "[ZohoCrmTemplatesService] HTTP {$response->status()} on GET {$path}: " . $response->body()
             );

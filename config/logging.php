@@ -53,7 +53,7 @@ return [
     'channels' => [
         'stack' => [
             'driver' => 'stack',
-            'channels' => ['single'],
+            'channels' => ['daily', 'errors'],
             'ignore_exceptions' => false,
         ],
 
@@ -68,6 +68,32 @@ return [
             'path' => storage_path('logs/laravel.log'),
             'level' => env('LOG_LEVEL', 'debug'),
             'days' => 14,
+        ],
+
+        // Errors-only triage channel — receives error+ from both 'daily' and 'api'
+        // via stack membership. Filters at the Monolog level: info/warning never
+        // land here, so an empty file means nothing is broken.
+        'errors' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/errors.log'),
+            'level' => 'error',
+            'days' => 30,
+            'replace_placeholders' => true,
+        ],
+
+        // One structured line per external HTTP call (see App\Listeners\LogOutgoingHttpCall).
+        'api' => [
+            'driver' => 'stack',
+            'channels' => ['api_daily', 'errors'],
+            'ignore_exceptions' => false,
+        ],
+
+        'api_daily' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/api.log'),
+            'level' => env('LOG_LEVEL', 'debug'),
+            'days' => env('LOG_DAILY_DAYS', 14),
+            'replace_placeholders' => true,
         ],
 
         'slack' => [
