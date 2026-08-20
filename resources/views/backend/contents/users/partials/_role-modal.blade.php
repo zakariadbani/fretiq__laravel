@@ -15,7 +15,7 @@
         'Répertoire'                => ['*companies*', '*contacts*'],
         'Préparation des campagnes' => ['*segments*', '*campaign_templates*',
                                         '*sequences*', '*sender_identities*'],
-        'Campagnes & planning'      => ['*campaigns*'],
+        'Campagnes'                 => ['*campaigns*'],
         'Réponses & demandes'       => ['*inbox*', '*demandes*'],
         'Conformité & consommation' => ['*suppressions*', '*consumption*'],
         // Zoho CRM

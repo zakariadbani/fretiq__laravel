@@ -45,6 +45,14 @@ class MenuTest extends TestCase
 
         $this->assertSame('admin/dashboard', $main->firstWhere('title', 'Vue d’ensemble')['path']);
         $this->assertSame('backend.access', $main->firstWhere('title', 'Vue d’ensemble')['permission']);
+        $this->assertSame('admin/campaigns', $main->firstWhere('title', 'Campagnes')['path']);
+        $this->assertSame('view campaigns', $main->firstWhere('title', 'Campagnes')['permission']);
+        $this->assertSame('admin/campaigns', $main->firstWhere('title', 'Campagnes')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Campagnes'));
+        $this->assertSame('admin/planner', $main->firstWhere('title', 'Planning')['path']);
+        $this->assertSame('view campaigns', $main->firstWhere('title', 'Planning')['permission']);
+        $this->assertSame('admin/planner', $main->firstWhere('title', 'Planning')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Planning'));
         $this->assertSame([
             'Prospection & campagnes',
             'Zoho CRM — Lecture seule',
@@ -53,10 +61,11 @@ class MenuTest extends TestCase
         $this->assertSame([
             'Prospection & campagnes',
             'Vue d’ensemble',
+            'Campagnes',
+            'Planning',
             'Découverte',
             'Répertoire',
             'Préparation des campagnes',
-            'Campagnes & planning',
             'Réponses & demandes',
             'Conformité & consommation',
             'Zoho CRM — Lecture seule',
@@ -77,10 +86,6 @@ class MenuTest extends TestCase
             'Répertoire' => [
                 ['Entreprises', 'view companies', 'admin/companies'],
                 ['Contacts', 'view contacts', 'admin/contacts'],
-            ],
-            'Campagnes & planning' => [
-                ['Campagnes', 'view campaigns', 'admin/campaigns'],
-                ['Planning', 'view campaigns', 'admin/planner'],
             ],
             'Préparation des campagnes' => [
                 ['Segments', 'view segments', 'admin/segments'],

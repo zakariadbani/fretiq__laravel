@@ -24,6 +24,26 @@ return [
             'path' => 'admin/dashboard',
         ],
         [
+            'title' => 'Planning',
+            'permission' => 'view campaigns',
+            'icon' => [
+                'svg' => 'calendar',
+                'font' => '<i class="bi bi-calendar-week fs-2"></i>',
+            ],
+            'path' => 'admin/planner',
+            'active_prefix' => 'admin/planner',
+        ],
+        [
+            'title' => 'Campagnes',
+            'permission' => 'view campaigns',
+            'icon' => [
+                'svg' => 'flash-circle',
+                'font' => '<i class="bi bi-rocket fs-2"></i>',
+            ],
+            'path' => 'admin/campaigns',
+            'active_prefix' => 'admin/campaigns',
+        ],
+        [
             'title' => 'Découverte',
             'permission' => ['view prospect_criteria', 'view prospect_batches'],
             'classes' => ['item' => 'menu-accordion'],
@@ -65,20 +85,6 @@ return [
                 ['title' => 'Modèles d’email', 'permission' => 'view campaign_templates', 'path' => 'admin/campaign_templates', 'active_prefix' => 'admin/campaign_templates'],
                 ['title' => 'Séquences', 'permission' => 'view sequences', 'path' => 'admin/sequences', 'active_prefix' => 'admin/sequences'],
                 ['title' => 'Identités d’expéditeur', 'permission' => 'view sender_identities', 'path' => 'admin/sender_identities', 'active_prefix' => 'admin/sender_identities'],
-            ],
-        ],
-        [
-            'title' => 'Campagnes & planning',
-            'permission' => ['view campaigns'],
-            'classes' => ['item' => 'menu-accordion'],
-            'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
-            'icon' => [
-                'svg' => 'flash-circle',
-                'font' => '<i class="bi bi-rocket fs-2"></i>',
-            ],
-            'sub' => [
-                ['title' => 'Campagnes', 'permission' => 'view campaigns', 'path' => 'admin/campaigns', 'active_prefix' => 'admin/campaigns'],
-                ['title' => 'Planning', 'permission' => 'view campaigns', 'path' => 'admin/planner'],
             ],
         ],
         [
