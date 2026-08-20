@@ -134,17 +134,26 @@ class ObservabilityOperationsTest extends TestCase
     public function test_scheduler_heartbeat_and_task_switches_are_reported(): void
     {
         $heartbeat = collect(app(Schedule::class)->events())
-            ->first(fn ($event) => $event->description === 'observability:scheduler-heartbeat');
+            ->first(fn ($event) => $event->description === 'observability_scheduler_heartbeat');
         $this->assertNotNull($heartbeat);
         $heartbeat->run($this->app);
         $this->assertSame('healthy', app(QueueObservabilityService::class)->schedulerHealth()['status']);
 
         $tasks = app(QueueObservabilityService::class)->scheduledTasks();
         $this->assertTrue($tasks->contains('key', 'campaigns_dispatch_due'));
+        $this->assertFalse($tasks->contains('key', 'observability_scheduler_heartbeat'),
+            'The heartbeat must not appear as a display row.');
         $inboxTask = $tasks->firstWhere('key', 'inbox_poll');
         $this->assertNotNull($inboxTask);
         $this->assertSame('Toutes les 5 minutes', $inboxTask['frequency']);
         $this->assertSame('Relève les boîtes IMAP actives et importe les nouvelles réponses.', $inboxTask['description']);
+
+        // Regression: a live-scheduled zoho task now surfaces automatically instead
+        // of requiring a hardcoded whitelist entry, and it renders read-only.
+        $zohoTask = $tasks->firstWhere('key', 'zoho_crm_sync_delta');
+        $this->assertNotNull($zohoTask, 'zoho_crm_sync_delta must appear in the live schedule.');
+        $this->assertFalse($zohoTask['controllable']);
+        $this->assertFalse($zohoTask['runnable']);
 
 
         $this->actingAs($this->superadmin)->patch('/admin/observability/scheduler/tasks/campaigns_dispatch_due', ['enabled' => false])

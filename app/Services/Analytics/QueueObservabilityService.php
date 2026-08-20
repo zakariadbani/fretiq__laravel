@@ -5,8 +5,8 @@ namespace App\Services\Analytics;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
 use App\Models\Setting;
+use App\Support\ScheduleDefinition;
 use Carbon\Carbon;
-use Cron\CronExpression;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Collection;
@@ -15,18 +15,51 @@ use Illuminate\Support\Facades\DB;
 
 class QueueObservabilityService
 {
-    private const TASKS = [
-        'campaigns_dispatch_due' => ['command' => 'campaigns:dispatch-due', 'description' => 'Place les campagnes arrivées à échéance dans la file d’envoi.', 'expression' => '* * * * *'],
-        'campaigns_generate_runs' => ['command' => 'campaigns:generate-runs', 'description' => 'Crée les exécutions dues pour les campagnes récurrentes.', 'expression' => '* * * * *'],
-        'sequences_process' => ['command' => 'sequences:process', 'description' => 'Récupère les vagues Zoho dues et met en file les étapes SMTP dues pour le worker campagnes.', 'expression' => '* * * * *'],
-        'campaigns_sync_sequence_enrollments' => ['command' => 'campaigns:sync-sequence-enrollments', 'description' => 'Inscrit les nouveaux contacts éligibles dans les campagnes séquentielles.', 'expression' => '* * * * *'],
-        'campaign_sync_stats' => ['command' => 'campaign:sync-stats', 'description' => 'Met à jour les statistiques des campagnes envoyées.', 'expression' => '*/15 * * * *'],
-        'discovery_terminalize_stale' => ['command' => 'discovery:terminalize-stale', 'description' => 'Clôture les découvertes bloquées et libère leurs crédits réservés.', 'expression' => '* * * * *'],
-        'prospect_auto_discover' => ['command' => 'prospect:auto-discover', 'description' => 'Lance les découvertes automatiques dues selon les critères configurés.', 'expression' => '0 * * * *'],
-        'inbox_poll' => ['command' => 'inbox:poll', 'description' => 'Relève les boîtes IMAP actives et importe les nouvelles réponses.', 'expression' => '*/5 * * * *'],
+    /** Keys that render pause/resume + run-now controls (gated by automatisation.{key}). */
+    private const CONTROLLABLE = [
+        'campaigns_dispatch_due',
+        'campaigns_generate_runs',
+        'sequences_process',
+        'smtp_dispatch_reservations',
+        'campaigns_sync_sequence_enrollments',
+        'campaign_sync_stats',
+        'discovery_terminalize_stale',
+        'prospect_auto_discover',
+        'inbox_poll',
     ];
 
-    public function __construct(private readonly Schedule $schedule) {}
+    /** Keys that can be invoked via Artisan::call() from "Exécuter maintenant". */
+    private const RUNNABLE = self::CONTROLLABLE;
+
+    /** Artisan command name for each runnable key. */
+    private const RUN_COMMANDS = [
+        'campaigns_dispatch_due' => 'campaigns:dispatch-due',
+        'campaigns_generate_runs' => 'campaigns:generate-runs',
+        'sequences_process' => 'sequences:process',
+        'smtp_dispatch_reservations' => 'smtp:dispatch-reservations',
+        'campaigns_sync_sequence_enrollments' => 'campaigns:sync-sequence-enrollments',
+        'campaign_sync_stats' => 'campaign:sync-stats',
+        'discovery_terminalize_stale' => 'discovery:terminalize-stale',
+        'prospect_auto_discover' => 'prospect:auto-discover',
+        'inbox_poll' => 'inbox:poll',
+    ];
+
+    /** French description shown on the observability page, per display key. Excludes the heartbeat (not a display row). */
+    private const LABELS = [
+        'campaigns_dispatch_due' => 'Place les campagnes arrivées à échéance dans la file d’envoi.',
+        'campaigns_generate_runs' => 'Crée les exécutions dues pour les campagnes récurrentes.',
+        'sequences_process' => 'Récupère les vagues Zoho dues et met en file les étapes SMTP dues pour le worker campagnes.',
+        'smtp_dispatch_reservations' => 'Traite les réservations d’envoi SMTP en attente.',
+        'campaigns_sync_sequence_enrollments' => 'Inscrit les nouveaux contacts éligibles dans les campagnes séquentielles.',
+        'campaign_sync_stats' => 'Met à jour les statistiques des campagnes envoyées.',
+        'discovery_terminalize_stale' => 'Clôture les découvertes bloquées et libère leurs crédits réservés.',
+        'prospect_auto_discover' => 'Lance les découvertes automatiques dues selon les critères configurés.',
+        'inbox_poll' => 'Relève les boîtes IMAP actives et importe les nouvelles réponses.',
+        'zoho_crm_sync_delta' => 'Synchronise le miroir Zoho CRM (delta).',
+        'zoho_crm_sync_reconcile' => 'Réconciliation nocturne du miroir Zoho CRM.',
+        'zoho_bulk_terminalization_recovery' => 'Relance la récupération des terminalisations Zoho en masse.',
+        'zoho_standard_work_recovery' => 'Relance les outbox de réconciliation Zoho.',
+    ];
 
     /** @return Collection<int, object> */
     public function activeJobs(int $limit = 50): Collection
@@ -105,29 +138,29 @@ class QueueObservabilityService
     /** @return Collection<int, array<string, mixed>> */
     public function scheduledTasks(): Collection
     {
-        $globalEnabled = (bool) Setting::get('automatisation.cron_enabled', true);
+        return collect($this->scheduleEvents())
+            ->filter(fn (Event $event): bool => is_string($event->description) && $event->description !== '' && $event->description !== 'observability_scheduler_heartbeat')
+            ->map(function (Event $event): array {
+                $key = $event->description;
+                $command = is_string($event->command) ? trim($event->command) : null;
+                $expression = $event->getExpression();
 
-        return collect($this->scheduledEventMap())->map(function (array $task) use ($globalEnabled): array {
-            $key = $task['key'];
-            $enabled = (bool) Setting::get("automatisation.{$key}", true);
-
-            $expression = $task['event']?->getExpression() ?? self::TASKS[$key]['expression'];
-            $nextRunAt = $task['event']?->nextRunDate()
-                ?? Carbon::instance((new CronExpression($expression))->getNextRunDate());
-
-            return [
-                'key' => $key,
-                'command' => $task['command'],
-                'description' => self::TASKS[$key]['description'],
-                'expression' => $expression,
-                'frequency' => $this->frequencyLabel($expression),
-                'enabled' => $enabled,
-                'effective_enabled' => $globalEnabled && $enabled,
-                'next_run_at' => $nextRunAt->setTimezone('Europe/Paris'),
-                'last_finished_at' => $this->parseDate(Setting::get("observability.tasks.{$key}.last_finished_at")),
-                'last_result' => Setting::get("observability.tasks.{$key}.last_result"),
-            ];
-        })->values();
+                return [
+                    'key' => $key,
+                    'command' => $command,
+                    'description' => self::LABELS[$key] ?? $command ?? $key,
+                    'expression' => $expression,
+                    'frequency' => $this->frequencyLabel($expression),
+                    'enabled' => (bool) Setting::get("automatisation.{$key}", true),
+                    'effective_enabled' => $event->filtersPass(app()),
+                    'controllable' => in_array($key, self::CONTROLLABLE, true),
+                    'runnable' => in_array($key, self::RUNNABLE, true),
+                    'next_run_at' => Carbon::instance($event->nextRunDate())->setTimezone('Europe/Paris'),
+                    'last_finished_at' => $this->parseDate(Setting::get("observability.tasks.{$key}.last_finished_at")),
+                    'last_result' => Setting::get("observability.tasks.{$key}.last_result"),
+                ];
+            })
+            ->values();
     }
 
     public function cancelJob(int $id): bool
@@ -171,7 +204,7 @@ class QueueObservabilityService
 
     public function setTaskEnabled(string $key, bool $enabled): bool
     {
-        if (! isset($this->scheduledEventMap()[$key])) {
+        if (! in_array($key, self::CONTROLLABLE, true)) {
             return false;
         }
         Setting::set("automatisation.{$key}", $enabled);
@@ -181,12 +214,11 @@ class QueueObservabilityService
 
     public function runTask(string $key): ?int
     {
-        $task = $this->scheduledEventMap()[$key] ?? null;
-        if ($task === null) {
+        if (! in_array($key, self::RUNNABLE, true)) {
             return null;
         }
         Setting::set("observability.tasks.{$key}.last_started_at", now()->utc()->toIso8601String());
-        $exitCode = Artisan::call($task['command']);
+        $exitCode = Artisan::call(self::RUN_COMMANDS[$key]);
         Setting::set("observability.tasks.{$key}.last_finished_at", now()->utc()->toIso8601String());
         Setting::set("observability.tasks.{$key}.last_result", $exitCode === 0 ? 'success' : 'failed');
 
@@ -200,7 +232,7 @@ class QueueObservabilityService
 
     public static function recordScheduledResult(Event $event, string $result): void
     {
-        $key = self::taskKey($event->command);
+        $key = self::taskKey($event->description);
 
         if ($key === null) {
             return;
@@ -210,37 +242,28 @@ class QueueObservabilityService
         Setting::set("observability.tasks.{$key}.last_result", $result);
     }
 
-    private static function taskKey(?string $command): ?string
+    private static function taskKey(?string $description): ?string
     {
-        if (! is_string($command) || ! preg_match('/artisan["\']?\s+([^\s"\']+)/', $command, $matches)) {
+        if (! is_string($description) || $description === '') {
             return null;
         }
 
-        $key = preg_replace('/[^a-z0-9]+/', '_', strtolower($matches[1]));
-
-        return isset(self::TASKS[$key]) ? $key : null;
+        // Scoped to the known display-key set: excludes the heartbeat (fires every
+        // minute) and any unnamed/unknown event, so recordScheduledResult() only
+        // ever writes settings for tasks actually shown on the observability page.
+        return isset(self::LABELS[$description]) ? $description : null;
     }
 
-    /** @return array<string, array{key:string,command:string,event:?Event}> */
-    private function scheduledEventMap(): array
+    /** @return array<int, Event> */
+    private function scheduleEvents(): array
     {
-        $tasks = [];
-        foreach ($this->schedule->events() as $event) {
-            if (! $event instanceof Event || ! is_string($event->command)) {
-                continue;
-            }
-            $key = self::taskKey($event->command);
-            if ($key === null) {
-                continue;
-            }
-            $tasks[$key] = ['key' => $key, 'command' => self::TASKS[$key]['command'], 'event' => $event];
-        }
+        // A fresh instance, not the app(Schedule::class) singleton: the singleton
+        // is only populated when routes/console.php runs during console/scheduler
+        // bootstrap, and stays empty for a plain HTTP request.
+        $schedule = new Schedule();
+        ScheduleDefinition::define($schedule);
 
-        foreach (self::TASKS as $key => $task) {
-            $tasks[$key] ??= ['key' => $key, 'command' => $task['command'], 'event' => null];
-        }
-
-        return $tasks;
+        return $schedule->events();
     }
 
     private function frequencyLabel(string $expression): string
@@ -250,6 +273,8 @@ class QueueObservabilityService
             '*/5 * * * *' => 'Toutes les 5 minutes',
             '*/15 * * * *' => 'Toutes les 15 minutes',
             '0 * * * *' => 'Toutes les heures',
+            '10 * * * *' => 'Chaque heure à :10',
+            '30 2 * * *' => 'Chaque jour à 02:30',
             default => $expression,
         };
     }

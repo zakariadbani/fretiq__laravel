@@ -386,7 +386,7 @@ class GlobalDataTable extends DataTable
 
             // Map PHP types to JS types
             $jsType = match($type) {
-                'bool' => 'boolean',
+                'int', 'bool' => 'boolean',
                 'select_enum', 'select' => 'select',
                 default => $type
             };

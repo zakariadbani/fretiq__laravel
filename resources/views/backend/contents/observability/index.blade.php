@@ -170,7 +170,9 @@
                 @foreach ($tasks as $task)
                     <tr>
                         <td>
-                            <code>{{ $task['command'] }}</code>
+                            @if ($task['command'])
+                                <code>{{ $task['command'] }}</code>
+                            @endif
                             <span class="text-muted d-block fs-8 mt-1">{{ $task['description'] }}</span>
                         </td>
                         <td><span title="{{ $task['expression'] }}">{{ $task['frequency'] }}</span></td>
@@ -185,15 +187,22 @@
                             @endif
                         </td>
                         <td class="text-end text-nowrap">
-                            <form method="POST" action="{{ route('admin.observability.scheduler.tasks.toggle', $task['key']) }}" class="d-inline" onsubmit="return confirm('{{ $task['enabled'] ? 'Suspendre' : 'Activer' }} cette tâche ?');">
-                                @csrf @method('PATCH')
-                                <input type="hidden" name="enabled" value="{{ $task['enabled'] ? 0 : 1 }}">
-                                <button type="submit" class="btn btn-sm btn-light-{{ $task['enabled'] ? 'warning' : 'success' }}" title="{{ $task['enabled'] ? 'Suspendre' : 'Activer' }}" aria-label="{{ $task['enabled'] ? 'Suspendre' : 'Activer' }} {{ $task['command'] }}"><i class="bi bi-{{ $task['enabled'] ? 'pause' : 'play' }}"></i></button>
-                            </form>
-                            <form method="POST" action="{{ route('admin.observability.scheduler.tasks.run', $task['key']) }}" class="d-inline" onsubmit="return confirm('Exécuter {{ $task['command'] }} maintenant ?');">
-                                @csrf
-                                <button type="submit" class="btn btn-sm btn-light-primary"><i class="bi bi-play-fill"></i> Exécuter</button>
-                            </form>
+                            @if ($task['controllable'])
+                                <form method="POST" action="{{ route('admin.observability.scheduler.tasks.toggle', $task['key']) }}" class="d-inline" onsubmit="return confirm('{{ $task['enabled'] ? 'Suspendre' : 'Activer' }} cette tâche ?');">
+                                    @csrf @method('PATCH')
+                                    <input type="hidden" name="enabled" value="{{ $task['enabled'] ? 0 : 1 }}">
+                                    <button type="submit" class="btn btn-sm btn-light-{{ $task['enabled'] ? 'warning' : 'success' }}" title="{{ $task['enabled'] ? 'Suspendre' : 'Activer' }}" aria-label="{{ $task['enabled'] ? 'Suspendre' : 'Activer' }} {{ $task['command'] }}"><i class="bi bi-{{ $task['enabled'] ? 'pause' : 'play' }}"></i></button>
+                                </form>
+                            @endif
+                            @if ($task['runnable'])
+                                <form method="POST" action="{{ route('admin.observability.scheduler.tasks.run', $task['key']) }}" class="d-inline" onsubmit="return confirm('Exécuter {{ $task['command'] }} maintenant ?');">
+                                    @csrf
+                                    <button type="submit" class="btn btn-sm btn-light-primary"><i class="bi bi-play-fill"></i> Exécuter</button>
+                                </form>
+                            @endif
+                            @if (! $task['controllable'] && ! $task['runnable'])
+                                <span class="text-muted fs-8">Lecture seule</span>
+                            @endif
                         </td>
                     </tr>
                 @endforeach

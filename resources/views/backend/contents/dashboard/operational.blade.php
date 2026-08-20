@@ -23,17 +23,14 @@
     <div class="card-header border-0"><div class="card-title d-flex flex-column"><span class="fw-bold">Vue exécutive</span><span class="text-muted fs-7">Acquisition, engagement et conversion sur 30 jours</span></div></div>
     <div class="card-body pt-0"><div class="row g-4">
         @foreach ([
-            [number_format($kpis['companies']), 'Entreprises'],
-            [number_format($kpis['contacts']), 'Contacts'],
-            [number_format($campaigns['total']), 'Campagnes totales'],
-            [number_format($kpis['active_campaigns']), 'Campagnes actives'],
-            [number_format($kpis['emails_sent_30d']), 'Emails envoyés'],
-            [number_format($kpis['open_rate'], 1).' %', 'Taux d’ouverture'],
-            [number_format($kpis['click_rate'], 1).' %', 'Taux de clic'],
-            [number_format($kpis['demandes_30d']), 'Demandes'],
-            [number_format($kpis['conversion_rate'], 1).' %', 'Conversion'],
-        ] as [$value, $label])
-            <div class="col-6 col-lg-3"><div class="border rounded p-4 h-100"><div class="fs-2 fw-bolder">{{ $value }}</div><div class="text-muted fs-7 fw-semibold">{{ $label }}</div></div></div>
+            [number_format($kpis['companies']), 'Entreprises', 'ki-bank'],
+            [number_format($kpis['emails_sent_30d']), 'Emails envoyés', 'ki-paper-plane'],
+            [number_format($kpis['open_rate'], 1).' %', 'Taux d’ouverture', 'ki-eye'],
+            [number_format($kpis['contacts']), 'Contacts', 'ki-people'],
+            [number_format($kpis['active_campaigns']), 'Campagnes actives', 'ki-rocket'],
+            [number_format($campaigns['total']), 'Campagnes totales', 'ki-chart-simple'],
+        ] as [$value, $label, $icon])
+            <div class="col-6 col-lg-3"><div class="border rounded p-4 h-100 d-flex align-items-center"><i class="ki-outline {{ $icon }} fs-2x text-primary me-3"></i><div><div class="fs-2 fw-bolder lh-1">{{ $value }}</div><div class="text-muted fs-7 fw-semibold">{{ $label }}</div></div></div></div>
         @endforeach
     </div></div>
 </section>
