@@ -8,7 +8,7 @@ return [
             'content' => 'Prospection & campagnes',
             'permission' => [
                 'backend.access', 'view companies', 'view contacts', 'view prospect_criteria',
-                'view prospect_batches', 'review prospect matches',
+                'view prospect_batches', 'review prospect matches', 'view sectors',
                 'view campaigns', 'view sequences', 'view segments', 'view campaign_templates',
                 'view sender_identities', 'view demandes', 'view inbox', 'view suppressions', 'view consumption',
             ],
@@ -45,7 +45,7 @@ return [
         ],
         [
             'title' => 'Découverte',
-            'permission' => ['view prospect_criteria', 'view prospect_batches'],
+            'permission' => ['view prospect_criteria', 'view prospect_batches', 'view sectors'],
             'classes' => ['item' => 'menu-accordion'],
             'attributes' => ['item' => ['data-kt-menu-trigger' => 'click']],
             'icon' => [
@@ -55,6 +55,7 @@ return [
             'sub' => [
                 ['title' => 'Critères de découverte', 'permission' => 'view prospect_criteria', 'path' => 'admin/prospect_criteria', 'active_prefix' => 'admin/prospect_criteria'],
                 ['title' => 'Lots', 'permission' => 'view prospect_batches', 'path' => 'admin/prospect_batches', 'active_prefix' => 'admin/prospect_batches'],
+                ['title' => 'Secteurs', 'permission' => 'view sectors', 'path' => 'admin/sectors', 'active_prefix' => 'admin/sectors'],
             ],
         ],
         [

@@ -268,12 +268,25 @@ class CompanyController extends BackendController
      */
     protected function getViewVars(): array
     {
+        try {
+            $sectors = \App\Models\Sector::where('is_active', true)
+                ->orderBy('sort_order')->orderBy('label')
+                ->pluck('label', 'label')->all();
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Table not migrated yet — fall back to the config taxonomy so the form still renders.
+            $sectors = array_combine(
+                config('global.data.company_sectors', []),
+                config('global.data.company_sectors', [])
+            );
+        }
+
         return [
             'relationships' => config('global.data.company_relationships', []),
             'sources' => config('global.data.company_sources', []),
             'qualificationStatuses' => config('global.data.company_qualification_statuses', []),
             'sizeBuckets' => config('global.data.company_size_buckets', []),
             'countries' => config('global.data.company_countries', []),
+            'sectors' => $sectors,
         ];
     }
 

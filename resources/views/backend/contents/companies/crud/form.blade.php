@@ -116,14 +116,25 @@
                                        value="{{ old('domain', $model->domain ?? '') }}" />
                             </div>
 
-                            {{-- Secteur --}}
+                            {{-- Secteur (locked select — canonical taxonomy, structure/specs/sector-taxonomy.md) --}}
                             <div class="fv-row mb-7">
                                 <label class="fw-semibold fs-6 mb-2">Secteur</label>
-                                <input type="text"
-                                       name="sector"
-                                       class="form-control form-control-solid"
-                                       placeholder="Ex : Transport & Logistique"
-                                       value="{{ old('sector', $model->sector ?? '') }}" />
+                                @php
+                                    $currentSector = old('sector', $model->sector ?? '');
+                                @endphp
+                                <select name="sector" class="form-select form-select-solid" data-control="select2" data-placeholder="Sélectionner un secteur...">
+                                    <option value="">Sélectionner un secteur...</option>
+                                    @if($currentSector !== '' && !isset($sectors[$currentSector]))
+                                        {{-- Legacy/unmapped value still on the record — keep it selectable so editing never silently drops it. --}}
+                                        <option value="{{ $currentSector }}" selected>{{ $currentSector }}</option>
+                                    @endif
+                                    @foreach($sectors as $label)
+                                        <option value="{{ $label }}"
+                                            {{ $currentSector === $label ? 'selected' : '' }}>
+                                            {{ $label }}
+                                        </option>
+                                    @endforeach
+                                </select>
                             </div>
 
                             {{-- Téléphone (moved from the old Coordonnées tab) --}}

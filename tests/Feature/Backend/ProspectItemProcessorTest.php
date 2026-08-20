@@ -273,14 +273,20 @@ class ProspectItemProcessorTest extends TestCase
         $this->assertSame('review', $item->status);
         $this->assertSame('missing_domain', $item->domain_reason);
         $this->assertSame([], $item->domain_alternatives);
-        $this->assertSame([
+        $expected = [
             'name' => 'Beta Transit',
             'address' => '5 quai du Port, Marseille',
             'phone' => '+33401020304',
             'provider_key' => 'maps-safe-42',
             'engine' => 'google_maps',
             'domain' => null,
-        ], data_get($item->source_metadata, 'resolution.maps.0'));
+            'sector_hint' => null,
+        ];
+        $actual = data_get($item->source_metadata, 'resolution.maps.0');
+        ksort($expected);
+        ksort($actual);
+        // ponytail: ksort — MySQL JSON columns don't guarantee member insertion order on read
+        $this->assertSame($expected, $actual);
     }
 
     public function test_platform_and_rejected_registrable_domain_collision_require_review(): void
@@ -424,6 +430,10 @@ class ProspectItemProcessorTest extends TestCase
                     'meta' => ['results' => 50, 'limit' => 10, 'offset' => 0],
                 ], 200);
             }
+            $engine = $request->data()['engine'] ?? null;
+            if (in_array($engine, ['google', 'google_maps'], true)) {
+                return Http::response([], 200);
+            }
 
             return Http::response([], 500);
         });
@@ -513,6 +523,10 @@ class ProspectItemProcessorTest extends TestCase
             if (str_contains($request->url(), '/companies/find')) {
                 return Http::response(['data' => []], 200);
             }
+            $engine = $request->data()['engine'] ?? null;
+            if (in_array($engine, ['google', 'google_maps'], true)) {
+                return Http::response([], 200);
+            }
 
             $domainSearchRequests[] = $request->data();
 
@@ -589,6 +603,118 @@ class ProspectItemProcessorTest extends TestCase
         $this->assertDatabaseHas('provider_calls', ['operation' => 'domain_search', 'status' => 'succeeded']);
     }
 
+    public function test_hunter_missing_industry_falls_back_to_maps_sector_hint(): void
+    {
+        $item = $this->item(['provided_domain' => 'acme.fr']);
+
+        Http::fake(function (Request $request) {
+            if (str_contains($request->url(), '/companies/find')) {
+                return Http::response(['data' => $this->companyEnrichment([
+                    'category' => ['industry' => null],
+                ])], 200);
+            }
+
+            if (str_contains($request->url(), '/domain-search')) {
+                return Http::response([
+                    'data' => ['domain' => 'acme.fr', 'emails' => []],
+                    'meta' => ['results' => 0, 'limit' => 100, 'offset' => 0],
+                ], 200);
+            }
+
+            $engine = $request->data()['engine'] ?? null;
+            if ($engine === 'google') {
+                return Http::response(['organic_results' => []], 200);
+            }
+
+            return Http::response(['local_results' => [[
+                'title' => 'Acme Logistics',
+                'type' => 'Transport',
+                'website' => 'https://acme.fr',
+            ]]], 200);
+        });
+
+        Queue::fake();
+        $job = new ProcessProspectBatchItemJob($item->id);
+        $job->handle(app(ProspectItemProcessor::class), app(ProspectBatchService::class));
+
+        $item->refresh();
+        $this->assertSame('promoted', $item->status);
+        $this->assertSame('Transport', Company::sole()->sector);
+        $this->assertSame('Transport', data_get($item->source_metadata, 'company.sector'));
+    }
+
+    public function test_hunter_not_found_falls_back_to_maps_sector_hint(): void
+    {
+        $item = $this->item(['provided_domain' => 'acme.fr']);
+
+        Http::fake(function (Request $request) {
+            if (str_contains($request->url(), '/companies/find')) {
+                return Http::response(['errors' => [['id' => 'not_found']]], 404);
+            }
+
+            if (str_contains($request->url(), '/domain-search')) {
+                return Http::response([
+                    'data' => ['domain' => 'acme.fr', 'emails' => []],
+                    'meta' => ['results' => 0, 'limit' => 100, 'offset' => 0],
+                ], 200);
+            }
+
+            $engine = $request->data()['engine'] ?? null;
+            if ($engine === 'google') {
+                return Http::response(['organic_results' => []], 200);
+            }
+
+            return Http::response(['local_results' => [[
+                'title' => 'Acme Logistics',
+                'type' => 'Transport',
+                'website' => 'https://acme.fr',
+            ]]], 200);
+        });
+
+        Queue::fake();
+        $job = new ProcessProspectBatchItemJob($item->id);
+        $job->handle(app(ProspectItemProcessor::class), app(ProspectBatchService::class));
+
+        $item->refresh();
+        $this->assertSame('promoted', $item->status);
+        $companyCall = ProviderCall::query()->where('operation', 'company_enrichment')->sole();
+        $this->assertSame('failed', $companyCall->status);
+        $this->assertSame(404, $companyCall->http_status);
+        $this->assertTrue((bool) data_get($item->source_metadata, 'processing.company_enrichment_done'));
+        $this->assertSame('Transport', Company::sole()->sector);
+        $this->assertSame('Transport', data_get($item->source_metadata, 'company.sector'));
+        $this->assertTrue((bool) data_get($item->fresh()->source_metadata, 'processing.maps_done'));
+        $this->assertNotEmpty(data_get($item->fresh()->source_metadata, 'resolution.maps'));
+    }
+
+    public function test_hunter_industry_present_skips_maps_sector_fallback_call(): void
+    {
+        $item = $this->item(['provided_domain' => 'acme.fr']);
+
+        Http::fake(function (Request $request) {
+            if (str_contains($request->url(), '/companies/find')) {
+                return Http::response(['data' => $this->companyEnrichment()], 200);
+            }
+
+            if (str_contains($request->url(), '/domain-search')) {
+                return Http::response([
+                    'data' => ['domain' => 'acme.fr', 'emails' => []],
+                    'meta' => ['results' => 0, 'limit' => 100, 'offset' => 0],
+                ], 200);
+            }
+
+            return Http::response([], 500);
+        });
+
+        app(ProspectItemProcessor::class)->process($item);
+
+        $item->refresh();
+        $this->assertSame('ready', $item->status);
+        $this->assertSame('Logistics', data_get($item->source_metadata, 'company.sector'));
+        $this->assertSame(0, ProviderCall::query()->where('operation', 'google_maps')->count());
+        Http::assertNotSent(fn (Request $request): bool => ($request->data()['engine'] ?? null) === 'google_maps');
+    }
+
     public function test_domain_search_not_found_is_empty_and_item_becomes_ready(): void
     {
         $item = $this->item(['provided_domain' => 'acme.fr']);
@@ -596,6 +722,10 @@ class ProspectItemProcessorTest extends TestCase
         Http::fake(function (Request $request) {
             if (str_contains($request->url(), '/companies/find')) {
                 return Http::response(['data' => []], 200);
+            }
+            $engine = $request->data()['engine'] ?? null;
+            if (in_array($engine, ['google', 'google_maps'], true)) {
+                return Http::response([], 200);
             }
 
             return Http::response(['errors' => [['id' => 'not_found']]], 404);
@@ -733,6 +863,10 @@ class ProspectItemProcessorTest extends TestCase
             if (str_contains($request->url(), '/companies/find')) {
                 return Http::response(['data' => []], 200);
             }
+            $engine = $request->data()['engine'] ?? null;
+            if (in_array($engine, ['google', 'google_maps'], true)) {
+                return Http::response([], 200);
+            }
 
             $requests[] = $request->data();
 
@@ -820,6 +954,10 @@ class ProspectItemProcessorTest extends TestCase
                     'verification' => ['status' => 'accept_all', 'date' => '2026-08-02'],
                 ]], 200);
             }
+            $engine = $request->data()['engine'] ?? null;
+            if (in_array($engine, ['google', 'google_maps'], true)) {
+                return Http::response([], 200);
+            }
 
             return Http::response([], 500);
         });
@@ -862,16 +1000,16 @@ class ProspectItemProcessorTest extends TestCase
         $processor = app(ProspectItemProcessor::class);
 
         $processor->process($item);
-        $this->assertSame(2, $sent);
+        $this->assertSame(3, $sent);
         $this->assertSame(1, Contact::query()->where('email', 'replay@acme.fr')->count());
         $this->assertSame(1, ProspectBatchContact::query()->where('prospect_batch_item_id', $item->id)->count());
         $processor->process($item->fresh());
 
-        $this->assertSame(2, $sent);
+        $this->assertSame(3, $sent);
         $this->assertSame(1, Contact::query()->where('email', 'replay@acme.fr')->count());
         $this->assertSame(1, ProspectBatchContact::query()->where('prospect_batch_item_id', $item->id)->count());
         $this->assertSame('ready', $item->fresh()->status);
-        $this->assertSame(2, ProviderCall::query()->count());
+        $this->assertSame(3, ProviderCall::query()->count());
     }
 
     public function test_provider_settlement_contact_import_and_provenance_are_atomic_and_job_replay_is_safe(): void

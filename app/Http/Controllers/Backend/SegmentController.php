@@ -236,8 +236,14 @@ class SegmentController extends BackendController
      */
     protected function getViewVars(): array
     {
+        try {
+            $sectorTaxonomy = \App\Models\Sector::where('is_active', true)->pluck('label')->all();
+        } catch (\Illuminate\Database\QueryException $e) {
+            $sectorTaxonomy = config('global.data.prospect_sectors', []);
+        }
+
         $sectors = array_values(array_unique(array_merge(
-            config('global.data.prospect_sectors', []),
+            $sectorTaxonomy,
             Company::query()
                 ->whereNotNull('sector')
                 ->where('sector', '!=', '')

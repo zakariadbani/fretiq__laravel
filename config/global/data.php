@@ -13,6 +13,66 @@
  *   DataTable  : ['type' => 'select_enum', 'configKey' => 'company_relationships', ...]
  */
 
+// Hoisted so 'company_sectors' below can derive from it without duplicating
+// the literal list — see the 'company_sectors' / 'sector_map' block further
+// down for the taxonomy this feeds (sector-taxonomy.md).
+$prospectSectors = [
+    'Transport & Logistique',
+    'Agroalimentaire',
+    'Industrie manufacturière',
+    'Chimie & Pharmaceutique',
+    'Automobile',
+    'Aéronautique',
+    'Textile & Habillement',
+    'E-commerce',
+    'Grande distribution',
+    'BTP & Matériaux',
+    'Énergie',
+    'Électronique & High-tech',
+    'Cosmétique & Parfumerie',
+    'Vins & Spiritueux',
+    'Machines & Équipements industriels',
+    'Maritime & Portuaire',
+    'Informatique',
+    'Matériel médical',
+    'Laboratoires pharmaceutiques',
+    'Équipementiers aéronautique',
+    'Instruments de mesure',
+    'Dentaire',
+    'Optique',
+    'Isolation thermique & panneaux sandwich',
+    'Équipementiers automobiles',
+    'Climatisation',
+    'Mobilier',
+    'Électroménager',
+    'Lubrifiants & pétrole',
+    'Traitement des eaux',
+    "Matériel d'hôtellerie",
+];
+
+// company_sectors = prospect_sectors (the near-duplicate "Matériel
+// industriel" was merged into "Machines & Équipements industriels" and
+// removed from prospect_sectors above — see the sector_map 'materiel
+// industriel' rule) plus 8 classification-only buckets that never feed a
+// SerpAPI query. This is the full canonical vocabulary seeded into the
+// `sectors` table.
+// NOTE: prospect_criteria row #2 still has the legacy 'Matériel industriel'
+// keyword in its raw search criteria — that's a search term, not a company
+// category, so it's harmless; user to update via the criteria UI if desired.
+$companySectors = array_values(array_merge(
+    $prospectSectors,
+    [
+        'Négoce & Distribution',
+        'Commerce de détail',
+        'Immobilier',
+        'Santé & Services médicaux',
+        'Services professionnels',
+        'Télécommunications & Médias',
+        'Finance & Assurance',
+        'Emballage',
+    ]
+));
+
 return [
 
     //---------------------------------------------------------------------------
@@ -470,39 +530,166 @@ return [
     // Valeurs libres utilisées directement dans les requêtes Google — ne pas modifier
     // sans vérifier l'impact sur la découverte existante.
     //---------------------------------------------------------------------------
-    'prospect_sectors' => [
-        'Transport & Logistique',
-        'Agroalimentaire',
-        'Industrie manufacturière',
-        'Chimie & Pharmaceutique',
-        'Automobile',
-        'Aéronautique',
-        'Textile & Habillement',
-        'E-commerce',
-        'Grande distribution',
-        'BTP & Matériaux',
-        'Énergie',
-        'Électronique & High-tech',
-        'Cosmétique & Parfumerie',
-        'Vins & Spiritueux',
-        'Machines & Équipements industriels',
-        'Maritime & Portuaire',
-        'Informatique',
-        'Matériel médical',
-        'Laboratoires pharmaceutiques',
-        'Équipementiers aéronautique',
-        'Instruments de mesure',
-        'Dentaire',
-        'Optique',
-        'Matériel industriel',
-        'Isolation thermique & panneaux sandwich',
-        'Équipementiers automobiles',
-        'Climatisation',
-        'Mobilier',
-        'Électroménager',
-        'Lubrifiants & pétrole',
-        'Traitement des eaux',
-        "Matériel d'hôtellerie",
+    'prospect_sectors' => $prospectSectors,
+
+    //---------------------------------------------------------------------------
+    // Companies — full canonical sector vocabulary (structure/specs/sector-taxonomy.md)
+    // Seeds the `sectors` table (SectorSeeder). Superset of prospect_sectors:
+    // adds 8 classification-only buckets that never feed a SerpAPI query and
+    // are not discovery keywords (use_in_discovery=false for those 8).
+    //---------------------------------------------------------------------------
+    'company_sectors' => $companySectors,
+
+    //---------------------------------------------------------------------------
+    // Companies.sector normalization — raw enrichment vocabulary → canonical
+    // label (or null = junk, not a real sector). Consumed by
+    // App\Support\SectorClassifier::canonical(). ORDER IS SIGNIFICANT — this
+    // is a first-match-wins ordered map: APPEND new rules, never reorder
+    // existing ones (reordering can silently flip an already-correct
+    // classification). Patterns are matched with
+    // preg_match('/'.$pattern.'/u', Str::lower(Str::ascii(trim($raw)))) —
+    // they must contain NO apostrophes (source data mixes straight ' and
+    // curly ’; Str::ascii folds ’→' but never strips it, so write patterns
+    // around the apostrophe, e.g. match "eau" not "l'eau").
+    //---------------------------------------------------------------------------
+    'sector_map' => [
+        // ── Junk / non-sector metadata → null (checked first, high-precision literals) ──
+        'siege social' => null,
+        'distributeur de (billets|cryptomonnaies)' => null,
+        'administration' => null,
+        'association professionnelle' => null,
+        'centre commercial' => null,
+        '\bmaison\b' => null,
+        'lotissement' => null,
+        'station-service' => null,
+
+        // ── E-commerce (MUST precede the internet|software|it services rule below) ──
+        'e-commerce' => 'E-commerce',
+        // "information technology" MUST precede the generic 'information' → Télécom
+        // rule further down, else "Information Technology and Services" (a common
+        // Hunter/Clearbit industry value) is misclassified as Télécommunications & Médias.
+        'internet|software|\bit services\b|information technology' => 'Informatique',
+
+        // ── Aéronautique ──
+        'aerospace|aeronautique|defense' => 'Aéronautique',
+
+        // ── Traitement des eaux (specific first; \beaux?\b also catches "l'eau" via the apostrophe word-break) ──
+        'adoucissement' => 'Traitement des eaux',
+        'assainissement' => 'Traitement des eaux',
+        'epuration' => 'Traitement des eaux',
+        'eaux? usees' => 'Traitement des eaux',
+        'traitement.*eau' => 'Traitement des eaux',
+        '\beaux?\b' => 'Traitement des eaux',
+
+        // ── "cuisine" belongs to hôtellerie, never agroalimentaire (regression trap) ──
+        'cuisine' => "Matériel d'hôtellerie",
+        'hotel|restaurant' => "Matériel d'hôtellerie",
+
+        // ── Matériel médical (equipment/products — before the generic medic stem) ──
+        'materiel medical' => 'Matériel médical',
+        'equipements? medicaux' => 'Matériel médical',
+        'produits chirurgicaux' => 'Matériel médical',
+
+        // ── Santé & Services médicaux (providers/services). Stem is "medic", NOT "medical" — "médicaux" folds to "medicaux" (regression trap) ──
+        'health care' => 'Santé & Services médicaux',
+        'medic' => 'Santé & Services médicaux',
+
+        // ── Dentaire (before cosmétique — "Dentiste cosmétique" must land here, not Cosmétique) ──
+        'dent' => 'Dentaire',
+
+        // ── Climatisation / CVC ──
+        'climatisation|chauffage|ventilation' => 'Climatisation',
+
+        // ── Cosmétique & Parfumerie ──
+        'parfum|arome' => 'Cosmétique & Parfumerie',
+        'cosmet' => 'Cosmétique & Parfumerie',
+        'beaute' => 'Cosmétique & Parfumerie',
+        'hygiene' => 'Cosmétique & Parfumerie',
+        'personal products' => 'Cosmétique & Parfumerie',
+
+        // ── Automobile (parts/accessories first — more specific than the generic automobile rule) ──
+        'pieces? (de rechange )?automobiles?|accessoires automobiles' => 'Équipementiers automobiles',
+        'automotive|automobile|voiture|carrosserie|concessionnaire' => 'Automobile',
+
+        // ── Mobilier ──
+        'ameublement|meuble' => 'Mobilier',
+
+        // ── Emballage ──
+        'packaging|containers|emballage' => 'Emballage',
+
+        // ── Électroménager (before Électronique & High-tech) ──
+        'electromenager' => 'Électroménager',
+
+        // ── Électronique & High-tech ──
+        'electronique|electrique|technology hardware' => 'Électronique & High-tech',
+
+        // ── Isolation (before the "materiaux" fallback in BTP & Matériaux below) ──
+        'isolation' => 'Isolation thermique & panneaux sandwich',
+
+        // ── Instruments de mesure ──
+        'instruments? de mesure' => 'Instruments de mesure',
+
+        // ── Laboratoires pharmaceutiques ──
+        'laboratoire' => 'Laboratoires pharmaceutiques',
+        'life sciences' => 'Laboratoires pharmaceutiques',
+
+        // ── Chimie & Pharmaceutique ──
+        'chemical|chimique|biotechnology|pharmaceutical' => 'Chimie & Pharmaceutique',
+
+        // ── Machines & Équipements industriels (specific first; bare "equipement" fallback is much further down) ──
+        'equipements? industriels?' => 'Machines & Équipements industriels',
+        // "Matériel industriel" merge (structure/specs/sector-taxonomy.md) — folds to
+        // "materiel industriel"; must precede the bare "equipement" fallback further down.
+        'materiel industriel' => 'Machines & Équipements industriels',
+        'chaudronnerie|machinery|capital goods' => 'Machines & Équipements industriels',
+
+        // ── Industrie manufacturière ──
+        'industrial conglomerates' => 'Industrie manufacturière',
+
+        // ── BTP & Matériaux (word-bound bois/wood — regression trap) ──
+        'building materials|construction|travaux|terrassement|materiaux' => 'BTP & Matériaux',
+        '\bbois\b|\bwood\b' => 'BTP & Matériaux',
+
+        // ── Énergie (word-bound gas — bare "gas" would match inside "magasin", regression trap) ──
+        '\bgas\b|energetique|energie' => 'Énergie',
+
+        // ── Grande distribution vs Agroalimentaire — "food" is retail OR product, disambiguate before the bare word-bound rule ──
+        'food & staples retailing|food.*retail' => 'Grande distribution',
+        '\bfood\b|surgele|agroalimentaire' => 'Agroalimentaire',
+
+        // ── Négoce & Distribution ──
+        'import-export|importateur|distributors|distribution' => 'Négoce & Distribution',
+        'vendeur en gros' => 'Négoce & Distribution',
+        'grossiste' => 'Négoce & Distribution',
+
+        // ── Commerce de détail ──
+        '\bretailing\b' => 'Commerce de détail',
+
+        // ── Immobilier ──
+        'immobil|real estate' => 'Immobilier',
+
+        // ── Finance & Assurance ──
+        'financial services' => 'Finance & Assurance',
+
+        // ── Télécommunications & Médias (word-bound media — regression trap) ──
+        'telecommunication' => 'Télécommunications & Médias',
+        '\bmedia\b' => 'Télécommunications & Médias',
+        'information' => 'Télécommunications & Médias',
+
+        // ── Services professionnels ──
+        'consultant|ingenierie|consumer services|professional services' => 'Services professionnels',
+
+        // ── Transport & Logistique ──
+        'transport|logistiq|freight|livraison|entrepot|road.*rail' => 'Transport & Logistique',
+
+        // ── Bare fallbacks — MUST stay last: every specific rule above must get first crack ──
+        // ponytail: "equipement"/"fabricant" bare are real-but-vague signals classified to
+        // their closest generic bucket rather than nulled; "magasin"/"entreprise" bare carry
+        // no sector signal at all and are true junk. Extend the specific rules above, not these.
+        'equipement' => 'Machines & Équipements industriels',
+        '\bfabricant\b' => 'Industrie manufacturière',
+        '\bmagasin\b' => null,
+        '\bentreprise\b' => null,
     ],
 
     //---------------------------------------------------------------------------

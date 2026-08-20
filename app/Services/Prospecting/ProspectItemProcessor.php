@@ -458,9 +458,11 @@ final class ProspectItemProcessor
             if ($exception->safeCode !== 'not_found') {
                 throw $exception;
             }
-            $this->recordEmptyOutcome($item, $context, 'hunter', 'company_enrichment', function (ProspectBatchItem $locked): void {
+            $company = [];
+            $this->applyMapsSectorFallbackIfEmpty($item, $company, $domain->host);
+            $this->recordEmptyOutcome($item, $context, 'hunter', 'company_enrichment', function (ProspectBatchItem $locked) use ($company): void {
                 $metadata = $this->itemMetadata($locked);
-                data_set($metadata, 'company', []);
+                data_set($metadata, 'company', $company);
                 data_set($metadata, 'processing.company_enrichment_done', true);
                 $locked->forceFill(['source_metadata' => $metadata])->save();
             });
@@ -475,6 +477,7 @@ final class ProspectItemProcessor
 
         $data = $execution->response?->data ?? [];
         $company = $this->normalizeCompanyData($data);
+        $this->applyMapsSectorFallbackIfEmpty($item, $company, $domain->host);
         $siteCandidates = $this->normalizeSiteEmails($data);
         $this->settleBusinessWrite(
             $item,
@@ -491,6 +494,40 @@ final class ProspectItemProcessor
             },
             consumedUnits: $data === [] ? 0 : $this->hunterUnits('company_enrichment'),
         );
+    }
+
+    /** @param array<string, mixed> $company */
+    private function applyMapsSectorFallbackIfEmpty(ProspectBatchItem $item, array &$company, ?string $host = null): void
+    {
+        if (! empty($company['sector'])) {
+            return;
+        }
+        if (! Setting::get('decouverte.maps_sector_fallback', true)) {
+            return;
+        }
+
+        $rows = $this->googleMaps($item);
+        $hint = null;
+        if ($host !== null) {
+            foreach ($rows as $row) {
+                if (($row['domain'] ?? null) === $host && ! empty($row['sector_hint'] ?? null)) {
+                    $hint = $row['sector_hint'];
+                    break;
+                }
+            }
+        }
+        // ponytail: first-match heuristic — most Maps rows have no website, so this can pick an unrelated same-query business; tighten with name agreement only if it misfires
+        if ($hint === null) {
+            foreach ($rows as $row) {
+                if (! empty($row['sector_hint'] ?? null)) {
+                    $hint = $row['sector_hint'];
+                    break;
+                }
+            }
+        }
+        if ($hint !== null) {
+            $company['sector'] = $hint;
+        }
     }
 
     private function scoreCompanyForItem(ProspectBatchItem $item, CanonicalDomain $domain): ?AutomaticEnrichmentDecision
@@ -1212,6 +1249,7 @@ final class ProspectItemProcessor
                 'provider_key' => $providerKey,
                 'engine' => 'google_maps',
                 'domain' => $canonical?->host,
+                'sector_hint' => $this->safeText($row['type'] ?? null, 100),
             ];
         }
 
@@ -1447,6 +1485,7 @@ final class ProspectItemProcessor
                 'provider_key' => $this->safeIdentifier($row['provider_key'] ?? null),
                 'engine' => in_array($row['engine'] ?? null, ['google', 'google_maps'], true) ? $row['engine'] : null,
                 'match_mode' => ($row['match_mode'] ?? null) === 'perfect' ? 'perfect' : null,
+                'sector_hint' => $this->safeText($row['sector_hint'] ?? null, 100),
                 'domain' => $domain?->host,
                 'registrable_domain' => $domain?->registrableDomain,
                 'perfect_match' => ($row['perfect_match'] ?? false) === true,

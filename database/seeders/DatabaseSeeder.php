@@ -19,6 +19,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             \Database\Seeders\Acl\RolesSeeder::class,
             \Database\Seeders\Acl\PermissionsSeeder::class,
+            \Database\Seeders\SectorSeeder::class,
             \Database\Seeders\UsersSeeder::class,
             \Database\Seeders\SettingsSeeder::class,
             \Database\Seeders\DefaultProspectionSeeder::class,

@@ -104,6 +104,14 @@ class Company extends Model
             $company->source ??= 'manual';
             $company->qualification_status ??= 'pending';
             $company->is_active ??= true;
+
+            // Single choke point for the sector taxonomy invariant
+            // (structure/business-rules/prospection-discovery.md) — every
+            // writer of companies.sector goes through Eloquent save(), so
+            // normalizing here guarantees canonical vocabulary everywhere.
+            if ($company->isDirty('sector')) {
+                $company->sector = \App\Support\SectorClassifier::canonical($company->sector);
+            }
         });
 
         // Hide rejected (AI-excluded competitor) companies from every read path

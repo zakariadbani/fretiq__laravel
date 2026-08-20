@@ -530,10 +530,19 @@ class ProspectCriteriaController extends BackendController
             $monthlyRemaining = null;
         }
 
+        try {
+            $sectorsList = \App\Models\Sector::where('is_active', true)
+                ->where('use_in_discovery', true)
+                ->orderBy('sort_order')->orderBy('label')
+                ->pluck('label')->all();
+        } catch (\Illuminate\Database\QueryException $e) {
+            $sectorsList = config('global.data.prospect_sectors', []);
+        }
+
         return [
             'companySizes' => config('global.data.company_size_buckets', []),
             'countries' => config('global.data.company_countries', []),
-            'sectorsList' => config('global.data.prospect_sectors', []),
+            'sectorsList' => $sectorsList,
             'positionGroups' => config('global.data.prospect_positions', []),
             'euCodes' => config('global.data.eu_country_codes', []),
             'recommendedPositions' => collect(config('global.data.prospect_positions', []))

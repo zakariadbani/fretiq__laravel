@@ -13,7 +13,7 @@ class PermissionsSeeder extends Seeder
      *
      * Permission naming convention: "{action} {entity}"
      * Entities: companies, contacts, segments, campaigns, campaign_templates, sequences, demandes,
-     *           users, prospect_criteria, sender_identities, suppressions
+     *           users, prospect_criteria, sender_identities, suppressions, sectors
      * Actions:  view, create, edit, delete
      *
      * Keyword permissions: backend.access, send campaigns, manage roles, manage permissions,
@@ -37,7 +37,7 @@ class PermissionsSeeder extends Seeder
         $entities = [
             'companies', 'contacts', 'segments', 'campaigns', 'campaign_templates',
             'sequences', 'demandes', 'users', 'prospect_criteria', 'sender_identities', 'suppressions',
-            'prospect_batches',
+            'prospect_batches', 'sectors',
         ];
         $actions = ['view', 'create', 'edit', 'delete'];
 
@@ -123,7 +123,7 @@ class PermissionsSeeder extends Seeder
         $commercialEntities = [
             'companies', 'contacts', 'segments', 'campaigns', 'sequences', 'demandes',
             'prospect_criteria', 'campaign_templates', 'sender_identities',
-            'prospect_batches',
+            'prospect_batches', 'sectors',
         ];
         $commercialActions = ['view', 'create', 'edit'];
 
