@@ -115,7 +115,9 @@ class ZohoCampaignsTemplatesService
 
                 if ($name === '' || $content === '') {
                     $skipped++;
-                    Log::debug("[ZohoCampaignsTemplatesService] Skipped campaign {$tpl['zoho_id']} — empty name or preview content");
+                    Log::channel('zoho')->debug('[ZohoCampaignsTemplatesService] Skipped campaign — empty name or preview content', [
+                        'zoho_id' => $tpl['zoho_id'],
+                    ]);
                     continue;
                 }
 
@@ -154,7 +156,9 @@ class ZohoCampaignsTemplatesService
         } catch (\Throwable $e) {
             $status = 'error';
             $error = $e->getMessage();
-            Log::error("[ZohoCampaignsTemplatesService] import() failed: {$error}");
+            Log::channel('zoho')->error('[ZohoCampaignsTemplatesService] import() failed', [
+                'error' => $error,
+            ]);
         }
 
         ZohoSyncLog::create([
@@ -291,7 +295,7 @@ class ZohoCampaignsTemplatesService
         $response = Http::timeout(30)->get($url);
 
         if ($response->failed()) {
-            Log::warning('[ZohoCampaignsTemplatesService] Preview fetch failed', [
+            Log::channel('zoho')->warning('[ZohoCampaignsTemplatesService] Preview fetch failed', [
                 'url_host' => parse_url($url, PHP_URL_HOST),
                 'status' => $response->status(),
             ]);

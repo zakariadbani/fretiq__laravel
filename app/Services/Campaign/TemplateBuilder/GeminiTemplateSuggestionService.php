@@ -29,7 +29,7 @@ class GeminiTemplateSuggestionService
     public function suggest(string $brief): ?array
     {
         if (! $this->gemini->hasApiKey()) {
-            Log::warning('[GeminiTemplateSuggestionService] Clé API Gemini non configurée — suggestion ignorée.');
+            Log::channel('campaign')->warning('[GeminiTemplateSuggestionService] Clé API Gemini non configurée — suggestion ignorée.');
 
             return null;
         }
@@ -41,7 +41,7 @@ class GeminiTemplateSuggestionService
             ]);
 
             if ($response->failed()) {
-                Log::warning('[GeminiTemplateSuggestionService] Réponse HTTP échouée depuis Gemini.', [
+                Log::channel('campaign')->warning('[GeminiTemplateSuggestionService] Réponse HTTP échouée depuis Gemini.', [
                     'status' => $response->status(),
                 ]);
 
@@ -55,7 +55,7 @@ class GeminiTemplateSuggestionService
             // candidate could still reach validateSuggestion().
             $finishReason = $response->json('candidates.0.finishReason');
             if ($finishReason !== 'STOP') {
-                Log::warning('[GeminiTemplateSuggestionService] finishReason non-STOP — suggestion rejetée.', [
+                Log::channel('campaign')->warning('[GeminiTemplateSuggestionService] finishReason non-STOP — suggestion rejetée.', [
                     'finish_reason' => $finishReason,
                 ]);
 
@@ -64,14 +64,14 @@ class GeminiTemplateSuggestionService
 
             $text = $this->gemini->extractText($response);
             if ($text === null) {
-                Log::warning('[GeminiTemplateSuggestionService] Réponse Gemini vide ou structure inattendue.');
+                Log::channel('campaign')->warning('[GeminiTemplateSuggestionService] Réponse Gemini vide ou structure inattendue.');
 
                 return null;
             }
 
             $data = $this->gemini->decodeJson($text);
             if ($data === null) {
-                Log::warning('[GeminiTemplateSuggestionService] JSON non décodable dans la réponse Gemini.', [
+                Log::channel('campaign')->warning('[GeminiTemplateSuggestionService] JSON non décodable dans la réponse Gemini.', [
                     'raw' => mb_substr($this->gemini->stripFences($text), 0, 500),
                 ]);
 
@@ -80,7 +80,7 @@ class GeminiTemplateSuggestionService
 
             $validated = $this->validator->validateSuggestion($data);
             if ($validated === null) {
-                Log::warning('[GeminiTemplateSuggestionService] Suggestion Gemini invalide ou hors bornes — rejetée.', [
+                Log::channel('campaign')->warning('[GeminiTemplateSuggestionService] Suggestion Gemini invalide ou hors bornes — rejetée.', [
                     'raw' => mb_substr(json_encode($data), 0, 500),
                 ]);
 
@@ -89,7 +89,7 @@ class GeminiTemplateSuggestionService
 
             return $validated;
         } catch (\Throwable $e) {
-            Log::warning('[GeminiTemplateSuggestionService] Exception lors de l\'appel Gemini — suggestion ignorée.', [
+            Log::channel('campaign')->warning('[GeminiTemplateSuggestionService] Exception lors de l\'appel Gemini — suggestion ignorée.', [
                 'error' => $e->getMessage(),
             ]);
 

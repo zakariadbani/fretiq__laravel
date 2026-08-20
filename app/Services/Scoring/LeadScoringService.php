@@ -47,7 +47,7 @@ class LeadScoringService
             $driver = config('services.scoring.driver', 'heuristic');
 
             if ($hasIntent && ! $hasGeminiKey) {
-                Log::warning('[LeadScoringService] Description IA renseignée mais GEMINI_API_KEY absente — repli heuristique (exclusion IA inactive).', [
+                Log::channel('gemini')->warning('[LeadScoringService] Description IA renseignée mais GEMINI_API_KEY absente — repli heuristique (exclusion IA inactive).', [
                     'criteria_id' => $criteria->id ?? null,
                 ]);
             }
@@ -56,7 +56,7 @@ class LeadScoringService
                 $result = $this->gemini->score($candidate, $criteria, $timeoutSeconds);
 
                 if ($result === null) {
-                    Log::warning('[LeadScoringService] Gemini indisponible — repli heuristique', [
+                    Log::channel('gemini')->warning('[LeadScoringService] Gemini indisponible — repli heuristique', [
                         'domain'      => $candidate['domain'] ?? ($candidate['url'] ?? $candidate['link'] ?? ''),
                         'criteria_id' => $criteria->id ?? null,
                     ]);
@@ -72,7 +72,7 @@ class LeadScoringService
             return $this->heuristic->score($candidate, $criteria, $timeoutSeconds);
         } catch (\Throwable $e) {
             // Safety net: should never reach here, but we must never throw.
-            Log::error('[LeadScoringService] Exception inattendue dans score() — repli heuristique.', [
+            Log::channel('gemini')->error('[LeadScoringService] Exception inattendue dans score() — repli heuristique.', [
                 'error'       => $e->getMessage(),
                 'domain'      => $candidate['domain'] ?? '',
                 'criteria_id' => $criteria->id ?? null,

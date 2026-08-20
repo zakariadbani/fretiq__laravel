@@ -245,7 +245,7 @@ class ZohoSyncOrchestrator
                 // never a terminal module result.  Otherwise a sibling module
                 // could finalize this batch while this delivery is still
                 // recoverable.
-                Log::warning('Zoho V2 reconciliation attempt was interrupted.', [
+                Log::channel('zoho')->warning('Zoho V2 reconciliation attempt was interrupted.', [
                     'batch_id' => $batch->id,
                     'module' => $definition->key,
                     'http_status' => (int) ($reconciliation['http_status'] ?? 0),
@@ -326,7 +326,7 @@ class ZohoSyncOrchestrator
         } catch (Throwable $e) {
             // Queue retries are non-terminal.  `failed()` is the only path
             // that turns a retryable delivery into a terminal module result.
-            Log::warning('Zoho V2 module attempt threw before completion.', [
+            Log::channel('zoho')->warning('Zoho V2 module attempt threw before completion.', [
                 'batch_id' => $batch->id,
                 'module' => $definition->key,
                 'exception' => sprintf(

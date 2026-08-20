@@ -204,7 +204,7 @@ class HomepageSnapshotService
             // Pool-level blowup (an exception type Laravel does not fold into the
             // results array). Degrade to the serial path so one bad promise cannot
             // cost the whole wave, then stop — everything is cached below.
-            Log::warning('[HomepageSnapshotService] Échec du pool de récupération — repli séquentiel.', [
+            Log::channel('discovery')->warning('[HomepageSnapshotService] Échec du pool de récupération — repli séquentiel.', [
                 'scheme' => $scheme,
                 'count'  => count($domains),
                 'error'  => $e->getMessage(),
@@ -235,7 +235,7 @@ class HomepageSnapshotService
 
             // Http::pool hands back a ConnectionException OBJECT instead of throwing.
             if ($result instanceof \Throwable) {
-                Log::warning('[HomepageSnapshotService] Échec de récupération de la page d\'accueil.', [
+                Log::channel('discovery')->warning('[HomepageSnapshotService] Échec de récupération de la page d\'accueil.', [
                     'domain' => $domain,
                     'scheme' => $scheme,
                     'error'  => $result->getMessage(),
@@ -258,7 +258,7 @@ class HomepageSnapshotService
                 }
 
                 if ($result->failed()) {
-                    Log::warning('[HomepageSnapshotService] Réponse HTTP échouée — page d\'accueil ignorée.', [
+                    Log::channel('discovery')->warning('[HomepageSnapshotService] Réponse HTTP échouée — page d\'accueil ignorée.', [
                         'domain' => $domain,
                         'scheme' => $scheme,
                         'status' => $result->status(),
@@ -272,7 +272,7 @@ class HomepageSnapshotService
 
                 $this->cacheExcerpt($domain, $this->cleanToExcerpt($result->body()));
             } catch (\Throwable $e) {
-                Log::warning('[HomepageSnapshotService] Échec de traitement de la page d\'accueil.', [
+                Log::channel('discovery')->warning('[HomepageSnapshotService] Échec de traitement de la page d\'accueil.', [
                     'domain' => $domain,
                     'scheme' => $scheme,
                     'error'  => $e->getMessage(),
@@ -343,7 +343,7 @@ class HomepageSnapshotService
                     ->get("{$scheme}://{$domain}");
 
                 if ($response->failed()) {
-                    Log::warning('[HomepageSnapshotService] Réponse HTTP échouée — page d\'accueil ignorée.', [
+                    Log::channel('discovery')->warning('[HomepageSnapshotService] Réponse HTTP échouée — page d\'accueil ignorée.', [
                         'domain' => $domain,
                         'scheme' => $scheme,
                         'status' => $response->status(),
@@ -355,7 +355,7 @@ class HomepageSnapshotService
 
                 return $response->body();
             } catch (\Throwable $e) {
-                Log::warning('[HomepageSnapshotService] Échec de récupération de la page d\'accueil.', [
+                Log::channel('discovery')->warning('[HomepageSnapshotService] Échec de récupération de la page d\'accueil.', [
                     'domain' => $domain,
                     'scheme' => $scheme,
                     'error'  => $e->getMessage(),

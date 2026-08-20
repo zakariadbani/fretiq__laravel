@@ -82,7 +82,7 @@ class CampaignSchedulerService
                 // Skip vs shift depends on frequency — see class docblock. No
                 // CampaignRun row is created for this occurrence; the cursor
                 // still advances below so the scheduler picks up the next one.
-                Log::debug('[CampaignSchedulerService] Daily-like occurrence skipped (blocked day).', [
+                Log::channel('campaign')->debug('[CampaignSchedulerService] Daily-like occurrence skipped (blocked day).', [
                     'campaign_id'    => $campaign->id,
                     'occurrence_key' => $occ,
                 ]);
@@ -105,7 +105,7 @@ class CampaignSchedulerService
 
                 $count++;
 
-                Log::debug('[CampaignSchedulerService] Recurring run materialised.', [
+                Log::channel('campaign')->debug('[CampaignSchedulerService] Recurring run materialised.', [
                     'campaign_id'    => $campaign->id,
                     'occurrence_key' => $occ,
                 ]);
@@ -126,14 +126,14 @@ class CampaignSchedulerService
                     'next_run_at' => null,
                 ]);
 
-                Log::info('[CampaignSchedulerService] Recurring campaign ended.', [
+                Log::channel('campaign')->info('[CampaignSchedulerService] Recurring campaign ended.', [
                     'campaign_id' => $campaign->id,
                     'last_run_at' => $campaign->next_run_at,
                 ]);
             } else {
                 $campaign->update(['next_run_at' => $nextRun]);
 
-                Log::debug('[CampaignSchedulerService] Recurring cursor advanced.', [
+                Log::channel('campaign')->debug('[CampaignSchedulerService] Recurring cursor advanced.', [
                     'campaign_id'    => $campaign->id,
                     'occurrence_key' => $occ,
                     'next_run_at'    => $nextRun->toIso8601String(),
@@ -156,7 +156,7 @@ class CampaignSchedulerService
                 $count++;
             }
 
-            Log::debug('[CampaignSchedulerService] Paced batch evaluated.', [
+            Log::channel('campaign')->debug('[CampaignSchedulerService] Paced batch evaluated.', [
                 'campaign_id' => $campaign->id,
                 'occurrence_key' => $run?->occurrence_key,
                 'next_run_at' => $campaign->fresh()?->next_run_at?->toIso8601String(),
@@ -244,7 +244,7 @@ class CampaignSchedulerService
                     // Fail-open, mirroring BusinessCalendarService::shiftToAllowed():
                     // stop advancing and fall through with whatever $next currently
                     // is rather than looping forever or throwing.
-                    Log::error('[CampaignSchedulerService] computeNextRun exceeded '.self::MAX_DAILY_SKIP_ITERATIONS.' consecutive blocked days while skipping a daily-like occurrence.', [
+                    Log::channel('campaign')->error('[CampaignSchedulerService] computeNextRun exceeded '.self::MAX_DAILY_SKIP_ITERATIONS.' consecutive blocked days while skipping a daily-like occurrence.', [
                         'frequency' => $frequency,
                         'from'      => $from->toIso8601String(),
                         'tz'        => $tz,

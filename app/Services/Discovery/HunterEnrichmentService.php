@@ -100,14 +100,14 @@ class HunterEnrichmentService
                     'reset_date' => isset($data['reset_date']) ? (string) $data['reset_date'] : null,
                 ];
             } catch (ProviderRequestException $exception) {
-                Log::warning('[HunterEnrichmentService] Hunter usage request failed', [
+                Log::channel('discovery')->warning('[HunterEnrichmentService] Hunter usage request failed', [
                     'status' => $exception->httpStatus,
                     'error_code' => $exception->safeCode,
                 ]);
 
                 return null;
             } catch (Throwable $exception) {
-                Log::warning('[HunterEnrichmentService] Hunter usage request failed', [
+                Log::channel('discovery')->warning('[HunterEnrichmentService] Hunter usage request failed', [
                     'exception' => $exception::class,
                 ]);
 
@@ -143,12 +143,12 @@ class HunterEnrichmentService
 
             return ['data' => array_values($data), 'meta' => $meta];
         } catch (ProviderRequestException $exception) {
-            Log::warning('[HunterEnrichmentService] Hunter usage history request failed', [
+            Log::channel('discovery')->warning('[HunterEnrichmentService] Hunter usage history request failed', [
                 'status' => $exception->httpStatus,
                 'error_code' => $exception->safeCode,
             ]);
         } catch (Throwable $exception) {
-            Log::warning('[HunterEnrichmentService] Hunter usage history request failed', [
+            Log::channel('discovery')->warning('[HunterEnrichmentService] Hunter usage history request failed', [
                 'exception' => $exception::class,
             ]);
         }
@@ -177,12 +177,12 @@ class HunterEnrichmentService
             return $this->normalizeHunterData($data);
         } catch (ProviderRequestException $exception) {
             $this->lastSearchSystemicFailure = true;
-            Log::error('[HunterEnrichmentService] Local Hunter fixture failed', [
+            Log::channel('discovery')->error('[HunterEnrichmentService] Local Hunter fixture failed', [
                 'error_code' => $exception->safeCode,
             ]);
         } catch (Throwable $exception) {
             $this->lastSearchSystemicFailure = true;
-            Log::error('[HunterEnrichmentService] Local Hunter fixture failed', [
+            Log::channel('discovery')->error('[HunterEnrichmentService] Local Hunter fixture failed', [
                 'exception' => $exception::class,
             ]);
         }
@@ -231,7 +231,7 @@ class HunterEnrichmentService
             $this->recordFailure('domain-search', $exception);
         } catch (Throwable $exception) {
             $this->lastSearchSystemicFailure = true;
-            Log::error('[HunterEnrichmentService] Hunter domain-search failed', [
+            Log::channel('discovery')->error('[HunterEnrichmentService] Hunter domain-search failed', [
                 'exception' => $exception::class,
             ]);
         }
@@ -256,7 +256,7 @@ class HunterEnrichmentService
             $this->recordFailure('company-enrichment', $exception);
         } catch (Throwable $exception) {
             $this->lastSearchSystemicFailure = true;
-            Log::error('[HunterEnrichmentService] Hunter company enrichment failed', [
+            Log::channel('discovery')->error('[HunterEnrichmentService] Hunter company enrichment failed', [
                 'exception' => $exception::class,
             ]);
         }
@@ -269,7 +269,7 @@ class HunterEnrichmentService
         if ($this->isSystemicStatus($exception->httpStatus) || $exception->safeCode === 'hunter_not_configured') {
             $this->lastSearchSystemicFailure = true;
         }
-        Log::error('[HunterEnrichmentService] Hunter '.$operation.' failed', [
+        Log::channel('discovery')->error('[HunterEnrichmentService] Hunter '.$operation.' failed', [
             'status' => $exception->httpStatus,
             'error_code' => $exception->safeCode,
         ]);

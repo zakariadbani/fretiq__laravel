@@ -159,13 +159,13 @@ class EnrichCriteriaContactsJob implements ShouldBeUnique, ShouldQueue
                 } catch (QuotaExhaustedException) {
                     break;
                 } catch (QuotaLockUnavailableException $e) {
-                    Log::warning('[EnrichCriteriaContactsJob] Quota lock unavailable; batch stopped.', [
+                    Log::channel('discovery')->warning('[EnrichCriteriaContactsJob] Quota lock unavailable; batch stopped.', [
                         'criteria_id' => $this->criteriaId,
                     ]);
                     $releaseAdmission = false;
                     throw $e;
                 } catch (\Throwable $e) {
-                    Log::error('[EnrichCriteriaContactsJob] Systemic enrichment error; batch stopped.', [
+                    Log::channel('discovery')->error('[EnrichCriteriaContactsJob] Systemic enrichment error; batch stopped.', [
                         'criteria_id' => $this->criteriaId,
                         'company_id' => $companyId,
                         'error' => $e->getMessage(),

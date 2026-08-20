@@ -154,7 +154,7 @@ class PacedSequenceEnrollmentService
                     try {
                         SyncCampaignWaveZohoListJob::dispatch($waveRunId);
                     } catch (\Throwable $exception) {
-                        Log::error('[PacedSequenceEnrollmentService] Unable to dispatch Zoho wave mirror.', ['run_id' => $waveRunId, 'exception' => $exception->getMessage()]);
+                        Log::channel('campaign')->error('[PacedSequenceEnrollmentService] Unable to dispatch Zoho wave mirror.', ['run_id' => $waveRunId, 'exception' => $exception->getMessage()]);
                     }
                 });
             }

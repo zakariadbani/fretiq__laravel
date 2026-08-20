@@ -43,7 +43,10 @@ trait ZohoGetWithRetry
 
         // ── 401 → refresh token once and retry ───────────────────────────────
         if ($response->status() === 401) {
-            Log::info("[{$prefix}] 401 on {$context} — refreshing token and retrying");
+            Log::channel('zoho')->info('401 — refreshing token and retrying', [
+                'source'  => $prefix,
+                'context' => $context,
+            ]);
             $auth->invalidate('crm');
             $token    = $auth->getAccessToken('crm');
             $headers  = ['Authorization' => 'Zoho-oauthtoken ' . $token];
@@ -54,7 +57,11 @@ trait ZohoGetWithRetry
         if ($response->status() === 429) {
             $retryAfter = (int) ($response->header('Retry-After') ?? 2);
             $sleep      = min($retryAfter, 5);
-            Log::warning("[{$prefix}] 429 on {$context} — sleeping {$sleep}s then retry");
+            Log::channel('zoho')->warning('429 — sleeping then retry', [
+                'source'    => $prefix,
+                'context'   => $context,
+                'sleep_sec' => $sleep,
+            ]);
             sleep($sleep);
             $response = Http::withHeaders($headers)->timeout($timeout)->get($url, $query);
         }

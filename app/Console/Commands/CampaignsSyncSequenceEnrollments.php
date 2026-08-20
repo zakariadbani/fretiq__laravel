@@ -41,7 +41,7 @@ class CampaignsSyncSequenceEnrollments extends Command
                             $preflight = $campaignService->dispatchPreflight($campaign);
                             if (! $preflight['ok']) {
                                 $blocked++;
-                                Log::warning('[CampaignSequenceAutoEnroll] Campaign skipped by preflight.', [
+                                Log::channel('campaign')->warning('[CampaignSequenceAutoEnroll] Campaign skipped by preflight.', [
                                     'campaign_id' => $campaign->id,
                                     'messages' => $preflight['messages'],
                                 ]);
@@ -55,7 +55,7 @@ class CampaignsSyncSequenceEnrollments extends Command
                         $skipped += $result['skipped'];
                     } catch (\Throwable $e) {
                         $blocked++;
-                        Log::error('[CampaignSequenceAutoEnroll] Campaign sync failed.', [
+                        Log::channel('campaign')->error('[CampaignSequenceAutoEnroll] Campaign sync failed.', [
                             'campaign_id' => $campaign->id,
                             'error_type' => $e::class,
                         ]);
@@ -69,7 +69,7 @@ class CampaignsSyncSequenceEnrollments extends Command
             'skipped' => $skipped,
             'blocked' => $blocked,
         ];
-        Log::info('[CampaignSequenceAutoEnroll] Sync completed.', $summary);
+        Log::channel('campaign')->info('[CampaignSequenceAutoEnroll] Sync completed.', $summary);
         $this->info("Campagnes={$campaigns}; inscrits={$enrolled}; déjà_suivis={$skipped}; bloquées={$blocked}.");
 
         return self::SUCCESS;

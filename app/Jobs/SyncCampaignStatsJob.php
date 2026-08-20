@@ -67,7 +67,7 @@ class SyncCampaignStatsJob implements ShouldBeUnique, ShouldQueue
         $run = CampaignRun::find($this->runId);
 
         if ($run === null) {
-            Log::warning('[SyncCampaignStatsJob] CampaignRun introuvable — abandon.', [
+            Log::channel('campaign')->warning('[SyncCampaignStatsJob] CampaignRun introuvable — abandon.', [
                 'run_id' => $this->runId,
             ]);
 
@@ -96,7 +96,7 @@ class SyncCampaignStatsJob implements ShouldBeUnique, ShouldQueue
      */
     private function syncFromZoho(CampaignRun $run): void
     {
-        Log::info('[SyncCampaignStatsJob] Sync stats Zoho.', [
+        Log::channel('campaign')->info('[SyncCampaignStatsJob] Sync stats Zoho.', [
             'run_id'       => $run->id,
             'campaign_key' => $run->zoho_campaign_key,
         ]);
@@ -131,7 +131,7 @@ class SyncCampaignStatsJob implements ShouldBeUnique, ShouldQueue
                     || (float) $report[$field] < 0,
             ));
             if ($missingFields !== []) {
-                Log::warning('[SyncCampaignStatsJob] Zoho: champs verifies manquants.', [
+                Log::channel('campaign')->warning('[SyncCampaignStatsJob] Zoho: champs verifies manquants.', [
                     'run_id' => $run->id,
                     'missing_fields' => $missingFields,
                 ]);
@@ -185,13 +185,13 @@ class SyncCampaignStatsJob implements ShouldBeUnique, ShouldQueue
             ) ? $run->stats_sync_error : null;
             $run->update($stats);
 
-            Log::info('[SyncCampaignStatsJob] Stats Zoho mises à jour.', [
+            Log::channel('campaign')->info('[SyncCampaignStatsJob] Stats Zoho mises à jour.', [
                 'run_id' => $run->id,
                 ...$stats,
             ]);
         } catch (\Throwable $e) {
             $run->update(['stats_sync_error' => $e->getMessage()]);
-            Log::error('[SyncCampaignStatsJob] Échec sync Zoho.', [
+            Log::channel('campaign')->error('[SyncCampaignStatsJob] Échec sync Zoho.', [
                 'run_id' => $run->id,
                 'error'  => $e->getMessage(),
             ]);
@@ -229,7 +229,7 @@ class SyncCampaignStatsJob implements ShouldBeUnique, ShouldQueue
 
         $run->update($stats);
 
-        Log::debug('[SyncCampaignStatsJob] Stats locales recalculées.', [
+        Log::channel('campaign')->debug('[SyncCampaignStatsJob] Stats locales recalculées.', [
             'run_id' => $run->id,
             ...$stats,
         ]);

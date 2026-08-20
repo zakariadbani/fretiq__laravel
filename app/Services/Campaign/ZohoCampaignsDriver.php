@@ -272,7 +272,7 @@ class ZohoCampaignsDriver implements CampaignsClient
             ];
         })->values()->toArray();
 
-        Log::info('[ZohoCampaignsDriver] Ajout des abonnés à la liste Zoho.', [
+        Log::channel('campaign')->info('[ZohoCampaignsDriver] Ajout des abonnés à la liste Zoho.', [
             'run_id'   => $run->id,
             'list_key' => $listKey,
             'count'    => count($contactPayload),
@@ -298,7 +298,7 @@ class ZohoCampaignsDriver implements CampaignsClient
             ?: config('mail.from.address', 'noreply@fretiq.fr');
         $fromName = $sender?->name ?: config('mail.from.name', 'Fretiq');
 
-        Log::info('[ZohoCampaignsDriver] Création de la campagne Zoho.', [
+        Log::channel('campaign')->info('[ZohoCampaignsDriver] Création de la campagne Zoho.', [
             'run_id'    => $run->id,
             'subject'   => $subject,
             'from'      => $fromEmail,
@@ -361,7 +361,7 @@ class ZohoCampaignsDriver implements CampaignsClient
         // replace with provider-status reconciliation once that endpoint is empirically verified.
         $run->update(['driver_ref' => 'zoho-send-attempted']);
 
-        Log::info('[ZohoCampaignsDriver] Déclenchement de l\'envoi Zoho.', [
+        Log::channel('campaign')->info('[ZohoCampaignsDriver] Déclenchement de l\'envoi Zoho.', [
             'run_id'       => $run->id,
             'campaign_key' => $campaignKey,
         ]);
@@ -385,7 +385,7 @@ class ZohoCampaignsDriver implements CampaignsClient
                 : $this->driverName(),
         ]);
 
-        Log::info('[ZohoCampaignsDriver] Run dispatché via Zoho Campaigns.', [
+        Log::channel('campaign')->info('[ZohoCampaignsDriver] Run dispatché via Zoho Campaigns.', [
             'run_id'       => $run->id,
             'list_key'     => $listKey,
             'campaign_key' => $campaignKey,

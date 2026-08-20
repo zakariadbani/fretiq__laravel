@@ -417,7 +417,7 @@ final class ProviderCallLedger
 
         [$effectiveException, $failedCall] = $failure;
         if ($failedCall !== null) {
-            Log::warning('provider_call_failed', [
+            Log::channel('discovery')->warning('provider_call_failed', [
                 'provider_call_id' => $failedCall->id,
                 'provider' => $failedCall->provider,
                 'operation' => $failedCall->operation,

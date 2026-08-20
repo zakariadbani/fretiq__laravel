@@ -235,7 +235,7 @@ class DiscoveryPipelineService
             // below before this attempt pauses, so continuation never pays for the
             // same score twice.
             if ($deadline->isExhausted()) {
-                Log::info('[DiscoveryPipelineService] Time budget exhausted — stopping this attempt; the run resumes from the same cursor on the next attempt.', [
+                Log::channel('discovery')->info('[DiscoveryPipelineService] Time budget exhausted — stopping this attempt; the run resumes from the same cursor on the next attempt.', [
                     'run_id' => $run?->id,
                     'criteria_id' => $criteria->id,
                     'consumed' => $offset + $scannedThisAttempt,
@@ -267,7 +267,7 @@ class DiscoveryPipelineService
                 }
 
                 if (! $this->touchHeartbeat($run)) {
-                    Log::info('[DiscoveryPipelineService] Run no longer running — stopping this attempt.', [
+                    Log::channel('discovery')->info('[DiscoveryPipelineService] Run no longer running — stopping this attempt.', [
                         'run_id' => $run?->id,
                         'criteria_id' => $criteria->id,
                     ]);
@@ -329,7 +329,7 @@ class DiscoveryPipelineService
                             ]);
 
                         if ($advanced === 0) {
-                            Log::info('[DiscoveryPipelineService] CAS debit blocked — run terminalized or cursor mismatch; returning partial stats.', [
+                            Log::channel('discovery')->info('[DiscoveryPipelineService] CAS debit blocked — run terminalized or cursor mismatch; returning partial stats.', [
                                 'run_id' => $run->id,
                                 'criteria_id' => $criteria->id,
                                 'expected' => $expected,
@@ -469,7 +469,7 @@ class DiscoveryPipelineService
                             return new DiscoveryPipelineResult($stats, $collectionComplete, false);
                         }
 
-                        Log::warning('[DiscoveryPipelineService] Quota admission lock unavailable — candidate retained for retry.', [
+                        Log::channel('discovery')->warning('[DiscoveryPipelineService] Quota admission lock unavailable — candidate retained for retry.', [
                             'domain' => $domain,
                             'criteria_id' => $criteria->id,
                             'run_id' => $run->id,
@@ -573,7 +573,7 @@ class DiscoveryPipelineService
 
                     if ($advanced === 0) {
                         // Run was terminalized or a concurrent process owns the cursor.
-                        Log::info('[DiscoveryPipelineService] CAS debit blocked — run terminalized or cursor mismatch; returning partial stats.', [
+                        Log::channel('discovery')->info('[DiscoveryPipelineService] CAS debit blocked — run terminalized or cursor mismatch; returning partial stats.', [
                             'run_id' => $run->id,
                             'criteria_id' => $criteria->id,
                             'expected' => $expected,
@@ -601,7 +601,7 @@ class DiscoveryPipelineService
                 }
             } catch (\Throwable $e) {
                 if ($e instanceof QueryException && $this->isDuplicateCompanyDomainKey($e)) {
-                    Log::info('[DiscoveryPipelineService] Duplicate company domain race - advancing cursor only', [
+                    Log::channel('discovery')->info('[DiscoveryPipelineService] Duplicate company domain race - advancing cursor only', [
                         'domain' => $domain,
                         'criteria_id' => $criteria->id,
                         'run_id' => $run?->id,
@@ -632,7 +632,7 @@ class DiscoveryPipelineService
                     continue;
                 }
 
-                Log::warning('[DiscoveryPipelineService] Domain processing failed — skipping', [
+                Log::channel('discovery')->warning('[DiscoveryPipelineService] Domain processing failed — skipping', [
                     'domain' => $domain,
                     'criteria_id' => $criteria->id,
                     'error' => $e->getMessage(),

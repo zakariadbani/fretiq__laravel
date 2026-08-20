@@ -99,7 +99,7 @@ class SequenceService
                     ->where('contact_id', $contact->id)
                     ->first();
 
-                Log::info('[SequenceService] Duplicate enrollment caught (race or non-active row exists) — returning existing.', [
+                Log::channel('campaign')->info('[SequenceService] Duplicate enrollment caught (race or non-active row exists) — returning existing.', [
                     'sequence_id'    => $seq->id,
                     'contact_id'     => $contact->id,
                     'enrollment_id'  => $existing?->id,
@@ -112,7 +112,7 @@ class SequenceService
             throw $e;
         }
 
-        Log::info('[SequenceService] Contact enrolled.', [
+        Log::channel('campaign')->info('[SequenceService] Contact enrolled.', [
             'enrollment_id' => $enrollment->id,
             'sequence_id'   => $seq->id,
             'contact_id'    => $contact->id,
@@ -194,7 +194,7 @@ class SequenceService
                 'next_send_at' => null,
             ]);
 
-            Log::info('[SequenceService] Enrollment completed (no more steps).', [
+            Log::channel('campaign')->info('[SequenceService] Enrollment completed (no more steps).', [
                 'enrollment_id' => $e->id,
                 'last_step_no'  => $e->current_step,
             ]);
@@ -220,7 +220,7 @@ class SequenceService
                 'next_send_at'   => null,
             ]);
 
-            Log::info('[SequenceService] Enrollment stopped — contact suppressed.', [
+            Log::channel('campaign')->info('[SequenceService] Enrollment stopped — contact suppressed.', [
                 'enrollment_id' => $e->id,
                 'reason' => $ineligibleReason,
             ]);
@@ -241,7 +241,7 @@ class SequenceService
 
         // ── 5. Skip if already sent (crash-after-send safety) ─────────────────
         if ($stepSend->provider_message_id !== null) {
-            Log::info('[SequenceService] Step already sent — skipping (retry-safe).', [
+            Log::channel('campaign')->info('[SequenceService] Step already sent — skipping (retry-safe).', [
                 'enrollment_id'       => $e->id,
                 'step_no'             => $stepNo,
                 'provider_message_id' => $stepSend->provider_message_id,
@@ -333,7 +333,7 @@ class SequenceService
                 'sent_at'             => now(),
             ]);
 
-            Log::info('[SequenceService] Step sent.', [
+            Log::channel('campaign')->info('[SequenceService] Step sent.', [
                 'enrollment_id'       => $e->id,
                 'step_no'             => $stepNo,
                 'contact_email'       => $contact->email,
@@ -341,7 +341,7 @@ class SequenceService
             ]);
         } catch (\Throwable $ex) {
             // Leave step_send in 'queued' status so retry picks it up.
-            Log::error('[SequenceService] Failed to send step.', [
+            Log::channel('campaign')->error('[SequenceService] Failed to send step.', [
                 'enrollment_id' => $e->id,
                 'step_no'       => $stepNo,
                 'error'         => $ex->getMessage(),
@@ -524,7 +524,7 @@ class SequenceService
 
             $stopped++;
 
-            Log::info('[SequenceService] Enrollment stopped on reply.', [
+            Log::channel('campaign')->info('[SequenceService] Enrollment stopped on reply.', [
                 'enrollment_id' => $enrollment->id,
                 'contact_id'    => $contact->id,
                 'reason'        => $reason,
@@ -567,7 +567,7 @@ class SequenceService
                 'next_send_at' => null,
             ]);
 
-            Log::info('[SequenceService] Enrollment completed after last step.', [
+            Log::channel('campaign')->info('[SequenceService] Enrollment completed after last step.', [
                 'enrollment_id' => $e->id,
                 'final_step_no' => $stepNo,
             ]);
@@ -618,7 +618,7 @@ class SequenceService
         $tz = $this->calendar->resolveTimezone($enrollment->campaign);
 
         if ($this->calendar->isBlocked(now(), $tz)) {
-            Log::debug('[SequenceService] Enrollment held — today is a blocked day.', [
+            Log::channel('campaign')->debug('[SequenceService] Enrollment held — today is a blocked day.', [
                 'enrollment_id' => $enrollment->id,
                 'next_send_at'  => $enrollment->next_send_at?->toIso8601String(),
                 'tz'            => $tz,

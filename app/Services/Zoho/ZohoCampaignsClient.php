@@ -116,7 +116,7 @@ class ZohoCampaignsClient
                 $this->subscribeContactWithTopic($listKey, $contact, $topicId);
             }
 
-            Log::info('[ZohoCampaignsClient] addListSubscribers', [
+            Log::channel('zoho')->info('[ZohoCampaignsClient] addListSubscribers', [
                 'list_key' => $listKey,
                 'count'    => $uniqueContacts->count(),
                 'topic_id' => $topicId,
@@ -159,7 +159,7 @@ class ZohoCampaignsClient
             );
         }
 
-        Log::info('[ZohoCampaignsClient] addListSubscribers', [
+        Log::channel('zoho')->info('[ZohoCampaignsClient] addListSubscribers', [
             'list_key' => $listKey,
             'count'    => count($contacts),
             'status'   => $response->status(),
@@ -287,7 +287,7 @@ class ZohoCampaignsClient
         if (! $response->failed() && (string) ($payload['code'] ?? '') === '2205') {
             $existingKey = $this->findRecipientListKeyByName($listName);
             if ($existingKey !== '') {
-                Log::info('[ZohoCampaignsClient] recovered existing list on 2205', [
+                Log::channel('zoho')->info('[ZohoCampaignsClient] recovered existing list on 2205', [
                     'list_name' => $listName,
                     'list_key'  => $existingKey,
                 ]);
@@ -483,7 +483,7 @@ class ZohoCampaignsClient
 
         $payload = $this->assertZohoSuccess($response, 'createCampaign', ['0', '200']);
 
-        Log::info('[ZohoCampaignsClient] createCampaign', [
+        Log::channel('zoho')->info('[ZohoCampaignsClient] createCampaign', [
             'name'        => $name,
             'list_key'    => $listKey,
             'status'      => $response->status(),
@@ -530,7 +530,7 @@ class ZohoCampaignsClient
 
         $payload = $response->json() ?? [];
 
-        Log::info('[ZohoCampaignsClient] sendCampaign', [
+        Log::channel('zoho')->info('[ZohoCampaignsClient] sendCampaign', [
             'campaign_key' => $campaignKey,
             'status'       => $response->status(),
             'body'         => ApiLog::excerpt($response->body(), 300),
@@ -583,7 +583,7 @@ class ZohoCampaignsClient
         }
 
 
-        Log::debug('[ZohoCampaignsClient] getCampaignReport', [
+        Log::channel('zoho')->debug('[ZohoCampaignsClient] getCampaignReport', [
             'campaign_key' => $campaignKey,
             'status'       => $response->status(),
         ]);

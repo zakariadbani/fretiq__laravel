@@ -189,7 +189,7 @@ class CompanyDiscoveryService
                 $searchProviderDown = true;
             } else {
                 $terminal = true;
-                Log::warning('[CompanyDiscoveryService] Search provider outage detected mid-run — draining already-collected candidates instead of retrying the provider.', [
+                Log::channel('discovery')->warning('[CompanyDiscoveryService] Search provider outage detected mid-run — draining already-collected candidates instead of retrying the provider.', [
                     'criteria_id' => $criteria->id,
                     'run_id' => $run->id,
                 ]);
@@ -294,14 +294,14 @@ class CompanyDiscoveryService
                     'plan_name' => $json['plan_name'] ?? null,
                 ];
             } catch (ProviderRequestException $exception) {
-                Log::warning('[CompanyDiscoveryService] SerpAPI account request failed', [
+                Log::channel('discovery')->warning('[CompanyDiscoveryService] SerpAPI account request failed', [
                     'status' => $exception->httpStatus,
                     'error_code' => $exception->safeCode,
                 ]);
 
                 return null;
             } catch (\Throwable $e) {
-                Log::warning('[CompanyDiscoveryService] SerpAPI account call threw an exception', [
+                Log::channel('discovery')->warning('[CompanyDiscoveryService] SerpAPI account call threw an exception', [
                     'exception_class' => $e::class,
                 ]);
 
@@ -426,7 +426,7 @@ class CompanyDiscoveryService
 
         if (! file_exists($path)) {
             if ($warnWhenMissing) {
-                Log::warning('[CompanyDiscoveryService] Local fixture missing', ['path' => $path]);
+                Log::channel('discovery')->warning('[CompanyDiscoveryService] Local fixture missing', ['path' => $path]);
             }
 
             return $warnWhenMissing ? null : [];
@@ -435,7 +435,7 @@ class CompanyDiscoveryService
         $raw = json_decode(file_get_contents($path), true);
 
         if (! is_array($raw)) {
-            Log::warning('[CompanyDiscoveryService] Local fixture is not a valid JSON array.', ['path' => $path]);
+            Log::channel('discovery')->warning('[CompanyDiscoveryService] Local fixture is not a valid JSON array.', ['path' => $path]);
 
             return $warnWhenMissing ? null : [];
         }
@@ -450,7 +450,7 @@ class CompanyDiscoveryService
         $apiKey = config('services.serpapi.api_key');
 
         if (! $apiKey) {
-            Log::warning('[CompanyDiscoveryService] SerpAPI key not configured — skipping discovery.', [
+            Log::channel('discovery')->warning('[CompanyDiscoveryService] SerpAPI key not configured — skipping discovery.', [
                 'criteria_id' => $criteria->id,
             ]);
 
@@ -503,7 +503,7 @@ class CompanyDiscoveryService
                         $providerParams,
                     );
                 } catch (ProviderRequestException $exception) {
-                    Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
+                    Log::channel('discovery')->warning('[CompanyDiscoveryService] SerpAPI request failed', [
                         'criteria_id' => $criteria->id,
                         'query' => $query['q'],
                         'engine' => $query['engine'],
@@ -514,7 +514,7 @@ class CompanyDiscoveryService
 
                     return $snapshot;
                 } catch (\Throwable $e) {
-                    Log::warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
+                    Log::channel('discovery')->warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
                         'criteria_id' => $criteria->id,
                         'query' => $query['q'],
                         'engine' => $query['engine'],
@@ -651,7 +651,7 @@ class CompanyDiscoveryService
                         return [$this->snapshot($run->fresh()), false];
                     }
 
-                    Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
+                    Log::channel('discovery')->warning('[CompanyDiscoveryService] SerpAPI request failed', [
                         'criteria_id' => $criteria->id,
                         'query' => $query['q'],
                         'engine' => $query['engine'],
@@ -670,7 +670,7 @@ class CompanyDiscoveryService
                         $attempts++;
                         $attemptedThisRound = true;
                     }
-                    Log::warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
+                    Log::channel('discovery')->warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
                         'criteria_id' => $criteria->id,
                         'query' => $query['q'],
                         'engine' => $query['engine'],
@@ -832,7 +832,7 @@ class CompanyDiscoveryService
                     $results[] = $candidate;
                 }
             } catch (ProviderRequestException $exception) {
-                Log::warning('[CompanyDiscoveryService] SerpAPI request failed', [
+                Log::channel('discovery')->warning('[CompanyDiscoveryService] SerpAPI request failed', [
                     'criteria_id' => $criteria->id,
                     'query' => $query['q'],
                     'engine' => $query['engine'],
@@ -840,7 +840,7 @@ class CompanyDiscoveryService
                     'error_code' => $exception->safeCode,
                 ]);
             } catch (\Throwable $e) {
-                Log::warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
+                Log::channel('discovery')->warning('[CompanyDiscoveryService] SerpAPI call threw an exception', [
                     'criteria_id' => $criteria->id,
                     'query' => $query['q'],
                     'engine' => $query['engine'],
@@ -1480,7 +1480,7 @@ class CompanyDiscoveryService
             // Passthrough: already a label or junk.
             // Log at debug only when $v is neither a key NOR a value in company_countries.
             if (! in_array($v, $labels, true)) {
-                Log::debug('[CompanyDiscoveryService] Unrecognised country token — passing through.', [
+                Log::channel('discovery')->debug('[CompanyDiscoveryService] Unrecognised country token — passing through.', [
                     'token' => $v,
                 ]);
             }
@@ -1510,7 +1510,7 @@ class CompanyDiscoveryService
         $total = count($queries);
         if ($total > $budget) {
             $dropped = $total - $budget;
-            Log::info('[CompanyDiscoveryService] Query budget exceeded — dropping queries.', [
+            Log::channel('discovery')->info('[CompanyDiscoveryService] Query budget exceeded — dropping queries.', [
                 'criteria_id' => $criteria->id,
                 'total' => $total,
                 'budget' => $budget,

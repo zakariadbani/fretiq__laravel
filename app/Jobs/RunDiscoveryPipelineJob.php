@@ -116,7 +116,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
             $run = $this->ownedRunQuery()->first();
 
             if ($run === null) {
-                Log::warning('[RunDiscoveryPipelineJob] Run does not belong to this discovery criterion — aborting.', [
+                Log::channel('discovery')->warning('[RunDiscoveryPipelineJob] Run does not belong to this discovery criterion — aborting.', [
                     'run_id' => $this->runId,
                     'criteria_id' => $this->criteriaId,
                 ]);
@@ -129,7 +129,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
         // The stale terminalizer or a failed() hook may have flipped the row to
         // 'failed' between dispatch and pick-up. Fresh DB read is authoritative.
         if ($run !== null && ! in_array($run->status, ['pending', 'running'], true)) {
-            Log::info('[RunDiscoveryPipelineJob] Run is already in a terminal state — aborting.', [
+            Log::channel('discovery')->info('[RunDiscoveryPipelineJob] Run is already in a terminal state — aborting.', [
                 'run_id' => $this->runId,
                 'run_status' => $run->status,
                 'criteria_id' => $this->criteriaId,
@@ -141,7 +141,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
         $criteria = ProspectCriteria::find($this->criteriaId);
 
         if (! $criteria) {
-            Log::warning('[RunDiscoveryPipelineJob] ProspectCriteria not found — aborting.', [
+            Log::channel('discovery')->warning('[RunDiscoveryPipelineJob] ProspectCriteria not found — aborting.', [
                 'criteria_id' => $this->criteriaId,
             ]);
             $this->terminalizeActiveRun('Critère introuvable ou inactif');
@@ -152,7 +152,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
         // E1: re-check is_active inside the job. Covers the queued-then-deactivated race
         // and future scheduler dispatch.
         if (! $criteria->is_active) {
-            Log::info('[RunDiscoveryPipelineJob] Criteria inactive — skipping.', [
+            Log::channel('discovery')->info('[RunDiscoveryPipelineJob] Criteria inactive — skipping.', [
                 'criteria_id' => $this->criteriaId,
                 'criteria_name' => $criteria->name,
             ]);
@@ -184,7 +184,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
             }
         }
 
-        Log::info('[RunDiscoveryPipelineJob] Starting discovery pipeline', [
+        Log::channel('discovery')->info('[RunDiscoveryPipelineJob] Starting discovery pipeline', [
             'criteria_id' => $this->criteriaId,
             'criteria_name' => $criteria->name,
         ]);
@@ -364,7 +364,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
                     } catch (QuotaExhaustedException) {
                         break;
                     } catch (QuotaLockUnavailableException) {
-                        Log::warning('[RunDiscoveryPipelineJob] Quota admission lock unavailable during backlog processing.', [
+                        Log::channel('discovery')->warning('[RunDiscoveryPipelineJob] Quota admission lock unavailable during backlog processing.', [
                             'criteria_id' => $this->criteriaId,
                             'run_id' => $run->id,
                         ]);
@@ -429,7 +429,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
             // $this->fail() would overwrite this curated message with
             // UNEXPECTED_FAILURE_MESSAGE via the failed() hook. Terminalize now.
             if ($result->searchProviderDown) {
-                Log::info('[RunDiscoveryPipelineJob] Search provider signaled down with no usable candidates collected — terminalizing without exhausting retries.', [
+                Log::channel('discovery')->info('[RunDiscoveryPipelineJob] Search provider signaled down with no usable candidates collected — terminalizing without exhausting retries.', [
                     'run_id' => $this->runId,
                     'criteria_id' => $this->criteriaId,
                 ]);
@@ -461,7 +461,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
                     // updated_at write returning 0 affected rows must never be read
                     // as "no longer running" (see DiscoveryRun::touchHeartbeat()).
                     if (! DiscoveryRun::touchHeartbeat($this->ownedRunQuery())) {
-                        Log::info('[RunDiscoveryPipelineJob] Run no longer running — not requeuing.', [
+                        Log::channel('discovery')->info('[RunDiscoveryPipelineJob] Run no longer running — not requeuing.', [
                             'run_id' => $this->runId,
                             'criteria_id' => $this->criteriaId,
                         ]);
@@ -499,7 +499,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
             }
 
             $completedRun = $run?->fresh();
-            Log::info('[RunDiscoveryPipelineJob] Pipeline completed', array_merge(
+            Log::channel('discovery')->info('[RunDiscoveryPipelineJob] Pipeline completed', array_merge(
                 ['criteria_id' => $this->criteriaId],
                 $result->toArray(),
                 [
@@ -531,7 +531,7 @@ class RunDiscoveryPipelineJob implements ShouldQueue
             return;
         }
 
-        Log::error('[RunDiscoveryPipelineJob] Discovery exhausted its exception retries.', [
+        Log::channel('discovery')->error('[RunDiscoveryPipelineJob] Discovery exhausted its exception retries.', [
             'run_id' => $this->runId,
             'criteria_id' => $this->criteriaId,
             'exception_class' => $e::class,

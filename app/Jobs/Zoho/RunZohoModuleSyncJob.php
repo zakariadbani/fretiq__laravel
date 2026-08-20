@@ -169,7 +169,7 @@ final class RunZohoModuleSyncJob implements ShouldBeUniqueUntilProcessing, Shoul
             // Framework failed-job evidence remains authoritative even if the
             // database is unavailable during terminalization.
         }
-        Log::error('Zoho V2 module sync job exhausted.', [
+        Log::channel('zoho')->error('Zoho V2 module sync job exhausted.', [
             'batch_id' => $this->batchId,
             'module' => $this->module,
             'mode' => $this->mode,

@@ -68,6 +68,7 @@ return [
             'path' => storage_path('logs/laravel.log'),
             'level' => env('LOG_LEVEL', 'debug'),
             'days' => 14,
+            'tap' => [\App\Logging\ExcludeErrors::class],
         ],
 
         // Errors-only triage channel — receives error+ from both 'daily' and 'api'
@@ -93,6 +94,71 @@ return [
             'path' => storage_path('logs/api.log'),
             'level' => env('LOG_LEVEL', 'debug'),
             'days' => env('LOG_DAILY_DAYS', 14),
+            'tap' => [\App\Logging\ExcludeErrors::class],
+            'replace_placeholders' => true,
+        ],
+
+        // Per-subsystem activity channels: stack ['{name}_daily', 'errors'].
+        // info/warning land in {name}-*.log (via the ExcludeErrors tap on
+        // the _daily member); error+ land in errors-*.log only. Invariant:
+        // every pair below must keep 'errors' as a stack member.
+        'zoho' => [
+            'driver' => 'stack',
+            'channels' => ['zoho_daily', 'errors'],
+            'ignore_exceptions' => false,
+        ],
+
+        'zoho_daily' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/zoho.log'),
+            'level' => env('LOG_LEVEL', 'debug'),
+            'days' => 14,
+            'tap' => [\App\Logging\ExcludeErrors::class],
+            'replace_placeholders' => true,
+        ],
+
+        'discovery' => [
+            'driver' => 'stack',
+            'channels' => ['discovery_daily', 'errors'],
+            'ignore_exceptions' => false,
+        ],
+
+        'discovery_daily' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/discovery.log'),
+            'level' => env('LOG_LEVEL', 'debug'),
+            'days' => 14,
+            'tap' => [\App\Logging\ExcludeErrors::class],
+            'replace_placeholders' => true,
+        ],
+
+        'campaign' => [
+            'driver' => 'stack',
+            'channels' => ['campaign_daily', 'errors'],
+            'ignore_exceptions' => false,
+        ],
+
+        'campaign_daily' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/campaign.log'),
+            'level' => env('LOG_LEVEL', 'debug'),
+            'days' => 14,
+            'tap' => [\App\Logging\ExcludeErrors::class],
+            'replace_placeholders' => true,
+        ],
+
+        'gemini' => [
+            'driver' => 'stack',
+            'channels' => ['gemini_daily', 'errors'],
+            'ignore_exceptions' => false,
+        ],
+
+        'gemini_daily' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/gemini.log'),
+            'level' => env('LOG_LEVEL', 'debug'),
+            'days' => 14,
+            'tap' => [\App\Logging\ExcludeErrors::class],
             'replace_placeholders' => true,
         ],
 

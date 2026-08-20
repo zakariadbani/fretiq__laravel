@@ -119,7 +119,7 @@ class CompanyEnrichmentService
                 'successful_enrichments' => $persisted['successful_enrichments'],
             ];
         } catch (\Throwable $e) {
-            Log::error('[CompanyEnrichmentService] Enrichment failed', [
+            Log::channel('discovery')->error('[CompanyEnrichmentService] Enrichment failed', [
                 'company_id' => $company->id,
                 'domain' => $company->domain,
                 'error' => $e->getMessage(),

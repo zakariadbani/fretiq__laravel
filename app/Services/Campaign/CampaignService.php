@@ -289,7 +289,7 @@ class CampaignService
             $campaign->update(['is_active' => true]);
         }
 
-        Log::info('[CampaignService] launchSequence completed.', [
+        Log::channel('campaign')->info('[CampaignService] launchSequence completed.', [
             'campaign_id' => $campaign->id,
             'sequence_id' => $sequence->id,
             'enrolled'    => $enrolled,
@@ -324,7 +324,7 @@ class CampaignService
 
         foreach ($runs as $run) {
             if ($run->campaign === null || ! $run->campaign->is_active) {
-                Log::info('[CampaignService] dispatchDue: skipping run — campaign is paused (is_active=false).', [
+                Log::channel('campaign')->info('[CampaignService] dispatchDue: skipping run — campaign is paused (is_active=false).', [
                     'run_id'      => $run->id,
                     'campaign_id' => $run->campaign_id,
                 ]);
@@ -342,7 +342,7 @@ class CampaignService
             // date stay allowed on any day.
             if ($run->campaign->schedule_type !== 'one_shot'
                 && $this->calendar->isBlocked(now(), $this->calendar->resolveTimezone($run->campaign))) {
-                Log::debug('[CampaignService] dispatchDue: holding run — today is a blocked day.', [
+                Log::channel('campaign')->debug('[CampaignService] dispatchDue: holding run — today is a blocked day.', [
                     'run_id'      => $run->id,
                     'campaign_id' => $run->campaign_id,
                     'run_at'      => $run->run_at?->toIso8601String(),
@@ -357,7 +357,7 @@ class CampaignService
                     $run,
                     new \RuntimeException('Dispatch preflight failed.'),
                 );
-                Log::warning('[CampaignService] dispatchDue: run blocked by dispatch preflight.', [
+                Log::channel('campaign')->warning('[CampaignService] dispatchDue: run blocked by dispatch preflight.', [
                     'run_id' => $run->id,
                     'campaign_id' => $run->campaign_id,
                     'message' => $this->preflightMessage($preflight),
@@ -416,7 +416,7 @@ class CampaignService
         // Lock released here by COMMIT. No TX is held beyond this point.
 
         if (! $claimed) {
-            Log::info('[CampaignService] Run already handled — skipping.', ['run_id' => $run->id]);
+            Log::channel('campaign')->info('[CampaignService] Run already handled — skipping.', ['run_id' => $run->id]);
             return;
         }
 
@@ -429,7 +429,7 @@ class CampaignService
         // return. The scheduler will retry on the next dispatch-due tick.
         if (! $this->sendWindowGuard->isWithinSendWindow($run->campaign)) {
             $run->update(['status' => 'scheduled']);
-            Log::info('[CampaignService] Send deferred — outside send window.', [
+            Log::channel('campaign')->info('[CampaignService] Send deferred — outside send window.', [
                 'run_id'      => $run->id,
                 'campaign_tz' => $run->campaign->timezone,
                 'send_window' => $run->campaign->send_window,
@@ -445,7 +445,7 @@ class CampaignService
         // the campaign is unpaused.
         if (! $run->campaign->is_active) {
             $run->update(['status' => 'scheduled']);
-            Log::info('[CampaignService] Send deferred — campaign is paused (is_active=false).', [
+            Log::channel('campaign')->info('[CampaignService] Send deferred — campaign is paused (is_active=false).', [
                 'run_id'      => $run->id,
                 'campaign_id' => $run->campaign_id,
             ]);
@@ -461,7 +461,7 @@ class CampaignService
                 $run,
                 new \RuntimeException('Dispatch preflight failed.'),
             );
-            Log::warning('[CampaignService] Send blocked by dispatch preflight.', [
+            Log::channel('campaign')->warning('[CampaignService] Send blocked by dispatch preflight.', [
                 'run_id' => $run->id,
                 'campaign_id' => $run->campaign_id,
                 'message' => $this->preflightMessage($preflight),
@@ -474,7 +474,7 @@ class CampaignService
         if ($run->campaign->emailVerificationPolicy() === Campaign::VERIFICATION_ALL_SENDABLE
             && $contacts->contains(fn (Contact $contact): bool => $contact->email_verification_status === 'pending')) {
             $run->update(['status' => 'scheduled', 'started_at' => null, 'finished_at' => null]);
-            Log::info('[CampaignService] Send deferred while email verification is pending.', [
+            Log::channel('campaign')->info('[CampaignService] Send deferred while email verification is pending.', [
                 'run_id' => $run->id,
                 'campaign_id' => $run->campaign_id,
             ]);
@@ -522,7 +522,7 @@ class CampaignService
         if ($run->status === 'sent' && $run->campaign->schedule_type === 'one_shot') {
             $run->campaign->update(['is_active' => false]);
 
-            Log::info('[CampaignService] One-shot campaign auto-set to inactive.', [
+            Log::channel('campaign')->info('[CampaignService] One-shot campaign auto-set to inactive.', [
                 'run_id'      => $run->id,
                 'campaign_id' => $run->campaign_id,
             ]);
@@ -547,7 +547,7 @@ class CampaignService
         $claimedRun = $this->deliveryFence->claimZohoTransport($run, ['scheduled', 'sending']);
         if ($claimedRun === null) {
             CampaignRun::query()->whereKey($run->id)->where('status', 'sending')->update(['status' => 'scheduled']);
-            Log::info('[CampaignService] Envoi Zoho annulé après revalidation du canal.', ['run_id' => $run->id]);
+            Log::channel('campaign')->info('[CampaignService] Envoi Zoho annulé après revalidation du canal.', ['run_id' => $run->id]);
             return;
         }
         $run = $claimedRun->load(['campaign.segment', 'campaign.template.translations', 'campaign.senderIdentity']);
@@ -561,7 +561,7 @@ class CampaignService
         if ($run->campaign->emailVerificationPolicy() === Campaign::VERIFICATION_ALL_SENDABLE
             && $contacts->contains(fn (Contact $contact): bool => $contact->email_verification_status === 'pending')) {
             $run->update(['status' => 'scheduled', 'started_at' => null, 'finished_at' => null]);
-            Log::info('[CampaignService] Zoho send deferred after transport claim while email verification is pending.', [
+            Log::channel('campaign')->info('[CampaignService] Zoho send deferred after transport claim while email verification is pending.', [
                 'run_id' => $run->id,
                 'campaign_id' => $run->campaign_id,
             ]);
@@ -605,7 +605,7 @@ class CampaignService
             return;
         }
 
-        Log::info('[CampaignService] Driver zoho détecté — envoi via dispatchRun().', [
+        Log::channel('campaign')->info('[CampaignService] Driver zoho détecté — envoi via dispatchRun().', [
             'run_id'   => $run->id,
             'contacts' => $contacts->count(),
         ]);
@@ -639,14 +639,14 @@ class CampaignService
                 ]);
             });
 
-            Log::info('[CampaignService] Run Zoho complété.', [
+            Log::channel('campaign')->info('[CampaignService] Run Zoho complété.', [
                 'run_id'       => $run->id,
                 'campaign_key' => $summary['campaign_key'] ?? null,
                 'list_key'     => $summary['list_key'] ?? null,
                 'stats_sent'   => $sentCount,
             ]);
         } catch (\Throwable $e) {
-            Log::error('[CampaignService] Échec du dispatchRun Zoho.', [
+            Log::channel('campaign')->error('[CampaignService] Échec du dispatchRun Zoho.', [
                 'run_id' => $run->id,
                 'error'  => $e->getMessage(),
             ]);
@@ -767,7 +767,7 @@ class CampaignService
                 });
             } catch (\Throwable $e) {
                 // Leave recipient in 'queued' state — next job retry will re-send.
-                Log::error('[CampaignService] Failed to send to recipient.', [
+                Log::channel('campaign')->error('[CampaignService] Failed to send to recipient.', [
                     'run_id'       => $run->id,
                     'recipient_id' => $recipient->id,
                     'contact_id'   => $contact->id,
@@ -802,7 +802,7 @@ class CampaignService
                 'finished_at' => now(),
             ]);
 
-            Log::info('[CampaignService] Lot progressif complété (local).', [
+            Log::channel('campaign')->info('[CampaignService] Lot progressif complété (local).', [
                 'run_id' => $run->id,
                 'stats_sent' => $sentCount,
             ]);
@@ -823,7 +823,7 @@ class CampaignService
             'finished_at' => now(),
         ]);
 
-        Log::info('[CampaignService] Run complété (local).', [
+        Log::channel('campaign')->info('[CampaignService] Run complété (local).', [
             'run_id'     => $run->id,
             'stats_sent' => $sentCount,
         ]);
@@ -943,7 +943,7 @@ class CampaignService
             ]);
         });
 
-        Log::warning('[CampaignService] Lot progressif épuisé après les tentatives de file.', [
+        Log::channel('campaign')->warning('[CampaignService] Lot progressif épuisé après les tentatives de file.', [
             'run_id' => $run->id,
             'exception_class' => $exception::class,
         ]);

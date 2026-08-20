@@ -68,7 +68,9 @@ class ZohoCrmTemplatesService
                     ]);
                 } catch (\RuntimeException $e) {
                     if ($this->isInvalidEmailTemplateModule($e)) {
-                        Log::debug("[ZohoCrmTemplatesService] Module {$module} ignored — no email_templates support");
+                        Log::channel('zoho')->debug('[ZohoCrmTemplatesService] Module ignored — no email_templates support', [
+                            'module' => $module,
+                        ]);
                         break;
                     }
 
@@ -152,7 +154,9 @@ class ZohoCrmTemplatesService
 
                 if ($subject === '' || $content === '') {
                     $skipped++;
-                    Log::debug("[ZohoCrmTemplatesService] Skipped template {$tpl['zoho_id']} — empty subject or content");
+                    Log::channel('zoho')->debug('[ZohoCrmTemplatesService] Skipped template — empty subject or content', [
+                        'zoho_id' => $tpl['zoho_id'],
+                    ]);
                     continue;
                 }
 
@@ -195,7 +199,9 @@ class ZohoCrmTemplatesService
         } catch (\Throwable $e) {
             $status = 'error';
             $error  = $e->getMessage();
-            Log::error("[ZohoCrmTemplatesService] import() failed: {$error}");
+            Log::channel('zoho')->error('[ZohoCrmTemplatesService] import() failed', [
+                'error' => $error,
+            ]);
         }
 
         $durationMs = (int) ((microtime(true) - $startedAt) * 1000);
@@ -236,7 +242,7 @@ class ZohoCrmTemplatesService
         try {
             $body = $this->httpGet('settings/modules', []);
         } catch (\Throwable $e) {
-            Log::warning('[ZohoCrmTemplatesService] settings/modules unavailable — falling back to Contacts + Leads', [
+            Log::channel('zoho')->warning('[ZohoCrmTemplatesService] settings/modules unavailable — falling back to Contacts + Leads', [
                 'error' => $e->getMessage(),
             ]);
 

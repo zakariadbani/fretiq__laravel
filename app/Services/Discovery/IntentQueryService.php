@@ -44,7 +44,7 @@ class IntentQueryService
         }
 
         if (! $this->gemini->hasApiKey()) {
-            Log::warning('[IntentQueryService] Clé API Gemini non configurée — génération de requêtes ignorée.', [
+            Log::channel('discovery')->warning('[IntentQueryService] Clé API Gemini non configurée — génération de requêtes ignorée.', [
                 'criteria_id' => $criteria->id ?? null,
             ]);
             return [];
@@ -59,7 +59,7 @@ class IntentQueryService
             ]);
 
             if ($response->failed()) {
-                Log::warning('[IntentQueryService] Réponse HTTP échouée depuis Gemini.', [
+                Log::channel('discovery')->warning('[IntentQueryService] Réponse HTTP échouée depuis Gemini.', [
                     'status'      => $response->status(),
                     'criteria_id' => $criteria->id ?? null,
                 ]);
@@ -69,7 +69,7 @@ class IntentQueryService
             $text = $this->gemini->extractText($response);
 
             if ($text === null) {
-                Log::warning('[IntentQueryService] Réponse Gemini vide ou structure inattendue.', [
+                Log::channel('discovery')->warning('[IntentQueryService] Réponse Gemini vide ou structure inattendue.', [
                     'criteria_id' => $criteria->id ?? null,
                 ]);
                 return [];
@@ -77,7 +77,7 @@ class IntentQueryService
 
             return $this->parseResult($text, $criteria);
         } catch (\Throwable $e) {
-            Log::warning('[IntentQueryService] Exception lors de l\'appel Gemini — génération de requêtes ignorée.', [
+            Log::channel('discovery')->warning('[IntentQueryService] Exception lors de l\'appel Gemini — génération de requêtes ignorée.', [
                 'criteria_id' => $criteria->id ?? null,
                 'error'       => $e->getMessage(),
             ]);
@@ -135,7 +135,7 @@ PROMPT;
         $data = $this->gemini->decodeJson($text);
 
         if ($data === null) {
-            Log::warning('[IntentQueryService] JSON non décodable dans la réponse Gemini.', [
+            Log::channel('discovery')->warning('[IntentQueryService] JSON non décodable dans la réponse Gemini.', [
                 'criteria_id' => $criteria->id ?? null,
                 'raw'         => mb_substr($this->gemini->stripFences($text), 0, 200),
             ]);
@@ -145,7 +145,7 @@ PROMPT;
         $queries = $data['queries'] ?? null;
 
         if (! is_array($queries)) {
-            Log::warning('[IntentQueryService] Champ queries manquant ou invalide dans la réponse Gemini.', [
+            Log::channel('discovery')->warning('[IntentQueryService] Champ queries manquant ou invalide dans la réponse Gemini.', [
                 'criteria_id' => $criteria->id ?? null,
             ]);
             return [];

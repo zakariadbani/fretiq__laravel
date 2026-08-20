@@ -104,7 +104,7 @@ class SendSequenceStepJob implements ShouldQueue, ShouldBeUnique
         $enrollment = SequenceEnrollment::find($this->enrollmentId);
 
         if ($enrollment === null) {
-            Log::warning('[SendSequenceStepJob] SequenceEnrollment not found — discarding job.', [
+            Log::channel('campaign')->warning('[SendSequenceStepJob] SequenceEnrollment not found — discarding job.', [
                 'enrollment_id' => $this->enrollmentId,
             ]);
             return;
@@ -115,7 +115,7 @@ class SendSequenceStepJob implements ShouldQueue, ShouldBeUnique
             && $enrollment->campaign?->sequence_enrollment_mode === 'paced'
             && in_array($enrollment->campaign?->delivery_channel, [null, 'zoho'], true)
             && config('services.zoho.driver', 'local') === 'zoho') {
-            Log::info('[SendSequenceStepJob] Paced enrollment is handled by Zoho waves - skipping SMTP.', [
+            Log::channel('campaign')->info('[SendSequenceStepJob] Paced enrollment is handled by Zoho waves - skipping SMTP.', [
                 'enrollment_id' => $this->enrollmentId,
             ]);
             return;
@@ -124,21 +124,21 @@ class SendSequenceStepJob implements ShouldQueue, ShouldBeUnique
         // Guard against processing an enrollment that was stopped/completed between
         // dispatch and execution (e.g. manual unsubscribe, reply handler).
         if ($enrollment->status !== 'active') {
-            Log::info('[SendSequenceStepJob] Enrollment no longer active — skipping.', [
+            Log::channel('campaign')->info('[SendSequenceStepJob] Enrollment no longer active — skipping.', [
                 'enrollment_id' => $this->enrollmentId,
                 'status'        => $enrollment->status,
             ]);
             return;
         }
 
-        Log::info('[SendSequenceStepJob] Processing drip step.', [
+        Log::channel('campaign')->info('[SendSequenceStepJob] Processing drip step.', [
             'enrollment_id' => $this->enrollmentId,
             'current_step'  => $enrollment->current_step,
         ]);
 
         app(SequenceService::class)->sendStep($enrollment);
 
-        Log::info('[SendSequenceStepJob] Drip step completed.', [
+        Log::channel('campaign')->info('[SendSequenceStepJob] Drip step completed.', [
             'enrollment_id' => $this->enrollmentId,
         ]);
     }

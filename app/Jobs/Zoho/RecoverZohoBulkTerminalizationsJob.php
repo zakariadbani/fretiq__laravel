@@ -128,12 +128,12 @@ final class RecoverZohoBulkTerminalizationsJob implements ShouldBeUniqueUntilPro
             try {
                 $this->releaseClaim($this->activeRootId, $this->activeOwner, true);
             } catch (Throwable) {
-                Log::error('Zoho V2 Bulk recovery claim release failed.', [
+                Log::channel('zoho')->error('Zoho V2 Bulk recovery claim release failed.', [
                     'root_id' => $this->activeRootId,
                 ]);
             }
         }
-        Log::error('Zoho V2 Bulk terminalization recovery job exhausted.', [
+        Log::channel('zoho')->error('Zoho V2 Bulk terminalization recovery job exhausted.', [
             'root_id' => $this->activeRootId,
             'exception' => $exception::class,
         ]);

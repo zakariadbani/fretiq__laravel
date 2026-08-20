@@ -68,7 +68,7 @@ class GeminiTranslationDriver
     ): ?array {
         // ── 1. API key guard ───────────────────────────────────────────────────
         if (! $this->gemini->hasApiKey()) {
-            Log::warning('[GeminiTranslationDriver] Clé API Gemini non configurée — traduction ignorée.', [
+            Log::channel('gemini')->warning('[GeminiTranslationDriver] Clé API Gemini non configurée — traduction ignorée.', [
                 'target_lang' => $targetLang,
             ]);
             return null;
@@ -109,7 +109,7 @@ class GeminiTranslationDriver
 
         // ── 4. Re-insert translated runs into token stream ─────────────────────
         if (count($translatedRuns) !== count($inputRuns)) {
-            Log::warning('[GeminiTranslationDriver] Longueur totale des runs incorrecte après découpage — attendu ' . count($inputRuns) . ', reçu ' . count($translatedRuns), [
+            Log::channel('gemini')->warning('[GeminiTranslationDriver] Longueur totale des runs incorrecte après découpage — attendu ' . count($inputRuns) . ', reçu ' . count($translatedRuns), [
                 'target_lang'    => $targetLang,
                 'expected_count' => count($inputRuns),
                 'received_count' => count($translatedRuns),
@@ -126,7 +126,7 @@ class GeminiTranslationDriver
 
         // ── Final guard: HTML tag multiset must be identical ──────────────────
         if (! $this->tagMultisetEqual($html, $translatedHtml)) {
-            Log::warning('[GeminiTranslationDriver] Multiset des balises HTML modifié après traduction — rejeté.', [
+            Log::channel('gemini')->warning('[GeminiTranslationDriver] Multiset des balises HTML modifié après traduction — rejeté.', [
                 'target_lang' => $targetLang,
             ]);
             return null;
@@ -162,7 +162,7 @@ class GeminiTranslationDriver
             ]);
 
             if ($response->failed()) {
-                Log::warning('[GeminiTranslationDriver] Réponse HTTP échouée depuis Gemini.', [
+                Log::channel('gemini')->warning('[GeminiTranslationDriver] Réponse HTTP échouée depuis Gemini.', [
                     'status'      => $response->status(),
                     'target_lang' => $targetLang,
                     'chunk_index' => $chunkIndex,
@@ -172,7 +172,7 @@ class GeminiTranslationDriver
 
             $finishReason = $response->json('candidates.0.finishReason');
             if ($finishReason === 'MAX_TOKENS') {
-                Log::warning('[GeminiTranslationDriver] Gemini a atteint MAX_TOKENS — traduction rejetée.', [
+                Log::channel('gemini')->warning('[GeminiTranslationDriver] Gemini a atteint MAX_TOKENS — traduction rejetée.', [
                     'target_lang' => $targetLang,
                     'chunk_index' => $chunkIndex,
                 ]);
@@ -182,7 +182,7 @@ class GeminiTranslationDriver
             $text = $this->gemini->extractText($response);
 
             if ($text === null) {
-                Log::warning('[GeminiTranslationDriver] Réponse Gemini vide ou structure inattendue.', [
+                Log::channel('gemini')->warning('[GeminiTranslationDriver] Réponse Gemini vide ou structure inattendue.', [
                     'target_lang' => $targetLang,
                     'chunk_index' => $chunkIndex,
                 ]);
@@ -198,7 +198,7 @@ class GeminiTranslationDriver
                 chunkIndex: $chunkIndex,
             );
         } catch (\Throwable $e) {
-            Log::warning('[GeminiTranslationDriver] Exception lors de l\'appel Gemini — traduction ignorée.', [
+            Log::channel('gemini')->warning('[GeminiTranslationDriver] Exception lors de l\'appel Gemini — traduction ignorée.', [
                 'target_lang' => $targetLang,
                 'chunk_index' => $chunkIndex,
                 'error'       => $e->getMessage(),
@@ -258,7 +258,7 @@ PROMPT;
         $data = $this->gemini->decodeJson($text);
 
         if ($data === null) {
-            Log::warning('[GeminiTranslationDriver] JSON non décodable dans la réponse Gemini.', [
+            Log::channel('gemini')->warning('[GeminiTranslationDriver] JSON non décodable dans la réponse Gemini.', [
                 'target_lang' => $targetLang,
                 'chunk_index' => $chunkIndex,
                 'raw'         => mb_substr($this->gemini->stripFences($text), 0, 500),
@@ -268,7 +268,7 @@ PROMPT;
 
         // ── Guard: subject must be a non-empty string ─────────────────────────
         if (! isset($data['subject']) || ! is_string($data['subject']) || trim($data['subject']) === '') {
-            Log::warning('[GeminiTranslationDriver] Champ "subject" manquant ou invalide.', [
+            Log::channel('gemini')->warning('[GeminiTranslationDriver] Champ "subject" manquant ou invalide.', [
                 'target_lang' => $targetLang,
                 'chunk_index' => $chunkIndex,
             ]);
@@ -277,7 +277,7 @@ PROMPT;
 
         // ── Guard: runs must be an array of the exact same length ─────────────
         if (! isset($data['runs']) || ! is_array($data['runs'])) {
-            Log::warning('[GeminiTranslationDriver] Champ "runs" absent ou non-tableau.', [
+            Log::channel('gemini')->warning('[GeminiTranslationDriver] Champ "runs" absent ou non-tableau.', [
                 'target_lang' => $targetLang,
                 'chunk_index' => $chunkIndex,
             ]);
@@ -285,7 +285,7 @@ PROMPT;
         }
 
         if (count($data['runs']) !== count($inputRuns)) {
-            Log::warning('[GeminiTranslationDriver] Longueur des runs incorrecte — attendu ' . count($inputRuns) . ', reçu ' . count($data['runs']), [
+            Log::channel('gemini')->warning('[GeminiTranslationDriver] Longueur des runs incorrecte — attendu ' . count($inputRuns) . ', reçu ' . count($data['runs']), [
                 'target_lang'    => $targetLang,
                 'chunk_index'    => $chunkIndex,
                 'expected_count' => count($inputRuns),
@@ -299,7 +299,7 @@ PROMPT;
         // Ensure all runs are strings
         foreach ($translatedRuns as $i => $run) {
             if (! is_string($run)) {
-                Log::warning("[GeminiTranslationDriver] Run #{$i} n'est pas une chaîne.", [
+                Log::channel('gemini')->warning("[GeminiTranslationDriver] Run #{$i} n'est pas une chaîne.", [
                     'target_lang' => $targetLang,
                     'chunk_index' => $chunkIndex,
                 ]);
@@ -310,7 +310,7 @@ PROMPT;
         // ── Guard: {{...}} order preserved per run ────────────────────────────
         foreach ($inputRuns as $i => $inputRun) {
             if (! $this->mergeTagsOrderedEqual($inputRun, $translatedRuns[$i])) {
-                Log::warning("[GeminiTranslationDriver] Merge tags non préservés dans le run #{$i}.", [
+                Log::channel('gemini')->warning("[GeminiTranslationDriver] Merge tags non préservés dans le run #{$i}.", [
                     'target_lang' => $targetLang,
                     'chunk_index' => $chunkIndex,
                     'input'       => mb_substr($inputRun, 0, 200),
@@ -322,7 +322,7 @@ PROMPT;
 
         // ── Guard: {{...}} order preserved in subject ─────────────────────────
         if (! $this->mergeTagsOrderedEqual($originalSubject, $data['subject'])) {
-            Log::warning('[GeminiTranslationDriver] Merge tags non préservés dans le subject.', [
+            Log::channel('gemini')->warning('[GeminiTranslationDriver] Merge tags non préservés dans le subject.', [
                 'target_lang' => $targetLang,
                 'chunk_index' => $chunkIndex,
             ]);
@@ -340,7 +340,7 @@ PROMPT;
         if ($originalPreview !== null && $originalPreview !== '') {
             $checkPreview = $translatedPreview ?? '';
             if (! $this->mergeTagsOrderedEqual($originalPreview, $checkPreview)) {
-                Log::warning('[GeminiTranslationDriver] Merge tags non préservés dans preview_text.', [
+                Log::channel('gemini')->warning('[GeminiTranslationDriver] Merge tags non préservés dans preview_text.', [
                     'target_lang' => $targetLang,
                     'chunk_index' => $chunkIndex,
                 ]);

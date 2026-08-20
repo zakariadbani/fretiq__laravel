@@ -112,7 +112,10 @@ class ZohoAuthService
         $token->expires_at = now()->addSeconds(max(300, $expiresIn - 60));
         $token->save();
 
-        Log::info("[ZohoAuthService] Token {$service} rafraîchi, expire dans {$expiresIn}s");
+        Log::channel('zoho')->info('[ZohoAuthService] Token rafraîchi', [
+            'service'    => $service,
+            'expires_in' => $expiresIn,
+        ]);
 
         return $token->access_token;
     }

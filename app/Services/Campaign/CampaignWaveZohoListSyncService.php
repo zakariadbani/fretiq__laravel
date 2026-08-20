@@ -291,7 +291,7 @@ class CampaignWaveZohoListSyncService
                 }
             }
 
-            Log::warning('[CampaignWaveZohoListSyncService] Contact Zoho rejete avec un code non verifie ; ignore pour cette vague uniquement.', [
+            Log::channel('campaign')->warning('[CampaignWaveZohoListSyncService] Contact Zoho rejete avec un code non verifie ; ignore pour cette vague uniquement.', [
                 'run_id' => $run->id,
                 'email' => $email,
                 'zoho_code' => $zohoCode,
@@ -304,7 +304,7 @@ class CampaignWaveZohoListSyncService
     /** @return array{list_key: string, list_name: string, contacts: int} */
     private function finishEmpty(CampaignRun $run, string $listKey, string $listName): array
     {
-        Log::warning('[CampaignWaveZohoListSyncService] Wave has no eligible contacts left; marking sent as empty.', [
+        Log::channel('campaign')->warning('[CampaignWaveZohoListSyncService] Wave has no eligible contacts left; marking sent as empty.', [
             'run_id' => $run->id,
             'list_key' => $listKey,
             'list_name' => $listName,

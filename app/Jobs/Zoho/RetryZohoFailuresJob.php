@@ -61,6 +61,6 @@ final class RetryZohoFailuresJob implements ShouldBeUnique, ShouldQueue
 
     public function failed(Throwable $exception): void
     {
-        Log::error('Zoho V2 failure retry job exhausted.', ['module' => $this->module, 'exception' => $exception::class]);
+        Log::channel('zoho')->error('Zoho V2 failure retry job exhausted.', ['module' => $this->module, 'exception' => $exception::class]);
     }
 }

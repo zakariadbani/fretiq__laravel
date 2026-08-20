@@ -114,7 +114,7 @@ final class RunZohoBulkBackfillJob implements ShouldBeUniqueUntilProcessing, Sho
         try {
             $this->terminate('delivery_exhausted');
         } finally {
-            Log::error('Zoho V2 Bulk backfill job exhausted.', [
+            Log::channel('zoho')->error('Zoho V2 Bulk backfill job exhausted.', [
                 'batch_id' => $this->batchId,
                 'module' => $this->module,
                 'correlation_id' => $this->correlationId,
@@ -136,7 +136,7 @@ final class RunZohoBulkBackfillJob implements ShouldBeUniqueUntilProcessing, Sho
                 $reason,
             );
         } catch (Throwable $exception) {
-            Log::error('Zoho V2 Bulk backfill terminalization failed.', [
+            Log::channel('zoho')->error('Zoho V2 Bulk backfill terminalization failed.', [
                 'batch_id' => $this->batchId,
                 'module' => $this->module,
                 'correlation_id' => $this->correlationId,

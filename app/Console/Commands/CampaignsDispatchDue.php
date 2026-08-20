@@ -52,7 +52,7 @@ class CampaignsDispatchDue extends Command
             return self::SUCCESS;
         } catch (\Throwable $e) {
             $this->error('campaigns:dispatch-due failed: ' . $e->getMessage());
-            Log::error('campaigns:dispatch-due failed', [
+            Log::channel('campaign')->error('campaigns:dispatch-due failed', [
                 'exception' => $e->getMessage(),
                 'trace'     => $e->getTraceAsString(),
             ]);

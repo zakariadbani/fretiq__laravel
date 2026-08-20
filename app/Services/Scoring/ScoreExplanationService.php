@@ -97,7 +97,7 @@ PROMPT;
             ]);
 
             if ($response->failed()) {
-                Log::warning('[ScoreExplanationService] Réponse HTTP échouée depuis Gemini.', [
+                Log::channel('gemini')->warning('[ScoreExplanationService] Réponse HTTP échouée depuis Gemini.', [
                     'company' => $profile['name'] ?? '',
                     'status'  => $response->status(),
                 ]);
@@ -107,7 +107,7 @@ PROMPT;
             $text = $this->gemini->extractText($response);
 
             if ($text === null) {
-                Log::warning('[ScoreExplanationService] Réponse Gemini vide ou structure inattendue.', [
+                Log::channel('gemini')->warning('[ScoreExplanationService] Réponse Gemini vide ou structure inattendue.', [
                     'company' => $profile['name'] ?? '',
                 ]);
                 return null;
@@ -128,7 +128,7 @@ PROMPT;
             return trim($explanation);
 
         } catch (\Throwable $e) {
-            Log::warning('[ScoreExplanationService] Exception lors de l\'appel Gemini.', [
+            Log::channel('gemini')->warning('[ScoreExplanationService] Exception lors de l\'appel Gemini.', [
                 'company' => $profile['name'] ?? '',
                 'error'   => $e->getMessage(),
             ]);

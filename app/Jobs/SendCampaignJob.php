@@ -108,17 +108,17 @@ class SendCampaignJob implements ShouldQueue, ShouldBeUnique
         $run = CampaignRun::find($this->runId);
 
         if ($run === null) {
-            Log::warning('[SendCampaignJob] CampaignRun not found — discarding job.', [
+            Log::channel('campaign')->warning('[SendCampaignJob] CampaignRun not found — discarding job.', [
                 'run_id' => $this->runId,
             ]);
             return;
         }
 
-        Log::info('[SendCampaignJob] Starting run.', ['run_id' => $this->runId]);
+        Log::channel('campaign')->info('[SendCampaignJob] Starting run.', ['run_id' => $this->runId]);
 
         app(CampaignService::class)->sendRun($run);
 
-        Log::info('[SendCampaignJob] Run completed.', ['run_id' => $this->runId]);
+        Log::channel('campaign')->info('[SendCampaignJob] Run completed.', ['run_id' => $this->runId]);
     }
 
     /** Reconcile paced company ledgers after the queue exhausts all attempts. */

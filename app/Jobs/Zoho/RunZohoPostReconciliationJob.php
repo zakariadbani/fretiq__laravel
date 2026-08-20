@@ -130,7 +130,7 @@ final class RunZohoPostReconciliationJob implements ShouldBeUniqueUntilProcessin
             'post_reconciliation_error' => 'Post-reconciliation processing failed.',
             'post_reconciliation_retry_not_before' => null,
         ]);
-        Log::error('Zoho V2 post-reconciliation job exhausted.', [
+        Log::channel('zoho')->error('Zoho V2 post-reconciliation job exhausted.', [
             'batch_id' => $this->batchId,
             'exception' => $exception::class,
         ]);

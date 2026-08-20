@@ -27,7 +27,7 @@ class GeminiScoringDriver implements ScoringDriverInterface
     public function score(array $candidate, ProspectCriteria $criteria, ?int $timeoutSeconds = null): ?array
     {
         if (! $this->gemini->hasApiKey()) {
-            Log::warning('[GeminiScoringDriver] Clé API Gemini non configurée — scoring Gemini ignoré.', [
+            Log::channel('gemini')->warning('[GeminiScoringDriver] Clé API Gemini non configurée — scoring Gemini ignoré.', [
                 'domain' => $candidate['domain'] ?? ($candidate['url'] ?? $candidate['link'] ?? ''),
             ]);
             return null;
@@ -41,7 +41,7 @@ class GeminiScoringDriver implements ScoringDriverInterface
             ]);
 
             if ($response->failed()) {
-                Log::warning('[GeminiScoringDriver] Réponse HTTP échouée depuis Gemini.', [
+                Log::channel('gemini')->warning('[GeminiScoringDriver] Réponse HTTP échouée depuis Gemini.', [
                     'status' => $response->status(),
                     'domain' => $candidate['domain'] ?? '',
                 ]);
@@ -51,7 +51,7 @@ class GeminiScoringDriver implements ScoringDriverInterface
             $text = $this->gemini->extractText($response);
 
             if ($text === null) {
-                Log::warning('[GeminiScoringDriver] Réponse Gemini vide ou structure inattendue.', [
+                Log::channel('gemini')->warning('[GeminiScoringDriver] Réponse Gemini vide ou structure inattendue.', [
                     'domain' => $candidate['domain'] ?? '',
                 ]);
                 return null;
@@ -59,7 +59,7 @@ class GeminiScoringDriver implements ScoringDriverInterface
 
             return $this->parseResult($text, $candidate);
         } catch (\Throwable $e) {
-            Log::warning('[GeminiScoringDriver] Exception lors de l\'appel Gemini — scoring ignoré.', [
+            Log::channel('gemini')->warning('[GeminiScoringDriver] Exception lors de l\'appel Gemini — scoring ignoré.', [
                 'domain' => $candidate['domain'] ?? '',
                 'error'  => $e->getMessage(),
             ]);
@@ -144,7 +144,7 @@ PROMPT;
         $data = $this->gemini->decodeJson($text);
 
         if ($data === null) {
-            Log::warning('[GeminiScoringDriver] JSON non décodable dans la réponse Gemini.', [
+            Log::channel('gemini')->warning('[GeminiScoringDriver] JSON non décodable dans la réponse Gemini.', [
                 'domain' => $candidate['domain'] ?? '',
                 'raw'    => mb_substr($this->gemini->stripFences($text), 0, 200),
             ]);
@@ -159,7 +159,7 @@ PROMPT;
             if (is_numeric($score)) {
                 $score = (int) $score;
             } else {
-                Log::warning('[GeminiScoringDriver] Champ score manquant ou invalide dans la réponse Gemini.', [
+                Log::channel('gemini')->warning('[GeminiScoringDriver] Champ score manquant ou invalide dans la réponse Gemini.', [
                     'domain' => $candidate['domain'] ?? '',
                     'score'  => $score,
                 ]);
@@ -170,7 +170,7 @@ PROMPT;
         $score = (int) $score;
 
         if ($score < 0 || $score > 100) {
-            Log::warning('[GeminiScoringDriver] Score hors limites (0-100) dans la réponse Gemini.', [
+            Log::channel('gemini')->warning('[GeminiScoringDriver] Score hors limites (0-100) dans la réponse Gemini.', [
                 'domain' => $candidate['domain'] ?? '',
                 'score'  => $score,
             ]);
@@ -178,7 +178,7 @@ PROMPT;
         }
 
         if (! is_string($explanation) || trim($explanation) === '') {
-            Log::warning('[GeminiScoringDriver] Explication manquante ou vide dans la réponse Gemini.', [
+            Log::channel('gemini')->warning('[GeminiScoringDriver] Explication manquante ou vide dans la réponse Gemini.', [
                 'domain' => $candidate['domain'] ?? '',
             ]);
             return null;

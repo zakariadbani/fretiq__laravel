@@ -117,7 +117,7 @@ class SyncCampaignRecipientEventsJob implements ShouldBeUnique, ShouldQueue
 
     public function failed(?\Throwable $exception): void
     {
-        Log::error('[SyncCampaignRecipientEventsJob] Recipient event sync failed.', [
+        Log::channel('campaign')->error('[SyncCampaignRecipientEventsJob] Recipient event sync failed.', [
             'run_id' => $this->runId,
             'exception' => $exception,
         ]);

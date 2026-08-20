@@ -37,7 +37,7 @@ class SyncCampaignWaveZohoListJob implements ShouldQueue, ShouldBeUnique
         $run = CampaignRun::find($this->runId);
         $retryable = $run !== null && $run->canResyncZohoWave();
         if (! $retryable) {
-            Log::warning('[SyncCampaignWaveZohoListJob] Run not retryable; skipping sync.', [
+            Log::channel('campaign')->warning('[SyncCampaignWaveZohoListJob] Run not retryable; skipping sync.', [
                 'run_id' => $this->runId,
                 'status' => $run?->status,
                 'driver_ref' => $run?->driver_ref,
@@ -54,6 +54,6 @@ class SyncCampaignWaveZohoListJob implements ShouldQueue, ShouldBeUnique
     public function failed(Throwable $exception): void
     {
         CampaignRun::whereKey($this->runId)->update(['status' => 'failed', 'driver_ref' => 'zoho-wave-failed', 'failure_reason' => mb_substr($exception->getMessage(), 0, 500)]);
-        Log::error('[SyncCampaignWaveZohoListJob] Zoho wave mirror failed.', ['run_id' => $this->runId, 'exception' => $exception->getMessage()]);
+        Log::channel('campaign')->error('[SyncCampaignWaveZohoListJob] Zoho wave mirror failed.', ['run_id' => $this->runId, 'exception' => $exception->getMessage()]);
     }
 }

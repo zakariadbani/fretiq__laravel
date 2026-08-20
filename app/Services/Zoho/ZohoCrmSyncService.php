@@ -125,7 +125,10 @@ class ZohoCrmSyncService
                     $synced++;
                 } catch (\Throwable $e) {
                     $skipped++;
-                    Log::warning("[ZohoCrmSyncService] syncAccounts: skipped record {$zohoId} — " . $e->getMessage());
+                    Log::channel('zoho')->warning('[ZohoCrmSyncService] syncAccounts: skipped record', [
+                        'zoho_id' => $zohoId,
+                        'error'   => $e->getMessage(),
+                    ]);
                 }
             }
 
@@ -180,7 +183,9 @@ class ZohoCrmSyncService
                 if ($company === null) {
                     // No Account_Name present at all — cannot satisfy NOT NULL FK.
                     $skipped++;
-                    Log::debug("[ZohoCrmSyncService] syncContacts: skipped contact {$zohoId} — no Account_Name");
+                    Log::channel('zoho')->debug('[ZohoCrmSyncService] syncContacts: skipped contact — no Account_Name', [
+                        'zoho_id' => $zohoId,
+                    ]);
                     continue;
                 }
 
@@ -189,7 +194,10 @@ class ZohoCrmSyncService
                     $synced++;
                 } catch (\Throwable $e) {
                     $skipped++;
-                    Log::warning("[ZohoCrmSyncService] syncContacts: skipped contact {$zohoId} — " . $e->getMessage());
+                    Log::channel('zoho')->warning('[ZohoCrmSyncService] syncContacts: skipped contact', [
+                        'zoho_id' => $zohoId,
+                        'error'   => $e->getMessage(),
+                    ]);
                 }
             }
 
@@ -228,11 +236,18 @@ class ZohoCrmSyncService
                 };
                 $records = $result['records'];
 
-                Log::info("[ZohoCrmSyncService] sync({$mod}): {$records} records upserted, {$result['skipped']} skipped");
+                Log::channel('zoho')->info('[ZohoCrmSyncService] sync: records upserted', [
+                    'module'  => $mod,
+                    'records' => $records,
+                    'skipped' => $result['skipped'],
+                ]);
             } catch (\Throwable $e) {
                 $status = 'error';
                 $error  = $e->getMessage();
-                Log::error("[ZohoCrmSyncService] sync({$mod}) failed: {$error}");
+                Log::channel('zoho')->error('[ZohoCrmSyncService] sync failed', [
+                    'module' => $mod,
+                    'error'  => $error,
+                ]);
             }
 
             $durationMs = (int) ((microtime(true) - $startedAt) * 1000);
@@ -257,7 +272,10 @@ class ZohoCrmSyncService
                     ]
                 );
             } catch (\Throwable $e) {
-                Log::warning("[ZohoCrmSyncService] Failed to update checkpoint for {$mod}: " . $e->getMessage());
+                Log::channel('zoho')->warning('[ZohoCrmSyncService] Failed to update checkpoint', [
+                    'module' => $mod,
+                    'error'  => $e->getMessage(),
+                ]);
             }
         }
     }

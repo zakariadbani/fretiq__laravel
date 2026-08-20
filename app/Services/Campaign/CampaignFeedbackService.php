@@ -281,7 +281,7 @@ class CampaignFeedbackService
         }
 
         $campaign->update(['is_active' => false]);
-        Log::warning('Campaign paused after anomalous bounce rate.', [
+        Log::channel('campaign')->warning('Campaign paused after anomalous bounce rate.', [
             'campaign_id' => $campaign->id,
             'campaign_run_id' => $runId,
             'recipient_count' => $denominator,
