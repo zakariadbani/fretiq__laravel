@@ -28,7 +28,7 @@
             [number_format($kpis['open_rate'], 1).' %', 'Taux d’ouverture', 'ki-eye'],
             [number_format($kpis['contacts']), 'Contacts', 'ki-people'],
             [number_format($kpis['active_campaigns']), 'Campagnes actives', 'ki-rocket'],
-            [number_format($campaigns['total']), 'Campagnes totales', 'ki-chart-simple'],
+            [number_format($campaigns['launched']), 'Campagnes lancées', 'ki-chart-line-up'],
         ] as [$value, $label, $icon])
             <div class="col-6 col-lg-3"><div class="border rounded p-4 h-100 d-flex align-items-center"><i class="ki-outline {{ $icon }} fs-2x text-primary me-3"></i><div><div class="fs-2 fw-bolder lh-1">{{ $value }}</div><div class="text-muted fs-7 fw-semibold">{{ $label }}</div></div></div></div>
         @endforeach

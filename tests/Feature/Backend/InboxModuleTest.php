@@ -283,8 +283,7 @@ class InboxModuleTest extends TestCase
         $this->assertTrue($commercial->hasPermissionTo('view inbox'));
         $this->assertTrue($commercial->hasPermissionTo('edit inbox'));
 
-        $suivi = collect(config('global.menu.main'))->firstWhere('title', 'Réponses & demandes');
-        $menu = collect($suivi['sub'])->firstWhere('title', 'Boîte de réception');
+        $menu = collect(config('global.menu.main'))->firstWhere('title', 'Boîte de réception');
         $this->assertSame('view inbox', $menu['permission']);
         $this->assertSame('admin/inbox', $menu['path']);
     }

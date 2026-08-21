@@ -288,6 +288,9 @@ class AnalyticsService
         return [
             'total' => Campaign::where('name', 'not like', 'E2E\_FIXTURE %')->count(),
             'active' => Campaign::where('name', 'not like', 'E2E\_FIXTURE %')->where('is_active', true)->count(),
+            'launched' => CampaignRun::executed()
+                ->whereHas('campaign', fn ($q) => $q->where('name', 'not like', 'E2E\_FIXTURE %'))
+                ->count(),
             'rows' => $rows,
         ];
     }

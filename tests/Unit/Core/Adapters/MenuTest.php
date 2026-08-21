@@ -53,21 +53,43 @@ class MenuTest extends TestCase
         $this->assertSame('view campaigns', $main->firstWhere('title', 'Planning')['permission']);
         $this->assertSame('admin/planner', $main->firstWhere('title', 'Planning')['active_prefix']);
         $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Planning'));
+        $this->assertSame('admin/prospect_criteria', $main->firstWhere('title', 'Critères de découverte')['path']);
+        $this->assertSame('view prospect_criteria', $main->firstWhere('title', 'Critères de découverte')['permission']);
+        $this->assertSame('admin/prospect_criteria', $main->firstWhere('title', 'Critères de découverte')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Critères de découverte'));
+        $this->assertSame('admin/prospect_batches', $main->firstWhere('title', 'Lots découverte')['path']);
+        $this->assertSame('view prospect_batches', $main->firstWhere('title', 'Lots découverte')['permission']);
+        $this->assertSame('admin/prospect_batches', $main->firstWhere('title', 'Lots découverte')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Lots découverte'));
         $this->assertSame([
             'Prospection & campagnes',
+            'Répertoire',
+            'Préparation des campagnes',
+            'Conformité & consommation',
             'Zoho CRM — Lecture seule',
             'Administration',
         ], $main->pluck('content')->filter()->values()->all());
         $this->assertSame([
             'Prospection & campagnes',
             'Vue d’ensemble',
-            'Campagnes',
             'Planning',
-            'Découverte',
+            'Campagnes',
+            'Critères de découverte',
+            'Lots découverte',
+            'Boîte de réception',
             'Répertoire',
+            'Entreprises',
+            'Contacts',
             'Préparation des campagnes',
-            'Réponses & demandes',
+            'Segments',
+            'Modèles d’email',
+            'Séquences',
+            'Identités d’expéditeur',
+            'Secteurs',
             'Conformité & consommation',
+            'Demandes',
+            'Suppressions',
+            'Consommation',
             'Zoho CRM — Lecture seule',
             'Tableau de bord Zoho',
             'Données CRM',
@@ -78,29 +100,62 @@ class MenuTest extends TestCase
             'Supervision',
         ], $main->map(fn (array $item): string => $item['content'] ?? $item['title'])->all());
 
+        $this->assertSame('admin/inbox', $main->firstWhere('title', 'Boîte de réception')['path']);
+        $this->assertSame('view inbox', $main->firstWhere('title', 'Boîte de réception')['permission']);
+        $this->assertSame('admin/inbox', $main->firstWhere('title', 'Boîte de réception')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Boîte de réception'));
+
+        $this->assertSame('admin/companies', $main->firstWhere('title', 'Entreprises')['path']);
+        $this->assertSame('view companies', $main->firstWhere('title', 'Entreprises')['permission']);
+        $this->assertSame('admin/companies', $main->firstWhere('title', 'Entreprises')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Entreprises'));
+
+        $this->assertSame('admin/contacts', $main->firstWhere('title', 'Contacts')['path']);
+        $this->assertSame('view contacts', $main->firstWhere('title', 'Contacts')['permission']);
+        $this->assertSame('admin/contacts', $main->firstWhere('title', 'Contacts')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Contacts'));
+
+        $this->assertSame('admin/segments', $main->firstWhere('title', 'Segments')['path']);
+        $this->assertSame('view segments', $main->firstWhere('title', 'Segments')['permission']);
+        $this->assertSame('admin/segments', $main->firstWhere('title', 'Segments')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Segments'));
+
+        $this->assertSame('admin/campaign_templates', $main->firstWhere('title', 'Modèles d’email')['path']);
+        $this->assertSame('view campaign_templates', $main->firstWhere('title', 'Modèles d’email')['permission']);
+        $this->assertSame('admin/campaign_templates', $main->firstWhere('title', 'Modèles d’email')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Modèles d’email'));
+
+        $this->assertSame('admin/sequences', $main->firstWhere('title', 'Séquences')['path']);
+        $this->assertSame('view sequences', $main->firstWhere('title', 'Séquences')['permission']);
+        $this->assertSame('admin/sequences', $main->firstWhere('title', 'Séquences')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Séquences'));
+
+        $this->assertSame('admin/sender_identities', $main->firstWhere('title', 'Identités d’expéditeur')['path']);
+        $this->assertSame('view sender_identities', $main->firstWhere('title', 'Identités d’expéditeur')['permission']);
+        $this->assertSame('admin/sender_identities', $main->firstWhere('title', 'Identités d’expéditeur')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Identités d’expéditeur'));
+
+        $this->assertSame('admin/sectors', $main->firstWhere('title', 'Secteurs')['path']);
+        $this->assertSame('view sectors', $main->firstWhere('title', 'Secteurs')['permission']);
+        $this->assertSame('admin/sectors', $main->firstWhere('title', 'Secteurs')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Secteurs'));
+
+        $this->assertSame('admin/demandes', $main->firstWhere('title', 'Demandes')['path']);
+        $this->assertSame('view demandes', $main->firstWhere('title', 'Demandes')['permission']);
+        $this->assertSame('admin/demandes', $main->firstWhere('title', 'Demandes')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Demandes'));
+
+        $this->assertSame('admin/suppressions', $main->firstWhere('title', 'Suppressions')['path']);
+        $this->assertSame('view suppressions', $main->firstWhere('title', 'Suppressions')['permission']);
+        $this->assertSame('admin/suppressions', $main->firstWhere('title', 'Suppressions')['active_prefix']);
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Suppressions'));
+
+        $this->assertSame('admin/consumption', $main->firstWhere('title', 'Consommation')['path']);
+        $this->assertSame('view consumption', $main->firstWhere('title', 'Consommation')['permission']);
+        $this->assertArrayNotHasKey('active_prefix', $main->firstWhere('title', 'Consommation'));
+        $this->assertArrayNotHasKey('sub', $main->firstWhere('title', 'Consommation'));
+
         $expectedAccordions = [
-            'Découverte' => [
-                ['Critères de découverte', 'view prospect_criteria', 'admin/prospect_criteria'],
-                ['Lots', 'view prospect_batches', 'admin/prospect_batches'],
-            ],
-            'Répertoire' => [
-                ['Entreprises', 'view companies', 'admin/companies'],
-                ['Contacts', 'view contacts', 'admin/contacts'],
-            ],
-            'Préparation des campagnes' => [
-                ['Segments', 'view segments', 'admin/segments'],
-                ['Modèles d’email', 'view campaign_templates', 'admin/campaign_templates'],
-                ['Séquences', 'view sequences', 'admin/sequences'],
-                ['Identités d’expéditeur', 'view sender_identities', 'admin/sender_identities'],
-            ],
-            'Réponses & demandes' => [
-                ['Boîte de réception', 'view inbox', 'admin/inbox'],
-                ['Demandes', 'view demandes', 'admin/demandes'],
-            ],
-            'Conformité & consommation' => [
-                ['Suppressions', 'view suppressions', 'admin/suppressions'],
-                ['Consommation', 'view consumption', 'admin/consumption'],
-            ],
             'Utilisateurs & accès' => [
                 ['Utilisateurs', 'view users', 'admin/users'],
                 ['Rôles', 'manage roles', 'admin/user-management/roles'],
@@ -144,12 +199,12 @@ class MenuTest extends TestCase
     public function test_active_prefix_opens_descendant_accordions_without_matching_nearby_paths(): void
     {
         $main = collect(config('global.menu.main'));
-        $prospects = $main->firstWhere('title', 'Répertoire');
+        $accessGroup = $main->firstWhere('title', 'Utilisateurs & accès');
 
-        $descendantHtml = $this->renderMenuAt('/admin/companies/1/edit', [$prospects]);
+        $descendantHtml = $this->renderMenuAt('/admin/users/1/edit', [$accessGroup]);
         $this->assertStringContainsString('menu-item here show menu-accordion', $descendantHtml);
 
-        $nearPrefixHtml = $this->renderMenuAt('/admin/companies-archive/1/edit', [$prospects]);
+        $nearPrefixHtml = $this->renderMenuAt('/admin/users-archive/1/edit', [$accessGroup]);
         $this->assertStringNotContainsString('menu-item here show menu-accordion', $nearPrefixHtml);
 
         $dashboardItems = $main->whereIn('title', ['Vue d’ensemble', 'Tableau de bord Zoho'])->values()->all();

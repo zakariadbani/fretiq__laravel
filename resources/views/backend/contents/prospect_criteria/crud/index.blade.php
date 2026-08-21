@@ -8,14 +8,6 @@
     <x-crud.breadcrumb :items="[['label' => 'Critères de découverte']]" />
 @endsection
 
-{{-- Quota meters + over-reservation banner (was an inline toolbar badge) --}}
-@include('backend.contents.prospect_criteria.partials._quota-strip', [
-    'quotaMeters'          => $quotaMeters ?? [],
-    'quotaPackage'         => $quotaPackage ?? null,
-    'activeDailyLimitSum'  => $activeDailyLimitSum ?? null,
-    'providerSearchesLeft' => $providerSearchesLeft ?? null,
-])
-
 <div class="card">
     {{-- Card header --}}
     <div class="card-header border-0 pt-6">
@@ -70,10 +62,6 @@
                 </div>
 
                 @can('create prospect_criteria')
-                <a href="{{ route('admin.prospect_criteria.import_form') }}" class="btn btn-light-primary me-3">
-                    <i class="bi bi-upload fs-2"></i>
-                    Importer CSV
-                </a>
                 <a href="{{ route('admin.prospect_criteria.create') }}" class="btn btn-primary">
                     <i class="bi bi-plus-lg fs-2"></i>
                     Ajouter un critère
