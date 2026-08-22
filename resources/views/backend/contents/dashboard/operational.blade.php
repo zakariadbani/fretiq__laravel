@@ -29,6 +29,8 @@
             [number_format($kpis['contacts']), 'Contacts', 'ki-people'],
             [number_format($kpis['active_campaigns']), 'Campagnes actives', 'ki-rocket'],
             [number_format($campaigns['launched']), 'Campagnes lancées', 'ki-chart-line-up'],
+            [number_format($kpis['enriched_contacted']), 'Entreprises contactées', 'ki-check-circle'],
+            [number_format($enterprises['enrichment']['enriched'] ?? 0), 'Entreprises enrichies', 'ki-check-circle'],
         ] as [$value, $label, $icon])
             <div class="col-6 col-lg-3"><div class="border rounded p-4 h-100 d-flex align-items-center"><i class="ki-outline {{ $icon }} fs-2x text-primary me-3"></i><div><div class="fs-2 fw-bolder lh-1">{{ $value }}</div><div class="text-muted fs-7 fw-semibold">{{ $label }}</div></div></div></div>
         @endforeach
@@ -61,6 +63,41 @@
                 @endforeach
             </ul>
         @else<div data-testid="dashboard-funnel-empty" class="dashboard-empty text-center text-muted py-12"><i class="bi bi-funnel fs-3x d-block mb-3"></i>Aucune donnée de parcours.</div>@endif
+    </div></div></section>
+</div>
+
+@php
+    $enrPalette = ['#50cd89','#009ef7','#ffc700','#f1416c','#7239ea','#ff6b35','#13c2c2','#eb2f96','#3b5de7','#0bb783'];
+    $enrData = $enterprises['enrichment'] ?? [];
+    $enrSeries = $enrLabels = $enrColors = [];
+    foreach (config('global.data.company_enrichment_statuses', []) as $key => $cfg) {
+        $c = (int) ($enrData[$key] ?? 0);
+        if ($c > 0) { $enrSeries[] = $c; $enrLabels[] = $cfg['label']; $enrColors[] = $enrPalette[count($enrColors) % count($enrPalette)]; }
+    }
+    if (($naCount = (int) ($enrData['not_attempted'] ?? 0)) > 0) {
+        $naCfg = config('global.data.company_enrichment_status_null');
+        $enrSeries[] = $naCount; $enrLabels[] = $naCfg['label']; $enrColors[] = '#b5b5c3';
+    }
+    $hasEnrichment = array_sum($enrSeries) > 0;
+@endphp
+
+<div class="row g-5 mb-6">
+    <section class="col-xl-6" data-testid="dashboard-enrichment-chart" aria-labelledby="dashboard-enrichment-title"><div class="card h-100"><div class="card-header border-0"><div class="card-title d-flex flex-column"><span id="dashboard-enrichment-title" class="fw-bold">Répartition par enrichissement</span><span class="text-muted fs-7">Statut d’enrichissement des entreprises</span></div></div><div class="card-body pt-0">
+        @if ($hasEnrichment)
+            <div id="dashboard-enrichment-chart-canvas" class="dashboard-chart" role="img"
+                 aria-label="Répartition des entreprises par statut d'enrichissement"
+                 data-series="{{ json_encode($enrSeries) }}"
+                 data-labels="{{ json_encode($enrLabels) }}"
+                 data-colors="{{ json_encode($enrColors) }}"></div>
+            <div id="dashboard-enrichment-chart-fallback" data-testid="dashboard-enrichment-fallback" class="dashboard-empty text-center text-muted py-12">
+                <i class="bi bi-bar-chart fs-3x d-block mb-3"></i>Graphique indisponible. Les valeurs restent disponibles ci-dessous.
+            </div>
+            <ul data-testid="dashboard-enrichment-summary" class="visually-hidden">
+                @foreach ($enrLabels as $index => $label)
+                    <li>{{ $label }} : {{ number_format($enrSeries[$index]) }}</li>
+                @endforeach
+            </ul>
+        @else<div data-testid="dashboard-enrichment-empty" class="dashboard-empty text-center text-muted py-12"><i class="bi bi-pie-chart fs-3x d-block mb-3"></i>Aucune donnée d’enrichissement.</div>@endif
     </div></div></section>
 </div>
 

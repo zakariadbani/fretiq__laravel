@@ -72,7 +72,7 @@ class ProspectionDashboardController extends Controller
                 'enrichment' => [],
                 'recent' => [],
             ];
-            $data['kpis'] = [...$data['kpis'], 'companies' => 0];
+            $data['kpis'] = [...$data['kpis'], 'companies' => 0, 'enriched_contacted' => 0];
         }
 
         if (! $request->user()->can('view contacts')) {

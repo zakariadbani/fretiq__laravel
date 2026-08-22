@@ -79,6 +79,20 @@ class AnalyticsService
             ? round(($demandes30d / $emailsSent30d) * 100, 2)
             : 0.0;
 
+        $enrichedContacted = Company::where('enrichment_status', Company::ENRICHMENT_ENRICHED)
+            ->whereHas('contacts', function ($q) {
+                $q->where(function ($q) {
+                    $q->whereExists(fn ($sub) => $sub->from('campaign_recipients')
+                            ->whereColumn('campaign_recipients.contact_id', 'contacts.id')
+                            ->whereNotNull('campaign_recipients.sent_at'))
+                      ->orWhereExists(fn ($sub) => $sub->from('sequence_step_sends')
+                            ->join('sequence_enrollments', 'sequence_enrollments.id', '=', 'sequence_step_sends.enrollment_id')
+                            ->whereColumn('sequence_enrollments.contact_id', 'contacts.id')
+                            ->whereNotNull('sequence_step_sends.sent_at'));
+                });
+            })
+            ->count();
+
         return [
             'companies'        => Company::count(),
             'contacts'         => Contact::count(),
@@ -89,6 +103,7 @@ class AnalyticsService
             'demandes'         => Demande::count(),
             'demandes_30d'     => $demandes30d,
             'conversion_rate'  => $conversionRate,
+            'enriched_contacted' => $enrichedContacted,
         ];
     }
 

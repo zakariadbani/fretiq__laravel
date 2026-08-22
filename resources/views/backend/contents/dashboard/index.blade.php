@@ -122,6 +122,25 @@
                 }
             });
         }
+
+        const enrichmentElement = document.getElementById('dashboard-enrichment-chart-canvas');
+        if (enrichmentElement) {
+            const enrichmentFallback = document.getElementById('dashboard-enrichment-chart-fallback');
+            const enrichmentChart = new ApexCharts(enrichmentElement, {
+                chart: { type: 'donut', height: 320 },
+                series: JSON.parse(enrichmentElement.dataset.series || '[]'),
+                labels: JSON.parse(enrichmentElement.dataset.labels || '[]'),
+                colors: JSON.parse(enrichmentElement.dataset.colors || '[]'),
+                legend: { position: 'bottom' },
+                dataLabels: { enabled: true },
+                noData: { text: 'Aucune donnée d’enrichissement' },
+            });
+            enrichmentChart.render().then(function () {
+                if (enrichmentFallback) {
+                    enrichmentFallback.classList.add('d-none');
+                }
+            });
+        }
     });
 </script>
 @endpush
