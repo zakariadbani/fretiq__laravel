@@ -119,7 +119,7 @@ class ProspectCriteriaViewConfig
                 ['label' => 'Découverte automatique', 'value' => ($model->auto_run && $model->run_at_hour !== null)
                     ? 'Quotidienne à '.sprintf('%02d:00', $model->run_at_hour).' (heure '.$quotaTz.')'
                     : 'Manuelle', 'type' => 'text'],
-                ['label' => 'Enrichissements réussis / exécution', 'value' => min(20, max(1, (int) ($model->contact_limit ?? 20))).' entreprises enrichies', 'type' => 'text'],
+                ['label' => 'Enrichissements réussis / exécution', 'value' => min(100, max(1, (int) ($model->contact_limit ?? 20))).' entreprises enrichies', 'type' => 'text'],
                 ['label' => 'Score min. d\'enrichissement', 'value' => $model->min_score_enrich ?? ('Hérité ('.Setting::get('decouverte.min_score_enrich', 50).')'), 'type' => 'text'],
                 ['label' => 'Enrichissement automatique', 'value' => $model->auto_enrich === null ? 'Hérité' : ($model->auto_enrich ? 'Activé' : 'Désactivé'), 'type' => 'text'],
                 ['label' => 'Secteurs',         'value' => ! empty($sectors) ? implode(', ', $sectors) : null, 'type' => 'tags'],

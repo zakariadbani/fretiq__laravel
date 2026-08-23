@@ -1303,8 +1303,8 @@ class ProspectCriteriaTest extends TestCase
 
         $response->assertSee('Enrichissements réussis / exécution', false);
         $response->assertSee('Vide = 20 enrichissements réussis', false);
-        $response->assertSee('20 tentatives maximum', false);
-        $response->assertSee('max="20"', false);
+        $response->assertSee('100 tentatives maximum', false);
+        $response->assertSee('max="100"', false);
         $response->assertDontSee('Contacts max / exécution', false);
         $response->assertSee('Recherches d’entreprises', false);
         $response->assertSee('Tentatives d’enrichissement', false);
@@ -1312,13 +1312,26 @@ class ProspectCriteriaTest extends TestCase
         $response->assertDontSee('Hunter', false);
     }
 
-    public function test_contact_limit_above_twenty_is_rejected(): void
+    public function test_contact_limit_above_hundred_is_rejected(): void
     {
         $this->actingAs($this->superadmin)
             ->post('/admin/prospect_criteria', [
                 'name' => 'Critère limite enrichissement invalide',
                 'daily_limit' => 5,
-                'contact_limit' => 21,
+                'contact_limit' => 101,
+                'is_active' => 1,
+            ])
+            ->assertStatus(406)
+            ->assertJsonStructure(['message', 'errors' => ['contact_limit']]);
+    }
+
+    public function test_contact_limit_of_zero_is_rejected(): void
+    {
+        $this->actingAs($this->superadmin)
+            ->post('/admin/prospect_criteria', [
+                'name' => 'Critère limite enrichissement zéro',
+                'daily_limit' => 5,
+                'contact_limit' => 0,
                 'is_active' => 1,
             ])
             ->assertStatus(406)
@@ -1342,6 +1355,23 @@ class ProspectCriteriaTest extends TestCase
         ]);
     }
 
+    public function test_contact_limit_of_hundred_is_accepted(): void
+    {
+        $this->actingAs($this->superadmin)
+            ->post('/admin/prospect_criteria', [
+                'name' => 'Critère limite enrichissement max',
+                'daily_limit' => 5,
+                'contact_limit' => 100,
+                'is_active' => 1,
+            ])
+            ->assertOk();
+
+        $this->assertDatabaseHas('prospect_criteria', [
+            'name' => 'Critère limite enrichissement max',
+            'contact_limit' => 100,
+        ]);
+    }
+
     public function test_legacy_contact_limit_is_displayed_with_the_runtime_cap(): void
     {
         $criteria = ProspectCriteria::create([
@@ -1355,7 +1385,7 @@ class ProspectCriteriaTest extends TestCase
             ->get('/admin/prospect_criteria/'.$criteria->id.'/edit#criteria_automatisation')
             ->assertOk();
 
-        $response->assertSee('value="20"', false);
+        $response->assertSee('value="100"', false);
         $response->assertDontSee('value="500"', false);
     }
 

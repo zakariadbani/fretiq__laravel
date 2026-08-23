@@ -13,7 +13,7 @@ use Illuminate\Support\Carbon;
 
 class CriteriaContactEnrichmentService
 {
-    public const BATCH_SAFETY_MAX = 20;
+    public const BATCH_SAFETY_MAX = 100;
 
     public function __construct(
         private readonly CompanyDiscoveryService $discovery,
@@ -199,7 +199,7 @@ class CriteriaContactEnrichmentService
         $quotaCapacity = max(0, min($quotaCaps));
         $caps = [...$quotaCaps, 'batch_safety' => self::BATCH_SAFETY_MAX];
         $attemptLimit = max(0, min($caps));
-        $configuredTarget = max(1, min((int) ($criteria->contact_limit ?? self::BATCH_SAFETY_MAX), self::BATCH_SAFETY_MAX));
+        $configuredTarget = max(1, min((int) ($criteria->contact_limit ?? 20), self::BATCH_SAFETY_MAX));
         $successTarget = $configuredTarget;
         $factors = [];
         foreach ($caps as $name => $value) {

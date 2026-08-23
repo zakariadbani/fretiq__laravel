@@ -1314,7 +1314,7 @@ class DiscoveryQuotaTest extends TestCase
 
         $this->assertSame(5, (int) $run->contact_credits_reserved,
             'contact_credits_reserved must be clamped to the package contact meter (5) even though contact_limit=100');
-        $this->assertSame(20, (int) $run->successful_enrichments_target);
+        $this->assertSame(100, (int) $run->successful_enrichments_target);
     }
 
     /**
@@ -1333,7 +1333,7 @@ class DiscoveryQuotaTest extends TestCase
 
         $this->assertSame(10, (int) $run->credits_reserved,
             'credits_reserved must be the wanted batch (10) — company meter unlimited');
-        $this->assertSame(20, (int) $run->contact_credits_reserved);
+        $this->assertSame(100, (int) $run->contact_credits_reserved);
         $this->assertSame(2, (int) $run->successful_enrichments_target);
     }
 
@@ -1397,7 +1397,7 @@ class DiscoveryQuotaTest extends TestCase
         $run = $quotaService->reserveRun($criteria);
 
         $this->assertSame(10, (int) $run->credits_reserved);
-        $this->assertSame(20, (int) $run->contact_credits_reserved);
+        $this->assertSame(100, (int) $run->contact_credits_reserved);
         $this->assertSame(2, (int) $run->successful_enrichments_target);
     }
 
@@ -1421,11 +1421,11 @@ class DiscoveryQuotaTest extends TestCase
 
         $this->assertSame(6, (int) $run->credits_reserved,
             'credits_reserved must equal daily_limit=6 when no package assignment exists (unlimited)');
-        $this->assertSame(20, (int) $run->contact_credits_reserved);
+        $this->assertSame(100, (int) $run->contact_credits_reserved);
         $this->assertSame(2, (int) $run->successful_enrichments_target);
     }
 
-    public function test_contact_reservation_is_independent_from_five_search_batch_and_defaults_to_twenty(): void
+    public function test_contact_reservation_caps_at_hundred_while_target_defaults_to_twenty(): void
     {
         PackageAssignment::query()->delete();
         Package::query()->delete();
@@ -1439,11 +1439,11 @@ class DiscoveryQuotaTest extends TestCase
         $run = app(DiscoveryQuotaService::class)->reserveRun($criteria);
 
         $this->assertSame(5, (int) $run->searches_reserved);
-        $this->assertSame(20, (int) $run->contact_credits_reserved);
+        $this->assertSame(100, (int) $run->contact_credits_reserved);
         $this->assertSame(20, (int) $run->successful_enrichments_target);
     }
 
-    public function test_legacy_contact_limit_above_twenty_is_clamped_at_runtime(): void
+    public function test_legacy_contact_limit_above_hundred_is_clamped_at_runtime(): void
     {
         PackageAssignment::query()->delete();
         Package::query()->delete();
@@ -1456,8 +1456,8 @@ class DiscoveryQuotaTest extends TestCase
 
         $run = app(DiscoveryQuotaService::class)->reserveRun($criteria);
 
-        $this->assertSame(20, (int) $run->contact_credits_reserved);
-        $this->assertSame(20, (int) $run->successful_enrichments_target);
+        $this->assertSame(100, (int) $run->contact_credits_reserved);
+        $this->assertSame(100, (int) $run->successful_enrichments_target);
     }
 
     public function test_auto_enrich_false_reserves_no_hunter_attempts(): void
@@ -1504,7 +1504,7 @@ class DiscoveryQuotaTest extends TestCase
         $this->assertSame(20, (int) $run->contact_credits_reserved);
     }
 
-    public function test_contact_package_daily_and_monthly_remainders_reduce_twenty_cap(): void
+    public function test_contact_package_daily_and_monthly_remainders_reduce_hundred_cap(): void
     {
         $this->assignPackageWithMonthly(null, null, 17, 9, Carbon::today()->startOfMonth()->toDateString());
         $criteria = $this->makeCriteria([

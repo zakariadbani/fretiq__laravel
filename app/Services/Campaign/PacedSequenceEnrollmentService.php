@@ -124,8 +124,15 @@ class PacedSequenceEnrollmentService
                     if ($enrollment?->wasRecentlyCreated) {
                         $usesLiveZohoWave = in_array($locked->delivery_channel, [null, 'zoho'], true)
                             && config('services.zoho.driver', 'local') === 'zoho';
+                        // Even under Zoho-wave management, next_send_at must stay a real,
+                        // honest timestamp — never null — so a stalled wave pipeline
+                        // remains visible to SequenceService::processDue() and
+                        // sequences:repair-stalled instead of disappearing forever.
+                        // SMTP dispatch is still guarded off for these enrollments via
+                        // SequenceService::canSendViaSmtp() and SendSequenceStepJob's own
+                        // zoho-wave check, so this is safe.
                         $enrollment->update([
-                            'next_send_at' => $usesLiveZohoWave ? null : now(),
+                            'next_send_at' => $usesLiveZohoWave ? $effectiveRunAt : now(),
                         ]);
                         $enrolled++;
                         $waveContacts->push($contact);

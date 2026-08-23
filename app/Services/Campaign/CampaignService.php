@@ -740,6 +740,10 @@ class CampaignService
                 $trackingEvent = EmailTrackingEvent::createForSend($recipient, $token);
             }
 
+            // The row's token is authoritative — under historical duplicates the
+            // unordered lookup above and createForSend() may resolve different rows.
+            $token = $trackingEvent->token;
+
             // ── 4c. Build signed unsubscribe URL ─────────────────────────────
             $unsubscribeUrl = URL::signedRoute('unsubscribe', ['contact' => $contact->id]);
 

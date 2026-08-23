@@ -5,6 +5,10 @@ use Illuminate\Support\Facades\Route;
 
 Route::controller(CampaignController::class)->prefix('admin')->name('admin.')->group(function () {
     Route::get('/campaigns', 'index')->name('campaigns.index');
+    Route::get('/campaigns/import', 'importForm')->name('campaigns.import_form');
+    Route::post('/campaigns/import/preview', 'importPreview')->name('campaigns.import_preview');
+    Route::post('/campaigns/import', 'importStore')->name('campaigns.import_store');
+    Route::get('/campaigns/import/template', 'downloadImportTemplate')->name('campaigns.import_template');
     Route::get('/campaigns/create', 'create')->name('campaigns.create');
     Route::post('/campaigns', 'store')->name('campaigns.store');
 

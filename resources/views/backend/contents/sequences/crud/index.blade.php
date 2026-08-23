@@ -62,6 +62,13 @@
                 </div>
 
                 @can('create sequences')
+                <a href="{{ route('admin.sequences.import_form') }}" class="btn btn-light-primary me-3">
+                    <i class="bi bi-upload fs-2"></i>
+                    Importer CSV
+                </a>
+                @endcan
+
+                @can('create sequences')
                 <a href="{{ route('admin.sequences.create') }}" class="btn btn-primary">
                     <i class="bi bi-plus-lg fs-2"></i>
                     Ajouter une séquence

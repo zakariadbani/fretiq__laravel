@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Backend;
 use App\DataTables\Backend\CampaignTemplatesDataTable;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
+use App\Http\Controllers\Traits\HandlesImportPreviewToken;
 use App\Models\CampaignTemplate;
+use App\Services\Campaign\CampaignTemplateHtmlImporter;
 use App\Services\Campaign\TemplateBuilder\BuilderStateValidator;
 use App\Services\Campaign\TemplateBuilder\GeminiTemplateSuggestionService;
 use App\Services\Campaign\TemplateBuilder\SectionCatalog;
@@ -35,14 +37,16 @@ class CampaignTemplateController extends BackendController
     use Crudable, Datatableable {
         Crudable::beforeSave as protected crudableBeforeSave;
     }
+    use HandlesImportPreviewToken;
 
     public function __construct(Request $request, CampaignTemplate $model, CampaignTemplatesDataTable $dataTable)
     {
         parent::__construct($request, $model, $dataTable);
 
         $this->middleware('permission:view campaign_templates')->only(['index', 'view']);
-        $this->middleware('permission:create campaign_templates')->only(['create', 'store']);
-        $this->middleware('permission:edit campaign_templates')->only(['edit', 'update', 'executeSwitch']);
+        $this->middleware('permission:create campaign_templates')->only(['create', 'store', 'importFromZoho', 'importForm', 'importPreview', 'importStore']);
+        // importPreview/importStore also require edit — importers upsert existing rows.
+        $this->middleware('permission:edit campaign_templates')->only(['edit', 'update', 'executeSwitch', 'importPreview', 'importStore']);
         $this->middleware('permission:delete campaign_templates')->only(['delete']);
         // Builder AI/preview endpoints are reachable from BOTH the create page
         // (create campaign_templates) and the edit page (edit campaign_templates) —
@@ -346,6 +350,57 @@ class CampaignTemplateController extends BackendController
         }
 
         return redirect()->route('admin.campaign_templates.index');
+    }
+
+    // ── HTML import ────────────────────────────────────────────────────────────
+    // Same preview→confirm shape as ProspectCriteriaController's CSV import,
+    // but the source is one-or-more uploaded .html files (not a delimited
+    // CSV) — see CampaignTemplateHtmlImporter's docblock for the header
+    // format and merge-tag allowlist it enforces. Distinct from
+    // importFromZoho() above (a live-API pull with no preview step).
+
+    public function importForm()
+    {
+        return view('backend.contents.campaign_templates.crud.import', [
+            'rows' => [],
+            'importToken' => null,
+        ]);
+    }
+
+    public function importPreview(Request $request, CampaignTemplateHtmlImporter $importer)
+    {
+        $request->validate([
+            'html_files' => ['required', 'array', 'min:1', 'max:'.CampaignTemplateHtmlImporter::MAX_FILES],
+            'html_files.*' => ['file', 'max:512', 'mimes:html,htm'],
+        ]);
+
+        $files = [];
+        foreach ($request->file('html_files', []) as $file) {
+            $files[] = [
+                'filename' => $file->getClientOriginalName(),
+                'contents' => (string) file_get_contents($file->getRealPath()),
+            ];
+        }
+
+        $rows = $importer->parse($files);
+
+        return view('backend.contents.campaign_templates.crud.import', [
+            'rows' => $rows,
+            'importToken' => $this->makeImportToken($request->user()->id, $rows),
+        ]);
+    }
+
+    public function importStore(Request $request, CampaignTemplateHtmlImporter $importer)
+    {
+        try {
+            $rows = $this->decryptImportToken((string) $request->input('import_token'), (int) $request->user()->id, CampaignTemplateHtmlImporter::MAX_FILES, 'html');
+            $result = $importer->store($rows);
+        } catch (ValidationException $exception) {
+            return redirect()->route('admin.campaign_templates.import_form')->withErrors($exception->errors());
+        }
+
+        return redirect()->route('admin.campaign_templates.index')
+            ->with('success', "{$result['created']} modèle(s) créé(s), {$result['updated']} mis à jour.");
     }
 
     /**

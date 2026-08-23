@@ -286,9 +286,9 @@ class SequenceService
         }
 
         // ── 6. Build tracking token + EmailTrackingEvent ──────────────────────
-        $token = TrackingToken::generate($e->id, $stepNo);
-
-        EmailTrackingEvent::createForSend($stepSend, $token);
+        // createForSend() reuses this stepSend's existing tracking row on
+        // retry instead of minting a fresh one every call — see its docblock.
+        $token = EmailTrackingEvent::createForSend($stepSend, TrackingToken::generate($e->id, $stepNo))->token;
 
         // ── 7. Build signed unsubscribe URL ───────────────────────────────────
         $unsubscribeUrl = URL::signedRoute('unsubscribe', ['contact' => $contact->id]);
@@ -446,8 +446,9 @@ class SequenceService
             ->where('step_no', $stepSend->step_no)
             ->with('template.translations')
             ->firstOrFail();
-        $token = TrackingToken::generate($enrollment->id, (int) $stepSend->step_no);
-        EmailTrackingEvent::createForSend($stepSend, $token);
+        // createForSend() reuses this stepSend's existing tracking row on
+        // retry instead of minting a fresh one every call — see its docblock.
+        $token = EmailTrackingEvent::createForSend($stepSend, TrackingToken::generate($enrollment->id, (int) $stepSend->step_no))->token;
         $unsubscribeUrl = URL::signedRoute('unsubscribe', ['contact' => $contact->id]);
         if ($beforeTransport !== null) {
             $beforeTransport();

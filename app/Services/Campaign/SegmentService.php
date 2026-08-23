@@ -368,6 +368,7 @@ class SegmentService
      *   position    → contacts.position     (case-insensitive LIKE OR match; array of free-text tags)
      *   exclude_contacted → bool; excludes contacts already contacted (lifecycle 'contacted'/'replied')
      *   exclude_generic_mailbox → bool; excludes role-mailbox local-parts (info@, contact@, ...)
+     *   engagement  → array; campaign-engagement cohort (see applyEngagementFilter)
      *
      * Boolean semantics inside the company whereHas:
      *   sector OR criteria_id  — when BOTH are present they are ORed with each other,
@@ -447,6 +448,128 @@ class SegmentService
                 'LOWER(SUBSTRING_INDEX(contacts.email, \'@\', 1)) NOT IN (' . implode(',', array_fill(0, count($genericLocalParts), '?')) . ')',
                 $genericLocalParts
             );
+        }
+
+        if (! empty($filter['engagement']) && is_array($filter['engagement'])) {
+            $this->applyEngagementFilter($query, $filter['engagement']);
+        }
+    }
+
+    /**
+     * Apply filter.engagement: a campaign-engagement cohort filter, AND-combined
+     * across whichever sub-keys are present.
+     *
+     *   campaign_id  → array of campaign ids; scopes the opened/clicked EXISTS
+     *                  check to those campaigns (via campaign_runs.campaign_id
+     *                  for direct sends, campaigns.sequence_id for sequence
+     *                  sends). Absent/empty = all campaigns.
+     *   opened       → true: ≥1 matching campaign_recipients OR sequence_step_sends
+     *                  row exists for the contact (a direct send and an SMTP
+     *                  sequence-step send both count); false: neither exists.
+     *                  "Opened" also matches a click (a click implies an
+     *                  open), and treats legacy Zoho-synced campaign_recipients
+     *                  rows that only ever set status (no opened_at) as opened.
+     *   clicked      → same EXISTS/NOT EXISTS shape, unioned across both
+     *                  sources. Zoho-synced campaign_recipients clicks may
+     *                  carry status='clicked' with clicked_at still NULL —
+     *                  matched too.
+     *   sans_demande → true: NOT EXISTS a demandes row for the contact.
+     *
+     * Example: {"opened":true,"clicked":false} = "ouvert sans clic".
+     *
+     * @param  Builder               $query
+     * @param  array<string, mixed>  $engagement
+     */
+    private function applyEngagementFilter(Builder $query, array $engagement): void
+    {
+        $campaignIds = $this->cleanFilterValue($engagement['campaign_id'] ?? null);
+        $campaignIds = is_array($campaignIds) ? $campaignIds : array_filter([$campaignIds]);
+
+        if (array_key_exists('opened', $engagement) && $engagement['opened'] !== null) {
+            $this->applyRecipientExistence($query, (bool) $engagement['opened'], $campaignIds, opened: true);
+        }
+
+        if (array_key_exists('clicked', $engagement) && $engagement['clicked'] !== null) {
+            $this->applyRecipientExistence($query, (bool) $engagement['clicked'], $campaignIds, opened: false);
+        }
+
+        if (! empty($engagement['sans_demande'])) {
+            $query->whereNotExists(function ($sub) {
+                $sub->select(DB::raw(1))
+                    ->from('demandes')
+                    ->whereColumn('demandes.contact_id', 'contacts.id');
+            });
+        }
+    }
+
+    /**
+     * Add a whereExists / whereNotExists matching the opened or clicked
+     * predicate, correlated on contacts.id and optionally scoped to a
+     * campaign_id list. Unions two engagement sources — direct campaign
+     * sends (campaign_recipients) and SMTP sequence-step sends
+     * (sequence_step_sends) — so a contact who only ever engaged through a
+     * sequence still counts; "exists" is true when EITHER source matches,
+     * "not exists" requires NEITHER to match.
+     *
+     * Uses the campaign_recipients indexes: contact_id (correlation) and
+     * (campaign_run_id, status) (scoping join + status predicate).
+     *
+     * @param  Builder  $query
+     * @param  bool     $shouldExist  true → whereExists; false → whereNotExists
+     * @param  array    $campaignIds  Cleaned campaign ids; empty = no scoping
+     * @param  bool     $opened       true → opened predicate; false → clicked predicate
+     */
+    private function applyRecipientExistence(Builder $query, bool $shouldExist, array $campaignIds, bool $opened): void
+    {
+        $recipientSubquery = function ($q) use ($campaignIds, $opened) {
+            $q->select(DB::raw(1))
+                ->from('campaign_recipients')
+                ->whereColumn('campaign_recipients.contact_id', 'contacts.id');
+
+            if ($opened) {
+                // A click implies an open; legacy/Zoho rows may carry only status.
+                $q->where(function ($w) {
+                    $w->whereNotNull('campaign_recipients.opened_at')
+                        ->orWhereIn('campaign_recipients.status', ['opened', 'clicked']);
+                });
+            } else {
+                $q->where(function ($w) {
+                    $w->whereNotNull('campaign_recipients.clicked_at')
+                        ->orWhere('campaign_recipients.status', 'clicked');
+                });
+            }
+
+            if (! empty($campaignIds)) {
+                $q->join('campaign_runs', 'campaign_runs.id', '=', 'campaign_recipients.campaign_run_id')
+                    ->whereIn('campaign_runs.campaign_id', $campaignIds);
+            }
+        };
+
+        // sequence_step_sends has no contact_id of its own — correlate via
+        // its owning enrollment. EmailTrackingService is the only writer of
+        // opened_at/clicked_at here (no Zoho-sync legacy quirk like
+        // campaign_recipients.status), so no status fallback is needed.
+        // Campaign scoping follows sequence_step_sends → sequence_enrollments
+        // → sequence_id → campaigns.sequence_id, since an enrollment's own
+        // campaign_id is nullable and a sequence can be reused by more than
+        // one campaign.
+        $sequenceStepSendSubquery = function ($q) use ($campaignIds, $opened) {
+            $q->select(DB::raw(1))
+                ->from('sequence_step_sends')
+                ->join('sequence_enrollments', 'sequence_enrollments.id', '=', 'sequence_step_sends.enrollment_id')
+                ->whereColumn('sequence_enrollments.contact_id', 'contacts.id')
+                ->whereNotNull($opened ? 'sequence_step_sends.opened_at' : 'sequence_step_sends.clicked_at');
+
+            if (! empty($campaignIds)) {
+                $q->join('campaigns', 'campaigns.sequence_id', '=', 'sequence_enrollments.sequence_id')
+                    ->whereIn('campaigns.id', $campaignIds);
+            }
+        };
+
+        if ($shouldExist) {
+            $query->where(fn ($q) => $q->whereExists($recipientSubquery)->orWhereExists($sequenceStepSendSubquery));
+        } else {
+            $query->whereNotExists($recipientSubquery)->whereNotExists($sequenceStepSendSubquery);
         }
     }
 

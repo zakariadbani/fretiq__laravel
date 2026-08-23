@@ -319,7 +319,7 @@ class ProspectCriteriaDataTable extends BackendDataTable
             } else {
                 $html = '<span class="text-muted">Manuel</span>';
             }
-            $hunterLimit = min(20, max(1, (int) ($row->contact_limit ?? 20)));
+            $hunterLimit = min(100, max(1, (int) ($row->contact_limit ?? 20)));
             $html .= $row->auto_enrich === false
                 ? '<div class="text-muted fs-8 mt-1">Enrichissement de contacts désactivé</div>'
                 : '<div class="text-muted fs-8 mt-1">Objectif : '.$hunterLimit.' enrichissements réussis</div>';

@@ -20,10 +20,12 @@ use Illuminate\Support\Facades\URL;
 use Tests\TestCase;
 
 /**
- * Tests for the public tracking pixel and unsubscribe endpoints.
+ * Tests for the public tracking pixel, click-through redirect, and
+ * unsubscribe endpoints.
  *
  * Routes under test (public — no auth required):
  *   GET  /track/open/{token}   → TrackingController::open
+ *   GET  /track/click/{token}  → TrackingController::click  (signed)
  *   GET  /u/{contact}          → UnsubscribeController::show  (signed)
  *   POST /u/{contact}          → UnsubscribeController::show  (signed, RFC 8058)
  */
@@ -162,6 +164,85 @@ class TrackingAndUnsubscribeTest extends TestCase
 
         $response->assertStatus(200);
         $response->assertHeader('Content-Type', 'image/gif');
+    }
+
+    /**
+     * GET /track/click/{token}?url=... must:
+     *   - 302-redirect to the destination
+     *   - set campaign_recipients.clicked_at (first click) and status='clicked'
+     *   - also imply opened_at (a click proves the message was opened)
+     */
+    public function test_tracking_click_records_and_redirects(): void
+    {
+        $contact   = $this->makeClientContact('click@acme.test');
+        $recipient = $this->makeCampaignRecipient($contact);
+        $token     = $this->makeToken();
+
+        EmailTrackingEvent::create([
+            'trackable_type'     => CampaignRecipient::class,
+            'trackable_id'       => $recipient->id,
+            'token'              => $token,
+            'event'              => 'sent',
+            'human_open_count'   => 0,
+            'machine_open_count' => 0,
+        ]);
+
+        $destination = 'https://example.test/offer?a=1&b=2';
+        // Relative signature — must match the production 'signed:relative'
+        // route middleware / RendersTrackedHtml generation.
+        $signedUrl   = URL::signedRoute('track.click', ['token' => $token, 'url' => $destination], null, false);
+
+        $response = $this->get(
+            $signedUrl,
+            ['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'],
+        );
+
+        $response->assertRedirect($destination);
+
+        $recipient->refresh();
+        $this->assertSame('clicked', $recipient->status);
+        $this->assertNotNull($recipient->clicked_at, 'clicked_at must be set after a human click');
+        $this->assertNotNull($recipient->opened_at, 'a click must also imply an open');
+    }
+
+    /**
+     * A request whose 'url' query param was swapped after signing must be
+     * rejected by the 'signed:relative' middleware — the click route must
+     * never become an open redirect. Rejection redirects to the app root
+     * (never to the attacker-controlled 'url' param, never a bare 403 for a
+     * human recipient — see Handler::register()). The recipient must be
+     * left untouched.
+     */
+    public function test_tracking_click_rejects_tampered_url_param(): void
+    {
+        $contact   = $this->makeClientContact('click-tamper@acme.test');
+        $recipient = $this->makeCampaignRecipient($contact);
+        $token     = $this->makeToken();
+
+        EmailTrackingEvent::create([
+            'trackable_type'     => CampaignRecipient::class,
+            'trackable_id'       => $recipient->id,
+            'token'              => $token,
+            'event'              => 'sent',
+            'human_open_count'   => 0,
+            'machine_open_count' => 0,
+        ]);
+
+        $signedUrl = URL::signedRoute('track.click', ['token' => $token, 'url' => 'https://example.test/legit'], null, false);
+
+        // Swap the destination but keep the original signature — simulates an
+        // attacker rewriting a legitimate signed link without the app key.
+        $parts = parse_url($signedUrl);
+        parse_str($parts['query'], $query);
+        $query['url'] = 'https://evil.test/phish';
+        $tamperedUrl  = $parts['path'] . '?' . http_build_query($query);
+
+        $response = $this->get($tamperedUrl);
+
+        $response->assertRedirect(url('/'));
+
+        $recipient->refresh();
+        $this->assertNull($recipient->clicked_at, 'A tampered click must not be recorded');
     }
 
     /**

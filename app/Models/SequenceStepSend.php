@@ -34,6 +34,7 @@ class SequenceStepSend extends Model
         'bounced_at',
         'sent_at',
         'opened_at',
+        'clicked_at',
     ];
 
     /**
@@ -44,6 +45,7 @@ class SequenceStepSend extends Model
     protected $casts = [
         'sent_at'   => 'datetime',
         'opened_at' => 'datetime',
+        'clicked_at' => 'datetime',
         'bounced_at' => 'datetime',
     ];
 
@@ -81,6 +83,7 @@ class SequenceStepSend extends Model
             'bounced_at'          => 'nullable|date',
             'sent_at'             => 'nullable|date',
             'opened_at'           => 'nullable|date',
+            'clicked_at'          => 'nullable|date',
         ];
     }
 }

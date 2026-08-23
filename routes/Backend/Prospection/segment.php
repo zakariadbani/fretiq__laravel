@@ -5,6 +5,10 @@ use Illuminate\Support\Facades\Route;
 
 Route::controller(SegmentController::class)->prefix('admin')->name('admin.')->group(function () {
     Route::get('/segments', 'index')->name('segments.index');
+    Route::get('/segments/import', 'importForm')->name('segments.import_form');
+    Route::post('/segments/import/preview', 'importPreview')->name('segments.import_preview');
+    Route::post('/segments/import', 'importStore')->name('segments.import_store');
+    Route::get('/segments/import/template', 'downloadImportTemplate')->name('segments.import_template');
     Route::get('/segments/create', 'create')->name('segments.create');
     Route::post('/segments', 'store')->name('segments.store');
     Route::post('/segments/preview', 'preview')->middleware('throttle:60,1')->name('segments.preview');

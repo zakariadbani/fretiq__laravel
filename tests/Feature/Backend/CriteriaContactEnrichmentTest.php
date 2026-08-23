@@ -309,16 +309,16 @@ class CriteriaContactEnrichmentTest extends TestCase
         $this->assertContains('monthly_quota', $snapshot['limiting_factors']);
     }
 
-    public function test_snapshot_applies_hard_batch_safety_cap_of_twenty(): void
+    public function test_snapshot_applies_hard_batch_safety_cap_of_hundred(): void
     {
         $criteria = $this->criteria(['contact_limit' => null]);
-        foreach (range(1, 21) as $i) {
+        foreach (range(1, 101) as $i) {
             $this->company($criteria, ['domain' => "safety-{$i}.example.com"]);
         }
 
         $snapshot = app(CriteriaContactEnrichmentService::class)->snapshot($criteria);
 
-        $this->assertSame(20, $snapshot['callable_count']);
+        $this->assertSame(100, $snapshot['callable_count']);
         $this->assertContains('batch_safety', $snapshot['limiting_factors']);
     }
 

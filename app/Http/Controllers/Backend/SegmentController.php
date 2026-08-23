@@ -6,12 +6,16 @@ use App\Crud\ViewConfigs\SegmentViewConfig;
 use App\DataTables\Backend\SegmentsDataTable;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
+use App\Http\Controllers\Traits\HandlesImportPreviewToken;
+use App\Models\Campaign;
 use App\Models\Company;
 use App\Models\ProspectCriteria;
 use App\Models\Segment;
+use App\Services\Campaign\SegmentCsvImporter;
 use App\Services\Campaign\SegmentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class SegmentController extends BackendController
 {
@@ -19,6 +23,7 @@ class SegmentController extends BackendController
         store as private crudStore;
     }
     use Datatableable;
+    use HandlesImportPreviewToken;
 
     public function __construct(Request $request, Segment $model, SegmentsDataTable $dataTable)
     {
@@ -28,8 +33,9 @@ class SegmentController extends BackendController
         $this->viewConfigClass = SegmentViewConfig::class;
 
         $this->middleware('permission:view segments')->only(['index', 'view', 'preview', 'contacts', 'contactsSearch']);
-        $this->middleware('permission:create segments')->only(['create', 'store']);
-        $this->middleware('permission:edit segments')->only(['edit', 'update', 'executeSwitch', 'pinContact', 'unpinContact']);
+        $this->middleware('permission:create segments')->only(['create', 'store', 'importForm', 'importPreview', 'importStore', 'downloadImportTemplate']);
+        // importPreview/importStore also require edit — importers upsert existing rows.
+        $this->middleware('permission:edit segments')->only(['edit', 'update', 'executeSwitch', 'pinContact', 'unpinContact', 'importPreview', 'importStore']);
         $this->middleware('permission:delete segments')->only(['delete']);
 
         $this->listTitle = 'Segments';
@@ -202,6 +208,12 @@ class SegmentController extends BackendController
             'filter.position.*'     => 'string|max:100',
             'filter.exclude_contacted'       => 'nullable|boolean',
             'filter.exclude_generic_mailbox' => 'nullable|boolean',
+            'filter.engagement'                => 'nullable|array',
+            'filter.engagement.campaign_id'    => 'nullable|array|max:20',
+            'filter.engagement.campaign_id.*'  => 'integer|exists:campaigns,id',
+            'filter.engagement.opened'         => 'nullable|boolean',
+            'filter.engagement.clicked'        => 'nullable|boolean',
+            'filter.engagement.sans_demande'   => 'nullable|boolean',
         ]);
 
         return [
@@ -275,6 +287,7 @@ class SegmentController extends BackendController
             'lifecycleStates' => config('global.data.contact_lifecycle_states', []),
             'positionGroups' => config('global.data.prospect_positions', []),
             'criteriaOptions' => ProspectCriteria::query()->orderBy('name')->pluck('name', 'id')->all(),
+            'campaigns'      => Campaign::query()->orderBy('name')->pluck('name', 'id')->all(),
         ];
     }
 
@@ -341,6 +354,11 @@ class SegmentController extends BackendController
 
         if ($this->boolInputSet($rawFilter['exclude_generic_mailbox'] ?? null)) {
             $filter['exclude_generic_mailbox'] = true;
+        }
+
+        $engagement = $this->buildEngagementFilter((array) ($rawFilter['engagement'] ?? []));
+        if (! empty($engagement)) {
+            $filter['engagement'] = $engagement;
         }
 
         $attributes['is_manual'] = $this->currentRequest->boolean('is_manual');
@@ -598,7 +616,8 @@ class SegmentController extends BackendController
         $scopeLabel = $scopeLabels[$scope] ?? $scope;
 
         $hasFilter = ! empty($filter['sector']) || ! empty($filter['country']) || ! empty($filter['lifecycle_state'])
-            || ! empty($filter['position']) || ! empty($filter['exclude_contacted']) || ! empty($filter['exclude_generic_mailbox']);
+            || ! empty($filter['position']) || ! empty($filter['exclude_contacted']) || ! empty($filter['exclude_generic_mailbox'])
+            || ! empty($filter['engagement']);
 
         if (! $hasFilter) {
             return "Cible : tous les contacts {$scopeLabel}";
@@ -650,6 +669,20 @@ class SegmentController extends BackendController
         }
         if (! empty($filter['exclude_generic_mailbox'])) {
             $parts[] = 'hors boîtes génériques';
+        }
+
+        // Engagement
+        if (! empty($filter['engagement'])) {
+            $engagement = $filter['engagement'];
+            if (array_key_exists('opened', $engagement)) {
+                $parts[] = $engagement['opened'] ? 'ayant ouvert' : "n'ayant pas ouvert";
+            }
+            if (array_key_exists('clicked', $engagement)) {
+                $parts[] = $engagement['clicked'] ? 'ayant cliqué' : "n'ayant pas cliqué";
+            }
+            if (! empty($engagement['sans_demande'])) {
+                $parts[] = 'sans demande de cotation';
+            }
         }
 
         return implode(' ', $parts);
@@ -704,7 +737,71 @@ class SegmentController extends BackendController
             $filter['exclude_generic_mailbox'] = true;
         }
 
+        $engagement = $this->buildEngagementFilter((array) ($rawFilter['engagement'] ?? []));
+        if (! empty($engagement)) {
+            $filter['engagement'] = $engagement;
+        }
+
         return $filter;
+    }
+
+    /**
+     * Build the cleaned filter.engagement sub-array from raw form/AJAX input.
+     * Shared by beforeSave() (persist) and normalizeFilter() (live preview) so
+     * the two paths can never drift apart on how the tri-state fields decode.
+     *
+     * campaign_id  → array of ints, empty entries dropped.
+     * opened/clicked → tri-state: '' or absent = omitted entirely (indifférent);
+     *   a stored `false` would actively exclude contacts on that dimension
+     *   instead of leaving it unfiltered, so only an explicit value is kept.
+     * sans_demande → plain checkbox boolean, omitted unless truthy.
+     *
+     * @param  array  $rawEngagement
+     * @return array<string, mixed>
+     */
+    private function buildEngagementFilter(array $rawEngagement): array
+    {
+        $engagement = [];
+
+        $campaignIds = array_values(array_map(
+            fn ($v) => (int) $v,
+            array_filter((array) ($rawEngagement['campaign_id'] ?? []), fn ($v) => $v !== null && $v !== '')
+        ));
+        if (! empty($campaignIds)) {
+            $engagement['campaign_id'] = $campaignIds;
+        }
+
+        $opened = $this->triStateInput($rawEngagement['opened'] ?? null);
+        if ($opened !== null) {
+            $engagement['opened'] = $opened;
+        }
+
+        $clicked = $this->triStateInput($rawEngagement['clicked'] ?? null);
+        if ($clicked !== null) {
+            $engagement['clicked'] = $clicked;
+        }
+
+        if ($this->boolInputSet($rawEngagement['sans_demande'] ?? null)) {
+            $engagement['sans_demande'] = true;
+        }
+
+        return $engagement;
+    }
+
+    /**
+     * Tri-state select parser for filter.engagement.opened / .clicked: '' (or
+     * null/absent) means "indifférent" and returns null so the caller omits
+     * the key entirely. Only an explicit value becomes a real boolean.
+     *
+     * @param  mixed  $value
+     */
+    private function triStateInput(mixed $value): ?bool
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return filter_var($value, FILTER_VALIDATE_BOOLEAN);
     }
 
     /**
@@ -720,5 +817,63 @@ class SegmentController extends BackendController
         }
 
         return filter_var($value, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    // ── CSV import ─────────────────────────────────────────────────────────────
+    // Clones App\Http\Controllers\Backend\ProspectCriteriaController's
+    // importForm/importPreview/importStore flow. Unlike criteria (which
+    // rejects a re-import of an existing name), segments upsert by name —
+    // persistence lives in SegmentCsvImporter::store() rather than inline
+    // here, see that class's docblock.
+
+    public function importForm()
+    {
+        return view('backend.contents.segments.crud.import', [
+            'rows' => [],
+            'importToken' => null,
+        ]);
+    }
+
+    public function importPreview(Request $request, SegmentCsvImporter $importer)
+    {
+        $request->validate(['csv' => ['required', 'file', 'max:512', 'mimes:csv,txt']]);
+        $file = $request->file('csv');
+        if ($file === null) {
+            throw ValidationException::withMessages(['csv' => ['Le fichier CSV est requis.']]);
+        }
+
+        $rows = $importer->parse((string) file_get_contents($file->getRealPath()), $file->getClientOriginalName());
+
+        return view('backend.contents.segments.crud.import', [
+            'rows' => $rows,
+            'importToken' => $this->makeImportToken($request->user()->id, $rows),
+        ]);
+    }
+
+    public function importStore(Request $request, SegmentCsvImporter $importer)
+    {
+        try {
+            $rows = $this->decryptImportToken((string) $request->input('import_token'), (int) $request->user()->id, SegmentCsvImporter::MAX_ROWS);
+            $result = $importer->store($rows);
+        } catch (ValidationException $exception) {
+            return redirect()->route('admin.segments.import_form')->withErrors($exception->errors());
+        }
+
+        $redirect = redirect()->route('admin.segments.index')
+            ->with('success', "{$result['created']} segment(s) créé(s), {$result['updated']} mis à jour.");
+
+        if ($result['warnings'] !== []) {
+            $redirect->with('warning', implode(' ', $result['warnings']));
+        }
+
+        return $redirect;
+    }
+
+    public function downloadImportTemplate(SegmentCsvImporter $importer)
+    {
+        return response($importer->template(), 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="modele-segments.csv"',
+        ]);
     }
 }

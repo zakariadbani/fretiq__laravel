@@ -6,16 +6,20 @@ use App\Crud\ViewConfigs\SequenceViewConfig;
 use App\DataTables\Backend\SequencesDataTable;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
+use App\Http\Controllers\Traits\HandlesImportPreviewToken;
 use App\Models\CampaignTemplate;
 use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStep;
+use App\Services\Campaign\SequenceCsvImporter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class SequenceController extends BackendController
 {
     use Crudable, Datatableable;
+    use HandlesImportPreviewToken;
 
     /**
      * Toggleable boolean fields for the executeSwitch action.
@@ -29,11 +33,13 @@ class SequenceController extends BackendController
         parent::__construct($request, $model, $dataTable);
 
         $this->middleware('permission:view sequences')->only(['index', 'view']);
-        $this->middleware('permission:create sequences')->only(['create', 'store']);
+        $this->middleware('permission:create sequences')->only(['create', 'store', 'importForm', 'importPreview', 'importStore', 'downloadImportTemplate']);
+        // importPreview/importStore also require edit — importers upsert existing rows.
         $this->middleware('permission:edit sequences')->only([
             'edit', 'update', 'executeSwitch',
             'addStep', 'updateStep', 'deleteStep', 'moveStepUp', 'moveStepDown',
             'pauseEnrollment', 'resumeEnrollment', 'stopEnrollment',
+            'importPreview', 'importStore',
         ]);
         $this->middleware('permission:delete sequences')->only(['delete']);
 
@@ -374,5 +380,62 @@ class SequenceController extends BackendController
 
         return redirect()->back(fallback: route('admin.sequences.view', $sequence->id))
             ->withFragment('sequence_steps');
+    }
+
+    // ── CSV import ─────────────────────────────────────────────────────────────
+    // Clones ProspectCriteriaController's importForm/importPreview/importStore
+    // flow. One CSV row = one step; the preview groups flat rows by sequence
+    // name (SequenceCsvImporter::groupIntoSequences()) while the encrypted
+    // token itself carries the flat rows store() re-groups from.
+
+    public function importForm()
+    {
+        return view('backend.contents.sequences.crud.import', [
+            'groups' => [],
+            'importToken' => null,
+        ]);
+    }
+
+    public function importPreview(Request $request, SequenceCsvImporter $importer)
+    {
+        $request->validate(['csv' => ['required', 'file', 'max:512', 'mimes:csv,txt']]);
+        $file = $request->file('csv');
+        if ($file === null) {
+            throw ValidationException::withMessages(['csv' => ['Le fichier CSV est requis.']]);
+        }
+
+        $rows = $importer->parse((string) file_get_contents($file->getRealPath()), $file->getClientOriginalName());
+
+        return view('backend.contents.sequences.crud.import', [
+            'groups' => $importer->groupIntoSequences($rows),
+            'importToken' => $this->makeImportToken($request->user()->id, $rows),
+        ]);
+    }
+
+    public function importStore(Request $request, SequenceCsvImporter $importer)
+    {
+        try {
+            $rows = $this->decryptImportToken((string) $request->input('import_token'), (int) $request->user()->id, SequenceCsvImporter::MAX_ROWS);
+            $result = $importer->store($rows);
+        } catch (ValidationException $exception) {
+            return redirect()->route('admin.sequences.import_form')->withErrors($exception->errors());
+        }
+
+        $redirect = redirect()->route('admin.sequences.index')
+            ->with('success', "{$result['created']} séquence(s) créée(s), {$result['updated']} mise(s) à jour, {$result['steps']} étape(s) au total.");
+
+        if ($result['warnings'] !== []) {
+            $redirect->with('warning', implode(' ', $result['warnings']));
+        }
+
+        return $redirect;
+    }
+
+    public function downloadImportTemplate(SequenceCsvImporter $importer)
+    {
+        return response($importer->template(), 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="modele-sequences.csv"',
+        ]);
     }
 }

@@ -334,7 +334,7 @@ class ProspectCriteria extends Model
             'daily_limit' => 'nullable|integer|min:1|max:500',
             'auto_run' => 'boolean',
             'run_at_hour' => 'nullable|integer|between:0,23|required_if:auto_run,1',
-            'contact_limit' => 'nullable|integer|min:1|max:20',
+            'contact_limit' => 'nullable|integer|min:1|max:100',
             'min_score_enrich' => 'nullable|integer|between:0,100',
             'auto_enrich' => 'nullable|boolean',
             'is_active' => 'boolean',

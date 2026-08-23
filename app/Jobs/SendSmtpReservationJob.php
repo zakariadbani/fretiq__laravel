@@ -223,8 +223,8 @@ class SendSmtpReservationJob implements ShouldQueue, ShouldBeUnique
             return;
         }
 
-        $token = TrackingToken::generate($run->id, $contact->id);
-        $tracking = EmailTrackingEvent::createForSend($recipient, $token);
+        $tracking = EmailTrackingEvent::createForSend($recipient, TrackingToken::generate($run->id, $contact->id));
+        $token = $tracking->token;
         $unsubscribeUrl = URL::signedRoute('unsubscribe', ['contact' => $contact->id]);
         $this->transportBoundaryCrossed = true;
         try {

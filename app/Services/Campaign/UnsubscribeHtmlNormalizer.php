@@ -89,8 +89,17 @@ final class UnsubscribeHtmlNormalizer
         return $html . "\n" . $addition;
     }
 
-    /** @return array{0: string, 1: array<string, string>} */
-    private static function protectNonRenderedSections(string $html, string $target): array
+    /**
+     * Replace every <script>/<style>/comment region with a short sentinel so
+     * a subsequent regex scan never walks their raw (possibly huge,
+     * possibly pathological) content — that's what keeps normalize() safe
+     * under a tiny pcre.backtrack_limit. Reused by RendersTrackedHtml's
+     * click-link rewriter for the same reason. Pass an empty $target to
+     * protect without stripping anything (str_replace('', '', $x) === $x).
+     *
+     * @return array{0: string, 1: array<string, string>}
+     */
+    public static function protectNonRenderedSections(string $html, string $target): array
     {
         $sections = [];
         $baseSentinel = '__FRETIQ_NON_RENDERED_' . hash('sha256', $target) . '_';

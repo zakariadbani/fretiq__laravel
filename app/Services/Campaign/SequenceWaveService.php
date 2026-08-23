@@ -219,11 +219,6 @@ class SequenceWaveService
                     'next_send_at' => null,
                 ]);
             } else {
-                SequenceEnrollment::whereKey($enrollments->pluck('id'))->update([
-                    'current_step' => $stepNo,
-                    'last_sent_at' => now(),
-                    'next_send_at' => null,
-                ]);
                 $baseKey = preg_replace('/-step-\d{3}$/', '', $locked->occurrence_key);
                 $timezone = $this->calendar->resolveTimezone($locked->campaign);
                 $clock = ($locked->campaign->next_run_at ?? $locked->run_at)
@@ -245,6 +240,17 @@ class SequenceWaveService
                         'driver_ref' => 'zoho-wave-reused',
                     ],
                 );
+
+                SequenceEnrollment::whereKey($enrollments->pluck('id'))->update([
+                    'current_step' => $stepNo,
+                    'last_sent_at' => now(),
+                    // Track the child wave's actual scheduled dispatch time — never
+                    // null — so a stalled wave pipeline stays visible instead of
+                    // disappearing forever. See the matching comment in
+                    // PacedSequenceEnrollmentService::evaluateDue().
+                    'next_send_at' => $child->run_at,
+                ]);
+
                 foreach ($enrollments as $enrollment) {
                     CampaignRecipient::firstOrCreate(
                         ['campaign_run_id' => $child->id, 'contact_id' => $enrollment->contact_id],
@@ -305,18 +311,61 @@ class SequenceWaveService
                 ->where(fn ($channel) => $channel->whereNull('delivery_channel')->orWhere('delivery_channel', 'zoho')))
             ->with(['campaign', 'sequence.steps', 'stepSends'])
             ->orderBy('id')
-            ->get()
-            ->filter(function (SequenceEnrollment $enrollment): bool {
-                $nextStep = $enrollment->sequence->steps
-                    ->where('step_no', '>', (int) $enrollment->current_step)
-                    ->sortBy('step_no')
-                    ->first();
+            ->get();
 
-                return $nextStep !== null
-                    && ! $enrollment->stepSends->contains(fn (SequenceStepSend $send): bool =>
-                        (int) $send->step_no === (int) $nextStep->step_no
-                        && ($send->provider_message_id !== null || in_array($send->status, ['sent', 'opened'], true)));
-            });
+        // Pair each enrollment with its next step first — no query, both
+        // checks rely on relations already eager-loaded above. Drops
+        // enrollments with no further step, or an already-confirmed send
+        // for it.
+        $nextSteps = [];
+        $candidates = $enrollments->filter(function (SequenceEnrollment $enrollment) use (&$nextSteps): bool {
+            $nextStep = $enrollment->sequence->steps
+                ->where('step_no', '>', (int) $enrollment->current_step)
+                ->sortBy('step_no')
+                ->first();
+
+            if ($nextStep === null) {
+                return false;
+            }
+
+            if ($enrollment->stepSends->contains(fn (SequenceStepSend $send): bool =>
+                (int) $send->step_no === (int) $nextStep->step_no
+                && ($send->provider_message_id !== null || in_array($send->status, ['sent', 'opened'], true)))) {
+                return false;
+            }
+
+            $nextSteps[$enrollment->id] = $nextStep;
+
+            return true;
+        });
+
+        // Since next_send_at is no longer nulled out for wave-managed
+        // enrollments (PacedSequenceEnrollmentService::evaluateDue() /
+        // this method / the step-advance branch above all now write a
+        // real timestamp), whereNotNull('next_send_at') alone can no
+        // longer distinguish "legacy, untracked" from "already tracked
+        // by a normal sequence-wave-* run". Exclude any enrollment that
+        // already has a recipient row for this exact step — adopting it
+        // again would create a competing duplicate CampaignRun (and a
+        // possible double-send) alongside the run already tracking it.
+        // Prefetched as one whereIn query (composite contact/campaign/step
+        // keys checked in memory) instead of one correlated exists() per
+        // candidate — this runs over the unbounded legacy-recovery backlog.
+        $trackedKeys = CampaignRecipient::query()
+            ->whereIn('contact_id', $candidates->pluck('contact_id')->unique())
+            ->whereHas('run', fn ($query) => $query
+                ->whereIn('campaign_id', $candidates->pluck('campaign_id')->unique())
+                ->whereIn('sequence_step_id', collect($nextSteps)->pluck('id')->unique()))
+            ->with('run:id,campaign_id,sequence_step_id')
+            ->get()
+            ->map(fn (CampaignRecipient $recipient): string => implode('|', [
+                $recipient->contact_id, $recipient->run->campaign_id, $recipient->run->sequence_step_id,
+            ]))
+            ->flip();
+
+        $enrollments = $candidates->reject(fn (SequenceEnrollment $enrollment): bool => $trackedKeys->has(
+            implode('|', [$enrollment->contact_id, $enrollment->campaign_id, $nextSteps[$enrollment->id]->id])
+        ));
 
         $groups = $enrollments->groupBy(fn (SequenceEnrollment $enrollment): string => implode('|', [
             $enrollment->campaign_id,
@@ -361,7 +410,9 @@ class SequenceWaveService
                         ['campaign_run_id' => $run->id, 'contact_id' => $enrollment->contact_id],
                         ['status' => 'queued'],
                     );
-                    $enrollment->update(['next_send_at' => null]);
+                    // Track the adoption run's own scheduled dispatch time — never
+                    // null — matching PacedSequenceEnrollmentService::evaluateDue().
+                    $enrollment->update(['next_send_at' => $runAt]);
                     $count++;
                 }
 

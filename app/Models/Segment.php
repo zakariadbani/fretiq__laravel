@@ -99,6 +99,14 @@ class Segment extends Model
             // filter.exclude_contacted / filter.exclude_generic_mailbox: booleans
             'filter.exclude_contacted'        => 'nullable|boolean',
             'filter.exclude_generic_mailbox'  => 'nullable|boolean',
+
+            // filter.engagement: optional structured campaign-engagement sub-filter.
+            'filter.engagement'                => 'nullable|array',
+            'filter.engagement.campaign_id'    => 'nullable|array|max:20',
+            'filter.engagement.campaign_id.*'  => 'integer|exists:campaigns,id',
+            'filter.engagement.opened'         => 'nullable|boolean',
+            'filter.engagement.clicked'        => 'nullable|boolean',
+            'filter.engagement.sans_demande'   => 'nullable|boolean',
         ];
     }
 

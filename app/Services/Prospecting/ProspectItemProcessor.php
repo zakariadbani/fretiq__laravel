@@ -662,8 +662,8 @@ final class ProspectItemProcessor
 
             return $id;
         });
-        $attempts = max(1, min(20, $item->batch->items()->count()));
-        $target = $criteria->contact_limit === null ? $attempts : max(1, min(20, (int) $criteria->contact_limit));
+        $attempts = max(1, min(100, $item->batch->items()->count()));
+        $target = $criteria->contact_limit === null ? $attempts : max(1, min(100, (int) $criteria->contact_limit));
         $this->criteriaEnrichment->enrichForCriteria(
             (int) $item->company_id, $criteria, $batchId, $attempts, $target, $item,
             $this->context($item, 'domain_search', (string) $item->selected_domain),

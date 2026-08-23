@@ -7,6 +7,7 @@ use App\DataTables\Backend\CampaignsDataTable;
 use App\Exceptions\PacedCampaignBatchAlreadyExistsException;
 use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
+use App\Http\Controllers\Traits\HandlesImportPreviewToken;
 use App\Jobs\SendCampaignJob;
 use App\Jobs\SendSequenceWaveStepJob;
 use App\Jobs\SyncCampaignRecipientEventsJob;
@@ -24,6 +25,7 @@ use App\Models\SequenceEnrollment;
 use App\Models\SenderIdentity;
 use App\Models\Setting;
 use App\Models\SmtpSendReservation;
+use App\Services\Campaign\CampaignCsvImporter;
 use App\Services\Campaign\CampaignService;
 use App\Services\Campaign\CampaignTestMailService;
 use App\Services\Campaign\CampaignRunTimelineService;
@@ -48,6 +50,7 @@ use Illuminate\Validation\ValidationException;
 class CampaignController extends BackendController
 {
     use Crudable, Datatableable;
+    use HandlesImportPreviewToken;
 
     /**
      * Toggleable boolean fields on Campaign.
@@ -67,8 +70,9 @@ class CampaignController extends BackendController
         $this->viewConfigClass = CampaignViewConfig::class;
 
         $this->middleware('permission:view campaigns')->only(['index', 'view', 'segmentCount', 'nextWavePreview']);
-        $this->middleware('permission:create campaigns')->only(['create', 'store']);
-        $this->middleware('permission:edit campaigns')->only(['edit', 'update', 'cancelRun', 'markReplied']);
+        $this->middleware('permission:create campaigns')->only(['create', 'store', 'importForm', 'importPreview', 'importStore', 'downloadImportTemplate']);
+        // importPreview/importStore also require edit — importers upsert existing rows.
+        $this->middleware('permission:edit campaigns')->only(['edit', 'update', 'cancelRun', 'markReplied', 'importPreview', 'importStore']);
         $this->middleware('permission:delete campaigns')->only(['delete']);
         $this->middleware('permission:send campaigns')->only(['dispatchPreview', 'schedule', 'sendNow', 'testSend', 'sequenceAutoEnroll', 'syncZohoList', 'syncStats', 'retryZohoWave', 'startRunNow', 'resendRun']);
 
@@ -246,17 +250,35 @@ class CampaignController extends BackendController
         }
 
         if ($newChannel === 'smtp' || $senderChanged) {
-            SequenceEnrollment::query()
-                ->where('campaign_id', $campaign->id)
-                ->where('status', 'active')
-                ->whereNull('next_send_at')
-                ->update(['next_send_at' => now()]);
-
-            CampaignRun::query()
+            // Wave-managed enrollments now carry a real next_send_at (the
+            // child wave's scheduled run_at, see SequenceWaveService) instead
+            // of null, so a plain whereNull() selector no longer matches
+            // them. Select the enrollments actually stranded by the wave
+            // runs we are about to cancel below, via the run/recipient
+            // linkage — their contact still has a queued CampaignRecipient
+            // row on one of those runs — so a channel switch reschedules
+            // them onto SMTP instead of leaving them waiting on a dead
+            // wave's run_at (up to delay_days).
+            $strandedWaveRunIds = CampaignRun::query()
                 ->where('campaign_id', $campaign->id)
                 ->where('occurrence_key', 'like', 'sequence-wave-%')
                 ->whereIn('status', ['prepared', 'scheduled', 'failed'])
                 ->whereNotIn('driver_ref', ['zoho-send-attempted', 'zoho-send-uncertain'])
+                ->pluck('id');
+
+            $strandedContactIds = CampaignRecipient::query()
+                ->whereIn('campaign_run_id', $strandedWaveRunIds)
+                ->where('status', 'queued')
+                ->pluck('contact_id');
+
+            SequenceEnrollment::query()
+                ->where('campaign_id', $campaign->id)
+                ->where('status', 'active')
+                ->whereIn('contact_id', $strandedContactIds)
+                ->update(['next_send_at' => now()]);
+
+            CampaignRun::query()
+                ->whereIn('id', $strandedWaveRunIds)
                 ->update([
                     'status' => 'canceled',
                     'finished_at' => now(),
@@ -865,7 +887,7 @@ class CampaignController extends BackendController
                  COALESCE(SUM(status = 'queued'), 0) AS queued,
                  COALESCE(SUM(sent_at IS NOT NULL), 0) AS sent,
                  COALESCE(SUM(opened_at IS NOT NULL), 0) AS opened,
-                 COALESCE(SUM(clicked_at IS NOT NULL), 0) AS clicked,
+                 COALESCE(SUM(status = 'clicked' OR clicked_at IS NOT NULL), 0) AS clicked,
                  COALESCE(SUM(status = 'replied'), 0) AS replied,
                  COALESCE(SUM(status = 'bounced'), 0) AS bounced,
                  COALESCE(SUM(status = 'skipped'), 0) AS skipped"
@@ -876,7 +898,7 @@ class CampaignController extends BackendController
                  COALESCE(SUM(status = 'queued'), 0) AS queued,
                  COALESCE(SUM(max_sent_at IS NOT NULL), 0) AS sent,
                  COALESCE(SUM(max_opened_at IS NOT NULL), 0) AS opened,
-                 COALESCE(SUM(max_clicked_at IS NOT NULL), 0) AS clicked,
+                 COALESCE(SUM(status = 'clicked' OR max_clicked_at IS NOT NULL), 0) AS clicked,
                  COALESCE(SUM(has_replied = 1), 0) AS replied,
                  COALESCE(SUM(status = 'bounced'), 0) AS bounced,
                  COALESCE(SUM(status = 'skipped'), 0) AS skipped"
@@ -916,7 +938,10 @@ class CampaignController extends BackendController
                 break;
 
             case 'clicked':
-                $query->whereNotNull($isRunScope ? 'clicked_at' : 'max_clicked_at');
+                $column = $isRunScope ? 'clicked_at' : 'max_clicked_at';
+                $query->where(function ($clickedQuery) use ($column): void {
+                    $clickedQuery->where('status', 'clicked')->orWhereNotNull($column);
+                });
                 break;
 
             case 'replied':
@@ -1996,5 +2021,56 @@ class CampaignController extends BackendController
             return redirect()->route('admin.campaigns.view', $campaign->id)
                 ->withFragment('campaign_destinataires');
         });
+    }
+
+    // ── CSV import ─────────────────────────────────────────────────────────────
+    // Clones ProspectCriteriaController's importForm/importPreview/importStore
+    // flow. Persistence (upsert) lives in CampaignCsvImporter::store() rather
+    // than inline here — see that class's docblock for the ref-resolution and
+    // is_active-forced-off house rules it enforces during parse().
+
+    public function importForm()
+    {
+        return view('backend.contents.campaigns.crud.import', [
+            'rows' => [],
+            'importToken' => null,
+        ]);
+    }
+
+    public function importPreview(Request $request, CampaignCsvImporter $importer)
+    {
+        $request->validate(['csv' => ['required', 'file', 'max:512', 'mimes:csv,txt']]);
+        $file = $request->file('csv');
+        if ($file === null) {
+            throw ValidationException::withMessages(['csv' => ['Le fichier CSV est requis.']]);
+        }
+
+        $rows = $importer->parse((string) file_get_contents($file->getRealPath()), $file->getClientOriginalName());
+
+        return view('backend.contents.campaigns.crud.import', [
+            'rows' => $rows,
+            'importToken' => $this->makeImportToken($request->user()->id, $rows),
+        ]);
+    }
+
+    public function importStore(Request $request, CampaignCsvImporter $importer)
+    {
+        try {
+            $rows = $this->decryptImportToken((string) $request->input('import_token'), (int) $request->user()->id, CampaignCsvImporter::MAX_ROWS);
+            $result = $importer->store($rows);
+        } catch (ValidationException $exception) {
+            return redirect()->route('admin.campaigns.import_form')->withErrors($exception->errors());
+        }
+
+        return redirect()->route('admin.campaigns.index')
+            ->with('success', "{$result['created']} campagne(s) créée(s), {$result['updated']} mise(s) à jour — toutes inactives.");
+    }
+
+    public function downloadImportTemplate(CampaignCsvImporter $importer)
+    {
+        return response($importer->template(), 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="modele-campagnes.csv"',
+        ]);
     }
 }

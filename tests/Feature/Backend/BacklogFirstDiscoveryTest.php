@@ -79,7 +79,7 @@ class BacklogFirstDiscoveryTest extends TestCase
         {
             public int $calls = 0;
 
-            public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null): array
+            public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null, ?\App\Services\Providers\ProviderCallContext $context = null): array
             {
                 $this->calls++;
 
@@ -171,7 +171,7 @@ class BacklogFirstDiscoveryTest extends TestCase
         {
             public int $calls = 0;
 
-            public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null): array
+            public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null, ?\App\Services\Providers\ProviderCallContext $context = null): array
             {
                 $this->calls++;
 
@@ -234,7 +234,7 @@ class BacklogFirstDiscoveryTest extends TestCase
         {
             public int $calls = 0;
 
-            public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null): array
+            public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null, ?\App\Services\Providers\ProviderCallContext $context = null): array
             {
                 $this->calls++;
 
@@ -335,7 +335,7 @@ class BacklogFirstDiscoveryTest extends TestCase
         {
             public float $returnedAt = 0.0;
 
-            public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null): array
+            public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null, ?\App\Services\Providers\ProviderCallContext $context = null): array
             {
                 usleep(20_000);
                 $this->returnedAt = microtime(true);

@@ -284,6 +284,82 @@
             </div>
             {{-- end CARD 2 --}}
 
+            {{-- CARD 3 — Engagement ─────────────────────────────────── --}}
+            @php
+                $storedEngagement = (array) ($model->filter['engagement'] ?? []);
+                $storedEngagementCampaignIds = array_map('intval', (array) old('filter.engagement.campaign_id', $storedEngagement['campaign_id'] ?? []));
+
+                $engagementOpenedDefault = array_key_exists('opened', $storedEngagement) ? ($storedEngagement['opened'] ? '1' : '0') : '';
+                $engagementOpened = old('filter.engagement.opened', $engagementOpenedDefault);
+
+                $engagementClickedDefault = array_key_exists('clicked', $storedEngagement) ? ($storedEngagement['clicked'] ? '1' : '0') : '';
+                $engagementClicked = old('filter.engagement.clicked', $engagementClickedDefault);
+
+                $engagementSansDemande = (bool) old('filter.engagement.sans_demande', $storedEngagement['sans_demande'] ?? false);
+            @endphp
+
+            <div class="card mb-5" data-segment-dynamic-fields data-segment-targeting-fields {{ $isManual ? 'hidden' : '' }}>
+                <div class="card-header border-0 pt-5">
+                    <h3 class="card-title fw-bolder m-0">
+                        <i class="bi bi-envelope-open text-success fs-3 me-2"></i>
+                        Engagement
+                    </h3>
+                    <div class="card-toolbar">
+                        <span class="text-muted fs-7">Ciblez selon le comportement sur les campagnes déjà envoyées</span>
+                    </div>
+                </div>
+                <div class="card-body border-top p-9">
+
+                    <div class="row g-5">
+
+                        {{-- Limiter à ces campagnes --}}
+                        <div class="col-md-12 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">Limiter à ces campagnes</label>
+                            <x-crud.select-multi
+                                name="filter[engagement][campaign_id]"
+                                :options="$campaigns"
+                                :selected="$storedEngagementCampaignIds"
+                                placeholder="Toutes les campagnes" />
+                            <div class="form-text text-muted mt-1">
+                                Laissez vide pour évaluer l'engagement sur toutes les campagnes envoyées.
+                            </div>
+                        </div>
+
+                        {{-- A ouvert --}}
+                        <div class="col-md-4 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">A ouvert</label>
+                            <select name="filter[engagement][opened]" class="form-select form-select-solid">
+                                <option value="" {{ $engagementOpened === '' ? 'selected' : '' }}>Indifférent</option>
+                                <option value="1" {{ $engagementOpened === '1' ? 'selected' : '' }}>Oui</option>
+                                <option value="0" {{ $engagementOpened === '0' ? 'selected' : '' }}>Non</option>
+                            </select>
+                        </div>
+
+                        {{-- A cliqué --}}
+                        <div class="col-md-4 fv-row">
+                            <label class="fw-semibold fs-6 mb-2">A cliqué</label>
+                            <select name="filter[engagement][clicked]" class="form-select form-select-solid">
+                                <option value="" {{ $engagementClicked === '' ? 'selected' : '' }}>Indifférent</option>
+                                <option value="1" {{ $engagementClicked === '1' ? 'selected' : '' }}>Oui</option>
+                                <option value="0" {{ $engagementClicked === '0' ? 'selected' : '' }}>Non</option>
+                            </select>
+                        </div>
+
+                        {{-- Sans demande de cotation --}}
+                        <div class="col-md-4 fv-row d-flex align-items-end">
+                            <label class="form-check form-check-custom form-check-solid">
+                                <input class="form-check-input" type="checkbox" name="filter[engagement][sans_demande]" value="1"
+                                       {{ $engagementSansDemande ? 'checked' : '' }} />
+                                <span class="form-check-label">Sans demande de cotation</span>
+                            </label>
+                        </div>
+
+                    </div>
+
+                </div>
+            </div>
+            {{-- end CARD 3 --}}
+
             {{-- Audience bandeau (in-form, cause→effect) --}}
             @include('backend.contents.segments.partials._audience-bandeau')
 

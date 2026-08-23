@@ -3,6 +3,7 @@
 namespace Tests\Feature\Backend;
 
 use App\Models\Campaign;
+use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
 use App\Models\CampaignTemplate;
 use App\Models\Company;
@@ -419,7 +420,12 @@ class CampaignDeliveryChannelTest extends TestCase
     public function test_switching_a_prepared_zoho_sequence_to_smtp_rearms_enrollments_and_cancels_wave_work(): void
     {
         config(['services.zoho.driver' => 'zoho']);
-        [$campaign, $sequence, $step, $enrollment] = $this->pacedSequenceCampaign('zoho', null);
+        // Post-fix, a wave-managed enrollment's next_send_at mirrors the
+        // child wave's run_at instead of staying null (see SequenceWaveService),
+        // so this must be a real future timestamp — not null — to actually
+        // exercise the run/recipient-linkage selector rather than a stale
+        // whereNull() check that no longer matches this shape.
+        [$campaign, $sequence, $step, $enrollment] = $this->pacedSequenceCampaign('zoho', now()->addHour());
         $wave = CampaignRun::create([
             'campaign_id' => $campaign->id,
             'sequence_step_id' => $step->id,
@@ -427,6 +433,15 @@ class CampaignDeliveryChannelTest extends TestCase
             'run_at' => now()->addHour(),
             'status' => 'prepared',
             'driver_ref' => 'zoho-wave-pending',
+        ]);
+        // The queued CampaignRecipient row is what SequenceWaveService always
+        // creates alongside a prepared wave — it is the run/recipient
+        // linkage the unstall selector uses to find enrollments actually
+        // stranded by the wave being canceled below.
+        CampaignRecipient::create([
+            'campaign_run_id' => $wave->id,
+            'contact_id' => $enrollment->contact_id,
+            'status' => 'queued',
         ]);
 
         $this->actingAs($this->user)
@@ -437,6 +452,37 @@ class CampaignDeliveryChannelTest extends TestCase
         $this->assertNotNull($enrollment->fresh()->next_send_at);
         $this->assertTrue($enrollment->fresh()->next_send_at->lte(now()));
         $this->assertSame('canceled', $wave->fresh()->status);
+    }
+
+    public function test_switching_a_prepared_zoho_sequence_to_smtp_does_not_touch_an_enrollment_with_no_recipient_on_the_canceled_wave(): void
+    {
+        config(['services.zoho.driver' => 'zoho']);
+        $untouchedNextSendAt = now()->addDays(2);
+        [$campaign, $sequence, $step, $enrollment] = $this->pacedSequenceCampaign('zoho', $untouchedNextSendAt);
+        // A prepared wave exists for this campaign, but this enrollment's
+        // contact was never queued on it (e.g. it belongs to a different,
+        // still-live wave not being canceled) — the run/recipient linkage
+        // must not match it, so its own schedule is left alone rather than
+        // blanket-rearming every active enrollment on the campaign.
+        CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $step->id,
+            'occurrence_key' => 'sequence-wave-000002',
+            'run_at' => now()->addHour(),
+            'status' => 'prepared',
+            'driver_ref' => 'zoho-wave-pending',
+        ]);
+
+        $this->actingAs($this->user)
+            ->putJson(route('admin.campaigns.update', $campaign), $this->sequenceUpdatePayload($campaign, $sequence, 'smtp'))
+            ->assertOk();
+
+        $this->assertSame('smtp', $campaign->fresh()->delivery_channel);
+        // gt(), not equalTo() — the datetime column truncates the fixture's
+        // microseconds on round-trip, so an exact-equality check would be a
+        // false negative. Staying in the far future (not rearmed to "now")
+        // is the actual behavior under test.
+        $this->assertTrue($enrollment->fresh()->next_send_at->gt(now()->addDay()));
     }
 
     public function test_switching_an_unsent_smtp_sequence_to_live_zoho_releases_direct_smtp_work(): void

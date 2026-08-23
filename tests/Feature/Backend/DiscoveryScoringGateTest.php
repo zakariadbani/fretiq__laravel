@@ -71,7 +71,7 @@ class DiscoveryScoringGateTest extends TestCase
             'consumed' => $consumed,
             'contact_credits_reserved' => $reserved,
             'contact_consumed' => 0,
-            'successful_enrichments_target' => min(20, max(1, (int) ($criteria->contact_limit ?? 20))),
+            'successful_enrichments_target' => min(100, max(1, (int) ($criteria->contact_limit ?? 20))),
             'successful_enrichments' => 0,
             'quota_date' => Carbon::today()->toDateString(),
             'started_at' => now(),
@@ -312,7 +312,7 @@ class DiscoveryScoringGateTest extends TestCase
             'companies_count' => 2,  // already persisted from the first run
             'contact_credits_reserved' => 6,
             'contact_consumed' => 0,
-            'successful_enrichments_target' => min(20, max(1, (int) ($criteria->contact_limit ?? 20))),
+            'successful_enrichments_target' => min(100, max(1, (int) ($criteria->contact_limit ?? 20))),
             'successful_enrichments' => 0,
             'quota_date' => Carbon::today()->toDateString(),
             'started_at' => now(),
@@ -677,12 +677,12 @@ class DiscoveryScoringGateTest extends TestCase
             {
                 public function __construct(private readonly ?array $payload) {}
 
-                public function domainSearch(string $domain, int $limit = 10, ?int $timeoutSeconds = null): ?array
+                public function domainSearch(string $domain, int $limit = 10, ?int $timeoutSeconds = null, ?\App\Services\Providers\ProviderCallContext $context = null): ?array
                 {
                     return $this->payload;
                 }
 
-                public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null): array
+                public function domainSearchResult(string $domain, int $limit = 10, ?int $timeoutSeconds = null, ?\App\Services\Providers\ProviderCallContext $context = null): array
                 {
                     return $this->payload === null
                         ? ['status' => 'provider_failed', 'data' => null]

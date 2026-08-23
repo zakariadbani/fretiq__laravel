@@ -299,6 +299,42 @@ class CampaignFeedbackTest extends TestCase
         $this->assertNotNull($recipient->clicked_at);
     }
 
+    /**
+     * SyncCampaignRecipientEventsJob::eventTime() returns null for every
+     * 'clickedcontacts' row (Zoho's click report carries no timestamp).
+     * Before this fix that left clicked_at permanently NULL — only status
+     * was written, and a later bounce/unsubscribe event would overwrite even
+     * that, losing the click signal entirely. An approximate (sync-time)
+     * timestamp must be persisted instead.
+     */
+    public function test_zoho_clicked_without_a_timestamp_persists_the_sync_time_as_clicked_at(): void
+    {
+        $recipient = $this->recipient('sent');
+        $before = now()->subSecond();
+
+        app(CampaignFeedbackService::class)->apply($recipient, 'clicked', null, null, 'zoho');
+
+        $recipient->refresh();
+        $this->assertSame('clicked', $recipient->status);
+        $this->assertNotNull($recipient->clicked_at, 'clicked_at must not be left NULL for a timestamp-less Zoho click');
+        $this->assertTrue($recipient->clicked_at->greaterThanOrEqualTo($before));
+    }
+
+    /**
+     * First-write-wins: a timestamp-less Zoho click must never overwrite an
+     * earlier, already-recorded clicked_at.
+     */
+    public function test_zoho_clicked_without_a_timestamp_never_overwrites_an_earlier_clicked_at(): void
+    {
+        $recipient = $this->recipient('clicked');
+        $earlier = now()->subDays(3)->startOfSecond();
+        $recipient->update(['clicked_at' => $earlier]);
+
+        app(CampaignFeedbackService::class)->apply($recipient, 'clicked', null, null, 'zoho');
+
+        $this->assertTrue($recipient->refresh()->clicked_at->equalTo($earlier));
+    }
+
     public function test_unsent_feedback_marks_the_recipient_skipped_without_suppression(): void
     {
         $recipient = $this->recipient();

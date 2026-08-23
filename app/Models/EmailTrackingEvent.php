@@ -47,30 +47,49 @@ class EmailTrackingEvent extends Model
     // ── Factories ──────────────────────────────────────────────────────────────
 
     /**
-     * Create (or retrieve) the sent-event row for a tracking token.
+     * Create (or reuse) the sent-event row for a trackable send.
      *
-     * Shared by CampaignService and SequenceService — trackable_type/id derive
-     * from $trackable (CampaignRecipient or SequenceStepSend); default payload
-     * (event='sent', zero counters) matches both prior inline firstOrCreate() calls.
+     * Shared by CampaignService, SequenceService, and SendSmtpReservationJob —
+     * trackable_type/id derive from $trackable (CampaignRecipient or
+     * SequenceStepSend); default payload (event='sent', zero counters)
+     * matches all prior inline firstOrCreate() calls.
+     *
+     * Reuses an existing row for this trackable if one already exists,
+     * instead of always minting a fresh token-keyed row. $token is a fresh
+     * random token (never collides with a real row), so keying only on it
+     * gave zero protection against a caller retried before the send ever
+     * completed (queue retry, a stuck/never-advancing send reprocessed
+     * repeatedly) — every retry orphaned a brand-new row bound to the same
+     * trackable_id. That is exactly how ~437k garbage rows piled up in prod
+     * (2026-07, all trackable_type=SequenceStepSend, one never-advancing
+     * step send). Look-up-then-create is not atomic (no unique index on
+     * trackable_type+trackable_id), but the real send attempt is already
+     * serialized upstream (SmtpSendReservation / SequenceStepSend unique
+     * constraints), so a concurrent double-insert here is not realistically
+     * reachable.
      */
     public static function createForSend(Model $trackable, string $token): self
     {
-        return static::firstOrCreate(
-            ['token' => $token],
-            [
-                'trackable_type'     => get_class($trackable),
-                'trackable_id'       => $trackable->id,
-                'event'              => 'sent',
-                'human_open_count'   => 0,
-                'machine_open_count' => 0,
-            ],
-        );
+        return static::where('trackable_type', get_class($trackable))
+            ->where('trackable_id', $trackable->id)
+            ->latest('id')
+            ->first()
+            ?? static::firstOrCreate(
+                ['token' => $token],
+                [
+                    'trackable_type'     => get_class($trackable),
+                    'trackable_id'       => $trackable->id,
+                    'event'              => 'sent',
+                    'human_open_count'   => 0,
+                    'machine_open_count' => 0,
+                ],
+            );
     }
 
     /** Promote a paced pre-send reservation after provider acceptance. */
     public function markSent(): void
     {
-        if ($this->event !== 'sent') {
+        if ($this->event !== 'sent' && $this->event !== 'clicked') {
             $this->update(['event' => 'sent']);
         }
     }

@@ -933,9 +933,9 @@ class DiscoveryQuotaService
                     // attempts have their own independent package-backed budget.
                     $successfulEnrichmentsTarget = max(
                         1,
-                        min((int) ($criteria->contact_limit ?? 20), 20),
+                        min((int) ($criteria->contact_limit ?? 20), 100),
                     );
-                    $contactCaps = [20];
+                    $contactCaps = [100];
                     if (! $this->contactIsUnlimited()) {
                         $contactCaps[] = $this->contactRemainingOn($today);
                     }

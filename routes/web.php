@@ -60,6 +60,18 @@ Route::get('/error', function () {
 Route::get('/track/open/{token}', [TrackingController::class, 'open'])
     ->name('track.open');
 
+// Click-through redirect. The destination lives in the signed 'url' query
+// param (HMAC-covered, not a free-form open-redirect param) — tampering with
+// either the token or the url is rejected before the controller runs.
+// 'signed:relative' validates the path+query only, not the host/scheme, so
+// APP_URL drift between the process that minted the link and the one
+// serving it (proxy, TLS termination, an APP_URL edit) cannot turn an
+// already-sent link into a false rejection — see Handler::register() for
+// the redirect-to-home fallback on genuine signature failure.
+Route::get('/track/click/{token}', [TrackingController::class, 'click'])
+    ->name('track.click')
+    ->middleware('signed:relative');
+
 // Unsubscribe confirmation GET, CSRF form POST, and RFC 8058 one-click POST.
 Route::get('/u/{contact}', [UnsubscribeController::class, 'show'])
     ->name('unsubscribe')

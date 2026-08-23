@@ -5,6 +5,9 @@ use Illuminate\Support\Facades\Route;
 
 Route::controller(CampaignTemplateController::class)->prefix('admin')->name('admin.')->group(function () {
     Route::get('/campaign_templates', 'index')->name('campaign_templates.index');
+    Route::get('/campaign_templates/import', 'importForm')->name('campaign_templates.import_form');
+    Route::post('/campaign_templates/import/preview', 'importPreview')->name('campaign_templates.import_preview');
+    Route::post('/campaign_templates/import', 'importStore')->name('campaign_templates.import_store');
     Route::get('/campaign_templates/create', 'create')->name('campaign_templates.create');
     Route::post('/campaign_templates', 'store')->name('campaign_templates.store');
     Route::post('/campaign_templates/import-zoho', 'importFromZoho')->name('campaign_templates.import_zoho');

@@ -52,7 +52,7 @@ class CampaignRunResendService
 
             $sourceContactIds = CampaignRecipient::query()
                 ->where('campaign_run_id', $lockedSource->id)
-                ->where('status', 'sent')
+                ->whereNotNull('sent_at')
                 ->lockForUpdate()
                 ->pluck('contact_id')
                 ->unique()

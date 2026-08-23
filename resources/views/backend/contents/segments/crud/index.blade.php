@@ -62,6 +62,13 @@
                 </div>
 
                 @can('create segments')
+                <a href="{{ route('admin.segments.import_form') }}" class="btn btn-light-primary me-3">
+                    <i class="bi bi-upload fs-2"></i>
+                    Importer CSV
+                </a>
+                @endcan
+
+                @can('create segments')
                 <a href="{{ route('admin.segments.create') }}" class="btn btn-primary">
                     <i class="bi bi-plus-lg fs-2"></i>
                     Ajouter un segment

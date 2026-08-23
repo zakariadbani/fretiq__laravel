@@ -407,6 +407,40 @@ class RendersTrackedHtmlMergeTagsTest extends TestCase
         $this->assertSame(1, substr_count($result, self::UNSUBSCRIBE_URL));
         $this->assertLessThan(strpos($result, '/track/open/tracking-token'), strrpos($result, '</script>'));
     }
+
+    // ── Click-through link rewriting ───────────────────────────────────────────
+
+    public function test_link_rewrite_wraps_http_hrefs_through_click_route(): void
+    {
+        $result = RendersTrackedHtmlMergeTagsFixture::renderTrackedHtml(
+            '<p><a href="https://example.test/offer?a=1&amp;b=2">Offer</a></p>',
+            $this->makeContact(),
+            self::UNSUBSCRIBE_URL,
+        );
+
+        $this->assertStringNotContainsString('href="https://example.test/offer', $result);
+        $this->assertMatchesRegularExpression('~href="[^"]*/track/click/tracking-token[^"]*"~', $result);
+    }
+
+    public function test_link_rewrite_skips_unsubscribe_mailto_tel_and_anchor_hrefs(): void
+    {
+        $source = '<p><a href="{{unsubscribe_url}}">Se désabonner</a></p>'
+            . '<p><a href="mailto:contact@fretiq.test">Email</a></p>'
+            . '<p><a href="tel:+33100000000">Call</a></p>'
+            . '<p><a href="#section">Jump</a></p>';
+
+        $result = RendersTrackedHtmlMergeTagsFixture::renderTrackedHtml(
+            $source,
+            $this->makeContact(),
+            self::UNSUBSCRIBE_URL,
+        );
+
+        $this->assertStringContainsString('href="' . self::UNSUBSCRIBE_URL . '"', $result);
+        $this->assertStringContainsString('href="mailto:contact@fretiq.test"', $result);
+        $this->assertStringContainsString('href="tel:+33100000000"', $result);
+        $this->assertStringContainsString('href="#section"', $result);
+        $this->assertStringNotContainsString('/track/click/', $result);
+    }
 }
 
 /**

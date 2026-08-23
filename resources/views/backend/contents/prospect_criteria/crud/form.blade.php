@@ -387,8 +387,8 @@
                                     // Keep an invalid submitted value visible for correction, but
                                     // cap legacy persisted values at the runtime maximum.
                                     $storedContactLimit = isset($model) && $model->contact_limit !== null
-                                        ? min(20, max(1, (int) $model->contact_limit))
-                                        : '';
+                                        ? min(100, max(1, (int) $model->contact_limit))
+                                        : 20;
                                     $displayContactLimit = old('contact_limit', $storedContactLimit);
                                 @endphp
                                 <div class="input-group input-group-solid">
@@ -398,11 +398,11 @@
                                            value="{{ $displayContactLimit }}"
                                            placeholder="20 par défaut"
                                            min="1"
-                                           max="20" />
+                                           max="100" />
                                     <span class="input-group-text fw-semibold text-gray-500">entreprises enrichies</span>
                                 </div>
                                 <div class="form-text text-muted mt-1">
-                                    Vide = 20 enrichissements réussis. Les appels d’enrichissement sans résultat ou en échec consomment quand même le quota package. Chaque exécution est limitée à 20 tentatives maximum et peut s’arrêter plus tôt si le quota est atteint ou si aucun candidat éligible ne reste.
+                                    Vide = 20 enrichissements réussis. Les appels d’enrichissement sans résultat ou en échec consomment quand même le quota package. Chaque exécution est limitée à 100 tentatives maximum et peut s’arrêter plus tôt si le quota est atteint ou si aucun candidat éligible ne reste.
                                 </div>
                             </div>
 

@@ -403,7 +403,7 @@ class CompanyManualEnrichTest extends TestCase
             function () {
                 return new class extends \App\Services\Discovery\HunterEnrichmentService
                 {
-                    public function domainSearch(string $domain, int $limit = 10, ?int $timeoutSeconds = null): ?array
+                    public function domainSearch(string $domain, int $limit = 10, ?int $timeoutSeconds = null, ?\App\Services\Providers\ProviderCallContext $context = null): ?array
                     {
                         throw new \RuntimeException('Hunter simulated failure');
                     }

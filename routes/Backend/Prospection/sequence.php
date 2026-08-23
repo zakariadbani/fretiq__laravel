@@ -5,6 +5,10 @@ use Illuminate\Support\Facades\Route;
 
 Route::controller(SequenceController::class)->prefix('admin')->name('admin.')->group(function () {
     Route::get('/sequences', 'index')->name('sequences.index');
+    Route::get('/sequences/import', 'importForm')->name('sequences.import_form');
+    Route::post('/sequences/import/preview', 'importPreview')->name('sequences.import_preview');
+    Route::post('/sequences/import', 'importStore')->name('sequences.import_store');
+    Route::get('/sequences/import/template', 'downloadImportTemplate')->name('sequences.import_template');
     Route::get('/sequences/create', 'create')->name('sequences.create');
     Route::post('/sequences', 'store')->name('sequences.store');
 

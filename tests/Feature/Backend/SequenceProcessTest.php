@@ -912,6 +912,66 @@ class SequenceProcessTest extends TestCase
         $this->assertSame(1, SmtpSendReservation::count());
     }
 
+    /**
+     * A step send stuck between token-creation and a successful transport
+     * (provider_message_id still null — e.g. a queue retry) must reuse its
+     * existing tracking row rather than mint a duplicate. This is the exact
+     * mechanism that orphaned ~437k email_tracking_events rows in prod
+     * (2026-07): every retry of a never-advancing step send minted a fresh
+     * token bound to the SAME trackable_id. A second, independent step send
+     * must still get its own distinct trackable_id.
+     */
+    public function test_retrying_a_stuck_step_send_reuses_its_tracking_token_while_distinct_sends_stay_distinct(): void
+    {
+        $seq = $this->makeTwoStepSequence();
+        $contact = $this->makeContact('retry-token@acme.test');
+        $service = app(SequenceService::class);
+        $enrollment = $service->enroll($seq, $contact);
+
+        // Simulate a step-send left over from an earlier attempt: the token/
+        // event was already minted but provider_message_id was never set.
+        $stepSend = SequenceStepSend::create([
+            'enrollment_id' => $enrollment->id,
+            'step_no' => 1,
+            'status' => 'queued',
+        ]);
+        $existingEvent = EmailTrackingEvent::createForSend(
+            $stepSend,
+            \App\Support\TrackingToken::generate($enrollment->id, 1),
+        );
+
+        $service->sendStep($enrollment->fresh());
+
+        $this->assertSame(
+            1,
+            EmailTrackingEvent::where('trackable_type', SequenceStepSend::class)
+                ->where('trackable_id', $stepSend->id)
+                ->count(),
+            'Retrying a stuck step send must reuse the existing tracking row, not mint a duplicate.',
+        );
+        Mail::assertSent(
+            SequenceStepMailable::class,
+            fn (SequenceStepMailable $mail) => str_contains($mail->render(), '/track/open/' . $existingEvent->token),
+        );
+
+        // A second, independent enrollment's send must get its OWN trackable_id.
+        $secondEnrollment = $service->enroll($seq, $this->makeContact('retry-token-2@acme.test'));
+        $service->sendStep($secondEnrollment);
+
+        $secondStepSend = SequenceStepSend::where('enrollment_id', $secondEnrollment->id)
+            ->where('step_no', 1)
+            ->firstOrFail();
+
+        $this->assertNotSame($stepSend->id, $secondStepSend->id);
+        $this->assertSame(
+            $secondStepSend->id,
+            EmailTrackingEvent::where('trackable_type', SequenceStepSend::class)
+                ->latest('id')
+                ->value('trackable_id'),
+            'The second send must be bound to its own SequenceStepSend id, never the first one.',
+        );
+    }
+
     private function makeSmtpSequenceCampaign(Sequence $sequence, array $attributes = []): Campaign
     {
         $segment = Segment::create(['name' => 'Sequence audience '.uniqid(), 'scope' => 'client']);

@@ -38,6 +38,13 @@
                 @endcan
 
                 @can('create campaign_templates')
+                <a href="{{ route('admin.campaign_templates.import_form') }}" class="btn btn-light-primary">
+                    <i class="bi bi-upload fs-2"></i>
+                    Importer HTML
+                </a>
+                @endcan
+
+                @can('create campaign_templates')
                 <a href="{{ route('admin.campaign_templates.create') }}" class="btn btn-primary">
                     <i class="bi bi-plus-lg fs-2"></i>
                     Ajouter un modèle

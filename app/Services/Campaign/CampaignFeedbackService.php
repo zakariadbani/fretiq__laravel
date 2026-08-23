@@ -136,9 +136,13 @@ class CampaignFeedbackService
         if ($outcome === 'opened' || $outcome === 'clicked') {
             $column = $outcome . '_at';
             $attributes = [];
-            $eventAt = $recipient->{$column} ?? ($hasOccurredAt ? $at : null);
-            if ($eventAt !== null || $source !== 'zoho') {
-                $attributes[$column] = $eventAt ?? now();
+            // First-write-wins: never overwrite an existing timestamp. When
+            // none exists yet, prefer a real event time; otherwise fall back
+            // to the sync/local time — an approximate timestamp beats a
+            // permanently-NULL column that a later bounce/unsubscribe event
+            // would otherwise leave as the only record of this outcome.
+            if ($recipient->{$column} === null) {
+                $attributes[$column] = $hasOccurredAt ? $at : now();
             }
             if (in_array($recipient->status, ['queued', 'sent', 'delivered', 'opened', 'clicked'], true)) {
                 $attributes['status'] = $outcome;

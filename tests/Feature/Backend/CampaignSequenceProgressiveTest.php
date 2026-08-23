@@ -145,7 +145,15 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertEqualsCanonicalizing(array_column($highContacts, 'id'), $wave->recipients()->pluck('contact_id')->all());
         Queue::assertPushed(SyncCampaignWaveZohoListJob::class, fn ($job) => $job->runId === $wave->id);
         Queue::assertNotPushed(SendSequenceStepJob::class);
-        $this->assertSame(0, SequenceEnrollment::where('campaign_id', $campaign->id)->whereNotNull('next_send_at')->count());
+        // next_send_at must track the wave's own scheduled run_at — never null —
+        // so a stalled wave pipeline stays visible to processDue()/repair
+        // tooling instead of disappearing. SMTP dispatch stays guarded off via
+        // canSendViaSmtp() + SendSequenceStepJob's own zoho-wave check (asserted
+        // above via Queue::assertNotPushed(SendSequenceStepJob::class)).
+        $this->assertSame(
+            2,
+            SequenceEnrollment::where('campaign_id', $campaign->id)->where('next_send_at', $wave->run_at)->count(),
+        );
     }
 
     public function test_local_driver_enrolls_paced_zoho_campaign_for_mailpit_without_creating_a_wave(): void
@@ -1353,7 +1361,10 @@ class CampaignSequenceProgressiveTest extends TestCase
         $run = CampaignRun::where('campaign_id', $campaign->id)->where('occurrence_key', 'like', 'sequence-wave-legacy-%')->firstOrFail();
         $this->assertSame($sequence->steps()->firstOrFail()->id, $run->sequence_step_id);
         $this->assertDatabaseHas('campaign_recipients', ['campaign_run_id' => $run->id, 'contact_id' => $contact->id, 'status' => 'queued']);
-        $this->assertNull($enrollment->fresh()->next_send_at);
+        // Adoption must track the wave's own run_at — never null — so the
+        // enrollment stays visible to processDue()/repair tooling.
+        $this->assertNotNull($enrollment->fresh()->next_send_at);
+        $this->assertTrue($enrollment->fresh()->next_send_at->equalTo($run->run_at));
     }
 
     public function test_attempted_campaign_key_finalizes_without_duplicate_zoho_calls(): void
@@ -1671,7 +1682,14 @@ class CampaignSequenceProgressiveTest extends TestCase
         app(SequenceWaveService::class)->recover();
         (new SendSequenceStepJob($enrollment->id))->handle();
 
-        $this->assertNull($enrollment->fresh()->next_send_at);
+        $run = CampaignRun::where('campaign_id', $campaign->id)
+            ->where('sequence_step_id', $sequence->steps()->firstOrFail()->id)
+            ->where('status', 'prepared')
+            ->firstOrFail();
+        // Adoption must track the wave's own run_at — never null — so the
+        // enrollment stays visible to processDue()/repair tooling.
+        $this->assertNotNull($enrollment->fresh()->next_send_at);
+        $this->assertTrue($enrollment->fresh()->next_send_at->equalTo($run->run_at));
         $this->assertDatabaseHas('campaign_runs', [
             'campaign_id' => $campaign->id,
             'sequence_step_id' => $sequence->steps()->firstOrFail()->id,

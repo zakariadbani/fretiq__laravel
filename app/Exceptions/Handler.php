@@ -57,6 +57,14 @@ class Handler extends ExceptionHandler
             if ($request->is('u/*')) {
                 return response()->view('public.unsubscribed', ['state' => 'error'], 403);
             }
+
+            // A human recipient clicking an old/drifted tracking link must
+            // land somewhere useful, never a bare 403 — and never the 'url'
+            // query param (that would reopen the exact open-redirect the
+            // signature exists to prevent).
+            if ($request->is('track/click/*')) {
+                return redirect()->to(url('/'));
+            }
         });
 
         $this->renderable(function (TokenMismatchException $e, Request $request) {
