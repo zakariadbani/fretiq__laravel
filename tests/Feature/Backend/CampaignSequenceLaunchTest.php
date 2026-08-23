@@ -844,14 +844,28 @@ class CampaignSequenceLaunchTest extends TestCase
         $this->assertSame(0, SequenceStepSend::count());
 
         // Flipping the GLOBAL driver to zoho blocks every attributed
-        // campaign alike (local, zoho-driver, paced) — but the unattributed
+        // campaign alike (local, zoho-driver, paced) — but a campaign-null
         // enrollment still dispatches: canSendViaSmtp() returns true for a
         // null campaign before it ever reaches the global-zoho gate.
+        //
+        // $unattributed already dispatched in phase 1, and SendSequenceStepJob
+        // is ShouldBeUnique: PendingDispatch acquires its cache lock at
+        // dispatch() time regardless of Queue::fake(), and since the fake
+        // queue never runs the job body, nothing releases it. Re-dispatching
+        // the same enrollment id here would be silently swallowed by that
+        // still-held lock (processDue() would still count it as eligible,
+        // but no job would actually reach the fake queue). Push it past due
+        // — as a real send would have — and arm a fresh unattributed
+        // enrollment to actually exercise the driver-flip dispatch.
+        $unattributed->update(['next_send_at' => now()->addDay()]);
+        $unattributed2 = $service->enroll($sequence, $this->makeContact($this->makeCompany()));
+        $unattributed2->update(['next_send_at' => now()->subMinute()]);
+
         config(['services.zoho.driver' => 'zoho']);
         Queue::fake();
         $this->assertSame(1, $service->processDue());
         Queue::assertPushed(SendSequenceStepJob::class, 1);
-        Queue::assertPushed(SendSequenceStepJob::class, fn ($job) => $job->enrollmentId === $unattributed->id);
+        Queue::assertPushed(SendSequenceStepJob::class, fn ($job) => $job->enrollmentId === $unattributed2->id);
 
         $service->sendStep($local->fresh());
         $service->sendStep($zoho->fresh());

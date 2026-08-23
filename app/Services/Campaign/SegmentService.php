@@ -394,6 +394,12 @@ class SegmentService
     private function applyJsonFilter(Builder $query, array $filter): void
     {
         $sector    = $this->cleanFilterValue($filter['sector'] ?? null);
+        // Canonicalize at read time: the picker allows free-text/historical labels, and
+        // label merges must apply retroactively to saved filters.
+        $sector = $sector === null ? null : array_map(
+            fn ($v) => \App\Support\SectorClassifier::canonical($v) ?? $v,
+            (array) $sector
+        );
         $criteria  = $this->cleanFilterValue($filter['criteria_id'] ?? null);
         $country   = $this->cleanFilterValue($filter['country'] ?? null);
 

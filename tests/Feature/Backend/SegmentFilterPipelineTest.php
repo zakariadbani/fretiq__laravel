@@ -73,4 +73,61 @@ class SegmentFilterPipelineTest extends TestCase
 
         $this->assertContains($contact->email, $emails);
     }
+
+    /**
+     * Read-time canonicalization regression (structure/specs/sector-taxonomy.md):
+     * the segment picker allows free-text/historical labels, and a label merge
+     * (e.g. "Matériel industriel" → "Machines & Équipements industriels") must
+     * apply retroactively to segments saved with the old label — otherwise the
+     * exact-match whereIn in SegmentService::applyJsonFilter silently drops
+     * matches for any segment saved before the merge.
+     */
+    public function test_stale_sector_filter_label_is_canonicalized_at_read_time(): void
+    {
+        $company = Company::create([
+            'name' => 'Prospect Industrial SARL',
+            'relationship' => 'prospect',
+            'source' => 'manual',
+            'qualification_status' => 'pending',
+            // Already canonical — SectorClassifier::canonical() maps this to itself.
+            'sector' => 'Machines & Équipements industriels',
+        ]);
+
+        $this->assertSame('Machines & Équipements industriels', $company->fresh()->sector);
+
+        $contact = Contact::create([
+            'company_id' => $company->id,
+            'email' => 'contact@prospect-industrial.test',
+            'name' => 'Jean Industriel',
+            'status' => 'new',
+            'source' => 'manual',
+            'legal_basis' => 'legitimate_interest',
+            'email_kind' => 'role',
+            // resolve() defaults to Campaign::VERIFICATION_VERIFIED_ONLY — an
+            // unverified contact is filtered out by ContactEligibilityService
+            // regardless of sector match, so mark it verified explicitly.
+            'email_verification_status' => 'valid',
+        ]);
+
+        $staleSegment = Segment::create([
+            'name' => 'Matériel industriel (stale label)',
+            'scope' => 'prospect',
+            // Removed-from-taxonomy label, merged into the canonical one above.
+            'filter' => ['sector' => ['Matériel industriel']],
+        ]);
+
+        $canonicalSegment = Segment::create([
+            'name' => 'Machines & Équipements industriels',
+            'scope' => 'prospect',
+            'filter' => ['sector' => ['Machines & Équipements industriels']],
+        ]);
+
+        $service = app(SegmentService::class);
+
+        $staleEmails = $service->resolve($staleSegment)->pluck('email')->all();
+        $canonicalEmails = $service->resolve($canonicalSegment)->pluck('email')->all();
+
+        $this->assertContains($contact->email, $staleEmails);
+        $this->assertSame($canonicalEmails, $staleEmails);
+    }
 }
