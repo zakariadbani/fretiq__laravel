@@ -80,6 +80,7 @@ class SegmentPinTest extends TestCase
             'source'      => 'manual',
             'legal_basis' => $co->relationship === 'client' ? 'relationship' : 'legitimate_interest',
             'email_kind'  => 'role',
+            'email_verification_status' => 'valid',
         ], $extra));
     }
 
@@ -116,7 +117,7 @@ class SegmentPinTest extends TestCase
         $filtermiss = $this->makeContact($otherCompany, 'filtermiss@it.test');
 
         // Segment filters to sector=Transport, so filtermiss is NOT in the filter result
-        $segment = $this->makeSegment('client', ['sector' => ['Transport']]);
+        $segment = $this->makeSegment('client', ['sector' => ['Transport & Logistique']]);
 
         // Pin filtermiss in as an include
         $segment->pinnedContacts()->syncWithoutDetaching([
@@ -141,20 +142,7 @@ class SegmentPinTest extends TestCase
     public function test_b3_whitespace_padded_suppressed_include_does_not_appear(): void
     {
 
-        // Insert contact with padded email directly (bypass unique validation)
-        \Illuminate\Support\Facades\DB::table('contacts')->insert([
-            'company_id'  => $this->clientCompany->id,
-            'email'       => '  Blocked@X.com  ',
-            'name'        => 'Padded Blocked',
-            'status'      => 'new',
-            'source'      => 'manual',
-            'legal_basis' => 'relationship',
-            'email_kind'  => 'role',
-            'created_at'  => now(),
-            'updated_at'  => now(),
-        ]);
-
-        $paddedContact = Contact::where('email', '  Blocked@X.com  ')->firstOrFail();
+        $paddedContact = $this->makeContact($this->clientCompany, '  Blocked@X.com  ', ['name' => 'Padded Blocked']);
 
         // Suppression row has clean email (no padding)
         Suppression::create([
@@ -187,19 +175,7 @@ class SegmentPinTest extends TestCase
     public function test_b3_manually_included_reflects_suppressed_drop(): void
     {
 
-        \Illuminate\Support\Facades\DB::table('contacts')->insert([
-            'company_id'  => $this->clientCompany->id,
-            'email'       => '  Blocked@X.com  ',
-            'name'        => 'Padded Blocked 2',
-            'status'      => 'new',
-            'source'      => 'manual',
-            'legal_basis' => 'relationship',
-            'email_kind'  => 'role',
-            'created_at'  => now(),
-            'updated_at'  => now(),
-        ]);
-
-        $paddedContact = Contact::where('email', '  Blocked@X.com  ')->firstOrFail();
+        $paddedContact = $this->makeContact($this->clientCompany, '  Blocked@X.com  ', ['name' => 'Padded Blocked 2']);
 
         Suppression::create([
             'email'  => 'blocked@x.com',
@@ -302,34 +278,8 @@ class SegmentPinTest extends TestCase
     public function test_n2_resolve_count_equals_stats_final_with_exclude_dup_overlap(): void
     {
 
-        // Insert two contacts with emails that trim to the same value
-        \Illuminate\Support\Facades\DB::table('contacts')->insert([
-            [
-                'company_id'  => $this->clientCompany->id,
-                'email'       => 'dup@corp.test',
-                'name'        => 'Dup Clean',
-                'status'      => 'new',
-                'source'      => 'manual',
-                'legal_basis' => 'relationship',
-                'email_kind'  => 'role',
-                'created_at'  => now(),
-                'updated_at'  => now(),
-            ],
-            [
-                'company_id'  => $this->clientCompany->id,
-                'email'       => ' dup@corp.test ',
-                'name'        => 'Dup Padded',
-                'status'      => 'new',
-                'source'      => 'manual',
-                'legal_basis' => 'relationship',
-                'email_kind'  => 'role',
-                'created_at'  => now(),
-                'updated_at'  => now(),
-            ],
-        ]);
-
-        $clean  = Contact::where('email', 'dup@corp.test')->firstOrFail();
-        $padded = Contact::where('email', ' dup@corp.test ')->firstOrFail();
+        $clean  = $this->makeContact($this->clientCompany, 'dup@corp.test',  ['name' => 'Dup Clean']);
+        $padded = $this->makeContact($this->clientCompany, ' dup@corp.test ', ['name' => 'Dup Padded']);
 
         $segment = $this->makeSegment('client');
 
@@ -404,7 +354,7 @@ class SegmentPinTest extends TestCase
         ]);
         $include = $this->makeContact($otherCo, 'include@other.test');
 
-        $segment = $this->makeSegment('client', ['sector' => ['Transport']]);
+        $segment = $this->makeSegment('client', ['sector' => ['Transport & Logistique']]);
 
         $segment->pinnedContacts()->syncWithoutDetaching([
             $include->id => ['mode' => 'include'],
@@ -471,7 +421,7 @@ class SegmentPinTest extends TestCase
         // A filter-matching contact pinned-OUT
         $excluded = $this->makeContact($this->clientCompany, 'excluded@client.test');
 
-        $segment = $this->makeSegment('client', ['sector' => ['Transport']]);
+        $segment = $this->makeSegment('client', ['sector' => ['Transport & Logistique']]);
 
         $segment->pinnedContacts()->syncWithoutDetaching([
             $pinned->id   => ['mode' => 'include'],

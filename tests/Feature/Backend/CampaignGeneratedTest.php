@@ -196,6 +196,7 @@ class CampaignGeneratedTest extends TestCase
             'source'      => 'manual',
             'legal_basis' => 'relationship',
             'email_kind'  => 'role',
+            'email_verification_status' => 'valid',
         ]);
     }
     // Access control
@@ -492,6 +493,10 @@ class CampaignGeneratedTest extends TestCase
 
         $this->app->instance(SegmentService::class, new class extends SegmentService
         {
+            public function __construct()
+            {
+            }
+
             public function resolveWithStats(
                 string $scope,
                 array $filter,
@@ -499,6 +504,7 @@ class CampaignGeneratedTest extends TestCase
                 array $includeIds = [],
                 array $excludeIds = [],
                 bool $manualOnly = false,
+                string $policy = Campaign::VERIFICATION_VERIFIED_ONLY,
             ): array {
                 return [
                     'matched' => 3,
@@ -512,7 +518,7 @@ class CampaignGeneratedTest extends TestCase
                 ];
             }
 
-            public function resolve(Segment $segment): \Illuminate\Support\Collection
+            public function resolve(Segment $segment, string $policy = Campaign::VERIFICATION_VERIFIED_ONLY): \Illuminate\Support\Collection
             {
                 throw new \RuntimeException('resolve() must not be called by segmentCount().');
             }
@@ -533,6 +539,10 @@ class CampaignGeneratedTest extends TestCase
 
         $this->app->instance(SegmentService::class, new class extends SegmentService
         {
+            public function __construct()
+            {
+            }
+
             public function resolveWithStats(
                 string $scope,
                 array $filter,
@@ -540,6 +550,7 @@ class CampaignGeneratedTest extends TestCase
                 array $includeIds = [],
                 array $excludeIds = [],
                 bool $manualOnly = false,
+                string $policy = Campaign::VERIFICATION_VERIFIED_ONLY,
             ): array {
                 throw new \RuntimeException('internal audience secret');
             }
@@ -597,6 +608,7 @@ class CampaignGeneratedTest extends TestCase
                 'source'      => 'manual',
                 'legal_basis' => 'relationship',
                 'email_kind'  => 'role',
+                'email_verification_status' => 'valid',
             ]);
         };
 

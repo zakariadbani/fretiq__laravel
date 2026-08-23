@@ -110,6 +110,7 @@ class TranslationSendPathTest extends TestCase
             'source'      => 'manual',
             'legal_basis' => 'relationship',
             'email_kind'  => 'role',
+            'email_verification_status' => 'valid',
         ]);
 
         $ct->load('company');

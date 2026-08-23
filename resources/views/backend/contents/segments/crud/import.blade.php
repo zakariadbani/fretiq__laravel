@@ -29,7 +29,7 @@
                 <div class="mb-6">
                     <label for="csv" class="form-label required">Fichier CSV</label>
                     <input id="csv" name="csv" type="file" accept=".csv,.txt,text/csv" class="form-control" required aria-describedby="csv-help">
-                    <div id="csv-help" class="form-text">Colonnes : name;scope;filter_json;notes. scope ∈ prospect, client, mixed. filter_json est optionnel (JSON valide ou vide). Maximum 100 lignes et 512 Ko.</div>
+                    <div id="csv-help" class="form-text">Colonnes : name;scope;filter_json;notes. scope ∈ prospect, client, test, mixed. filter_json est optionnel (JSON valide ou vide). Maximum 100 lignes et 512 Ko.</div>
                 </div>
                 <div class="d-flex flex-wrap gap-3 align-items-center">
                     <button type="submit" class="btn btn-primary"><i class="bi bi-eye"></i> Prévisualiser l’import</button>

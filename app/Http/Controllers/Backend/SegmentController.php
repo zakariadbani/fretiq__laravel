@@ -611,6 +611,7 @@ class SegmentController extends BackendController
         $scopeLabels = [
             'client'   => 'clients',
             'prospect' => 'prospects',
+            'test'     => 'tests',
             'mixed'    => 'clients et prospects',
         ];
         $scopeLabel = $scopeLabels[$scope] ?? $scope;

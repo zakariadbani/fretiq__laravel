@@ -87,6 +87,7 @@ class SegmentPinEndpointTest extends TestCase
             'source'      => 'manual',
             'legal_basis' => 'relationship',
             'email_kind'  => 'role',
+            'email_verification_status' => 'valid',
         ]);
     }
 

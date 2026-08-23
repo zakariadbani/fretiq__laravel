@@ -45,6 +45,7 @@ class SegmentManualModeTest extends TestCase
             'source' => 'manual',
             'legal_basis' => 'relationship',
             'email_kind' => 'role',
+            'email_verification_status' => 'valid',
         ], $attributes));
     }
 
@@ -54,7 +55,7 @@ class SegmentManualModeTest extends TestCase
             'name' => 'Sélection manuelle',
             'scope' => 'client',
             'is_manual' => true,
-            'filter' => ['sector' => ['Transport']],
+            'filter' => ['sector' => ['Transport & Logistique']],
         ]);
     }
 
@@ -120,12 +121,13 @@ class SegmentManualModeTest extends TestCase
             'source' => 'manual',
             'legal_basis' => 'relationship',
             'email_kind' => 'role',
+            'email_verification_status' => 'valid',
         ]);
         $segment = Segment::create([
             'name' => 'Dynamique',
             'scope' => 'client',
             'is_manual' => false,
-            'filter' => ['sector' => ['Transport']],
+            'filter' => ['sector' => ['Transport & Logistique']],
         ]);
         $segment->pinnedContacts()->syncWithoutDetaching([
             $includedFilterMiss->id => ['mode' => 'include'],

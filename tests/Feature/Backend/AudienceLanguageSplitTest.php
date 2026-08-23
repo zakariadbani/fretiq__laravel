@@ -104,6 +104,7 @@ class AudienceLanguageSplitTest extends TestCase
             'source'      => 'manual',
             'legal_basis' => 'relationship',
             'email_kind'  => 'role',
+            'email_verification_status' => 'valid',
         ]);
     }
 
@@ -294,6 +295,7 @@ class AudienceLanguageSplitTest extends TestCase
             'source'      => 'manual',
             'legal_basis' => 'relationship',
             'email_kind'  => 'role',
+            'email_verification_status' => 'valid',
         ]);
 
         $response = $this->actingAs($this->adminUser)

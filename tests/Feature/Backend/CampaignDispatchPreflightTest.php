@@ -53,7 +53,7 @@ class CampaignDispatchPreflightTest extends TestCase
         $this->makeClientContact('eligible-one@example.test');
         $this->makeProspectContact('eligible-two@example.test');
         $suppressed = $this->makeClientContact('suppressed@example.test');
-        $this->makeProspectContact('personal@example.test', ['email_kind' => 'personal']);
+        $this->makeProspectContact('personal@example.test', ['email_kind' => 'personal', 'email_verification_status' => null]);
         $excluded = $this->makeClientContact('excluded@example.test');
         Suppression::create(['email' => $suppressed->email, 'contact_id' => $suppressed->id]);
 
@@ -353,6 +353,7 @@ class CampaignDispatchPreflightTest extends TestCase
             'source' => 'manual',
             'legal_basis' => 'relationship',
             'email_kind' => 'role',
+            'email_verification_status' => 'valid',
         ]);
     }
 
@@ -373,6 +374,7 @@ class CampaignDispatchPreflightTest extends TestCase
             'source' => 'manual',
             'legal_basis' => 'legitimate_interest',
             'email_kind' => 'role',
+            'email_verification_status' => 'valid',
         ], $overrides));
     }
 
@@ -382,7 +384,7 @@ class CampaignDispatchPreflightTest extends TestCase
         $this->makeClientContact("{$prefix}-eligible-client@example.test");
         $this->makeProspectContact("{$prefix}-eligible-prospect@example.test");
         $suppressed = $this->makeClientContact("{$prefix}-suppressed@example.test");
-        $this->makeProspectContact("{$prefix}-personal@example.test", ['email_kind' => 'personal']);
+        $this->makeProspectContact("{$prefix}-personal@example.test", ['email_kind' => 'personal', 'email_verification_status' => null]);
 
         Suppression::create(['email' => $suppressed->email, 'contact_id' => $suppressed->id]);
 

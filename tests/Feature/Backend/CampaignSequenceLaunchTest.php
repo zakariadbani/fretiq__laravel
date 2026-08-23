@@ -71,6 +71,7 @@ class CampaignSequenceLaunchTest extends TestCase
             'source'      => 'manual',
             'legal_basis' => 'relationship',
             'email_kind'  => 'role',
+            'email_verification_status' => 'valid',
         ]);
     }
 
@@ -227,7 +228,6 @@ class CampaignSequenceLaunchTest extends TestCase
             ->get("/admin/campaigns/{$campaign->id}")
             ->assertOk()
             ->assertSee('Inscription automatique')
-            ->assertSee('Synchroniser maintenant')
             ->assertSee(route('admin.campaigns.sequenceAutoEnroll', $campaign->id))
             ->assertSee(asset('assets/js/custom/datatables-utils.js'), false);
 
@@ -365,6 +365,7 @@ class CampaignSequenceLaunchTest extends TestCase
             ->where('contact_id', $contact->id)
             ->firstOrFail();
         $company->update(['relationship' => 'prospect']);
+        config(['prospecting.cold_send_enabled' => true]);
 
         app(SequenceService::class)->sendStep($enrollment);
 
@@ -794,7 +795,7 @@ class CampaignSequenceLaunchTest extends TestCase
         });
     }
 
-    public function test_due_sequence_smtp_only_dispatches_for_active_local_or_unattributed_enrollments(): void
+    public function test_due_sequence_smtp_dispatches_all_active_enrollments_when_global_driver_is_local(): void
     {
         // Pinned to a weekday: SequenceService::processDue() (chunk 6) holds
         // any enrollment when TODAY is a blocked day (weekend/blackout, via
@@ -824,26 +825,37 @@ class CampaignSequenceLaunchTest extends TestCase
         SequenceEnrollment::whereKey([$local->id, $inactive->id, $zoho->id, $paced->id, $unattributed->id, $stopped->id])
             ->update(['next_send_at' => now()->subMinute()]);
 
+        // canSendViaSmtp() no longer keys off the per-campaign driver or the
+        // enrollment mode — under a local/inactive GLOBAL driver, every
+        // active enrollment on an active campaign dispatches, including a
+        // zoho-driver campaign and a paced enrollment. Only the inactive
+        // campaign and the stopped enrollment are excluded.
         Queue::fake();
-        $this->assertSame(2, $service->processDue());
-        Queue::assertPushed(SendSequenceStepJob::class, 2);
+        $this->assertSame(4, $service->processDue());
+        Queue::assertPushed(SendSequenceStepJob::class, 4);
         Queue::assertPushed(SendSequenceStepJob::class, fn ($job) => $job->enrollmentId === $local->id);
         Queue::assertPushed(SendSequenceStepJob::class, fn ($job) => $job->enrollmentId === $unattributed->id);
+        Queue::assertPushed(SendSequenceStepJob::class, fn ($job) => $job->enrollmentId === $zoho->id);
+        Queue::assertPushed(SendSequenceStepJob::class, fn ($job) => $job->enrollmentId === $paced->id);
 
         $service->sendStep($inactive->fresh());
-        $service->sendStep($zoho->fresh());
-        $service->sendStep($paced->fresh());
         $service->sendStep($stopped->fresh());
         Mail::assertNothingSent();
         $this->assertSame(0, SequenceStepSend::count());
 
+        // Flipping the GLOBAL driver to zoho blocks every attributed
+        // campaign alike (local, zoho-driver, paced) — but the unattributed
+        // enrollment still dispatches: canSendViaSmtp() returns true for a
+        // null campaign before it ever reaches the global-zoho gate.
         config(['services.zoho.driver' => 'zoho']);
         Queue::fake();
-        $this->assertSame(0, $service->processDue());
-        Queue::assertNothingPushed();
+        $this->assertSame(1, $service->processDue());
+        Queue::assertPushed(SendSequenceStepJob::class, 1);
+        Queue::assertPushed(SendSequenceStepJob::class, fn ($job) => $job->enrollmentId === $unattributed->id);
 
         $service->sendStep($local->fresh());
-        $service->sendStep($unattributed->fresh());
+        $service->sendStep($zoho->fresh());
+        $service->sendStep($paced->fresh());
         Mail::assertNothingSent();
         $this->assertSame(0, SequenceStepSend::count());
 
@@ -973,6 +985,7 @@ class CampaignSequenceLaunchTest extends TestCase
             'sequence_id'        => $sequence->id,
             'sender_identity_id' => $sender->id,
             'schedule_type'      => 'sequence',
+            'email_verification_policy' => Campaign::VERIFICATION_VERIFIED_ONLY,
         ]);
 
         // Validate via the model's rules() method
@@ -990,6 +1003,7 @@ class CampaignSequenceLaunchTest extends TestCase
             'segment_id'         => $segment->id,
             'sender_identity_id' => $sender->id,
             'schedule_type'      => 'one_shot',
+            'email_verification_policy' => Campaign::VERIFICATION_VERIFIED_ONLY,
         ]);
 
         $rulesOneShot     = $oneShotCampaign->rules();

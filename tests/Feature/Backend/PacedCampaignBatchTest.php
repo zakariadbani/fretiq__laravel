@@ -104,7 +104,7 @@ class PacedCampaignBatchTest extends TestCase
             'processed_at' => now(),
         ]);
 
-        $lateContact = Contact::factory()->create(['company_id' => $processedCompany->id]);
+        $lateContact = Contact::factory()->create(['company_id' => $processedCompany->id, 'email_verification_status' => 'valid']);
 
         $secondRun = app(PacedCampaignBatchService::class)->prepareForDate(
             $campaign,
@@ -406,7 +406,7 @@ class PacedCampaignBatchTest extends TestCase
     private function makeCompanyWithContacts(int $score, int $contactCount): Company
     {
         $company = Company::factory()->client()->create(['ai_score' => $score]);
-        Contact::factory()->count($contactCount)->create(['company_id' => $company->id]);
+        Contact::factory()->count($contactCount)->create(['company_id' => $company->id, 'email_verification_status' => 'valid']);
 
         return $company;
     }

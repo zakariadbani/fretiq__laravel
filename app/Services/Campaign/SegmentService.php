@@ -276,6 +276,8 @@ class SegmentService
             $query->whereHas('company', fn (Builder $q) => $q->where('relationship', 'client'));
         } elseif ($scope === 'prospect') {
             $query->whereHas('company', fn (Builder $q) => $q->where('relationship', 'prospect'));
+        } elseif ($scope === 'test') {
+            $query->whereHas('company', fn (Builder $q) => $q->where('relationship', 'test'));
         }
         // 'mixed' → no relationship filter
     }

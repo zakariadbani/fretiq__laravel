@@ -81,6 +81,7 @@ return [
     'company_relationships' => [
         'prospect' => ['label' => 'Prospect',  'color' => 'info'],
         'client' => ['label' => 'Client',    'color' => 'success'],
+        'test' => ['label' => 'Test',      'color' => 'dark'],
     ],
 
     //---------------------------------------------------------------------------
@@ -323,6 +324,7 @@ return [
     'segment_scopes' => [
         'prospect' => ['label' => 'Prospects', 'color' => 'info'],
         'client' => ['label' => 'Clients',   'color' => 'success'],
+        'test' => ['label' => 'Test',      'color' => 'dark'],
         'mixed' => ['label' => 'Mixte',     'color' => 'primary'],
     ],
 

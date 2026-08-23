@@ -47,6 +47,7 @@ class SegmentResolveTest extends TestCase
             'source'      => 'manual',
             'legal_basis' => 'relationship',
             'email_kind'  => 'role',
+            'email_verification_status' => 'valid',
         ]);
 
         return [$co, $ct];
@@ -69,6 +70,7 @@ class SegmentResolveTest extends TestCase
             'source'      => 'manual',
             'legal_basis' => 'legitimate_interest',
             'email_kind'  => 'role',
+            'email_verification_status' => 'valid',
         ]);
 
         return [$co, $ct];
@@ -150,6 +152,29 @@ class SegmentResolveTest extends TestCase
         $emails = $result->pluck('email')->all();
         $this->assertContains('jean@acme.test', $emails, 'Client contact should be included in mixed segment');
         $this->assertContains('prospect@example.test', $emails, 'Prospect contact should be included in mixed segment');
+    }
+
+    /**
+     * A test-scoped segment resolves only contacts of relationship='test'
+     * companies, exactly parallel to the prospect/client scope tests above.
+     */
+    public function test_test_scope_segment_resolves_only_test_relationship_contacts(): void
+    {
+        Contact::factory()
+            ->for(Company::factory()->state(['relationship' => 'test']))
+            ->create(['email' => 'qa@example.test', 'email_verification_status' => 'valid']);
+
+        $this->makeProspectContact('prospect@example.test');
+        $this->makeClientContact('jean@acme.test');
+
+        $segment = Segment::create(['name' => 'Test', 'scope' => 'test']);
+
+        $result = app(SegmentService::class)->resolve($segment);
+        $emails = $result->pluck('email')->all();
+
+        $this->assertContains('qa@example.test', $emails, 'Test-relationship contact should be included');
+        $this->assertNotContains('prospect@example.test', $emails, 'Prospect contact should be excluded by scope');
+        $this->assertNotContains('jean@acme.test', $emails, 'Client contact should be excluded by scope');
     }
 
     /**

@@ -41,6 +41,10 @@ auth.json
 /public/assets/media/email/*
 !/public/assets/media/email/tcl-logo-white.png
 !/public/assets/media/email/linkedin.png
+# Hand-written custom JS (scripts custom déployés via git) — keep tracked; compiled/vendor bundles stay ignored
+!/public/assets/js/
+/public/assets/js/*
+!/public/assets/js/custom/
 /public/mix-manifest.json
 /storage/*.key
 /vendor

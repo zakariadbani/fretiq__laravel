@@ -72,6 +72,7 @@ class WaveProjectionServiceTest extends TestCase
                 'source' => 'manual',
                 'legal_basis' => 'relationship',
                 'email_kind' => 'role',
+                'email_verification_status' => 'valid',
             ]);
         });
         Contact::create([
@@ -82,6 +83,7 @@ class WaveProjectionServiceTest extends TestCase
             'source' => 'manual',
             'legal_basis' => 'relationship',
             'email_kind' => 'role',
+            'email_verification_status' => 'valid',
         ]);
 
         SequenceEnrollment::create([
@@ -133,6 +135,7 @@ class WaveProjectionServiceTest extends TestCase
                 'source' => 'manual',
                 'legal_basis' => 'relationship',
                 'email_kind' => 'role',
+                'email_verification_status' => 'valid',
             ]));
         }
 

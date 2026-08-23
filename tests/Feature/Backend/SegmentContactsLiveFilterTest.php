@@ -32,7 +32,7 @@ class SegmentContactsLiveFilterTest extends TestCase
     private User    $noPermUser;
     private Segment $segment;
 
-    /** Client company matching the segment's saved filter (sector=Transport) */
+    /** Client company matching the segment's saved filter (sector=Transport, canonicalized to 'Transport & Logistique' on save) */
     private Company $clientCompanyTransport;
     /** Client company NOT matching the segment's saved filter (sector=IT) */
     private Company $clientCompanyIT;
@@ -76,11 +76,11 @@ class SegmentContactsLiveFilterTest extends TestCase
             'country'              => 'FR',
         ]);
 
-        // Saved segment: scope=client, filter[sector]=Transport
+        // Saved segment: scope=client, filter[sector]=Transport & Logistique (canonical label — filters match companies.sector exactly)
         $this->segment = Segment::create([
             'name'   => 'Transport Clients',
             'scope'  => 'client',
-            'filter' => ['sector' => ['Transport']],
+            'filter' => ['sector' => ['Transport & Logistique']],
         ]);
     }
 
@@ -186,10 +186,10 @@ class SegmentContactsLiveFilterTest extends TestCase
             $itContact->id => ['mode' => 'include'],
         ]);
 
-        // Live filter: sector=Transport — IT contact doesn't match, but it's pinned-in
+        // Live filter: sector=Transport & Logistique — IT contact doesn't match, but it's pinned-in
         $response = $this->getContacts([
             'scope'  => 'client',
-            'filter' => ['sector' => ['Transport']],
+            'filter' => ['sector' => ['Transport & Logistique']],
         ]);
 
         $response->assertStatus(200);
