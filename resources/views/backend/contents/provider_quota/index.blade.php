@@ -43,7 +43,61 @@
     </div>
 @endif
 
-<div class="d-flex justify-content-end mb-4">
+<div class="d-flex justify-content-end align-items-center flex-wrap gap-2 mb-4">
+    @if($driverLive)
+        @php
+            $drainCompanies = (int) ($drainEstimate['companies_eligible'] ?? 0);
+            $drainContacts = (int) ($drainEstimate['contacts_unverified'] ?? 0);
+        @endphp
+        @can('enrich companies')
+            @can('verify contacts')
+                @php $fullDisabled = $drainCompanies === 0 && $drainContacts === 0; @endphp
+                <span class="d-inline-block" @if($fullDisabled) data-drain-tooltip data-bs-toggle="tooltip" title="Aucune entreprise à enrichir ni email à vérifier." @endif>
+                    <button type="button" class="btn btn-sm btn-light-warning"
+                            data-drain-mode="full"
+                            data-drain-title="Drainer le quota ?"
+                            data-drain-confirm="Lancer le drain"
+                            data-preview-url="{{ route('admin.provider-quota.drain-preview') }}"
+                            data-drain-url="{{ route('admin.provider-quota.drain') }}"
+                            data-csrf-token="{{ csrf_token() }}"
+                            @disabled($fullDisabled) @if($fullDisabled) style="pointer-events:none;" @endif>
+                        <i class="bi bi-database-down me-1"></i> Drainer le quota (entreprises + emails)
+                    </button>
+                </span>
+            @endcan
+
+            @php $companiesDisabled = $drainCompanies === 0; @endphp
+            <span class="d-inline-block" @if($companiesDisabled) data-drain-tooltip data-bs-toggle="tooltip" title="Aucune entreprise éligible à enrichir." @endif>
+                <button type="button" class="btn btn-sm btn-light-primary"
+                        data-drain-mode="companies"
+                        data-drain-title="Enrichir les entreprises ?"
+                        data-drain-confirm="Lancer l’enrichissement"
+                        data-preview-url="{{ route('admin.provider-quota.drain-preview') }}"
+                        data-drain-url="{{ route('admin.provider-quota.drain') }}"
+                        data-csrf-token="{{ csrf_token() }}"
+                        @disabled($companiesDisabled) @if($companiesDisabled) style="pointer-events:none;" @endif>
+                    <i class="bi bi-buildings me-1"></i> Enrichir les entreprises éligibles
+                </button>
+            </span>
+        @endcan
+
+        @can('verify contacts')
+            @php $verifyDisabled = $drainContacts === 0; @endphp
+            <span class="d-inline-block" @if($verifyDisabled) data-drain-tooltip data-bs-toggle="tooltip" title="Aucun email non vérifié." @endif>
+                <button type="button" class="btn btn-sm btn-light-info"
+                        data-drain-mode="verify"
+                        data-drain-title="Vérifier les emails ?"
+                        data-drain-confirm="Lancer la vérification"
+                        data-preview-url="{{ route('admin.provider-quota.drain-preview') }}"
+                        data-drain-url="{{ route('admin.provider-quota.drain') }}"
+                        data-csrf-token="{{ csrf_token() }}"
+                        @disabled($verifyDisabled) @if($verifyDisabled) style="pointer-events:none;" @endif>
+                    <i class="bi bi-check2-circle me-1"></i> Vérifier les emails non vérifiés
+                </button>
+            </span>
+        @endcan
+    @endif
+
     <form method="POST" action="{{ route('admin.provider-quota.refresh') }}">
         @csrf
         <button type="submit" class="btn btn-sm btn-light-primary">
@@ -284,5 +338,88 @@
         @endforeach
     </div>
 </div>
+
+@push('scripts')
+<script data-drain-handlers>
+document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('[data-drain-mode]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            if (button.disabled) return;
+            var mode = button.dataset.drainMode;
+            var isSpend = mode === 'companies' || mode === 'full';
+            button.disabled = true;
+
+            fetch(button.dataset.previewUrl, {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': button.dataset.csrfToken,
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ mode: mode, include_empty: false }),
+            })
+            .then(function (response) {
+                return response.json().then(function (data) {
+                    if (!response.ok || !data.ok) throw new Error(data.message || 'Prévisualisation impossible.');
+                    return data;
+                });
+            })
+            .then(function (data) {
+                var resetText = data.reset_date ? ' Réinitialisation le ' + data.reset_date + '.' : '';
+                return Swal.fire({
+                    title: button.dataset.drainTitle || 'Confirmer ?',
+                    text: (data.summary || '') + resetText,
+                    icon: 'question',
+                    showCancelButton: true,
+                    confirmButtonColor: isSpend ? '#ffc700' : '#009ef7',
+                    confirmButtonText: button.dataset.drainConfirm || 'Lancer',
+                    cancelButtonText: 'Annuler',
+                }).then(function (result) {
+                    if (!result.isConfirmed) {
+                        button.disabled = false;
+                        return;
+                    }
+                    return fetch(button.dataset.drainUrl, {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRF-TOKEN': button.dataset.csrfToken,
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ mode: mode, token: data.token }),
+                    }).then(function (response) {
+                        return response.json().then(function (payload) {
+                            return { status: response.status, data: payload || {} };
+                        });
+                    }).then(function (response) {
+                        var payload = response.data;
+                        if (response.status === 200 && payload.ok) {
+                            toastr.success(payload.message || 'Drain lancé.');
+                        } else if (response.status === 200 && payload.ok === false) {
+                            toastr.info(payload.message || 'Un drain est déjà en cours.');
+                        } else {
+                            toastr.error(payload.message || 'Le drain n’a pas pu être lancé.');
+                        }
+                        button.disabled = false;
+                    }).catch(function () {
+                        toastr.error('Le drain n’a pas pu être lancé.');
+                        button.disabled = false;
+                    });
+                });
+            })
+            .catch(function (error) {
+                button.disabled = false;
+                Swal.fire({ title: 'Erreur', text: error.message || 'Prévisualisation impossible.', icon: 'error' });
+            });
+        });
+    });
+
+    // Bootstrap tooltips on disabled buttons' wrappers (getOrCreateInstance is idempotent).
+    document.querySelectorAll('[data-drain-tooltip]').forEach(function (el) {
+        if (window.bootstrap && bootstrap.Tooltip) bootstrap.Tooltip.getOrCreateInstance(el);
+    });
+});
+</script>
+@endpush
 
 </x-default-layout>

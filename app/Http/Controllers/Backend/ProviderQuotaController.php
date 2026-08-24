@@ -3,12 +3,17 @@
 namespace App\Http\Controllers\Backend;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\DrainEnrichmentJob;
 use App\Models\ProviderCall;
 use App\Services\Discovery\CompanyDiscoveryService;
+use App\Services\Discovery\EnrichmentDrainService;
 use App\Services\Discovery\HunterEnrichmentService;
 use App\Services\Quota\DiscoveryQuotaService;
+use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Str;
 
 class ProviderQuotaController extends Controller
 {
@@ -45,13 +50,17 @@ class ProviderQuotaController extends Controller
     {
         $serpapi = app(CompanyDiscoveryService::class)->accountUsage();
         $hunter = app(HunterEnrichmentService::class)->accountUsage();
+        $driverLive = config('services.serpapi.driver', 'local') !== 'local';
 
         return view('backend.contents.provider_quota.index', [
             'serpapi'              => $serpapi,
             'hunter'               => $hunter,
             'providerReservations' => app(DiscoveryQuotaService::class)->providerReservationsToday(),
-            'driverLive'           => config('services.serpapi.driver', 'local') !== 'local',
+            'driverLive'           => $driverLive,
             'consumption'          => $this->consumption($serpapi, $hunter),
+            // Initial button counts / disabled state. Real spend is re-snapshotted
+            // server-side by the preview round-trip at click time — this is display only.
+            'drainEstimate'        => $driverLive ? app(EnrichmentDrainService::class)->estimate(false) : null,
         ]);
     }
 
@@ -70,6 +79,157 @@ class ProviderQuotaController extends Controller
 
         return redirect()->route('admin.provider-quota.index')
             ->with('success', 'Données fournisseurs actualisées.');
+    }
+
+    /**
+     * Cost preview + signed approval token for a drain. The token carries the
+     * mode, include_empty flag and the company cap (a re-snapshot of eligibility
+     * at click time) with a 5-minute TTL — spend is bounded server-side, never
+     * from stale page-load data-attributes. Mirrors
+     * ProspectCriteriaController::contactEnrichmentPreview.
+     */
+    public function drainPreview(Request $request)
+    {
+        abort_unless($request->user()->can('enrich companies'), 403);
+
+        $validated = $request->validate([
+            'mode' => 'required|in:companies,verify,full',
+            'include_empty' => 'sometimes|boolean',
+        ]);
+        $mode = $validated['mode'];
+        $includeEmpty = (bool) ($validated['include_empty'] ?? false);
+
+        if (in_array($mode, ['verify', 'full'], true)) {
+            abort_unless($request->user()->can('verify contacts'), 403);
+        }
+
+        $estimate = app(EnrichmentDrainService::class)->estimate($includeEmpty);
+        // Cap = drain everything currently eligible, clamped to a sane ceiling.
+        $maxCompanyAttempts = min(100000, max(0, (int) $estimate['companies_eligible']));
+
+        // The confirm summary must reflect the clamped dispatch cap, not raw
+        // eligibility: for eligible > 100k the raw figure would overstate the
+        // company spend the job actually performs (the token 'max' is clamped too).
+        $summaryEstimate = $estimate;
+        $summaryEstimate['companies_eligible'] = $maxCompanyAttempts;
+        $summaryEstimate['company_credits'] = round($maxCompanyAttempts * EnrichmentDrainService::COMPANY_UNIT_COST, 2);
+        $summaryEstimate['total_credits'] = round($summaryEstimate['company_credits'] + (float) $estimate['contact_credits'], 2);
+
+        $hunter = app(HunterEnrichmentService::class)->accountUsage();
+        $hunterRemaining = isset($hunter['searches_available']) ? max(0, (int) $hunter['searches_available']) : null;
+        $verificationsRemaining = isset($hunter['verifications_available']) ? max(0, (int) $hunter['verifications_available']) : null;
+        $resetDate = isset($hunter['reset_date'])
+            ? rescue(fn () => \Illuminate\Support\Carbon::parse($hunter['reset_date'])->format('d/m/Y'), null, false)
+            : null;
+
+        $token = Crypt::encryptString(json_encode([
+            'mode' => $mode,
+            'include_empty' => $includeEmpty,
+            'max' => $maxCompanyAttempts,
+            'ts' => time(),
+        ], JSON_THROW_ON_ERROR));
+
+        return response()->json([
+            'ok' => true,
+            'token' => $token,
+            'summary' => $this->drainSummary($mode, $summaryEstimate),
+            'companies_eligible' => (int) $estimate['companies_eligible'],
+            'contacts_unverified' => (int) $estimate['contacts_unverified'],
+            'total_credits' => (float) $estimate['total_credits'],
+            'hunter_remaining' => $hunterRemaining,
+            'verifications_remaining' => $verificationsRemaining,
+            'reset_date' => $resetDate,
+        ], 200)->header('Cache-Control', 'no-store');
+    }
+
+    /**
+     * Validate the signed approval token and dispatch the drain. Single-flight
+     * via the atomic `drain:active` marker (Cache::add, same idiom as refresh()).
+     */
+    public function drain(Request $request)
+    {
+        abort_unless($request->user()->can('enrich companies'), 403);
+
+        $validated = $request->validate([
+            'mode' => 'required|in:companies,verify,full',
+        ]);
+        $mode = $validated['mode'];
+
+        if (in_array($mode, ['verify', 'full'], true)) {
+            abort_unless($request->user()->can('verify contacts'), 403);
+        }
+
+        try {
+            $approval = json_decode(Crypt::decryptString((string) $request->input('token')), true, 512, JSON_THROW_ON_ERROR);
+            $ts = (int) ($approval['ts'] ?? 0);
+            $includeEmpty = (bool) ($approval['include_empty'] ?? false);
+            $max = max(0, min(100000, (int) ($approval['max'] ?? 0)));
+            $valid = (string) ($approval['mode'] ?? '') === $mode
+                && $ts > 0
+                && (time() - $ts) <= 300;
+        } catch (\Throwable) {
+            $valid = false;
+        }
+
+        if (! $valid) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Confirmation expirée ou invalide — relancez la prévisualisation.',
+            ], 422);
+        }
+
+        // ponytail: Cache::add is the atomic test-and-set (same primitive refresh()
+        // uses) — closes the check-then-set race that a get()+put() would leave open.
+        // TTL 1200s = the one authoritative single-flight marker shared by CLI + web
+        // + job; the job refreshes it every cycle so a long drain never lapses, and
+        // uniqueFor=7200 on the job is the secondary guard against a duplicate dispatch.
+        if (! Cache::add('drain:active', true, now()->addSeconds(1200))) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Un drain est déjà en cours.',
+            ], 200);
+        }
+
+        $runId = (string) Str::uuid();
+
+        try {
+            DrainEnrichmentJob::dispatch($mode, $includeEmpty, $max, $runId);
+        } catch (\Throwable $e) {
+            Cache::forget('drain:active');
+
+            return response()->json([
+                'ok' => false,
+                'message' => 'Impossible de lancer le drain. Réessayez.',
+            ], 500);
+        }
+
+        Cache::forget('provider.hunter.account.v2');
+
+        return response()->json([
+            'ok' => true,
+            'message' => 'Drain lancé en arrière-plan. Un worker discovery + prospecting est requis.',
+        ]);
+    }
+
+    /**
+     * French cost sentence for the confirm dialog. Provider names stay out of
+     * admin copy — generic "crédits" only.
+     *
+     * @param  array{companies_eligible: int, company_credits: float, contacts_unverified: int, contact_credits: float, total_credits: float}  $estimate
+     */
+    private function drainSummary(string $mode, array $estimate): string
+    {
+        $companies = (int) $estimate['companies_eligible'];
+        $companyCredits = (float) $estimate['company_credits'];
+        $contacts = (int) $estimate['contacts_unverified'];
+        $contactCredits = (float) $estimate['contact_credits'];
+        $total = (float) $estimate['total_credits'];
+
+        return match ($mode) {
+            'companies' => "{$companies} entreprise(s) à enrichir — environ {$companyCredits} crédit(s) de découverte consommé(s).",
+            'verify' => "{$contacts} email(s) à vérifier — environ {$contactCredits} crédit(s) consommé(s).",
+            default => "{$companies} entreprise(s) à enrichir puis vérification des emails non vérifiés (recalculée après enrichissement, {$contacts} aujourd’hui) — environ {$total} crédit(s) au total. La vérification couvre aussi les emails découverts pendant l’enrichissement ; le coût réel peut dépasser l’estimation.",
+        };
     }
 
     /**
