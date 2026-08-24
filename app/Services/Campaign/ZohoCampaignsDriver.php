@@ -40,15 +40,11 @@ class ZohoCampaignsDriver implements CampaignsClient
     /**
      * Map of local template placeholders → Zoho Campaigns predefined merge tags.
      *
-     * VERIFIED — 2026-07-21, live `GET {api_url}/contact/allfields?type=json` → STATUS 200.
-     * The company field is DISPLAY_NAME "Company Name", FIELD_DISPLAY_NAME "COMPANYNAME",
-     * FIELD_NAME "companyname". The merge tag itself, `$[COMPANYNAME]$`, was confirmed
-     * directly from Zoho's own merge-tag picker in the campaign editor (not doc-sourced).
-     * A prior version of this map used `$[COMPANY]$`, which is not a real Zoho Campaigns
-     * merge tag — Zoho emitted it back to recipients literally instead of substituting the
-     * company name. The company tag must use that exact form: Zoho delivers the
-     * pipe-separated fallback form literally. The first-name tag keeps Zoho's documented
-     * fallback form `$[TAG|value_for_email|value_for_social]$`.
+     * VERIFIED — 2026-08-24, live send (test bench T0b). Zoho Campaigns org merge tags
+     * use the `$[UD:FIELD_NAME]$` form (official list: ../structure/specs/zoho-campaigns-merge-tags.md).
+     * `$[COMPANYNAME]$` and `$[COMPANY]$` are NOT valid — Zoho now blocks a campaign send
+     * outright if it contains an unknown tag, rather than emitting it literally. The
+     * legacy predefined tags `$[FNAME]$` / `$[FNAME|a|b]$` / `$[EMAIL]$` are still valid.
      *
      * NOT MAPPED — {{company.sector}} has no known Zoho Campaigns equivalent and is
      * therefore absent from this map: it passes through to Zoho unchanged (i.e. the
@@ -60,7 +56,7 @@ class ZohoCampaignsDriver implements CampaignsClient
         '{{contact.name}}'       => '$[FNAME|client|client]$',
         '{{contact.first_name}}' => '$[FNAME|client|client]$',
         '{{contact.email}}'      => '$[EMAIL]$',
-        '{{company.name}}'       => '$[COMPANYNAME]$',
+        '{{company.name}}'       => '$[UD:COMPANY_NAME||]$',
         '{{unsubscribe_url}}'    => '$[LI:UNSUBSCRIBE]$',
     ];
 

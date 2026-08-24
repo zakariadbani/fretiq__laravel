@@ -54,7 +54,7 @@ class CampaignWaveZohoListSyncService
             }
             $target[$email] = [
                 'Contact Email' => $email,
-                'First Name' => (string) ($contact?->name ?? ''),
+                'First Name' => Str::before(trim((string) ($contact?->name ?? '')), ' '),
                 'Company' => (string) ($contact?->company?->name ?? ''),
             ];
         }

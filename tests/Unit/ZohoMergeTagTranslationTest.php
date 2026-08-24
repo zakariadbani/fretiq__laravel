@@ -74,7 +74,7 @@ class ZohoMergeTagTranslationTest extends TestCase
     public function test_company_name_translates_to_exact_companyname_tag(): void
     {
         $result = ZohoCampaignsDriver::translateMergeTags('Société : {{company.name}}');
-        $this->assertSame('Société : $[COMPANYNAME]$', $result);
+        $this->assertSame('Société : $[UD:COMPANY_NAME||]$', $result);
     }
 
     public function test_unsubscribe_url_translates_to_zoho_unsubscribe_tag(): void
@@ -96,7 +96,7 @@ HTML;
 
         $expected = <<<'HTML'
 <p>Bonjour $[FNAME|client|client]$,</p>
-<p>Votre société : $[COMPANYNAME]$</p>
+<p>Votre société : $[UD:COMPANY_NAME||]$</p>
 <p>Email : $[EMAIL]$</p>
 <p><a href="$[LI:UNSUBSCRIBE]$">Se désabonner</a></p>
 HTML;
@@ -172,7 +172,7 @@ HTML;
             '<p>{{company.name}}</p><a href="{{unsubscribe_url}}">unsubscribe</a>'
         );
 
-        $this->assertStringContainsString('$[COMPANYNAME]$', $result);
+        $this->assertStringContainsString('$[UD:COMPANY_NAME||]$', $result);
         $this->assertStringNotContainsString('$[COMPANYNAME|', $result);
     }
 

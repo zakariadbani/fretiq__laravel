@@ -280,7 +280,7 @@ class ZohoDriverSelectionTest extends TestCase
         Http::assertSent(fn ($req) => str_contains($req->url(), '/json/listsubscribe'));
         Http::assertSent(fn ($req) => str_contains($req->url(), 'createCampaign')
             && $req['campaignname'] === "Fretiq Campagne Zoho Test - C{$run->campaign_id} - R{$run->id} - " . now()->format('Ymd')
-            && $req['subject'] === 'Bonjour $[COMPANYNAME]$'
+            && $req['subject'] === 'Bonjour $[UD:COMPANY_NAME||]$'
             && ! str_contains($req['subject'], '$[COMPANYNAME|'));
         Http::assertSent(fn ($req) => str_contains($req->url(), 'sendcampaign'));
     }
