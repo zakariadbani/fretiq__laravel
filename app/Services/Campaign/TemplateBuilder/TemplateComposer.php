@@ -24,11 +24,20 @@ class TemplateComposer
     ) {}
 
     /**
+     * Default footer contact email when no sender-derived address is passed —
+     * kept as a literal fallback only; the real value comes from
+     * SenderIdentity::defaultContactEmail() at each call site. This method
+     * stays DB-free by contract (see TemplateComposerTest docblock l.16-18),
+     * so it never queries SenderIdentity itself.
+     */
+    private const DEFAULT_CONTACT_EMAIL = 'sales@tcltransport.com';
+
+    /**
      * @param  array<string, mixed>  $state
      *
      * @throws ValidationException
      */
-    public function compose(array $state, string $locale = 'fr'): string
+    public function compose(array $state, string $locale = 'fr', ?string $contactEmail = null): string
     {
         if (! in_array($locale, ['fr', 'en'], true)) {
             throw ValidationException::withMessages(['locale' => ["Langue de composition inconnue : [{$locale}]."]]);
@@ -58,13 +67,15 @@ class TemplateComposer
             'logoWhiteUrl'    => SectionCatalog::LOGO_WHITE_URL,
             'linkedinIconUrl' => SectionCatalog::LINKEDIN_ICON_URL,
             'locale'          => $locale,
-            'copy'            => $this->copy($locale),
+            'copy'            => $this->copy($locale, $contactEmail),
         ])->render();
     }
 
     /** @return array<string, string> */
-    private function copy(string $locale): array
+    private function copy(string $locale, ?string $contactEmail): array
     {
+        $contactEmail = filled($contactEmail) ? $contactEmail : self::DEFAULT_CONTACT_EMAIL;
+
         return $locale === 'en'
             ? [
                 'tagline' => 'Transport & logistics', 'eyebrow' => 'Your freight, our priority', 'greeting' => 'Hello', 'why' => 'Why TCL Transport?',
@@ -72,6 +83,7 @@ class TemplateComposer
                 'compact_address' => 'TCL — 353 Mohammed V Boulevard, 7th floor – Espace Idriss, 20300 Casablanca – Morocco', 'compact_compliance' => 'You are receiving this message as part of a professional communication.',
                 'detailed_address' => '353 Mohammed V Boulevard, 7th floor – Espace Idriss, 20300 Casablanca – Morocco', 'detailed_compliance' => 'You are receiving this email as part of a professional communication.',
                 'origin' => 'Origin', 'frequency' => 'Frequency', 'challenge' => 'Challenge', 'solution' => 'TCL response', 'result' => 'Result',
+                'contact_email' => $contactEmail,
             ]
             : [
                 'tagline' => 'Transport & logistique', 'eyebrow' => 'Votre fret, notre priorité', 'greeting' => 'Bonjour', 'why' => 'Pourquoi TCL Transport ?',
@@ -79,6 +91,7 @@ class TemplateComposer
                 'compact_address' => 'TCL — 353 Bd Mohammed V, 7ème étage – Espace Idriss, 20300 Casablanca – Maroc', 'compact_compliance' => "Vous recevez ce message dans le cadre d'une prise de contact professionnelle.",
                 'detailed_address' => '353 Bd Mohammed V, 7ème étage – Espace Idriss, 20300 Casablanca – Maroc', 'detailed_compliance' => "Vous recevez cet e-mail dans le cadre d'une communication professionnelle.",
                 'origin' => 'Origine', 'frequency' => 'Fréquence', 'challenge' => 'Contrainte', 'solution' => 'Réponse TCL', 'result' => 'Résultat',
+                'contact_email' => $contactEmail,
             ];
     }
 }

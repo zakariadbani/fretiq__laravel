@@ -4,6 +4,7 @@ namespace Tests\Feature\Seeders;
 
 use App\Models\CampaignTemplate;
 use App\Models\CampaignTemplateTranslation;
+use App\Models\SenderIdentity;
 use App\Services\Campaign\TemplateBuilder\BuilderStateValidator;
 use App\Services\Campaign\TemplateBuilder\TemplateComposer;
 use Database\Seeders\DefaultProspectionSeeder;
@@ -83,7 +84,7 @@ class TclFamilleSequenceSeederTest extends TestCase
             $this->assertNotContains($template->builder_state['slots']['closing_line'], $template->builder_state['slots']['bullets'], $template->name);
             $this->assertSame($template->preview_text, $template->builder_state['preview_text'], $template->name);
             $this->assertEquals($template->builder_state, app(BuilderStateValidator::class)->validate($template->builder_state), $template->name);
-            $this->assertSame($template->html_content, app(TemplateComposer::class)->compose($template->builder_state), $template->name);
+            $this->assertSame($template->html_content, app(TemplateComposer::class)->compose($template->builder_state, 'fr', SenderIdentity::defaultContactEmail()), $template->name);
             $this->assertSame($template->sourceHashes(), [
                 'subject' => $translation->src_subject_hash,
                 'preview' => $translation->src_preview_hash,
@@ -168,7 +169,7 @@ class TclFamilleSequenceSeederTest extends TestCase
         $builderTranslation = $builder->translationFor('en');
         $manualState = $builder->builder_state;
         $manualState['slots']['hero_title'] = 'Titre modifié manuellement';
-        $manualHtml = app(TemplateComposer::class)->compose($manualState);
+        $manualHtml = app(TemplateComposer::class)->compose($manualState, 'fr', SenderIdentity::defaultContactEmail());
         $builder->update([
             'subject' => 'Sujet builder modifié manuellement',
             'preview_text' => 'Aperçu builder modifié manuellement',

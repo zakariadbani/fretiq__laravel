@@ -20,8 +20,9 @@
         </td>
       </tr>
       <tr>
+        {{-- ponytail: compose-time default sender; substitution à l'envoi si multi-expéditeurs un jour --}}
         <td align="center" style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#c7d2e6;line-height:1.6;padding-bottom:16px;">
-          <a href="mailto:sales@tcltransport.com" style="color:#c7d2e6;text-decoration:none;">sales@tcltransport.com</a>
+          <a href="mailto:{{ $copy['contact_email'] }}" style="color:#c7d2e6;text-decoration:none;">{{ $copy['contact_email'] }}</a>
         </td>
       </tr>
       <tr>

@@ -184,6 +184,10 @@ class CampaignTemplateHtmlImporter
                 $attrs = [
                     'subject' => $row['subject'],
                     'html_content' => $row['html_content'],
+                    // A classic/HTML import always overwrites a stale builder_state
+                    // from a previous builder-mode row of the same name — the newly
+                    // imported HTML is no longer re-openable in the builder.
+                    'builder_state' => null,
                 ];
 
                 $existing = CampaignTemplate::whereRaw('LOWER(name) = ?', [mb_strtolower($row['name'])])->first();

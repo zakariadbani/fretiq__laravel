@@ -7,6 +7,8 @@ use App\Http\Controllers\Traits\Crudable;
 use App\Http\Controllers\Traits\Datatableable;
 use App\Http\Controllers\Traits\HandlesImportPreviewToken;
 use App\Models\CampaignTemplate;
+use App\Models\SenderIdentity;
+use App\Services\Campaign\CampaignTemplateBuilderImporter;
 use App\Services\Campaign\CampaignTemplateHtmlImporter;
 use App\Services\Campaign\TemplateBuilder\BuilderStateValidator;
 use App\Services\Campaign\TemplateBuilder\GeminiTemplateSuggestionService;
@@ -28,7 +30,7 @@ class CampaignTemplateController extends BackendController
      * otherwise invariant, so a stale cache would silently keep showing the
      * old variant card previews.
      */
-    private const VARIANT_PREVIEWS_CACHE_VERSION = 3;
+    private const VARIANT_PREVIEWS_CACHE_VERSION = 4;
 
     // beforeSave() is overridden below (builder-mode composition). `parent::`
     // can't reach it because Crudable is a TRAIT flattened into this class,
@@ -146,7 +148,7 @@ class CampaignTemplateController extends BackendController
 
         try {
             $validated = app(BuilderStateValidator::class)->validate($rawState);
-            $html      = app(TemplateComposer::class)->compose($validated);
+            $html      = app(TemplateComposer::class)->compose($validated, 'fr', SenderIdentity::defaultContactEmail());
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
@@ -239,7 +241,7 @@ class CampaignTemplateController extends BackendController
 
         $validated = app(BuilderStateValidator::class)->validate($decoded);
 
-        $attributes['html_content']  = app(TemplateComposer::class)->compose($validated);
+        $attributes['html_content']  = app(TemplateComposer::class)->compose($validated, 'fr', SenderIdentity::defaultContactEmail());
         $attributes['builder_state'] = $validated;
         // Single source of truth (plan item 7): the preview_text COLUMN must
         // never diverge from builder_state.preview_text. The form's visible
@@ -299,9 +301,17 @@ class CampaignTemplateController extends BackendController
      */
     private function buildVariantPreviews(): array
     {
+        // Resolved BEFORE the cache key/closure — buildVariantPreviews()'s
+        // output depends on this value (it's baked into the composed HTML),
+        // so it must be part of the cache key. Otherwise changing the
+        // default sender identity would leave these preview cards showing
+        // the old address forever (rememberForever), with no version bump
+        // able to fix it since nothing in the repo would have changed.
+        $contactEmail = SenderIdentity::defaultContactEmail();
+
         return Cache::rememberForever(
-            'builder.variant_previews.v' . self::VARIANT_PREVIEWS_CACHE_VERSION,
-            function () {
+            'builder.variant_previews.v' . self::VARIANT_PREVIEWS_CACHE_VERSION . '.' . md5((string) $contactEmail),
+            function () use ($contactEmail) {
                 $composer = app(TemplateComposer::class);
                 $base     = SectionCatalog::defaultState();
 
@@ -312,14 +322,14 @@ class CampaignTemplateController extends BackendController
                     $state['header_variant'] = $header;
                     $state['hero_variant']   = SectionCatalog::heroForHeader($header);
 
-                    $previews['headers'][$header] = $composer->compose($state);
+                    $previews['headers'][$header] = $composer->compose($state, 'fr', $contactEmail);
                 }
 
                 foreach (SectionCatalog::FOOTERS as $footer) {
                     $state                   = $base;
                     $state['footer_variant'] = $footer;
 
-                    $previews['footers'][$footer] = $composer->compose($state);
+                    $previews['footers'][$footer] = $composer->compose($state, 'fr', $contactEmail);
                 }
 
                 return $previews;
@@ -367,22 +377,68 @@ class CampaignTemplateController extends BackendController
         ]);
     }
 
-    public function importPreview(Request $request, CampaignTemplateHtmlImporter $importer)
+    public function importPreview(Request $request, CampaignTemplateHtmlImporter $htmlImporter, CampaignTemplateBuilderImporter $builderImporter)
     {
+        // extensions: — NOT mimes:html,htm,json. mimes sniffs the file's magic
+        // bytes via libmagic, which flags small/plain JSON files as text/plain
+        // and rejects them outright (finding #4 — see plan). extensions: is a
+        // simple, reliable filename-suffix check instead.
         $request->validate([
             'html_files' => ['required', 'array', 'min:1', 'max:'.CampaignTemplateHtmlImporter::MAX_FILES],
-            'html_files.*' => ['file', 'max:512', 'mimes:html,htm'],
+            'html_files.*' => ['file', 'max:512', 'extensions:html,htm,json'],
         ]);
 
-        $files = [];
+        $htmlFiles = [];
+        $jsonFiles = [];
         foreach ($request->file('html_files', []) as $file) {
-            $files[] = [
+            $entry = [
                 'filename' => $file->getClientOriginalName(),
                 'contents' => (string) file_get_contents($file->getRealPath()),
             ];
+
+            if (strtolower((string) $file->getClientOriginalExtension()) === 'json') {
+                $jsonFiles[] = $entry;
+            } else {
+                $htmlFiles[] = $entry;
+            }
         }
 
-        $rows = $importer->parse($files);
+        $rows = [];
+        if ($htmlFiles !== []) {
+            foreach ($htmlImporter->parse($htmlFiles) as $row) {
+                $rows[] = $row + ['mode' => 'html'];
+            }
+        }
+        if ($jsonFiles !== []) {
+            $rows = array_merge($rows, $builderImporter->parse($jsonFiles));
+        }
+
+        // Each importer only dedupes names WITHIN its own parsed batch (a
+        // private $seenNames map) — Foo.html and Foo.json in the same upload
+        // both survive parse() individually. Guard the MERGED set here:
+        // storing both would silently let one row's html_content overwrite
+        // the other's on the same template, with no warning to the user.
+        $seenAcrossFormats = [];
+        foreach ($rows as $row) {
+            $key = mb_strtolower($row['name']);
+            if (isset($seenAcrossFormats[$key])) {
+                throw ValidationException::withMessages([
+                    'json' => ["Nom en double entre fichiers HTML et JSON : « {$row['name']} »."],
+                ]);
+            }
+            $seenAcrossFormats[$key] = true;
+        }
+
+        // MAX_TOTAL_BYTES is enforced independently by each importer, so a
+        // mixed html+json batch can legally carry up to ~2x that cap. The
+        // encrypted import_token is minted ONCE below over the MERGED set —
+        // enforce the cap on that merged total here.
+        $totalBytes = array_sum(array_column($rows, 'size'));
+        if ($totalBytes > CampaignTemplateHtmlImporter::MAX_TOTAL_BYTES) {
+            throw ValidationException::withMessages([
+                'json' => ['Le total combiné des fichiers importés (HTML et JSON) dépasse 2 Mo — réduisez le nombre ou la taille des fichiers.'],
+            ]);
+        }
 
         return view('backend.contents.campaign_templates.crud.import', [
             'rows' => $rows,
@@ -390,17 +446,32 @@ class CampaignTemplateController extends BackendController
         ]);
     }
 
-    public function importStore(Request $request, CampaignTemplateHtmlImporter $importer)
+    public function importStore(Request $request, CampaignTemplateHtmlImporter $htmlImporter, CampaignTemplateBuilderImporter $builderImporter)
     {
         try {
-            $rows = $this->decryptImportToken((string) $request->input('import_token'), (int) $request->user()->id, CampaignTemplateHtmlImporter::MAX_FILES, 'html');
-            $result = $importer->store($rows);
+            $rows = $this->decryptImportToken((string) $request->input('import_token'), (int) $request->user()->id, CampaignTemplateHtmlImporter::MAX_FILES, 'import');
+
+            $htmlRows = array_values(array_filter($rows, fn ($row) => ($row['mode'] ?? 'html') !== 'builder'));
+            $builderRows = array_values(array_filter($rows, fn ($row) => ($row['mode'] ?? 'html') === 'builder'));
+
+            $created = 0;
+            $updated = 0;
+            if ($htmlRows !== []) {
+                $result = $htmlImporter->store($htmlRows);
+                $created += $result['created'];
+                $updated += $result['updated'];
+            }
+            if ($builderRows !== []) {
+                $result = $builderImporter->store($builderRows);
+                $created += $result['created'];
+                $updated += $result['updated'];
+            }
         } catch (ValidationException $exception) {
             return redirect()->route('admin.campaign_templates.import_form')->withErrors($exception->errors());
         }
 
         return redirect()->route('admin.campaign_templates.index')
-            ->with('success', "{$result['created']} modèle(s) créé(s), {$result['updated']} mis à jour.");
+            ->with('success', "{$created} modèle(s) créé(s), {$updated} mis à jour.");
     }
 
     /**

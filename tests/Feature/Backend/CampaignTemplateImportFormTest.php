@@ -37,6 +37,6 @@ class CampaignTemplateImportFormTest extends TestCase
         $this->actingAs($user)
             ->get(route('admin.campaign_templates.import_form'))
             ->assertOk()
-            ->assertSee('Importer des modèles HTML');
+            ->assertSee('Importer des modèles');
     }
 }

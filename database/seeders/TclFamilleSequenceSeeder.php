@@ -101,6 +101,7 @@ class TclFamilleSequenceSeeder extends Seeder
         $englishTranslations = $this->englishTranslations();
         $composer = app(TemplateComposer::class);
         $validator = app(BuilderStateValidator::class);
+        $contactEmail = SenderIdentity::defaultContactEmail();
 
         foreach ([1, 2, 3] as $n) {
             $tpl = [];
@@ -119,7 +120,7 @@ class TclFamilleSequenceSeeder extends Seeder
                         'subject'      => $definition['subject'],
                         'preview_text' => $definition['preview_text'],
                         'builder_state' => $frState,
-                        'html_content' => $composer->compose($frState),
+                        'html_content' => $composer->compose($frState, 'fr', $contactEmail),
                     ])->save();
                 }
 
@@ -137,7 +138,7 @@ class TclFamilleSequenceSeeder extends Seeder
                     ], [
                         'subject' => $translation['subject'],
                         'preview_text' => $translation['preview_text'],
-                        'html_content' => $composer->compose($enState, 'en'),
+                        'html_content' => $composer->compose($enState, 'en', $contactEmail),
                         'is_ai_generated' => false,
                         'reviewed_at' => null,
                         'src_subject_hash' => $hashes['subject'],

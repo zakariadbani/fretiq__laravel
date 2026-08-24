@@ -1,16 +1,16 @@
 <x-default-layout>
 
 @section('title')
-    Importer des modèles HTML
+    Importer des modèles
 @endsection
 
 @section('breadcrumbs')
-    <x-crud.breadcrumb :items="[['label' => 'Modèles d\'email', 'route' => 'admin.campaign_templates.index'], ['label' => 'Importer HTML']]" />
+    <x-crud.breadcrumb :items="[['label' => 'Modèles d\'email', 'route' => 'admin.campaign_templates.index'], ['label' => 'Importer']]" />
 @endsection
 
 <div class="card">
     <div class="card-header border-0 pt-6">
-        <div class="card-title"><h2 class="fw-bold">Importer des modèles HTML</h2></div>
+        <div class="card-title"><h2 class="fw-bold">Importer des modèles</h2></div>
         <div class="card-toolbar"><a href="{{ route('admin.campaign_templates.index') }}" class="btn btn-light">Retour aux modèles</a></div>
     </div>
     <div class="card-body pt-0">
@@ -27,11 +27,15 @@
             <form method="POST" action="{{ route('admin.campaign_templates.import_preview') }}" enctype="multipart/form-data">
                 @csrf
                 <div class="mb-6">
-                    <label for="html_files" class="form-label required">Fichiers HTML</label>
-                    <input id="html_files" name="html_files[]" type="file" accept=".html,.htm,text/html" class="form-control" required multiple aria-describedby="html-help">
+                    <label for="html_files" class="form-label required">Fichiers HTML ou JSON</label>
+                    <input id="html_files" name="html_files[]" type="file" accept=".html,.htm,.json" class="form-control" required multiple aria-describedby="html-help">
                     <div id="html-help" class="form-text">
-                        Chaque fichier doit porter un commentaire d’en-tête du type <code>&lt;!-- Campagne : … / Objet : … --&gt;</code> — Objet fournit le sujet (obligatoire), Campagne fournit le nom (sinon dérivé du nom de fichier).
+                        <strong>Fichiers HTML</strong> : chaque fichier doit porter un commentaire d’en-tête du type <code>&lt;!-- Campagne : … / Objet : … --&gt;</code> — Objet fournit le sujet (obligatoire), Campagne fournit le nom (sinon dérivé du nom de fichier).
                         Balises de fusion autorisées : @verbatim{{contact.first_name}}, {{contact.name}}, {{company.name}}, {{company.sector}}, {{unsubscribe_url}}@endverbatim.
+                        <br>
+                        <strong>Fichiers JSON</strong> (maquette générateur) : objet <code>{"name", "subject", "preview_text", "builder_state"}</code> — name et subject obligatoires, builder_state doit respecter le format du générateur (en-tête/hero/contenu/pied de page + slots).
+                        Balises de fusion autorisées côté maquette : @verbatim{{contact.first_name}}, {{contact.name}}, {{company.name}}@endverbatim uniquement — pas de <code>@verbatim{{unsubscribe_url}}@endverbatim</code> ni <code>@verbatim{{company.sector}}@endverbatim</code>, le pied de page standard est inclus d’office.
+                        <br>
                         Maximum {{ \App\Services\Campaign\CampaignTemplateHtmlImporter::MAX_FILES }} fichiers, 512 Ko chacun.
                     </div>
                 </div>
@@ -46,7 +50,12 @@
                     <div class="col-12 col-xl-6" data-testid="campaign-templates-html-preview-row">
                         <details class="card card-bordered h-100" open>
                             <summary class="card-header border-0 cursor-pointer">
-                                <div class="card-title"><span class="fw-bold">{{ $row['name'] }}</span></div>
+                                <div class="card-title">
+                                    <span class="fw-bold">{{ $row['name'] }}</span>
+                                    <span class="badge {{ ($row['mode'] ?? 'html') === 'builder' ? 'badge-light-info' : 'badge-light-primary' }} ms-2" data-field="mode">
+                                        {{ ($row['mode'] ?? 'html') === 'builder' ? 'Maquette (builder)' : 'HTML' }}
+                                    </span>
+                                </div>
                                 <div class="card-toolbar">
                                     <span class="badge {{ $row['will_update'] ? 'badge-light-warning' : 'badge-light-success' }}">
                                         {{ $row['will_update'] ? 'Sera mis à jour' : 'Sera créé' }}

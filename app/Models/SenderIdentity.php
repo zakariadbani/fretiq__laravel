@@ -99,6 +99,17 @@ class SenderIdentity extends Model
         ];
     }
 
+    /**
+     * Email of the default+active sender identity, for compose-time
+     * defaults (e.g. the builder footer contact email) — a real DB read,
+     * so callers that must stay DB-free (TemplateComposer::compose()) call
+     * this at the call site and pass the resolved value in, never inside.
+     */
+    public static function defaultContactEmail(): ?string
+    {
+        return static::query()->where('is_default', true)->where('is_active', true)->value('email');
+    }
+
     public function hasCompleteSmtpConfiguration(): bool
     {
         return $this->is_active
