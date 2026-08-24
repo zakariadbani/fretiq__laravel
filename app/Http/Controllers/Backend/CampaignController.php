@@ -380,7 +380,7 @@ class CampaignController extends BackendController
         $timelineRunStates = $this->timelineRunStates($campaign, $campaign->runs);
         $managedTimelineRun = $campaign->schedule_type === 'sequence'
             ? null
-            : $campaign->runs->filter(fn (CampaignRun $run) => in_array($run->status, ['prepared', 'scheduled', 'sending'], true))
+            : $campaign->runs->filter(fn (CampaignRun $run) => in_array($run->status, ['prepared', 'scheduled', 'sending'], true) && $run->driver_ref !== 'zoho-list-sync')
                 ->sortBy('run_at')->first();
         $waveData      = $this->campaignWaveData($campaign);
         $enrolledCount = SequenceEnrollment::where('campaign_id', $campaign->id)->count();
@@ -1011,7 +1011,9 @@ class CampaignController extends BackendController
             'schedulerHealth'       => $editingCampaign ? $this->schedulerHealth() : ['status' => 'missing'],
             'managedTimelineRun'    => $editingCampaign && $editingCampaign->schedule_type !== 'sequence'
                 ? CampaignRun::query()->where('campaign_id', $editingCampaign->id)
-                    ->whereIn('status', ['prepared', 'scheduled', 'sending'])->orderBy('run_at')->first()
+                    ->whereIn('status', ['prepared', 'scheduled', 'sending'])
+                    ->where(fn ($q) => $q->whereNull('driver_ref')->orWhere('driver_ref', '!=', 'zoho-list-sync'))
+                    ->orderBy('run_at')->first()
                 : null,
         ];
     }
