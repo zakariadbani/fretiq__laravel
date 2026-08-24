@@ -4,10 +4,13 @@ namespace App\Providers;
 
 use App\Core\KTBootstrap;
 use App\Services\Analytics\QueueObservabilityService;
+use App\Services\Settings\SettingService;
 use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Database\Schema\Builder;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -141,6 +144,45 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(ScheduledTaskFailed::class, fn (ScheduledTaskFailed $event) => QueueObservabilityService::recordScheduledResult($event->task, 'failed')
         );
 
+        $this->overrideApiKeysFromSettings();
+
         KTBootstrap::init();
+    }
+
+    /**
+     * Superadmin "Clés API" settings tab bridge: override
+     * config('services.{provider}.api_key') from the DB-stored setting when
+     * one exists, so every existing consumer (SerpApiClient, HunterClient,
+     * GeminiClient, direct config() reads) picks up the change with zero
+     * client changes and no restart. Empty/missing DB value → config() keeps
+     * its env() default, i.e. .env stays the fallback.
+     *
+     * Guarded by Schema::hasTable so a fresh, not-yet-migrated environment
+     * never throws here. Wrapped in try/catch too — Schema::hasTable itself
+     * opens a DB connection, so an unreachable DB (console commands that
+     * don't need the DB, CI without one configured) must not break boot().
+     *
+     * @return void
+     */
+    private function overrideApiKeysFromSettings(): void
+    {
+        try {
+            if (! Schema::hasTable('settings')) {
+                return;
+            }
+
+            $settingService = $this->app->make(SettingService::class);
+
+            foreach (['serpapi', 'hunter', 'gemini'] as $provider) {
+                $value = $settingService->get("api_keys.{$provider}");
+
+                if (is_string($value) && $value !== '') {
+                    Config::set("services.{$provider}.api_key", $value);
+                }
+            }
+        } catch (\Throwable $e) {
+            // Boot-time bridge is best-effort: on any failure, config() keeps
+            // its env() default and every consumer falls back to .env.
+        }
     }
 }

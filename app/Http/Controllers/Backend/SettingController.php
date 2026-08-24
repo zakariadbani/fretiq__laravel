@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Backend;
 
 use App\Http\Controllers\Controller;
+use App\Models\Setting;
 use App\Services\Discovery\DiscoveryEngineRegistry;
 use App\Services\Discovery\ContactVerificationBatchService;
 use App\Services\Discovery\EmailVerificationSettings;
@@ -300,6 +301,29 @@ class SettingController extends Controller
             ],
         ],
 
+        'api_keys' => [
+            'label' => 'Clés API',
+            'enabled' => true,
+            'description' => 'Clés des fournisseurs externes utilisées par la découverte et le scoring. Laissez un champ vide pour conserver la clé actuelle ; cochez « Réinitialiser » pour revenir à la valeur définie sur le serveur (.env).',
+            'fields' => [
+                'serpapi' => [
+                    'type' => 'password',
+                    'label' => 'Clé — Fournisseur de recherche',
+                    'help' => 'Utilisée par le moteur de découverte pour interroger les résultats de recherche.',
+                ],
+                'hunter' => [
+                    'type' => 'password',
+                    'label' => 'Clé — Recherche d\'emails',
+                    'help' => 'Utilisée pour retrouver et vérifier les adresses email des contacts découverts.',
+                ],
+                'gemini' => [
+                    'type' => 'password',
+                    'label' => 'Clé — Assistant IA',
+                    'help' => 'Utilisée pour le scoring automatique des entreprises découvertes.',
+                ],
+            ],
+        ],
+
     ];
 
     // ── Actions ──────────────────────────────────────────────────────────────────
@@ -346,6 +370,18 @@ class SettingController extends Controller
                 fn (string $date): string => $this->formatFrenchDayLabel(Carbon::parse($date, $calendarTz)),
                 $previewDates
             ));
+
+        // API-keys tab — never pass the raw secret into the view. Only an
+        // is_set flag + a masked last-4-chars hint, computed from the live
+        // config (which already reflects any DB override — see boot() bridge
+        // in AppServiceProvider).
+        foreach (array_keys($this->tabs['api_keys']['fields']) as $provider) {
+            $current = (string) config("services.{$provider}.api_key", '');
+            $tabs['api_keys']['fields'][$provider]['is_set'] = $current !== '';
+            $tabs['api_keys']['fields'][$provider]['masked'] = $current !== ''
+                ? '••••'.substr($current, -4)
+                : null;
+        }
 
         $settings = $this->settingService->all();
         if (array_key_exists('decouverte.discovery_engines', $settings)) {
@@ -459,6 +495,14 @@ class SettingController extends Controller
             ]);
         }
 
+        if ($request->has('settings.api_keys')) {
+            $request->validate([
+                'settings.api_keys.serpapi' => 'nullable|string|max:255',
+                'settings.api_keys.hunter' => 'nullable|string|max:255',
+                'settings.api_keys.gemini' => 'nullable|string|max:255',
+            ]);
+        }
+
         DB::transaction(function () use ($request) {
             foreach ($this->tabs as $group => $tabConfig) {
                 if (! ($tabConfig['enabled'] ?? false) || ! $request->has("settings.{$group}")) {
@@ -466,6 +510,7 @@ class SettingController extends Controller
                 }
 
                 $posted = $request->input("settings.{$group}", []);
+                $resets = $request->input("reset.{$group}", []);
 
                 foreach ($tabConfig['fields'] as $fieldKey => $fieldDef) {
                     // Static fields are display-only, never saved
@@ -474,6 +519,28 @@ class SettingController extends Controller
                     }
 
                     $type = $fieldDef['type'] ?? 'text';
+
+                    if ($type === 'password') {
+                        // Reset takes precedence: drop the DB override entirely
+                        // so the boot-time bridge falls back to .env.
+                        if (! empty($resets[$fieldKey])) {
+                            Setting::where('group_name', $group)->where('setting_key', $fieldKey)->delete();
+
+                            continue;
+                        }
+
+                        // Leave-blank-to-keep: an empty submit does NOT overwrite
+                        // the stored override (and does NOT fall back to .env —
+                        // that's what the reset checkbox above is for).
+                        $posted[$fieldKey] = trim((string) ($posted[$fieldKey] ?? ''));
+                        if ($posted[$fieldKey] === '') {
+                            continue;
+                        }
+
+                        $this->settingService->set("{$group}.{$fieldKey}", $posted[$fieldKey]);
+
+                        continue;
+                    }
 
                     if ($type === 'boolean') {
                         // Unchecked checkbox posts nothing; treat as false
