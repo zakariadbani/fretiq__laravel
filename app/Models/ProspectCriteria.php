@@ -331,7 +331,8 @@ class ProspectCriteria extends Model
             'company_sizes.*' => 'string|max:20',
             'target_positions' => 'nullable|array|max:50',
             'target_positions.*' => 'string|max:100',
-            'daily_limit' => 'nullable|integer|min:1|max:500',
+            // ponytail: cap réel ~150 recherches/run (15/tentative × 20 tries job); au-delà le run fail() — si besoin >150, terminer le run proprement au lieu de fail()
+            'daily_limit' => 'nullable|integer|min:1|max:150',
             'auto_run' => 'boolean',
             'run_at_hour' => 'nullable|integer|between:0,23|required_if:auto_run,1',
             'contact_limit' => 'nullable|integer|min:1|max:100',

@@ -713,6 +713,7 @@ class ProspectCriteriaController extends BackendController
 
         return response()->json([
             'queries' => $queries,
+            'cursors' => (object) $discoveryService->cursorPreview($prospectCriteria, array_column($queries, 'q')),
             'execution' => $this->queryPreviewExecutionMeta(
                 $prospectCriteria,
                 $quotaService,

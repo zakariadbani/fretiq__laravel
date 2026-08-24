@@ -119,7 +119,7 @@
                                            class="form-control form-control-solid"
                                            value="{{ old('daily_limit', $model->daily_limit ?? 20) }}"
                                            min="1"
-                                           max="500" />
+                                           max="150" />
                                     <span class="input-group-text fw-semibold text-gray-500">recherches d’entreprises / jour</span>
                                 </div>
                                 @php
@@ -488,6 +488,7 @@
 
             var executionBudget = null;
             var selectedEngineCount = 0;
+            var cursorStates = {};
 
             // Renders queries as real form inputs (name="ai_queries[i][q|enabled]") so
             // they submit with Enregistrer — this card is a stateless preview, Enregistrer
@@ -535,7 +536,8 @@
                           + '</label>'
                           + '<span class="badge badge-light-warning me-1">' + (i + 1) + '</span>'
                           + '<span class="text-gray-700 fs-7 flex-grow-1">' + qTextEsc + '</span>'
-                          + (enabled ? '' : '<span class="badge badge-light-secondary ms-3">Désactivée</span>')
+                          + '<span class="badge badge-light-secondary ms-3 q-disabled-badge' + (enabled ? ' d-none' : '') + '">Désactivée</span>'
+                          + cursorBadges(q)
                           + '</div>'
                           + '</div>';
                 });
@@ -543,9 +545,27 @@
                 bindToggles();
             }
 
+            // Per-engine cursor state chips (already-paginated / already-exhausted) —
+            // read-only, sourced from the last loadQueries() response. Not refreshed
+            // by "Générer avec l'IA" (its response carries no cursors), so the chips
+            // simply keep showing the last known state across a re-generate.
+            function cursorBadges(q) {
+                var chips = cursorStates[q];
+                if (!chips || !chips.length) return '';
+                var html = '';
+                $.each(chips, function (i, c) {
+                    var label = $('<div>').text(c.label || c.engine).html();
+                    html += c.exhausted
+                        ? '<span class="badge badge-light-danger ms-2">' + label + ' · déjà épuisée</span>'
+                        : '<span class="badge badge-light-info ms-2">' + label + ' · page suivante : ' + c.page + '</span>';
+                });
+                return html;
+            }
+
             function buildExecutionPlan(queries) {
                 var actionable = 0;
                 var disabled = 0;
+                var exhausted = 0;
 
                 $.each(queries, function (i, item) {
                     var q = item.q != null ? item.q : item;
@@ -555,27 +575,45 @@
                         return;
                     }
                     actionable++;
+
+                    var chips = cursorStates[q];
+                    if (chips && chips.length) {
+                        $.each(chips, function (j, c) {
+                            if (c.exhausted) exhausted++;
+                        });
+                    }
                 });
 
-                var preparedAttempts = actionable * selectedEngineCount;
+                // Every active stream is re-tried each round rather than attempted once,
+                // so the real ceiling on a launch is the search budget itself, not the
+                // count of prepared streams (fix #3 — see possibleAttempts below).
+                var preparedAttempts = Math.max(0, actionable * selectedEngineCount - exhausted);
                 var budget = executionBudget === null ? preparedAttempts : Math.max(0, executionBudget);
 
                 return {
                     prepared: queries.length,
                     actionable: actionable,
                     preparedAttempts: preparedAttempts,
-                    possibleAttempts: Math.min(budget, preparedAttempts),
+                    possibleAttempts: budget,
                     disabled: disabled,
+                    exhausted: exhausted,
                     budget: budget,
                 };
             }
 
             function executionSummary(queries, plan) {
-                return '<div class="alert alert-light-info border border-info border-dashed p-4 mb-4">'
-                    + '<div class="fw-bold text-gray-800 mb-1">Prochain lancement : ' + plan.possibleAttempts + ' appels possibles sur ' + plan.preparedAttempts + ' préparés</div>'
-                    + '<div class="text-muted fs-7">' + plan.actionable + ' requête(s) active(s) · ' + plan.disabled + ' désactivée(s).</div>'
-                    + '<div class="text-muted fs-8 mt-2"><i class="bi bi-info-circle me-1"></i>L\'aperçu ne consomme aucun crédit. Les moteurs sont configurés globalement dans Paramètres.</div>'
+                var html = '<div class="alert alert-light-info border border-info border-dashed p-4 mb-4">'
+                    + '<div class="fw-bold text-gray-800 mb-1">Prochain lancement : jusqu\'à ' + plan.possibleAttempts + ' appels de recherche · ' + plan.preparedAttempts + ' flux actifs</div>'
+                    + '<div class="text-muted fs-7">' + plan.actionable + ' requête(s) active(s) · ' + plan.exhausted + ' flux épuisé(s) · ' + plan.disabled + ' désactivée(s).</div>';
+
+                if (plan.exhausted > 0 && plan.preparedAttempts === 0) {
+                    html += '<div class="text-danger fs-7 mt-1">Toutes les requêtes actives sont épuisées — modifiez ou ajoutez des requêtes pour relancer la collecte.</div>';
+                }
+
+                html += '<div class="text-muted fs-8 mt-2"><i class="bi bi-info-circle me-1"></i>L\'aperçu ne consomme aucun crédit. Les moteurs sont configurés globalement dans Paramètres.</div>'
                     + '</div>';
+
+                return html;
             }
 
             // Toggling only dims the row locally — no server call. The state submits
@@ -584,6 +622,7 @@
                 $container.find('.q-toggle').on('change', function () {
                     var $box = $(this).closest('[data-qi]');
                     $box.toggleClass('opacity-50', !this.checked);
+                    $box.find('.q-disabled-badge').toggleClass('d-none', this.checked);
                 });
             }
 
@@ -606,6 +645,7 @@
                     '<div class="text-muted fs-7"><i class="bi bi-hourglass-split me-1"></i>Chargement des requêtes…</div>'
                 );
                 $.getJSON(previewUrl, function (data) {
+                    cursorStates = data.cursors || {};
                     renderQueries(data.queries || [], data.execution || null);
                 }).fail(function () {
                     $container.html(

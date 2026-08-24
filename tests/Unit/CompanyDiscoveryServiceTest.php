@@ -1303,4 +1303,129 @@ class CompanyDiscoveryServiceTest extends TestCase
         $this->assertSame([], $snapshot);
         $this->assertSame(15, $count);
     }
+
+    // ── A2/A3/A4: cursor persistence fixes ────────────────────────────────────
+
+    /**
+     * A2: SerpApiClient::validateStart() rejects a corrupt stored start offset
+     * (here 15, not a multiple of 10 for google) with InvalidArgumentException
+     * BEFORE any HTTP call is made. Previously this exception fell into the
+     * generic catch, left exhausted=false, and the same corrupt cursor would be
+     * retried forever across every future job attempt. It must now be marked
+     * exhausted so the run can conclude.
+     */
+    public function test_corrupt_cursor_start_marks_the_stream_exhausted_instead_of_looping_forever(): void
+    {
+        config([
+            'services.serpapi.driver' => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+        ]);
+
+        // Never actually reached — validateStart() throws before any HTTP call —
+        // fake anyway so a regression cannot slip a real network call through.
+        Http::fake(['*' => Http::response(['organic_results' => []], 200)]);
+
+        $q = 'corrupt cursor query';
+        $criteria = $this->makePersistedCriteria([
+            'ai_queries' => [['q' => $q, 'enabled' => true]],
+            'discovery_cursors' => [
+                md5($q) => ['q' => $q, 'engine' => 'google', 'start' => 15, 'exhausted' => false],
+            ],
+        ]);
+        $run = $this->makeRun($criteria);
+
+        $this->service->discoverForRun($criteria, $run, 1);
+
+        $cursor = $criteria->refresh()->discovery_cursors[md5($q)];
+        $this->assertTrue($cursor['exhausted']);
+        // validateStart() throws before the reserve closure runs, so this attempt
+        // never debited the run's durable search budget.
+        $this->assertSame(0, $run->fresh()->searches_consumed);
+        Http::assertNothingSent();
+    }
+
+    /**
+     * A3: the '_collection_complete_run_id' marker is a bare int, not a cursor
+     * array — normaliseCursors() previously re-attached only '_rotation' and
+     * silently dropped this marker on the next write (e.g. the very next
+     * appendPage() persisted by a live discovery call).
+     *
+     * The fake response includes serpapi_pagination.next so the query stream is
+     * NOT exhausted by this call — otherwise isLiveCollectionTerminal() would
+     * legitimately call markCollectionComplete() itself and overwrite the seeded
+     * marker with this test's own real run id, which is correct behaviour but
+     * would defeat the point of this test (proving the marker round-trips
+     * through an ordinary, non-terminal normaliseCursors()+save()).
+     */
+    public function test_collection_complete_marker_survives_a_normalise_and_save_cycle(): void
+    {
+        config([
+            'services.serpapi.driver' => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+        ]);
+
+        Http::fake(['*' => Http::response([
+            'organic_results' => [$this->serpResult('marker-survives.test')],
+            'serpapi_pagination' => ['next' => 'https://serpapi.test/next?start=10'],
+        ], 200)]);
+
+        $criteria = $this->makePersistedCriteria([
+            'ai_queries' => [['q' => 'marker survives query', 'enabled' => true]],
+            'discovery_cursors' => [
+                ProspectCriteria::DISCOVERY_COLLECTION_COMPLETE_RUN_KEY => 42,
+            ],
+        ]);
+
+        $this->service->discoverForRun($criteria, $this->makeRun($criteria), 1);
+
+        $this->assertSame(
+            42,
+            (int) data_get($criteria->refresh()->discovery_cursors, ProspectCriteria::DISCOVERY_COLLECTION_COMPLETE_RUN_KEY)
+        );
+    }
+
+    /**
+     * A4: a cursor whose query text no longer exists among the criteria's
+     * current ai_queries (e.g. left behind by an ai_target/ai_exclude edit that
+     * regenerated ai_queries with new md5 keys) is an orphan and must be pruned
+     * on the next normalise/save cycle. A cursor whose query is merely disabled
+     * (still present in ai_queries) must NOT be pruned.
+     */
+    public function test_normalise_cursors_prunes_orphaned_queries_but_keeps_disabled_ones(): void
+    {
+        config([
+            'services.serpapi.driver' => 'serpapi',
+            'services.serpapi.api_key' => 'test-key',
+        ]);
+
+        Http::fake(['*' => Http::response([
+            'organic_results' => [$this->serpResult('prune-active.test')],
+        ], 200)]);
+
+        $criteria = $this->makePersistedCriteria([
+            'ai_queries' => [
+                ['q' => 'requête actuelle', 'enabled' => true],
+                ['q' => 'requête désactivée', 'enabled' => false],
+            ],
+            'discovery_cursors' => [
+                md5('requête désactivée') => ['q' => 'requête désactivée', 'engine' => 'google', 'start' => 10, 'exhausted' => false],
+                md5('requête disparue') => ['q' => 'requête disparue', 'engine' => 'google', 'start' => 10, 'exhausted' => false],
+            ],
+        ]);
+
+        $this->service->discoverForRun($criteria, $this->makeRun($criteria), 1);
+
+        $cursors = $criteria->refresh()->discovery_cursors;
+
+        $this->assertArrayHasKey(
+            md5('requête désactivée'),
+            $cursors,
+            'A disabled-but-still-present query keeps its cursor.'
+        );
+        $this->assertArrayNotHasKey(
+            md5('requête disparue'),
+            $cursors,
+            'A query no longer present in ai_queries is an orphan and must be pruned.'
+        );
+    }
 }

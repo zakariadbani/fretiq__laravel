@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 
 /**
  * CompanyDiscoveryService — SerpAPI-backed company domain discovery.
@@ -134,7 +135,7 @@ class CompanyDiscoveryService
         }
 
         $queries = $this->enabledQueries($criteria);
-        $cursors = $this->normaliseCursors($criteria->discovery_cursors ?? [], $queries);
+        $cursors = $this->normaliseCursors($criteria, $queries);
 
         if ($this->isLiveCollectionTerminal($run, $searchBudget, $queries, $cursors)) {
             $this->markCollectionComplete($criteria, $run);
@@ -174,7 +175,7 @@ class CompanyDiscoveryService
 
         $freshRun = $run->fresh() ?? $run;
         $freshCriteria = $criteria->fresh() ?? $criteria;
-        $freshCursors = $this->normaliseCursors($freshCriteria->discovery_cursors ?? [], $queries);
+        $freshCursors = $this->normaliseCursors($freshCriteria, $queries);
 
         $terminal = $this->isLiveCollectionTerminal($freshRun, $searchBudget, $queries, $freshCursors);
         $searchProviderDown = false;
@@ -225,6 +226,50 @@ class CompanyDiscoveryService
                 : [];
             $cursors[ProspectCriteria::DISCOVERY_COLLECTION_COMPLETE_RUN_KEY] = (int) $run->getKey();
             $lockedCriteria->forceFill(['discovery_cursors' => $cursors])->save();
+        });
+    }
+
+    /**
+     * Persist exhausted=true for one query×engine stream whose cursor is
+     * permanently unusable (e.g. SerpApiClient::validateStart() rejects a
+     * corrupted start offset). Without this the stream retries the same
+     * invalid cursor forever and isLiveCollectionTerminal() never concludes.
+     *
+     * @param  array{q: string, engine: string}  $queryDef
+     */
+    private function markCursorExhausted(ProspectCriteria $criteria, array $queryDef): void
+    {
+        DB::transaction(function () use ($criteria, $queryDef): void {
+            /** @var ProspectCriteria|null $locked */
+            $locked = ProspectCriteria::whereKey($criteria->id)->lockForUpdate()->first();
+            if (! $locked) {
+                return;
+            }
+
+            // normaliseCursors() below only ever sees this single query, so its
+            // `_rotation` validity check would otherwise drop an unrelated rotation
+            // pointer as a side effect of this narrow, single-stream write.
+            $storedRotation = is_array($locked->discovery_cursors)
+                ? ($locked->discovery_cursors['_rotation'] ?? null)
+                : null;
+
+            $cursors = $this->normaliseCursors($locked, [$queryDef]);
+            $key = $this->queryKey($queryDef);
+            $existing = is_array($cursors[$key] ?? null) ? $cursors[$key] : [];
+
+            $cursors[$key] = [
+                'q' => $queryDef['q'],
+                'engine' => $queryDef['engine'],
+                'start' => max(0, (int) ($existing['start'] ?? 0)),
+                'exhausted' => true,
+                'provider_params' => $existing['provider_params'] ?? [],
+            ];
+
+            if (is_string($storedRotation)) {
+                $cursors['_rotation'] = $storedRotation;
+            }
+
+            $locked->forceFill(['discovery_cursors' => $cursors])->save();
         });
     }
 
@@ -472,7 +517,7 @@ class CompanyDiscoveryService
             return $snapshot;
         }
 
-        $cursors = $this->normaliseCursors($criteria->discovery_cursors ?? [], $queries);
+        $cursors = $this->normaliseCursors($criteria, $queries);
         $order = $this->rotatedQueryOrder($queries, $cursors);
         $searches = 0;
 
@@ -484,7 +529,7 @@ class CompanyDiscoveryService
             $key = $this->queryKey($query);
 
             while (count($snapshot) < $need && $searches < self::MAX_SEARCHES_PER_RUN) {
-                $cursors = $this->normaliseCursors($criteria->fresh()?->discovery_cursors ?? [], $queries);
+                $cursors = $this->normaliseCursors($criteria->fresh() ?? $criteria, $queries);
                 $cursor = $cursors[$key] ?? $query + ['start' => 0, 'exhausted' => false];
 
                 if ((bool) ($cursor['exhausted'] ?? false)) {
@@ -589,7 +634,7 @@ class CompanyDiscoveryService
         ?float $workDeadlineAt,
     ): array {
         $snapshot = $this->snapshot($run);
-        $cursors = $this->normaliseCursors($criteria->discovery_cursors ?? [], $queries);
+        $cursors = $this->normaliseCursors($criteria, $queries);
         $order = $this->rotatedQueryOrder($queries, $cursors);
         $attempts = 0;
         $maxSearches = min($searchBudget, self::MAX_SEARCHES_PER_RUN);
@@ -605,7 +650,7 @@ class CompanyDiscoveryService
                 }
 
                 $key = $this->queryKey($query);
-                $cursors = $this->normaliseCursors($criteria->fresh()?->discovery_cursors ?? [], $queries);
+                $cursors = $this->normaliseCursors($criteria->fresh() ?? $criteria, $queries);
                 $cursor = $cursors[$key] ?? $query + ['start' => 0, 'exhausted' => false];
 
                 if ((bool) ($cursor['exhausted'] ?? false)) {
@@ -663,6 +708,30 @@ class CompanyDiscoveryService
                     if ($exception->httpStatus === 429 || $exception->safeCode === 'rate_limit') {
                         return [$snapshot, true];
                     }
+
+                    continue;
+                } catch (InvalidArgumentException $exception) {
+                    if ($transportReserved) {
+                        $attempts++;
+                        $attemptedThisRound = true;
+                    }
+
+                    // The provider client rejected this stream's own stored cursor as
+                    // structurally invalid (bad start offset, bad params, …) — it would
+                    // never succeed on retry, so mark it exhausted instead of looping
+                    // on it forever across every future job attempt.
+                    $this->markCursorExhausted($criteria, $query);
+
+                    // Never log the raw exception text here (see CompanyDiscoveryLoggingTest)
+                    // — SerpApiClient's validation messages are safe constant codes today,
+                    // but this file's convention stays exception_class only, no message text.
+                    Log::channel('discovery')->warning('[CompanyDiscoveryService] discovery_cursor_invalidated — corrupt cursor rejected by the provider client, marking stream exhausted.', [
+                        'criteria_id' => $criteria->id,
+                        'query' => $query['q'],
+                        'engine' => $query['engine'],
+                        'start' => $start,
+                        'exception_class' => $exception::class,
+                    ]);
 
                     continue;
                 } catch (\Throwable $e) {
@@ -915,6 +984,52 @@ class CompanyDiscoveryService
     }
 
     /**
+     * Read-only cursor state for the query-preview card, grouped by query text.
+     * Only streams with real state are returned (started or exhausted).
+     *
+     * @param  list<string>  $queryTexts
+     * @return array<string, list<array{engine: string, label: string, page: int, exhausted: bool}>>
+     */
+    public function cursorPreview(ProspectCriteria $criteria, array $queryTexts): array
+    {
+        $stored = is_array($criteria->discovery_cursors) ? $criteria->discovery_cursors : [];
+        $preview = [];
+
+        foreach ($queryTexts as $text) {
+            if (! is_string($text) || trim($text) === '') {
+                continue;
+            }
+
+            $chips = [];
+            foreach ($this->engines->selected() as $engine) {
+                $cursor = $stored[$this->queryKey(['q' => trim($text), 'engine' => $engine])] ?? null;
+                if (! is_array($cursor)) {
+                    continue;
+                }
+
+                $exhausted = (bool) ($cursor['exhausted'] ?? false);
+                $start = max(0, (int) ($cursor['start'] ?? 0));
+                if (! $exhausted && $start === 0) {
+                    continue;
+                }
+
+                $chips[] = [
+                    'engine' => $engine,
+                    'label' => $this->engines->get($engine)->label(),
+                    'page' => intdiv($start, $this->pageSizeFor($engine)) + 1,
+                    'exhausted' => $exhausted,
+                ];
+            }
+
+            if ($chips !== []) {
+                $preview[$text] = $chips;
+            }
+        }
+
+        return $preview;
+    }
+
+    /**
      * Results per page for the given engine. Organic returns 10; Google Maps returns 20
      * and its serpapi_pagination.next advances &start by 20.
      */
@@ -924,12 +1039,41 @@ class CompanyDiscoveryService
     }
 
     /**
+     * Every current query text for the criteria — enabled AND disabled rows alike.
+     * Used only to decide which discovery_cursors entries are still relevant (see
+     * the orphan prune in normaliseCursors() below); falls back to buildQueries()
+     * same as enabledQueries() so a criteria without saved ai_queries doesn't have
+     * every cursor pruned.
+     *
+     * @return array<string, true> keyed by trimmed query text for O(1) lookup
+     */
+    private function currentQueryTexts(ProspectCriteria $criteria): array
+    {
+        $rows = ! empty($criteria->ai_queries)
+            ? collect($criteria->ai_queries)
+                ->filter(fn ($r) => is_array($r))
+                ->map(fn (array $r) => $r['q'] ?? null)
+                ->all()
+            : $this->buildQueries($criteria);
+
+        $texts = [];
+        foreach ($rows as $q) {
+            if (is_string($q) && trim($q) !== '') {
+                $texts[trim($q)] = true;
+            }
+        }
+
+        return $texts;
+    }
+
+    /**
      * @param  list<array{q: string, engine: string}>  $queries
      * @return array<string, mixed>
      */
-    private function normaliseCursors(?array $stored, array $queries): array
+    private function normaliseCursors(ProspectCriteria $criteria, array $queries): array
     {
-        $stored = is_array($stored) ? $stored : [];
+        $stored = is_array($criteria->discovery_cursors) ? $criteria->discovery_cursors : [];
+        $validQueryTexts = $this->currentQueryTexts($criteria);
         $validKeys = [];
         $cursors = [];
 
@@ -955,9 +1099,19 @@ class CompanyDiscoveryService
                 continue;
             }
 
+            // A stream not among the currently active $queries is only kept when its
+            // query text still exists among the criteria's ai_queries (e.g. disabled,
+            // or its engine was deselected) — otherwise it's an orphan left behind by
+            // an ai_target/ai_exclude edit that regenerated ai_queries with new md5
+            // keys, and the cursor blob would otherwise grow forever.
+            $storedText = is_string($storedCursor['q'] ?? null) ? $storedCursor['q'] : '';
+            if (trim($storedText) === '' || ! isset($validQueryTexts[trim($storedText)])) {
+                continue;
+            }
+
             $storedEngine = $this->normaliseEngine($storedCursor['engine'] ?? null);
             $cursors[$storedKey] = [
-                'q' => is_string($storedCursor['q'] ?? null) ? $storedCursor['q'] : '',
+                'q' => $storedText,
                 'engine' => $storedEngine,
                 'start' => max(0, (int) ($storedCursor['start'] ?? 0)),
                 'exhausted' => (bool) ($storedCursor['exhausted'] ?? false),
@@ -970,6 +1124,14 @@ class CompanyDiscoveryService
         $rotation = $stored['_rotation'] ?? null;
         if (is_string($rotation) && isset($validKeys[$rotation])) {
             $cursors['_rotation'] = $rotation;
+        }
+
+        // A completed collection's marker is a bare int, not a cursor array, so the
+        // loop above never touches it — but it must still survive round-tripping
+        // through normaliseCursors() or the next write here would silently drop it.
+        $done = $stored[ProspectCriteria::DISCOVERY_COLLECTION_COMPLETE_RUN_KEY] ?? null;
+        if (is_numeric($done)) {
+            $cursors[ProspectCriteria::DISCOVERY_COLLECTION_COMPLETE_RUN_KEY] = (int) $done;
         }
 
         return $cursors;
@@ -1317,7 +1479,7 @@ class CompanyDiscoveryService
                 return false;
             }
 
-            $cursors = $this->normaliseCursors($lockedCriteria->discovery_cursors ?? [], $queries);
+            $cursors = $this->normaliseCursors($lockedCriteria, $queries);
             $key = $this->queryKey($query);
             $storedStart = (int) ($cursors[$key]['start'] ?? 0);
 
@@ -1430,7 +1592,7 @@ class CompanyDiscoveryService
                 return;
             }
 
-            $cursors = $this->normaliseCursors($locked->discovery_cursors ?? [], $queries);
+            $cursors = $this->normaliseCursors($locked, $queries);
             $cursors['_rotation'] = $this->queryKey($query);
             $locked->forceFill(['discovery_cursors' => $cursors])->save();
         });

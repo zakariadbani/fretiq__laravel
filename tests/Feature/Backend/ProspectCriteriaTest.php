@@ -239,6 +239,57 @@ class ProspectCriteriaTest extends TestCase
     }
 
     /**
+     * A1: daily_limit's server cap is 150 — the real ceiling (~15 searches per
+     * job attempt × MAX_SEARCHES_PER_RUN=... tries before the job fail()s).
+     * 151 must be rejected on update.
+     */
+    public function test_update_rejects_daily_limit_over_150(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name' => 'Critère Daily Limit Trop Haut',
+            'daily_limit' => 10,
+            'is_active' => true,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->put('/admin/prospect_criteria/'.$criteria->id, [
+                'name' => 'Critère Daily Limit Trop Haut',
+                'daily_limit' => 151,
+                'is_active' => 1,
+            ]);
+
+        $response->assertStatus(406);
+        $response->assertJsonStructure(['message', 'errors']);
+
+        $criteria->refresh();
+        $this->assertSame(10, $criteria->daily_limit, 'Rejected update must not persist the invalid value.');
+    }
+
+    /**
+     * A1: 150 is exactly at the cap and must be accepted.
+     */
+    public function test_update_accepts_daily_limit_at_150(): void
+    {
+        $criteria = ProspectCriteria::create([
+            'name' => 'Critère Daily Limit Max',
+            'daily_limit' => 10,
+            'is_active' => true,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->put('/admin/prospect_criteria/'.$criteria->id, [
+                'name' => 'Critère Daily Limit Max',
+                'daily_limit' => 150,
+                'is_active' => 1,
+            ]);
+
+        $response->assertStatus(200);
+
+        $criteria->refresh();
+        $this->assertSame(150, $criteria->daily_limit);
+    }
+
+    /**
      * Deactivation round-trip (D9): submitting the edit form WITHOUT the checkbox
      * checked (hidden input sends is_active=0) correctly deactivates the criteria.
      */
@@ -1057,6 +1108,50 @@ class ProspectCriteriaTest extends TestCase
         $this->assertNotEmpty($queries, 'buildQueries() must return ≥1 query for a criteria with sectors+countries');
         $this->assertSame(20, $response->json('execution.daily_limit'));
         $this->assertSame(20, $response->json('execution.search_budget'));
+    }
+
+    /**
+     * B: the preview response's 'cursors' key exposes per-engine pagination state
+     * for each active query text, keyed by the exact (untrimmed) query text, so
+     * the form can render "already exhausted" / "next page N" badges.
+     *
+     * Fallback engines with no Setting row are DiscoveryEngineRegistry::defaults()
+     * = ['google', 'google_maps'] — matches the two stored cursor keys below.
+     * ai_queries deliberately still contains $q so A4's orphan prune does not
+     * drop this cursor before the preview can read it.
+     */
+    public function test_preview_queries_exposes_per_engine_cursor_state(): void
+    {
+        $q = 'transitaire textile France';
+
+        $criteria = ProspectCriteria::create([
+            'name' => 'Critère Cursor Preview',
+            'ai_queries' => [['q' => $q, 'enabled' => true]],
+            'discovery_cursors' => [
+                md5($q) => ['q' => $q, 'engine' => 'google', 'start' => 20, 'exhausted' => false],
+                md5('google_maps:'.$q) => ['q' => $q, 'engine' => 'google_maps', 'start' => 0, 'exhausted' => true],
+                '_rotation' => md5($q),
+            ],
+            'daily_limit' => 10,
+            'is_active' => true,
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->get('/admin/prospect_criteria/'.$criteria->id.'/preview-queries');
+
+        $response->assertStatus(200);
+
+        $chips = collect($response->json('cursors')[$q] ?? []);
+        $google = $chips->firstWhere('engine', 'google');
+        $googleMaps = $chips->firstWhere('engine', 'google_maps');
+
+        $this->assertNotNull($google, 'google stream must be present in the cursor preview');
+        $this->assertSame(3, $google['page'], 'start=20 / pageSize=10 + 1 = page 3');
+        $this->assertFalse($google['exhausted']);
+
+        $this->assertNotNull($googleMaps, 'google_maps stream must be present in the cursor preview');
+        $this->assertSame(1, $googleMaps['page']);
+        $this->assertTrue($googleMaps['exhausted']);
     }
 
     /**
