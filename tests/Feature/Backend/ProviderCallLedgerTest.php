@@ -308,6 +308,51 @@ class ProviderCallLedgerTest extends TestCase
         $this->assertSame('operator_retry_authorized', $safe->fresh()->metadata['reason']);
     }
 
+    public function test_operator_retry_rearms_the_budget_for_an_all_exhausted_transient_item(): void
+    {
+        $batch = ProspectBatch::factory()->create();
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create();
+        $maxed = ProviderCall::query()->create([
+            'prospect_batch_id' => $batch->id,
+            'prospect_batch_item_id' => $item->id,
+            'provider' => 'serpapi',
+            'operation' => 'google_maps',
+            'idempotency_key' => hash('sha256', 'rearm-maxed'),
+            'status' => 'failed',
+            'attempt_count' => 4,
+            'metadata' => ['error_code' => 'rate_limit', 'retryable' => false],
+        ]);
+
+        $authorized = app(ProviderCallLedger::class)
+            ->authorizeKnownFailureRetryForItem($item->id, 'rate_limit');
+
+        $this->assertSame(1, $authorized);
+        $fresh = $maxed->fresh();
+        $this->assertSame('retryable', $fresh->status);
+        $this->assertSame(0, $fresh->attempt_count);
+        $this->assertSame('operator_budget_rearm', $fresh->metadata['reason']);
+    }
+
+    public function test_operator_retry_still_throws_exhausted_for_an_all_exhausted_permanent_item(): void
+    {
+        $batch = ProspectBatch::factory()->create();
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create();
+        ProviderCall::query()->create([
+            'prospect_batch_id' => $batch->id,
+            'prospect_batch_item_id' => $item->id,
+            'provider' => 'serpapi',
+            'operation' => 'google_maps',
+            'idempotency_key' => hash('sha256', 'no-rearm-maxed'),
+            'status' => 'failed',
+            'attempt_count' => 4,
+            'metadata' => ['error_code' => 'pagination_error', 'retryable' => false],
+        ]);
+
+        $this->expectException(ProviderRequestException::class);
+        $this->expectExceptionMessage('provider_call_retry_exhausted');
+        app(ProviderCallLedger::class)->authorizeKnownFailureRetryForItem($item->id, 'pagination_error');
+    }
+
     public function test_retry_headroom_reports_max_remaining_attempts_across_matching_failed_calls(): void
     {
         $batch = ProspectBatch::factory()->create();
@@ -334,6 +379,10 @@ class ProviderCallLedgerTest extends TestCase
 
     public function test_retry_headroom_is_zero_only_when_every_matching_call_is_maxed_out(): void
     {
+        // Uses a permanent (non-re-armable) error code — usage_limit is now
+        // manually re-armable when fully exhausted (returns MAX_ATTEMPTS
+        // instead of 0), which is covered separately by
+        // test_retry_headroom_rearms_to_full_budget_for_an_all_exhausted_transient_item.
         $batch = ProspectBatch::factory()->create();
         $item = ProspectBatchItem::factory()->for($batch, 'batch')->create();
         ProviderCall::query()->create([
@@ -344,11 +393,11 @@ class ProviderCallLedgerTest extends TestCase
             'idempotency_key' => hash('sha256', 'headroom-maxed'),
             'status' => 'failed',
             'attempt_count' => 4,
-            'metadata' => ['error_code' => 'usage_limit'],
+            'metadata' => ['error_code' => 'pagination_error'],
         ]);
         $ledger = app(ProviderCallLedger::class);
 
-        $this->assertSame(0, $ledger->retryHeadroomForItem($item->id, 'usage_limit'));
+        $this->assertSame(0, $ledger->retryHeadroomForItem($item->id, 'pagination_error'));
 
         // A second matching call that still has headroom flips the item back
         // to retryable, mirroring authorizeKnownFailureRetryForItem()'s own
@@ -361,10 +410,29 @@ class ProviderCallLedgerTest extends TestCase
             'idempotency_key' => hash('sha256', 'headroom-fresh-sibling'),
             'status' => 'failed',
             'attempt_count' => 2,
-            'metadata' => ['error_code' => 'usage_limit'],
+            'metadata' => ['error_code' => 'pagination_error'],
         ]);
 
-        $this->assertSame(2, $ledger->retryHeadroomForItem($item->id, 'usage_limit'));
+        $this->assertSame(2, $ledger->retryHeadroomForItem($item->id, 'pagination_error'));
+    }
+
+    public function test_retry_headroom_rearms_to_full_budget_for_an_all_exhausted_transient_item(): void
+    {
+        $batch = ProspectBatch::factory()->create();
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create();
+        ProviderCall::query()->create([
+            'prospect_batch_id' => $batch->id,
+            'prospect_batch_item_id' => $item->id,
+            'provider' => 'hunter',
+            'operation' => 'domain_search',
+            'idempotency_key' => hash('sha256', 'headroom-rearm-maxed'),
+            'status' => 'failed',
+            'attempt_count' => 4,
+            'metadata' => ['error_code' => 'rate_limit'],
+        ]);
+        $ledger = app(ProviderCallLedger::class);
+
+        $this->assertSame(4, $ledger->retryHeadroomForItem($item->id, 'rate_limit'));
     }
 
     public function test_open_retry_window_is_detected_regardless_of_call_status_and_clears_once_retry_at_passes(): void

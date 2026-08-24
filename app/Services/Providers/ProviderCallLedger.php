@@ -16,6 +16,16 @@ final class ProviderCallLedger
 
     private const MAX_UNITS = 9999999999.99;
 
+    /**
+     * Provider-capacity error codes eligible for a manual operator re-arm
+     * (attempt_count reset) once every matching call is budget-exhausted.
+     * Deliberately excludes `provider_call_not_replayable` — see plan
+     * Non-Goals: it's a state-machine-violation code, not a capacity error.
+     *
+     * @var list<string>
+     */
+    private const MANUAL_REARM_CODES = ['usage_limit', 'rate_limit', 'provider_unavailable'];
+
     /** @var list<int> */
     private const RETRY_BACKOFF_SECONDS = [30, 120, 600, 1800];
 
@@ -252,7 +262,7 @@ final class ProviderCallLedger
             return 0;
         }
 
-        return DB::transaction(function () use ($itemId, $allowedCodes): int {
+        return DB::transaction(function () use ($itemId, $allowedCodes, $itemErrorCode): int {
             $calls = ProviderCall::query()
                 ->where('prospect_batch_item_id', $itemId)
                 ->where('status', 'failed')
@@ -264,20 +274,24 @@ final class ProviderCallLedger
                     true,
                 ));
 
-            if ($calls->isNotEmpty() && $calls->every(fn (ProviderCall $call): bool => $call->attempt_count >= self::MAX_ATTEMPTS)) {
+            $allMaxed = $calls->isNotEmpty() && $calls->every(fn (ProviderCall $call): bool => $call->attempt_count >= self::MAX_ATTEMPTS);
+            $rearm = $allMaxed && $this->isManuallyReArmable($itemErrorCode);
+
+            if ($allMaxed && ! $rearm) {
                 throw new ProviderRequestException('provider_call_retry_exhausted', false);
             }
 
             $authorized = 0;
             foreach ($calls as $call) {
-                if ($call->attempt_count >= self::MAX_ATTEMPTS) {
+                if (! $rearm && $call->attempt_count >= self::MAX_ATTEMPTS) {
                     continue;
                 }
                 $call->forceFill([
                     'status' => 'retryable',
+                    'attempt_count' => $rearm ? 0 : $call->attempt_count,
                     'metadata' => $this->mergeMetadata($call->metadata ?? [], [
                         'retryable' => true,
-                        'reason' => 'operator_retry_authorized',
+                        'reason' => $rearm ? 'operator_budget_rearm' : 'operator_retry_authorized',
                         'source' => 'manual_review',
                     ]),
                     'retry_at' => now(),
@@ -339,7 +353,20 @@ final class ProviderCallLedger
             return null;
         }
 
-        return (int) $calls->max(fn (ProviderCall $call): int => max(0, self::MAX_ATTEMPTS - $call->attempt_count));
+        $headroom = (int) $calls->max(fn (ProviderCall $call): int => max(0, self::MAX_ATTEMPTS - $call->attempt_count));
+
+        if ($headroom === 0 && $this->isManuallyReArmable($itemErrorCode)) {
+            return self::MAX_ATTEMPTS;
+        }
+
+        return $headroom;
+    }
+
+    private function isManuallyReArmable(string $itemErrorCode): bool
+    {
+        $canonicalCode = $itemErrorCode === 'too_many_requests' ? 'usage_limit' : $itemErrorCode;
+
+        return in_array($canonicalCode, self::MANUAL_REARM_CODES, true);
     }
 
     /** @return list<string> */

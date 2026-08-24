@@ -69,6 +69,20 @@ class ProspectRetryDrainTest extends TestCase
         $this->assertSame(3, $payload['min_attempt_headroom']);
     }
 
+    public function test_preview_counts_an_all_exhausted_transient_item_as_eligible_not_budget_exhausted(): void
+    {
+        $criteria = ProspectCriteria::create(['name' => 'Actif', 'is_active' => true]);
+        $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id, 'prospect_criteria_id' => $criteria->id]);
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'failed', 'error_code' => 'rate_limit']);
+        $this->providerCall($item, 'rate_limit', 4, 'failed');
+
+        $response = $this->actingAs($this->user)->postJson(route('admin.prospect_review.retry_drain.preview'));
+        $payload = $response->assertOk()->json();
+
+        $this->assertSame(1, $payload['eligible_count']);
+        $this->assertSame(0, $payload['skipped']['budget_exhausted']);
+    }
+
     public function test_preview_caps_considered_at_100_but_still_reports_the_true_total(): void
     {
         $batch = ProspectBatch::factory()->create(['created_by' => $this->user->id]);
@@ -347,16 +361,18 @@ class ProspectRetryDrainTest extends TestCase
         // defense-in-depth, not the controller's selection filter: dropping
         // authorizeKnownFailureRetryForItem() on the pending branch would let
         // this attempt-exhausted item re-dispatch straight into
-        // provider_call_not_replayable instead of being skipped.
-        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'pending', 'error_code' => 'usage_limit']);
-        $this->providerCall($item, 'usage_limit', 4, 'failed');
+        // provider_call_not_replayable instead of being skipped. Uses a
+        // permanent (non-re-armable) error code — usage_limit/rate_limit/
+        // provider_unavailable are now manually re-armable when exhausted.
+        $item = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'pending', 'error_code' => 'pagination_error']);
+        $this->providerCall($item, 'pagination_error', 4, 'failed');
 
         (new DrainRetryableProspectItemsJob([$item->id], 'pending-budget-token', $this->user->id))
             ->handle(app(ProspectBatchService::class), app(ProviderCallLedger::class));
 
         Queue::assertNothingPushed();
         $this->assertSame('pending', $item->fresh()->status);
-        $this->assertSame('usage_limit', $item->fresh()->error_code);
+        $this->assertSame('pagination_error', $item->fresh()->error_code);
 
         $result = Cache::get(DrainRetryableProspectItemsJob::cacheKeyFor('pending-budget-token'));
         $this->assertTrue($result['terminal']);
@@ -397,8 +413,11 @@ class ProspectRetryDrainTest extends TestCase
         $windowOpen = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'failed', 'error_code' => 'usage_limit']);
         $this->providerCall($windowOpen, 'usage_limit', 1, 'retryable', now()->addMinutes(10));
 
-        $budgetExhausted = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'failed', 'error_code' => 'usage_limit']);
-        $this->providerCall($budgetExhausted, 'usage_limit', 4, 'failed');
+        // Permanent (non-re-armable) error code: usage_limit/rate_limit/provider_unavailable
+        // are now manually re-armable when fully exhausted, so this fixture
+        // uses pagination_error to keep exercising the genuine-exhaustion path.
+        $budgetExhausted = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'failed', 'error_code' => 'pagination_error']);
+        $this->providerCall($budgetExhausted, 'pagination_error', 4, 'failed');
 
         $uncertain = ProspectBatchItem::factory()->for($batch, 'batch')->create(['status' => 'failed', 'error_code' => 'provider_outcome_uncertain']);
 
