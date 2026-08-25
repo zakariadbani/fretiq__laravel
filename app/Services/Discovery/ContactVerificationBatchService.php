@@ -7,9 +7,14 @@ namespace App\Services\Discovery;
 use App\Jobs\StartContactEmailVerificationJob;
 use App\Models\Contact;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Log;
 
 final class ContactVerificationBatchService
 {
+    public function __construct(
+        private readonly EmailVerificationSettings $settings,
+    ) {}
+
     /** @return array{eligible:int,estimated_cost:float,unit_cost:float,exclusions:array<string,int>} */
     public function estimate(): array
     {
@@ -46,6 +51,12 @@ final class ContactVerificationBatchService
 
     public function enqueue(): int
     {
+        if (! $this->settings->enabled()) {
+            Log::channel('discovery')->info('[ContactVerificationBatchService] Batch enqueue skipped: email verification is disabled.');
+
+            return 0;
+        }
+
         $count = 0;
         $this->eligibleQuery()->select(['id', 'email'])->orderBy('id')->chunkById(250, function ($contacts) use (&$count): void {
             foreach ($contacts as $contact) {

@@ -8,7 +8,9 @@ use App\Models\Suppression;
 use App\Services\Providers\Hunter\HunterClient;
 use App\Services\Providers\ProviderCallContext;
 use App\Services\Providers\ProviderCallLedger;
+use App\Services\Providers\ProviderRequestException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use DomainException;
 use InvalidArgumentException;
@@ -57,7 +59,40 @@ final class ContactVerificationService
         }
 
         $contact = Contact::query()->findOrFail($contactId);
-        $execution = $this->hunter->emailVerifier($this->context($key), strtolower(trim((string) $contact->email)));
+
+        try {
+            $execution = $this->hunter->emailVerifier($this->context($key), strtolower(trim((string) $contact->email)));
+        } catch (ProviderRequestException $exception) {
+            if ($exception->safeCode !== 'provider_call_not_replayable') {
+                throw $exception;
+            }
+
+            // The ledger row for this idempotency key is stuck in a terminal
+            // non-replayable state (e.g. previously exhausted/failed). settleUnknown()
+            // can't be reused here — it settles a live ProviderExecution and this
+            // path has none. Stamp the contact directly so it drops out of
+            // eligibleQuery() and the drain stops re-enqueuing it forever.
+            Log::channel('discovery')->warning('[ContactVerificationService] Provider call not replayable; stamping contact unknown to break the re-enqueue loop.', [
+                'contact_id' => $contactId,
+                'idempotency_key' => $key,
+            ]);
+
+            return DB::transaction(function () use ($contactId): Contact {
+                $locked = Contact::query()->lockForUpdate()->findOrFail($contactId);
+                if (filled($locked->email_verification_status) || $locked->email_verification_checked_at !== null) {
+                    // Real evidence landed while this call was in flight (e.g. an
+                    // operator force-recheck). Don't clobber it with a fabricated result.
+                    return $locked;
+                }
+                $locked->forceFill([
+                    'email_verification_status' => 'unknown',
+                    'email_verification_source' => 'hunter_unreplayable',
+                    'email_verification_checked_at' => now(),
+                ])->save();
+
+                return $locked->fresh() ?? $locked;
+            });
+        }
 
         if ($execution->replayed) {
             return $contact->fresh() ?? $contact;

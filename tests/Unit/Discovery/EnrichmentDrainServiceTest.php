@@ -9,6 +9,7 @@ use App\Models\Company;
 use App\Models\Contact;
 use App\Services\Discovery\CompanyEnrichmentService;
 use App\Services\Discovery\ContactVerificationBatchService;
+use App\Services\Discovery\EmailVerificationSettings;
 use App\Services\Discovery\EnrichmentDrainService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
@@ -29,7 +30,7 @@ class EnrichmentDrainServiceTest extends TestCase
     private function service(CompanyEnrichmentService $enrichment): EnrichmentDrainService
     {
         // Real verification batch is harmless: no test here calls drainContacts().
-        return new EnrichmentDrainService($enrichment, new ContactVerificationBatchService);
+        return new EnrichmentDrainService($enrichment, new ContactVerificationBatchService(new EmailVerificationSettings));
     }
 
     private function enriched(): array

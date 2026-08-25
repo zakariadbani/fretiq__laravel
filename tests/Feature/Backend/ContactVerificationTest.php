@@ -215,6 +215,57 @@ class ContactVerificationTest extends TestCase
         $this->assertDatabaseHas('provider_calls', ['id' => $call->id, 'status' => 'succeeded']);
     }
 
+    public function test_terminally_failed_provider_call_stamps_contact_unknown(): void
+    {
+        $this->user->givePermissionTo('verify contacts');
+        Http::preventStrayRequests();
+
+        $key = hash('sha256', sprintf(
+            'contact-email-verifier:v1:%d:%s:%s',
+            $this->contact->id,
+            hash('sha256', strtolower(trim((string) $this->contact->email))),
+            'never',
+        ));
+        ProviderCall::create([
+            'provider' => 'hunter',
+            'operation' => 'email_verifier',
+            'engine' => 'email_verifier',
+            'idempotency_key' => $key,
+            'status' => 'failed',
+            'reserved_units' => round((float) config('prospecting.provider_units.hunter.email_verifier', 0.5), 2),
+            'attempt_count' => 4,
+            'started_at' => now(),
+            'finished_at' => now(),
+        ]);
+
+        $this->actingAs($this->user)
+            ->post(route('admin.contacts.verify-email', $this->contact), [
+                'confirm_provider_cost' => '1',
+            ])
+            ->assertRedirect(route('admin.contacts.view', $this->contact));
+
+        $this->assertDatabaseHas('contacts', [
+            'id' => $this->contact->id,
+            'email_verification_status' => 'unknown',
+            'email_verification_source' => 'hunter_unreplayable',
+        ]);
+        $this->assertNotNull($this->contact->fresh()->email_verification_checked_at);
+        $this->assertSame(1, ProviderCall::count());
+        $this->assertDatabaseHas('provider_calls', ['id' => ProviderCall::query()->sole()->id, 'status' => 'failed']);
+        Http::assertNothingSent();
+
+        // Re-verify: contact now has evidence, so verify() short-circuits before
+        // ever touching the (still-terminal) ledger row again — no exception.
+        $this->actingAs($this->user)
+            ->post(route('admin.contacts.verify-email', $this->contact), [
+                'confirm_provider_cost' => '1',
+            ])
+            ->assertRedirect(route('admin.contacts.view', $this->contact))
+            ->assertSessionHas('success');
+        $this->assertSame(1, ProviderCall::count());
+        Http::assertNothingSent();
+    }
+
     public function test_contact_view_exposes_only_the_unified_state_not_provider_evidence(): void
     {
         Permission::findOrCreate('view contacts', 'web');
