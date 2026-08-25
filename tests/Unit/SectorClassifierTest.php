@@ -109,4 +109,30 @@ class SectorClassifierTest extends TestCase
             'genuine telecom information still maps to telecom' => ["Services d'information", 'Télécommunications & Médias'],
         ];
     }
+
+    /**
+     * @dataProvider newRulesProvider
+     */
+    public function test_new_sector_rules(string $raw, ?string $expected): void
+    {
+        $this->assertSame($expected, SectorClassifier::canonical($raw));
+    }
+
+    public static function newRulesProvider(): array
+    {
+        return [
+            'aciériste maps to btp materiaux' => ['Aciériste', 'BTP & Matériaux'],
+            'caviste maps to vins spiritueux' => ['Caviste', 'Vins & Spiritueux'],
+            'usine textile maps to textile habillement' => ['Usine textile', 'Textile & Habillement'],
+            'ecole de pilotage maps to aeronautique' => ['École de pilotage', 'Aéronautique'],
+            'electric utilities maps to energie' => ['Electric Utilities', 'Énergie'],
+            'epicier en gros maps to agroalimentaire' => ['Épicier en gros', 'Agroalimentaire'],
+            'epicerie maps to commerce detail' => ['Épicerie', 'Commerce de détail'],
+            'assistance informatique maps to informatique' => ['Assistance et services informatiques', 'Informatique'],
+            'aeroport international maps to aeronautique' => ['Aéroport international', 'Aéronautique'],
+            // Regression trap: bare "aeroport" is NOT a rule (only "aeroport international" is) —
+            // this must stay Transport & Logistique via "navette", never get pulled into Aéronautique.
+            'navette aeroport is transport not aeronautique' => ['Service de navette aéroport', 'Transport & Logistique'],
+        ];
+    }
 }

@@ -571,9 +571,11 @@ return [
         // rule further down, else "Information Technology and Services" (a common
         // Hunter/Clearbit industry value) is misclassified as Télécommunications & Médias.
         'internet|software|\bit services\b|information technology' => 'Informatique',
+        '\binformatique' => 'Informatique',
 
         // ── Aéronautique ──
         'aerospace|aeronautique|defense' => 'Aéronautique',
+        'aviation|pilotage|aeroport international|aerien|helicoptere' => 'Aéronautique',
 
         // ── Traitement des eaux (specific first; \beaux?\b also catches "l'eau" via the apostrophe word-break) ──
         'adoucissement' => 'Traitement des eaux',
@@ -595,6 +597,7 @@ return [
         // ── Santé & Services médicaux (providers/services). Stem is "medic", NOT "medical" — "médicaux" folds to "medicaux" (regression trap) ──
         'health care' => 'Santé & Services médicaux',
         'medic' => 'Santé & Services médicaux',
+        '\bsante\b' => 'Santé & Services médicaux',
 
         // ── Dentaire (before cosmétique — "Dentiste cosmétique" must land here, not Cosmétique) ──
         'dent' => 'Dentaire',
@@ -618,9 +621,11 @@ return [
 
         // ── Emballage ──
         'packaging|containers|emballage' => 'Emballage',
+        'imprim' => 'Emballage',
 
         // ── Électroménager (before Électronique & High-tech) ──
         'electromenager' => 'Électroménager',
+        'household durables' => 'Électroménager',
 
         // ── Électronique & High-tech ──
         'electronique|electrique|technology hardware' => 'Électronique & High-tech',
@@ -644,28 +649,41 @@ return [
         // "materiel industriel"; must precede the bare "equipement" fallback further down.
         'materiel industriel' => 'Machines & Équipements industriels',
         'chaudronnerie|machinery|capital goods' => 'Machines & Équipements industriels',
+        'mecanique|usinage|ferronnerie|compresseur|roulement|materiel agricole|engins? de chantier|\bmachines?\b' => 'Machines & Équipements industriels',
 
         // ── Industrie manufacturière ──
         'industrial conglomerates' => 'Industrie manufacturière',
+        'moulage|papier' => 'Industrie manufacturière',
 
         // ── BTP & Matériaux (word-bound bois/wood — regression trap) ──
         'building materials|construction|travaux|terrassement|materiaux' => 'BTP & Matériaux',
         '\bbois\b|\bwood\b' => 'BTP & Matériaux',
+        'aluminium|\bacier|\bbeton|ciment|\bmarbre|menuis' => 'BTP & Matériaux',
 
         // ── Énergie (word-bound gas — bare "gas" would match inside "magasin", regression trap) ──
         '\bgas\b|energetique|energie' => 'Énergie',
+        'electric utilities' => 'Énergie',
 
         // ── Grande distribution vs Agroalimentaire — "food" is retail OR product, disambiguate before the bare word-bound rule ──
         'food & staples retailing|food.*retail' => 'Grande distribution',
         '\bfood\b|surgele|agroalimentaire' => 'Agroalimentaire',
+        'aliment|boisson|epicier|agriculteur' => 'Agroalimentaire',
+
+        // ── Textile & Habillement ──
+        'textile|tissus|coton|chaussures|vetements|apparel|habillement' => 'Textile & Habillement',
+
+        // ── Vins & Spiritueux ──
+        'vinicole|\bvins?\b|caviste|vignoble' => 'Vins & Spiritueux',
 
         // ── Négoce & Distribution ──
         'import-export|importateur|distributors|distribution' => 'Négoce & Distribution',
         'vendeur en gros' => 'Négoce & Distribution',
         'grossiste' => 'Négoce & Distribution',
+        'nettoyage|palette|produits? plastiques?' => 'Négoce & Distribution',
 
         // ── Commerce de détail ──
         '\bretailing\b' => 'Commerce de détail',
+        'superette|supermarche|epicerie|depot-vente' => 'Commerce de détail',
 
         // ── Immobilier ──
         'immobil|real estate' => 'Immobilier',
@@ -680,9 +698,11 @@ return [
 
         // ── Services professionnels ──
         'consultant|ingenierie|consumer services|professional services' => 'Services professionnels',
+        'securite|reparation|conseil|emploi|services aux entreprises|commercial services' => 'Services professionnels',
 
         // ── Transport & Logistique ──
         'transport|logistiq|freight|livraison|entrepot|road.*rail' => 'Transport & Logistique',
+        'taxi|navette|chauffeur|autobus|bagages|voyage' => 'Transport & Logistique',
 
         // ── Bare fallbacks — MUST stay last: every specific rule above must get first crack ──
         // ponytail: "equipement"/"fabricant" bare are real-but-vague signals classified to
