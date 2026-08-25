@@ -40,7 +40,7 @@
                 @can('create campaign_templates')
                 <a href="{{ route('admin.campaign_templates.import_form') }}" class="btn btn-light-primary">
                     <i class="bi bi-upload fs-2"></i>
-                    Importer HTML
+                    Importer HTML/JSON
                 </a>
                 @endcan
 

@@ -393,7 +393,7 @@ class TclFamilleSequenceSeeder extends Seeder
     {
         return [
             'Famille 1 — Email 1 (J0) — Maîtrise de la contrainte' => [
-                'subject' => 'Secure your sensitive imports from Europe — {{company.name}}',
+                'subject' => 'Europe → Morocco: secure your import flows without delay',
                 'preview_text' => 'Critical deadlines, sensitive goods and compliance: dedicated handling.',
                 'html_content' => <<<HTML
 <p>Hello {{contact.first_name}},</p>
@@ -440,7 +440,7 @@ The TCL Transport team</p>
 HTML,
             ],
             'Famille 1 — Email 3 (J+9) — Contenu expert' => [
-                'subject' => 'What is changing in import customs controls',
+                'subject' => 'Morocco import customs: what is changing for your flows',
                 'preview_text' => 'A compliance checklist to help prevent customs holds.',
                 'html_content' => <<<HTML
 <p>Hello {{contact.first_name}},</p>
@@ -460,7 +460,7 @@ The TCL Transport team</p>
 HTML,
             ],
             'Famille 1 — Email 4 (J+15) — CTA direct' => [
-                'subject' => 'A complimentary review of your supply chain?',
+                'subject' => 'A complimentary review of your Europe → Morocco supply chain?',
                 'preview_text' => 'A no-obligation 20-minute outside view of your logistics flows.',
                 'html_content' => <<<HTML
 <p>Hello {{contact.first_name}},</p>
@@ -481,7 +481,7 @@ The TCL Transport team</p>
 HTML,
             ],
             'Famille 2 — Email 1 (J0) — Angle coût' => [
-                'subject' => 'Optimise the cost of your Europe–Morocco flows',
+                'subject' => 'Optimise your regular Europe → Morocco flows',
                 'preview_text' => 'Regular road groupage from Goussainville, Barcelona and Porto.',
                 'html_content' => <<<HTML
 <p>Hello {{contact.first_name}},</p>
@@ -542,7 +542,7 @@ The TCL Transport team</p>
 HTML,
             ],
             'Famille 2 — Email 4 (J+15) — Offre tarifaire' => [
-                'subject' => 'A complimentary rate simulation for {{company.name}}',
+                'subject' => 'A rate simulation for your Europe → Morocco flows',
                 'preview_text' => 'A no-obligation cost simulation within 48 hours.',
                 'html_content' => <<<HTML
 <p>Hello {{contact.first_name}},</p>
@@ -564,7 +564,7 @@ The TCL Transport team</p>
 HTML,
             ],
             'Famille 3 — Email 1 (J0) — Gestion de projet' => [
-                'subject' => 'Keep project deadlines on track without logistics surprises',
+                'subject' => 'Europe → Morocco projects: deadlines kept, no surprises',
                 'preview_text' => 'Sourcing, transport, customs and delivery aligned with your schedule.',
                 'html_content' => <<<HTML
 <p>Hello {{contact.first_name}},</p>
@@ -655,7 +655,7 @@ HTML,
         return [
             [
                 'name'         => 'Famille 1 — Email 1 (J0) — Maîtrise de la contrainte',
-                'subject'      => '{{company.name}} — Sécuriser vos flux sans compromis sur les délais',
+                'subject'      => 'Europe → Maroc : sécuriser vos flux import sans retard',
                 'preview_text' => 'Découvrez comment TCL Transport sécurise vos flux logistiques critiques et garantit le respect de vos délais.',
                 'html_content' => <<<HTML
 <p>Bonjour {{contact.first_name}},</p>
@@ -710,7 +710,7 @@ HTML,
             ],
             [
                 'name'         => 'Famille 1 — Email 3 (J+9) — Contenu expert',
-                'subject'      => 'Ce qui change sur les contrôles douaniers à l\'import',
+                'subject'      => 'Douane import Maroc : ce qui change pour vos flux',
                 'preview_text' => 'Une checklist de conformité pour éviter les blocages en douane.',
                 'html_content' => <<<HTML
 <p>Bonjour {{contact.first_name}},</p>
@@ -734,7 +734,7 @@ HTML,
             ],
             [
                 'name'         => 'Famille 1 — Email 4 (J+15) — CTA direct',
-                'subject'      => 'Un diagnostic gratuit de votre chaîne logistique ?',
+                'subject'      => 'Un diagnostic offert de votre chaîne Europe → Maroc ?',
                 'preview_text' => '20 minutes, sans engagement, pour un regard extérieur sur vos flux.',
                 'html_content' => <<<HTML
 <p>Bonjour {{contact.first_name}},</p>
@@ -773,7 +773,7 @@ HTML,
         return [
             [
                 'name'         => 'Famille 2 — Email 1 (J0) — Angle coût',
-                'subject'      => 'Optimiser le coût de vos flux Europe – Maroc',
+                'subject'      => 'Optimiser vos flux réguliers Europe → Maroc',
                 'preview_text' => 'Groupage routier régulier depuis Goussainville, Barcelone et Porto.',
                 'html_content' => <<<HTML
 <p>Bonjour {{contact.first_name}},</p>
@@ -844,7 +844,7 @@ HTML,
             ],
             [
                 'name'         => 'Famille 2 — Email 4 (J+15) — Offre tarifaire',
-                'subject'      => 'Une simulation tarifaire gratuite pour {{company.name}}',
+                'subject'      => 'Une simulation tarifaire pour vos flux Europe → Maroc',
                 'preview_text' => 'Une simulation de coût sous 48h, sans engagement.',
                 'html_content' => <<<HTML
 <p>Bonjour {{contact.first_name}},</p>
@@ -882,7 +882,7 @@ HTML,
         return [
             [
                 'name'         => 'Famille 3 — Email 1 (J0) — Gestion de projet',
-                'subject'      => 'Tenir vos délais projet sans imprévu logistique',
+                'subject'      => 'Projets Europe → Maroc : tenir vos délais sans imprévu',
                 'preview_text' => 'Sourcing, transport, douane et livraison calés sur votre planning.',
                 'html_content' => <<<HTML
 <p>Bonjour {{contact.first_name}},</p>

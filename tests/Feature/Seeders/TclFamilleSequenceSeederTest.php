@@ -101,7 +101,7 @@ class TclFamilleSequenceSeederTest extends TestCase
         }
 
         $first = $templates->firstWhere('name', 'Famille 1 — Email 1 (J0) — Maîtrise de la contrainte');
-        $this->assertSame('Secure your sensitive imports from Europe — {{company.name}}', $first->translationFor('en')->subject);
+        $this->assertSame('Europe → Morocco: secure your import flows without delay', $first->translationFor('en')->subject);
         $this->assertStringContainsString('IATA agent', $first->translationFor('en')->html_content);
 
         $last = $templates->firstWhere('name', 'Famille 3 — Email 4 (J+15) — CTA planning');
