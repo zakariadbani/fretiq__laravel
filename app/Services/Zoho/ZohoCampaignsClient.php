@@ -328,6 +328,19 @@ class ZohoCampaignsClient
                 'fromindex' => $fromIndex,
                 'range' => $range,
             ]);
+
+            // Zoho returns API-level code 2502 ("no subscribers") instead of an
+            // empty list — both for a genuinely empty list (first page) and for
+            // the page right after the last full page (e.g. exactly 200
+            // members). Treat it as end-of-pagination, not a failure: return
+            // whatever was already accumulated instead of throwing and losing
+            // prior pages. Checked before assertZohoSuccess so other endpoints'
+            // handling of 2502 (if any) is untouched.
+            $rawPayload = $response->json() ?? [];
+            if (! $response->failed() && (string) ($rawPayload['code'] ?? '') === '2502') {
+                break;
+            }
+
             $payload = $this->assertZohoSuccess($response, 'listRecipientEmails');
             $details = $payload['list_of_details'] ?? [];
             if (! is_array($details)) {
@@ -522,13 +535,11 @@ class ZohoCampaignsClient
                 'campaignkey' => $campaignKey,
             ]);
 
-        if ($response->failed()) {
-            throw new \RuntimeException(
-                '[ZohoCampaignsClient] sendCampaign échoué (HTTP ' . $response->status() . '): ' . ApiLog::excerpt($response->body(), 300)
-            );
-        }
-
-        $payload = $response->json() ?? [];
+        // Zoho can return HTTP 200 with an API-level error payload (e.g. code 6606
+        // "email not verified"). Validate the body's code, not just the transport
+        // status, so an API-level rejection never gets treated as a successful
+        // send by the caller.
+        $payload = $this->assertZohoSuccess($response, 'sendCampaign', ['0', '200']);
 
         Log::channel('zoho')->info('[ZohoCampaignsClient] sendCampaign', [
             'campaign_key' => $campaignKey,

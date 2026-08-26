@@ -154,8 +154,14 @@ class SequenceWaveService
         }
 
         $audienceChanged = $contacts->count() !== $queuedBefore;
+        // Broadened beyond the reused/synced happy path so a failed/pending run that
+        // still carries a list key gets its membership re-verified too — with fix 1a,
+        // an emptied Zoho list now round-trips as [] instead of throwing, so this is
+        // what actually reaches the re-sync branch below instead of wedging forever.
+        // Ambiguous states are excluded: zoho-send-uncertain throws above (:125-127)
+        // and zoho-send-attempted is handled via $sendAlreadyAttempted.
         if (! $audienceChanged
-            && in_array($run->driver_ref, ['zoho-wave-reused', 'zoho-wave-synced'], true)
+            && in_array($run->driver_ref, ['zoho-wave-reused', 'zoho-wave-synced', 'zoho-wave-pending', 'zoho-wave-failed', 'zoho-send-failed'], true)
             && $run->zoho_list_key) {
             $normalize = fn ($emails): array => collect($emails)
                 ->map(fn ($email): string => mb_strtolower(trim((string) $email)))

@@ -143,12 +143,28 @@ class CampaignRun extends Model
      * one. This is NOT a lifetime invariant — SequenceWaveService:112-117 deliberately
      * nulls the key when the audience shifted. The real at-most-once send guards live at
      * ZohoCampaignsDriver:332-347.
+     *
+     * driver_ref is excluded/allowed explicitly rather than keyed off zoho_campaign_key
+     * alone: 'zoho-send-attempted' / 'zoho-send-uncertain' mean Zoho may already have the
+     * send in flight — ambiguous, never resync even with a blank key. Conversely a
+     * persisted zoho_campaign_key is still resyncable when driver_ref proves the prior
+     * attempt failed before/at send ('zoho-wave-failed', 'zoho-send-failed') or never
+     * finished syncing ('zoho-wave-pending') — that's the wedge this predicate exists to
+     * unblock: a failed send with a stale key otherwise locks the wave forever.
      */
     public function canResyncZohoWave(): bool
     {
-        return in_array($this->status, ['prepared', 'failed'], true)
-            && blank($this->zoho_campaign_key)
-            && str_starts_with((string) $this->occurrence_key, 'sequence-wave-');
+        if (! in_array($this->status, ['prepared', 'failed'], true)
+            || ! str_starts_with((string) $this->occurrence_key, 'sequence-wave-')) {
+            return false;
+        }
+
+        if (in_array($this->driver_ref, ['zoho-send-attempted', 'zoho-send-uncertain'], true)) {
+            return false;
+        }
+
+        return blank($this->zoho_campaign_key)
+            || in_array($this->driver_ref, ['zoho-wave-failed', 'zoho-send-failed', 'zoho-wave-pending'], true);
     }
 
     /** @param Builder<CampaignRun> $query */

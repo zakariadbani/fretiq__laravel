@@ -1771,7 +1771,12 @@ class CampaignController extends BackendController
             'Cette vague Zoho ne peut pas être relancée automatiquement.'
         );
 
-        filled($run->zoho_list_key)
+        // A recoverable failure/pending ref means the last sync/send attempt never
+        // proved success — re-sync even when zoho_list_key is still filled, since
+        // that key may point at a list Zoho emptied or never fully populated.
+        $needsResync = in_array($run->driver_ref, ['zoho-wave-failed', 'zoho-send-failed', 'zoho-wave-pending'], true);
+
+        (filled($run->zoho_list_key) && ! $needsResync)
             ? SendSequenceWaveStepJob::dispatch($run->id)
             : SyncCampaignWaveZohoListJob::dispatch($run->id);
 

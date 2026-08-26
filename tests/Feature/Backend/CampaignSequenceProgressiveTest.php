@@ -1404,6 +1404,49 @@ class CampaignSequenceProgressiveTest extends TestCase
         Queue::assertPushed(SyncCampaignWaveZohoListJob::class, fn ($job) => $job->runId === $run->id);
     }
 
+    public function test_failed_zoho_wave_retry_resyncs_even_with_filled_list_key(): void
+    {
+        // A recoverable driver_ref (zoho-wave-failed / zoho-send-failed / zoho-wave-pending)
+        // must route to SyncCampaignWaveZohoListJob even when zoho_list_key is already
+        // filled — that key may point at a list Zoho silently emptied. Only a non-recoverable
+        // ref with a filled key should short-circuit straight to SendSequenceWaveStepJob.
+        config(['services.zoho.driver' => 'zoho']);
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
+        $contact = $this->contact($this->company(50));
+        SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $contact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+        ]);
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $sequence->steps()->firstOrFail()->id,
+            'occurrence_key' => 'sequence-wave-000001',
+            'run_at' => now()->subMinute(),
+            'status' => 'failed',
+            'driver_ref' => 'zoho-wave-failed',
+            'zoho_list_key' => 'stale-list-key',
+            'failure_reason' => 'invalid contact email',
+        ]);
+        CampaignRecipient::create([
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'queued',
+        ]);
+        $admin = User::factory()->create(['email_verified_at' => now()]);
+        $admin->assignRole('superadmin');
+
+        $this->actingAs($admin)
+            ->post(route('admin.campaigns.retryZohoWave', [$campaign->id, $run->id]))
+            ->assertRedirect(route('admin.campaigns.view', $campaign->id) . "?wave_id={$run->id}#campaign_vagues")
+            ->assertSessionHas('success');
+
+        Queue::assertPushed(SyncCampaignWaveZohoListJob::class, fn ($job) => $job->runId === $run->id);
+        Queue::assertNotPushed(SendSequenceWaveStepJob::class);
+    }
+
     public function test_failed_zoho_wave_retry_requires_send_campaigns_permission(): void
     {
         $campaign = $this->campaign($this->segment(), $this->sequence());
@@ -1424,8 +1467,11 @@ class CampaignSequenceProgressiveTest extends TestCase
         Queue::assertNotPushed(SyncCampaignWaveZohoListJob::class);
     }
 
-    public function test_wave_sync_job_ignores_stale_retry_after_zoho_campaign_creation(): void
+    public function test_wave_sync_job_resyncs_recoverable_failure_even_with_persisted_campaign_key(): void
     {
+        // Recoverable driver_ref (proven pre-send failure, not an in-flight/ambiguous
+        // send) must resync even though a stale zoho_campaign_key is still persisted —
+        // that stale key is exactly the wedge fix 2 exists to unblock.
         config(['services.zoho.driver' => 'zoho']);
         $campaign = $this->campaign($this->segment(), $this->sequence());
         $run = CampaignRun::create([
@@ -1435,6 +1481,25 @@ class CampaignSequenceProgressiveTest extends TestCase
             'status' => 'failed',
             'driver_ref' => 'zoho-wave-failed',
             'zoho_campaign_key' => 'already-created',
+        ]);
+        $service = $this->mock(CampaignWaveZohoListSyncService::class, fn (MockInterface $mock) => $mock->shouldReceive('sync')->once());
+
+        (new SyncCampaignWaveZohoListJob($run->id))->handle($service);
+    }
+
+    public function test_wave_sync_job_ignores_ambiguous_send_attempted_state_even_with_blank_key(): void
+    {
+        // zoho-send-attempted means Zoho may already have the send in flight — an
+        // ambiguous state that must never resync, even with a blank campaign key.
+        config(['services.zoho.driver' => 'zoho']);
+        $campaign = $this->campaign($this->segment(), $this->sequence());
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'sequence-wave-000001',
+            'run_at' => now()->subMinute(),
+            'status' => 'failed',
+            'driver_ref' => 'zoho-send-attempted',
+            'zoho_campaign_key' => null,
         ]);
         $service = $this->mock(CampaignWaveZohoListSyncService::class, fn (MockInterface $mock) => $mock->shouldNotReceive('sync'));
 
@@ -1531,7 +1596,11 @@ class CampaignSequenceProgressiveTest extends TestCase
         $attempts = 0;
         $retryClient->shouldReceive('sendCampaign')->twice()->andReturnUsing(function () use (&$attempts): array {
             if (++$attempts === 1) {
-                throw new \RuntimeException('sendCampaign échoué (HTTP 400): rejected');
+                // A parsed API-level rejection body (Zoho HTTP 200 + bad code, e.g.
+                // 6606) is the only outcome classified as a definite pre-send
+                // rejection — an HTTP-level failure (4xx/5xx) is ambiguous instead
+                // (see the uncertain case below and fix 1c).
+                throw new \RuntimeException('[ZohoCampaignsClient] sendCampaign erreur API Zoho : code 6606 - Email is not verified');
             }
             return [];
         });
@@ -1598,8 +1667,11 @@ class CampaignSequenceProgressiveTest extends TestCase
                 ['campaign_key' => 'zoho-step-2'],
             );
         });
+        // Called twice: once for $first (driver_ref zoho-wave-pending, fix 4 broadened
+        // gate re-verifies membership even before a resync-triggered send) and once for
+        // $child (zoho-wave-reused) — both against the same reused list key.
         $this->mock(ZohoRecipientListGateway::class, fn (MockInterface $mock) => $mock
-            ->shouldReceive('listEmails')->once()->with('list-step-1')->andReturn([$contact->email]));
+            ->shouldReceive('listEmails')->twice()->with('list-step-1')->andReturn([$contact->email]));
 
         $service = app(SequenceWaveService::class);
         $service->send($first);
@@ -1649,7 +1721,7 @@ class CampaignSequenceProgressiveTest extends TestCase
             'template_id' => $template->id,
             'subject' => 'Etape 2',
         ]);
-        $this->contact($this->company(50));
+        $contact = $this->contact($this->company(50));
         $campaign = $this->campaign($segment, $sequence, [
             'next_run_at' => '2026-07-24 07:00:00', // 09:00 Europe/Paris (CEST).
             'timezone' => 'Europe/Paris',
@@ -1663,6 +1735,11 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->mock(ZohoCampaignsDriver::class, function (MockInterface $mock): void {
             $mock->shouldReceive('dispatchRun')->once()->andReturn(['campaign_key' => 'zoho-step-1']);
         });
+        // driver_ref is still the default zoho-wave-pending from activate() — fix 4's
+        // broadened gate re-verifies membership against the manually-set list key
+        // before dispatch, so the (unmocked-by-default) gateway must be stubbed.
+        $this->mock(ZohoRecipientListGateway::class, fn (MockInterface $mock) => $mock
+            ->shouldReceive('listEmails')->once()->with('list-step-1')->andReturn([$contact->email]));
 
         app(SequenceWaveService::class)->send($first);
 
@@ -1703,7 +1780,7 @@ class CampaignSequenceProgressiveTest extends TestCase
             'template_id' => $template->id,
             'subject' => 'Etape 2',
         ]);
-        $this->contact($this->company(50));
+        $contact = $this->contact($this->company(50));
         $campaign = $this->campaign($segment, $sequence, [
             'next_run_at' => '2026-07-24 09:00:00',
             'timezone' => 'UTC',
@@ -1720,6 +1797,11 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->mock(ZohoCampaignsDriver::class, function (MockInterface $mock): void {
             $mock->shouldReceive('dispatchRun')->once()->andReturn(['campaign_key' => 'zoho-step-1']);
         });
+        // driver_ref is still the default zoho-wave-pending from activate() — fix 4's
+        // broadened gate re-verifies membership against the manually-set list key
+        // before dispatch, so the (unmocked-by-default) gateway must be stubbed.
+        $this->mock(ZohoRecipientListGateway::class, fn (MockInterface $mock) => $mock
+            ->shouldReceive('listEmails')->once()->with('list-step-1')->andReturn([$contact->email]));
 
         app(SequenceWaveService::class)->send($first);
 
@@ -1749,8 +1831,8 @@ class CampaignSequenceProgressiveTest extends TestCase
         $sequence = $this->sequence();
         $companyA = $this->company(50);
         $companyB = $this->company(60);
-        $this->contact($companyA);
-        $this->contact($companyB);
+        $contactA = $this->contact($companyA);
+        $contactB = $this->contact($companyB);
         $campaign = $this->campaign($segment, $sequence, ['next_run_at' => '2026-07-21 08:00:00']);
         app(PacedSequenceEnrollmentService::class)->activate($campaign, Carbon::parse('2026-07-21 09:00:00', 'UTC'));
         $run = CampaignRun::where('campaign_id', $campaign->id)->where('occurrence_key', 'sequence-wave-000001')->firstOrFail();
@@ -1759,6 +1841,11 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->mock(ZohoCampaignsDriver::class, function (MockInterface $mock): void {
             $mock->shouldReceive('dispatchRun')->once()->andReturn(['campaign_key' => 'zoho-shared-key']);
         });
+        // driver_ref is still the default zoho-wave-pending from activate() — fix 4's
+        // broadened gate re-verifies membership against the manually-set list key
+        // before dispatch, so the (unmocked-by-default) gateway must be stubbed.
+        $this->mock(ZohoRecipientListGateway::class, fn (MockInterface $mock) => $mock
+            ->shouldReceive('listEmails')->once()->with('list-multi')->andReturn([$contactA->email, $contactB->email]));
 
         app(SequenceWaveService::class)->send($run);
 
@@ -1921,7 +2008,16 @@ class CampaignSequenceProgressiveTest extends TestCase
         ]);
         $contact = $this->contact($this->company(50));
         $oldEmail = $contact->email;
+        // Contact::booted() nulls verification evidence whenever email is dirty
+        // (app/Models/Contact.php:111-117) — restore it so the contact stays
+        // eligible and the test actually reaches the membership-diff branch
+        // instead of falling into the zoho-wave-empty short-circuit.
         $contact->update(['email' => 'changed-' . $contact->id . '@example.test']);
+        $contact->update([
+            'email_verification_status' => 'valid',
+            'email_verification_source' => 'import',
+            'email_verification_checked_at' => now(),
+        ]);
         $campaign = $this->campaign($this->segment(), $sequence);
         SequenceEnrollment::create([
             'sequence_id' => $sequence->id,
@@ -1955,6 +2051,10 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertNull($run->zoho_list_key);
         $this->assertSame('prepared', $run->status);
         $this->assertSame('zoho-wave-pending', $run->driver_ref);
+        // Confirms the run reached the membership-diff branch (mocked listEmails
+        // fired) instead of the zoho-wave-empty short-circuit an ineligible
+        // contact would have triggered.
+        $this->assertNotSame('zoho-wave-empty', $run->driver_ref);
         Queue::assertPushed(SyncCampaignWaveZohoListJob::class, fn ($job) => $job->runId === $run->id);
     }
 
@@ -2001,6 +2101,13 @@ class CampaignSequenceProgressiveTest extends TestCase
         $client->shouldReceive('sendCampaign')->once()->with('new-campaign')->andReturn([]);
         $client->shouldNotReceive('addListSubscribers');
         $this->app->instance(ZohoCampaignsDriver::class, new ZohoCampaignsDriver($client));
+        // driver_ref is still zoho-wave-pending from the first resync above — fix 4's
+        // broadened gate re-verifies membership against the new list key before
+        // dispatch, so the (unmocked-by-default) gateway must be stubbed. Only
+        // $contacts[1] is still eligible (queued); $contacts[0] was suppressed and
+        // marked skipped by the first send() call above.
+        $this->mock(ZohoRecipientListGateway::class, fn (MockInterface $mock) => $mock
+            ->shouldReceive('listEmails')->once()->with('new-list')->andReturn([$contacts[1]->email]));
         $run->update(['zoho_list_key' => 'new-list', 'status' => 'scheduled']);
 
         app(SequenceWaveService::class)->send($run->fresh());
@@ -2034,6 +2141,11 @@ class CampaignSequenceProgressiveTest extends TestCase
         $first->update(['zoho_list_key' => 'step-1-list', 'status' => 'scheduled']);
         $this->mock(ZohoCampaignsDriver::class, fn (MockInterface $mock) => $mock
             ->shouldReceive('dispatchRun')->once()->andReturn(['campaign_key' => 'step-1-key']));
+        // driver_ref is still the default zoho-wave-pending from activate() — fix 4's
+        // broadened gate re-verifies membership against the manually-set list key
+        // before dispatch, so the (unmocked-by-default) gateway must be stubbed.
+        $this->mock(ZohoRecipientListGateway::class, fn (MockInterface $mock) => $mock
+            ->shouldReceive('listEmails')->once()->with('step-1-list')->andReturn([$contact->email]));
         $service = app(SequenceWaveService::class);
         $service->send($first);
         $child = CampaignRun::where('campaign_id', $campaign->id)

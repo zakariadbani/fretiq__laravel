@@ -366,8 +366,15 @@ class ZohoCampaignsDriver implements CampaignsClient
             $this->zohoClient->sendCampaign($campaignKey);
         } catch (\Throwable $exception) {
             $message = $exception->getMessage();
+            // Only a parsed API-level rejection (assertZohoSuccess's "erreur API
+            // Zoho" — an HTTP 200 with an unambiguous bad code/status body, e.g.
+            // 6606) proves Zoho rejected the send pre-delivery. Everything else —
+            // HTTP 4xx/5xx/429 ("(HTTP" message), timeouts, connection errors,
+            // missing/unparseable bodies — is ambiguous: Zoho may have accepted
+            // the send anyway, so it must go to reconciliation, not be finalized
+            // as failed.
             $definiteRejection = str_contains($message, 'sendCampaign')
-                && (str_contains($message, '(HTTP') || str_contains($message, 'erreur API'));
+                && str_contains($message, 'erreur API');
             $run->update(['driver_ref' => $definiteRejection ? 'zoho-send-failed' : 'zoho-send-uncertain']);
             throw $exception;
         }

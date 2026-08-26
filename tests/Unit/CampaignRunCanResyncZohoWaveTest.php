@@ -53,4 +53,43 @@ class CampaignRunCanResyncZohoWaveTest extends TestCase
     {
         $this->assertTrue($this->makeRun(['status' => 'prepared'])->canResyncZohoWave());
     }
+
+    /** @dataProvider recoverableDriverRefsProvider */
+    public function test_recoverable_driver_ref_with_persisted_key_is_resyncable(string $driverRef): void
+    {
+        $run = $this->makeRun([
+            'driver_ref' => $driverRef,
+            'zoho_campaign_key' => 'campaign-existing',
+        ]);
+
+        $this->assertTrue($run->canResyncZohoWave());
+    }
+
+    public static function recoverableDriverRefsProvider(): array
+    {
+        return [
+            'zoho-wave-failed' => ['zoho-wave-failed'],
+            'zoho-send-failed' => ['zoho-send-failed'],
+            'zoho-wave-pending' => ['zoho-wave-pending'],
+        ];
+    }
+
+    /** @dataProvider ambiguousDriverRefsProvider */
+    public function test_ambiguous_driver_ref_with_blank_key_is_not_resyncable(string $driverRef): void
+    {
+        $run = $this->makeRun([
+            'driver_ref' => $driverRef,
+            'zoho_campaign_key' => null,
+        ]);
+
+        $this->assertFalse($run->canResyncZohoWave());
+    }
+
+    public static function ambiguousDriverRefsProvider(): array
+    {
+        return [
+            'zoho-send-attempted' => ['zoho-send-attempted'],
+            'zoho-send-uncertain' => ['zoho-send-uncertain'],
+        ];
+    }
 }

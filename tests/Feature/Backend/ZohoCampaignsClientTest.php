@@ -499,6 +499,53 @@ class ZohoCampaignsClientTest extends TestCase
     }
 
     /**
+     * Zoho reports code 2502 ("no subscribers") instead of an empty page on the
+     * very first call for a genuinely empty list. listRecipientEmails must return
+     * [] rather than throw — that's what lets sync repopulate the list.
+     */
+    public function test_list_recipient_emails_returns_empty_array_on_first_page_2502(): void
+    {
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*getlistsubscribers*' => Http::response(['code' => '2502', 'status' => 'error', 'message' => 'No subscribers in this list'], 200),
+        ]);
+
+        $emails = $this->makeClient()->listRecipientEmails('list-empty');
+
+        $this->assertSame([], $emails);
+    }
+
+    /**
+     * Zoho also reports 2502 on the page immediately after a full 200-row page
+     * (e.g. a list with exactly 200 members) instead of an empty page. That must
+     * return the accumulated rows from the prior page(s), not throw and lose them.
+     */
+    public function test_list_recipient_emails_returns_accumulated_rows_on_2502_after_full_page(): void
+    {
+        $pageOne = array_map(
+            fn (int $index) => ['contact_email' => 'contact' . $index . '@acme.test'],
+            range(1, 200),
+        );
+        $calls = 0;
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*getlistsubscribers*' => function () use (&$calls, $pageOne) {
+                $calls++;
+
+                return $calls === 1
+                    ? Http::response(['code' => 0, 'list_of_details' => $pageOne], 200)
+                    : Http::response(['code' => '2502', 'status' => 'error', 'message' => 'No subscribers in this list'], 200);
+            },
+        ]);
+
+        $emails = $this->makeClient()->listRecipientEmails('list-exactly-200');
+
+        $this->assertCount(200, $emails);
+        $this->assertSame('contact1@acme.test', $emails[0]);
+        $this->assertSame('contact200@acme.test', $emails[199]);
+    }
+
+    /**
      * createCampaign posts to Zoho's documented /createCampaign endpoint and
      * uses the live-verified parameter names from Zoho docs: from_email,
      * list_details, and content_url. sendCampaign uses /sendcampaign.
@@ -554,6 +601,24 @@ class ZohoCampaignsClientTest extends TestCase
                 && str_contains($request->header('Authorization')[0] ?? '', 'Zoho-oauthtoken')
                 && $request['campaignkey'] === 'CK-001';
         });
+    }
+
+    /**
+     * Zoho can return HTTP 200 with an API-level error payload (e.g. code 6606
+     * "email not verified"). sendCampaign must validate the body's code and
+     * throw, not treat raw HTTP 200 as success.
+     */
+    public function test_send_campaign_throws_on_api_level_error_despite_http_200(): void
+    {
+        Http::fake([
+            '*oauth/v2/token*' => Http::response(['access_token' => 'fake-at', 'expires_in' => 3600], 200),
+            '*sendcampaign*'   => Http::response(['status' => 'error', 'code' => '6606', 'message' => 'Email is not verified'], 200),
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('erreur API Zoho');
+
+        $this->makeClient()->sendCampaign('CK-001');
     }
 
     /**
