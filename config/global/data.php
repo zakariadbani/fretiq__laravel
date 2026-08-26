@@ -91,6 +91,7 @@ return [
         'discovered' => ['label' => 'Découverte auto', 'color' => 'info'],
         'zoho' => ['label' => 'Import Zoho',     'color' => 'primary'],
         'manual' => ['label' => 'Saisie manuelle', 'color' => 'secondary'],
+        'hunter' => ['label' => 'Import',         'color' => 'success'],
     ],
 
     //---------------------------------------------------------------------------
@@ -172,6 +173,7 @@ return [
         'discovered' => ['label' => 'Découverte auto', 'color' => 'info'],
         'zoho' => ['label' => 'Import Zoho',     'color' => 'primary'],
         'manual' => ['label' => 'Saisie manuelle', 'color' => 'secondary'],
+        'hunter' => ['label' => 'Import',         'color' => 'success'],
     ],
 
     //---------------------------------------------------------------------------
@@ -395,6 +397,7 @@ return [
         'ES' => 'Espagne',
         'EE' => 'Estonie',
         'SZ' => 'Eswatini',
+        'US' => 'États-Unis',
         'ET' => 'Éthiopie',
         'FJ' => 'Fidji',
         'FI' => 'Finlande',

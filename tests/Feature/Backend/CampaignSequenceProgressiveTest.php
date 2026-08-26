@@ -1070,6 +1070,11 @@ class CampaignSequenceProgressiveTest extends TestCase
             'status' => 'queued',
         ]);
 
+        // Membership recheck now also covers 'zoho-wave-synced' (this test's
+        // driver_ref) — fake the list gateway so it reports the audience
+        // unchanged instead of the real client making a live Zoho call.
+        $this->mock(ZohoRecipientListGateway::class, fn (MockInterface $mock) => $mock
+            ->shouldReceive('listEmails')->with('prepared-list')->andReturn([$contact->email]));
         $this->mock(CampaignDeliveryFence::class, function (MockInterface $mock) use ($contact): void {
             $mock->shouldReceive('claimZohoTransport')
                 ->once()
@@ -1145,6 +1150,106 @@ class CampaignSequenceProgressiveTest extends TestCase
             'skip_reason' => 'verification_pending',
         ]);
         $this->assertSame('stopped', $enrollment->fresh()->status);
+    }
+
+    /**
+     * TOCTOU regression: a fresh `zoho-wave-synced` run (never previously
+     * `zoho-wave-reused`) whose Zoho list emptied between sync and delayed
+     * send must be re-synced (existing 154-166 branch), not dispatched
+     * against an empty list (Zoho code 6606) — and never terminalized while
+     * locally-eligible contacts are still queued.
+     */
+    public function test_synced_wave_with_emptied_zoho_list_resyncs_instead_of_dispatching(): void
+    {
+        config(['services.zoho.driver' => 'zoho']);
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
+        $contact = $this->contact($this->company(50));
+        SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $contact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+        ]);
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $sequence->steps()->firstOrFail()->id,
+            'occurrence_key' => 'sequence-wave-emptied-list',
+            'run_at' => now(),
+            'status' => 'scheduled',
+            'zoho_list_key' => 'wave-list-key',
+            'driver_ref' => 'zoho-wave-synced',
+        ]);
+        CampaignRecipient::create([
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'queued',
+        ]);
+        $gateway = new class implements ZohoRecipientListGateway {
+            public function ensureCampaignList(int $campaignId, string $listName, array $seedContacts): string { return 'wave-list-key'; }
+            public function listEmails(string $listKey): array { return []; }
+            public function addContacts(string $listKey, array $contacts): void {}
+        };
+        $this->app->instance(ZohoRecipientListGateway::class, $gateway);
+        $this->mock(ZohoCampaignsDriver::class, fn (MockInterface $mock) => $mock->shouldNotReceive('dispatchRun'));
+
+        app(SequenceWaveService::class)->send($run);
+
+        $run->refresh();
+        $this->assertSame('prepared', $run->status);
+        $this->assertNull($run->zoho_list_key);
+        $this->assertNull($run->zoho_campaign_key);
+        $this->assertSame('zoho-wave-pending', $run->driver_ref);
+        $this->assertDatabaseHas('campaign_recipients', [
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'queued',
+        ]);
+        Queue::assertPushed(SyncCampaignWaveZohoListJob::class, fn ($job) => $job->runId === $run->id);
+    }
+
+    /**
+     * A sequence wave with no `zoho_list_key` at all (sync never completed,
+     * or was reset) must never fall back to the campaign/config list key —
+     * it re-syncs its own per-run list instead of dispatching against the
+     * wrong list.
+     */
+    public function test_sequence_wave_with_missing_zoho_list_key_resyncs_instead_of_dispatching(): void
+    {
+        config(['services.zoho.driver' => 'zoho']);
+        $campaign = $this->campaign($this->segment(), $sequence = $this->sequence());
+        $contact = $this->contact($this->company(50));
+        SequenceEnrollment::create([
+            'sequence_id' => $sequence->id,
+            'contact_id' => $contact->id,
+            'campaign_id' => $campaign->id,
+            'current_step' => 0,
+            'status' => 'active',
+        ]);
+        $run = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'sequence_step_id' => $sequence->steps()->firstOrFail()->id,
+            'occurrence_key' => 'sequence-wave-missing-list-key',
+            'run_at' => now(),
+            'status' => 'scheduled',
+            'zoho_list_key' => null,
+            'driver_ref' => 'zoho-wave-synced',
+        ]);
+        CampaignRecipient::create([
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'queued',
+        ]);
+        $this->mock(ZohoCampaignsDriver::class, fn (MockInterface $mock) => $mock->shouldNotReceive('dispatchRun'));
+
+        app(SequenceWaveService::class)->send($run);
+
+        $run->refresh();
+        $this->assertSame('prepared', $run->status);
+        $this->assertNull($run->zoho_list_key);
+        $this->assertNull($run->zoho_campaign_key);
+        $this->assertSame('zoho-wave-pending', $run->driver_ref);
+        Queue::assertPushed(SyncCampaignWaveZohoListJob::class, fn ($job) => $job->runId === $run->id);
     }
 
     public function test_wave_view_shows_explicit_and_legacy_membership(): void

@@ -3,6 +3,8 @@
 namespace App\Crud\ViewConfigs;
 
 use App\Models\Contact;
+use App\Models\ProspectBatchContact;
+use App\Support\OriginResolver;
 use Illuminate\Support\Facades\Route;
 
 /**
@@ -72,6 +74,18 @@ class ContactViewConfig
         // ── Detail rows ───────────────────────────────────────────────────────
         $detailRows = [];
         if ($hasId) {
+            // Own batch pivot wins; falls back to the company's origin. Single
+            // detail page — the extra lookup is cheap, unlike a datatable column.
+            $ownBatchId = ProspectBatchContact::query()->where('contact_id', $model->id)->value('prospect_batch_id');
+            $company = $model->company;
+            $companyBatchId = ($ownBatchId === null && $company && $company->source === 'discovered' && $company->criteria_id === null)
+                ? optional($company->prospectBatchItems()->latest('id')->first())->prospect_batch_id
+                : null;
+            $origin = OriginResolver::forContact($model->source, $ownBatchId, $company?->source, $company?->criteria_id, $companyBatchId);
+            $originHref = ($origin['route'] !== null && Route::has($origin['route']))
+                ? route($origin['route'], $origin['id'])
+                : null;
+
             $detailRows = [
                 ['label' => 'Nom',          'value' => $model->name,     'type' => 'text'],
                 ['label' => 'Email',         'value' => $model->email,    'type' => 'email'],
@@ -88,6 +102,7 @@ class ContactViewConfig
                 ['label' => 'État', 'value' => $state, 'type' => 'enum', 'configKey' => 'contact_lifecycle_states'],
                 ['label' => 'Type email',  'value' => $model->email_kind,  'type' => 'enum', 'configKey' => 'contact_email_kinds'],
                 ['label' => 'Source',      'value' => $model->source,      'type' => 'enum', 'configKey' => 'contact_sources'],
+                ['label' => 'Origine',     'value' => $origin['label'],    'type' => 'link', 'href' => $originHref],
                 ['label' => 'Créé le',     'value' => $model->created_at,  'type' => 'date'],
             ];
         }

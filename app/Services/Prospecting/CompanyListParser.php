@@ -3,6 +3,7 @@
 namespace App\Services\Prospecting;
 
 use App\Services\Discovery\DomainCanonicalizer;
+use App\Support\CountryResolver;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Str;
 
@@ -370,31 +371,7 @@ final class CompanyListParser
 
     private function normalizeCountry(string $value): ?string
     {
-        if ($value === '') {
-            return null;
-        }
-
-        $countries = config('global.data.company_countries', []);
-        $code = strtoupper($value);
-
-        if (strlen($code) === 2 && array_key_exists($code, $countries)) {
-            return $code;
-        }
-
-        $needle = $this->countryToken($value);
-
-        foreach ($countries as $countryCode => $label) {
-            if ($needle === $this->countryToken((string) $label)) {
-                return strtoupper((string) $countryCode);
-            }
-        }
-
-        return null;
-    }
-
-    private function countryToken(string $value): string
-    {
-        return (string) preg_replace('/[^a-z0-9]+/', '', strtolower(Str::ascii($value)));
+        return CountryResolver::resolve($value);
     }
 
     /** @return array{row_number:?int, code:string, message:string} */

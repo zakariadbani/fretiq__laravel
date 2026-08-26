@@ -4,8 +4,12 @@ namespace App\DataTables\Backend;
 
 use App\DataTables\BackendDataTable;
 use App\Models\Contact;
+use App\Models\ProspectBatchContact;
+use App\Models\ProspectBatchItem;
 use App\Services\Prospecting\ContactLifecycleService;
+use App\Support\OriginResolver;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 
 class ContactsDataTable extends BackendDataTable
 {
@@ -42,6 +46,12 @@ class ContactsDataTable extends BackendDataTable
             'orderable' => true,
             'searchable' => false,
         ],
+        'origine' => [
+            'title' => 'Origine',
+            'orderable' => false,
+            'searchable' => false,
+            'raw' => true,
+        ],
     ];
 
     protected $table_filters = [
@@ -75,7 +85,26 @@ class ContactsDataTable extends BackendDataTable
      */
     public function query()
     {
-        return $this->lifecycle->select($this->currentModel->newQuery()->with('company'));
+        $query = $this->currentModel->newQuery()
+            ->addSelect([
+                // Own batch pivot — correlated subquery, no per-row query.
+                'own_batch_id' => ProspectBatchContact::query()
+                    ->select('prospect_batch_id')
+                    ->whereColumn('contact_id', 'contacts.id')
+                    ->latest('id')
+                    ->limit(1),
+            ])
+            ->with(['company' => function ($relation) {
+                $relation->addSelect([
+                    'origin_batch_id' => ProspectBatchItem::query()
+                        ->select('prospect_batch_id')
+                        ->whereColumn('company_id', 'companies.id')
+                        ->latest('id')
+                        ->limit(1),
+                ]);
+            }]);
+
+        return $this->lifecycle->select($query);
     }
 
     /**
@@ -114,6 +143,27 @@ class ContactsDataTable extends BackendDataTable
             $color = $cfg['color'] ?? 'secondary';
 
             return '<span class="badge badge-light-'.e($color).'">'.e($label).'</span>';
+        });
+
+        // ── Origine badge — own batch pivot wins, else falls back to the company's ──
+        $this->datatables->addColumn('origine', function (Contact $row) {
+            $company = $row->company;
+            $origin = OriginResolver::forContact(
+                $row->source,
+                $row->own_batch_id ?? null,
+                $company?->source,
+                $company?->criteria_id,
+                $company?->origin_batch_id ?? null,
+            );
+            $label = e($origin['label']);
+
+            if ($origin['route'] !== null && Route::has($origin['route'])) {
+                $href = e(route($origin['route'], $origin['id']));
+
+                return '<a href="'.$href.'" class="badge badge-light-info text-hover-primary">'.$label.'</a>';
+            }
+
+            return '<span class="badge badge-light-secondary">'.$label.'</span>';
         });
     }
 

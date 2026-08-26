@@ -4,7 +4,10 @@ namespace App\DataTables\Backend;
 
 use App\DataTables\BackendDataTable;
 use App\Models\Company;
+use App\Models\ProspectBatchItem;
+use App\Support\OriginResolver;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 
 class CompaniesDataTable extends BackendDataTable
 {
@@ -58,6 +61,12 @@ class CompaniesDataTable extends BackendDataTable
         'enrichment_status' => [
             'title'      => 'Enrichissement',
             'orderable'  => true,
+            'searchable' => false,
+            'raw'        => true,
+        ],
+        'origine' => [
+            'title'      => 'Origine',
+            'orderable'  => false,
             'searchable' => false,
             'raw'        => true,
         ],
@@ -132,7 +141,15 @@ class CompaniesDataTable extends BackendDataTable
      */
     public function query()
     {
-        $query = $this->currentModel->newQuery()->withCount('contacts');
+        $query = $this->currentModel->newQuery()->withCount('contacts')->addSelect([
+            // Correlated subquery instead of a per-row relation load — cheap
+            // "Origine" resolution (Lot link) without N+1 in the listing.
+            'origin_batch_id' => ProspectBatchItem::query()
+                ->select('prospect_batch_id')
+                ->whereColumn('company_id', 'companies.id')
+                ->latest('id')
+                ->limit(1),
+        ]);
 
         if ($this->currentRequest->routeIs('admin.companies.archive')) {
             $query->rejected();
@@ -315,6 +332,22 @@ class CompaniesDataTable extends BackendDataTable
             $color = e($cfg['color'] ?? 'secondary');
 
             return '<span class="badge badge-light-' . $color . '">' . $label . '</span>';
+        });
+
+        // ── Origine badge — Import / Zoho / Manuel / Critère / Lot ───────────
+        // origin_batch_id comes from the addSelect() correlated subquery in
+        // query() — no per-row relation load here.
+        $this->datatables->addColumn('origine', function (Company $row) {
+            $origin = OriginResolver::forCompany($row->source, $row->criteria_id, $row->origin_batch_id ?? null);
+            $label = e($origin['label']);
+
+            if ($origin['route'] !== null && Route::has($origin['route'])) {
+                $href = e(route($origin['route'], $origin['id']));
+
+                return '<a href="' . $href . '" class="badge badge-light-info text-hover-primary">' . $label . '</a>';
+            }
+
+            return '<span class="badge badge-light-secondary">' . $label . '</span>';
         });
 
         // ── Contacts count badge ─────────────────────────────────────────────

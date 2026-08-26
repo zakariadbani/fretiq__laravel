@@ -3,6 +3,8 @@
 namespace App\Crud\ViewConfigs;
 
 use App\Models\Company;
+use App\Support\OriginResolver;
+use Illuminate\Support\Facades\Route;
 
 /**
  * ViewConfig descriptor for the Company detail/edit pages.
@@ -100,6 +102,17 @@ class CompanyViewConfig
 
         $detailRows = [];
         if ($hasId) {
+            // Origin batch id only needs a lookup when the company came via
+            // auto-discovery without a criteria_id (i.e. from a staged lot) —
+            // a single-row detail page, so the extra query here is cheap.
+            $originBatchId = ($model->source === 'discovered' && $model->criteria_id === null)
+                ? optional($model->prospectBatchItems()->latest('id')->first())->prospect_batch_id
+                : null;
+            $origin = OriginResolver::forCompany($model->source, $model->criteria_id, $originBatchId);
+            $originHref = ($origin['route'] !== null && Route::has($origin['route']))
+                ? route($origin['route'], $origin['id'])
+                : null;
+
             $detailRows = [
                 ['label' => 'Actif',           'value' => $model->is_active,             'type' => 'boolean'],
                 ['label' => 'Secteur',         'value' => $model->sector,                'type' => 'text'],
@@ -109,6 +122,7 @@ class CompanyViewConfig
                 ['label' => 'Téléphone',       'value' => $model->phone,                 'type' => 'text'],
                 ['label' => 'Relation',        'value' => $model->relationship,          'type' => 'enum', 'configKey' => 'company_relationships'],
                 ['label' => 'Source',          'value' => $model->source,                'type' => 'enum', 'configKey' => 'company_sources'],
+                ['label' => 'Origine',         'value' => $origin['label'],              'type' => 'link', 'href' => $originHref],
                 ['label' => 'Statut qualif.',  'value' => $model->qualification_status,  'type' => 'enum', 'configKey' => 'company_qualification_statuses'],
                 ['label' => 'Enrichissement',  'value' => $enrCfg['label'] ?? 'Non tenté', 'type' => 'badge', 'color' => $enrCfg['color'] ?? 'secondary'],
                 ['label' => 'Score IA',        'value' => $model->ai_score,             'type' => 'score'],

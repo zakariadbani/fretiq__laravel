@@ -90,6 +90,13 @@
                 @endcan
 
                 @can('create companies')
+                <a href="{{ route('admin.companies.import_form') }}" class="btn btn-light-primary me-3">
+                    <i class="bi bi-upload fs-2"></i>
+                    Importer
+                </a>
+                @endcan
+
+                @can('create companies')
                 <a href="{{ route('admin.companies.create') }}" class="btn btn-primary">
                     <i class="bi bi-plus-lg fs-2"></i>
                     Ajouter une entreprise

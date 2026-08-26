@@ -140,8 +140,23 @@ class SequenceWaveService
             return;
         }
 
+        // Sequence waves send only to their own per-run synced list; never fall back
+        // to the campaign/config list key. A missing key means sync never completed
+        // (or was reset) — re-sync rather than dispatch against a wrong/empty list.
+        if ($run->sequence_step_id !== null && ! $sendAlreadyAttempted && empty($run->zoho_list_key)) {
+            $run->update([
+                'status' => 'prepared',
+                'zoho_campaign_key' => null,
+                'driver_ref' => 'zoho-wave-pending',
+            ]);
+            SyncCampaignWaveZohoListJob::dispatch($run->id);
+            return;
+        }
+
         $audienceChanged = $contacts->count() !== $queuedBefore;
-        if (! $audienceChanged && $run->driver_ref === 'zoho-wave-reused' && $run->zoho_list_key) {
+        if (! $audienceChanged
+            && in_array($run->driver_ref, ['zoho-wave-reused', 'zoho-wave-synced'], true)
+            && $run->zoho_list_key) {
             $normalize = fn ($emails): array => collect($emails)
                 ->map(fn ($email): string => mb_strtolower(trim((string) $email)))
                 ->filter()

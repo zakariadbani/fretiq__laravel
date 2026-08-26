@@ -44,6 +44,7 @@ final class DiscoveredContactImportService
         Company $company,
         iterable $rows,
         ?ProspectBatchItem $item = null,
+        string $source = 'discovered',
     ): ContactImportResult {
         $this->assertContext($company, $item);
 
@@ -86,7 +87,7 @@ final class DiscoveredContactImportService
                     $contact = Contact::query()->create([
                         'company_id' => $company->getKey(),
                         'email' => $email,
-                        'source' => 'discovered',
+                        'source' => $source,
                         ...$attributes,
                     ]);
                     $created++;

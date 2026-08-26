@@ -13,8 +13,12 @@ use App\Models\CampaignRecipient;
 use App\Models\Company;
 use App\Models\Demande;
 use App\Services\Discovery\CompanyEnrichmentService;
+use App\Services\Prospecting\HunterCsvImportService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class CompanyController extends BackendController
 {
@@ -33,10 +37,13 @@ class CompanyController extends BackendController
         $this->viewConfigClass = \App\Crud\ViewConfigs\CompanyViewConfig::class;
 
         $this->middleware('permission:view companies')->only(['index', 'view']);
-        $this->middleware('permission:create companies')->only(['create', 'store']);
-        $this->middleware('permission:edit companies')->only(['edit', 'update', 'executeSwitch', 'explainScore', 'restore']);
+        $this->middleware('permission:create companies')->only(['create', 'store', 'importForm', 'importPreview', 'importStore']);
+        $this->middleware('permission:edit companies')->only(['edit', 'update', 'executeSwitch', 'explainScore', 'restore', 'importPreview', 'importStore']);
         $this->middleware('permission:delete companies')->only(['delete']);
         $this->middleware('permission:enrich companies')->only(['enrich']);
+        // Importer also creates/merges contacts — gate on the contacts entity too.
+        $this->middleware('permission:create contacts')->only(['importForm', 'importPreview', 'importStore']);
+        $this->middleware('permission:edit contacts')->only(['importPreview', 'importStore']);
 
         $this->listTitle = 'Entreprises';
         $this->title = 'name';
@@ -370,5 +377,141 @@ class CompanyController extends BackendController
         Company::whereKey($company->id)->update(['ai_explanation' => $text]);
 
         return response()->json(['message' => 'success', 'text' => 'Récapitulatif IA généré.', 'explanation' => $text], 200);
+    }
+
+    // ── CSV import (companies + contacts) ─────────────────────────────────────
+    // Two optional file inputs (companies CSV, contacts CSV — at least one
+    // required). Preview payload is cache-backed under hunter_import:{uuid},
+    // bound to the requesting user, 30-minute TTL — NOT HandlesImportPreviewToken
+    // (rows can run into the hundreds of KB, too large for a signed hidden field).
+
+    private const IMPORT_CACHE_PREFIX = 'hunter_import:';
+
+    private const IMPORT_CACHE_MINUTES = 30;
+
+    /** Row numbers capped per error code so the preview list stays bounded. */
+    private const IMPORT_ERROR_ROWS_SHOWN = 20;
+
+    /** @var array<string,string> */
+    private const IMPORT_ERROR_LABELS = [
+        'file_too_large' => 'Fichier trop volumineux',
+        'unsafe_file' => 'Fichier non autorisé',
+        'file_unreadable' => 'Fichier illisible',
+        'unsafe_content' => 'Contenu non autorisé',
+        'header_required' => 'Colonnes attendues introuvables dans l’en-tête',
+        'too_many_rows' => 'Trop de lignes dans le fichier',
+        'company_name_required' => 'Nom de société manquant',
+        'company_name_too_long' => 'Nom de société trop long',
+        'domain_missing' => 'Domaine manquant',
+        'domain_invalid' => 'Domaine invalide',
+        'platform_domain' => 'Domaine de plateforme (réseau social, annuaire…)',
+        'country_invalid' => 'Pays non reconnu',
+        'email_required' => 'Adresse e-mail manquante',
+    ];
+
+    public function importForm()
+    {
+        return view('backend.contents.companies.crud.import', [
+            'summary' => null,
+            'parseErrors' => [],
+            'uuid' => null,
+        ]);
+    }
+
+    public function importPreview(Request $request, HunterCsvImportService $importer)
+    {
+        $request->validate([
+            'companies_csv' => ['nullable', 'file', 'max:10240', 'mimes:csv,txt'],
+            'contacts_csv' => ['nullable', 'file', 'max:10240', 'mimes:csv,txt'],
+        ]);
+
+        $companiesFile = $request->file('companies_csv');
+        $contactsFile = $request->file('contacts_csv');
+
+        if ($companiesFile === null && $contactsFile === null) {
+            throw ValidationException::withMessages(['companies_csv' => ['Sélectionnez au moins un fichier.']]);
+        }
+
+        $companyParse = $companiesFile !== null ? $importer->parseCompanies($companiesFile) : ['rows' => [], 'errors' => []];
+        $leadParse = $contactsFile !== null ? $importer->parseLeads($contactsFile) : ['rows' => [], 'errors' => []];
+
+        $summary = $importer->preview($companyParse['rows'], $leadParse['rows']);
+
+        $uuid = (string) Str::uuid();
+        Cache::put(self::IMPORT_CACHE_PREFIX.$uuid, [
+            'user_id' => $request->user()->id,
+            'company_rows' => $companyParse['rows'],
+            'lead_rows' => $leadParse['rows'],
+        ], now()->addMinutes(self::IMPORT_CACHE_MINUTES));
+
+        return view('backend.contents.companies.crud.import', [
+            'summary' => $summary,
+            'parseErrors' => $this->aggregateImportErrors([...$companyParse['errors'], ...$leadParse['errors']]),
+            'uuid' => $uuid,
+        ]);
+    }
+
+    public function importStore(Request $request, HunterCsvImportService $importer)
+    {
+        $uuid = (string) $request->input('import_uuid');
+        $payload = $uuid !== '' ? Cache::get(self::IMPORT_CACHE_PREFIX.$uuid) : null;
+
+        if ($payload === null || (int) $payload['user_id'] !== (int) $request->user()->id) {
+            return redirect()->route('admin.companies.import_form')
+                ->withErrors(['import_uuid' => ["Aperçu expiré — veuillez réimporter le fichier."]]);
+        }
+
+        // Sync import measured ~4.6s for 108+1607 rows on dev; PHP's default
+        // max_execution_time (30s/60s) can cut off a larger file mid-commit.
+        set_time_limit(0);
+
+        // Forget only after a successful commit — if commit() throws mid-run,
+        // the cached payload survives so a resubmit can pick up where it left
+        // off (commit is idempotent — a double-submit is a safe no-op).
+        $result = $importer->commit($payload['company_rows'], $payload['lead_rows']);
+
+        Cache::forget(self::IMPORT_CACHE_PREFIX.$uuid);
+
+        $companies = $result['companies_created'] + $result['companies_merged'];
+        $contacts = $result['contacts_created'] + $result['contacts_updated'];
+
+        return redirect()->route('admin.companies.index')->with(
+            'success',
+            "Import terminé : {$companies} entreprise(s) traitée(s) ({$result['stub_companies_created']} créée(s) automatiquement), {$contacts} contact(s) traité(s)."
+        );
+    }
+
+    /**
+     * Aggregate raw parse errors by code — a bare code-per-row list would be
+     * both unrenderable ({{ $error }} on an array) and unbounded (country
+     * bugs alone produced 100+ rows). Caps row numbers shown per code.
+     *
+     * @param  list<array{row_number:?int, code:string}>  $errors
+     * @return list<array{code:string, label:string, count:int, rows:list<int>, more:int}>
+     */
+    private function aggregateImportErrors(array $errors): array
+    {
+        $byCode = [];
+        foreach ($errors as $error) {
+            $code = (string) $error['code'];
+            $byCode[$code]['count'] = ($byCode[$code]['count'] ?? 0) + 1;
+            if ($error['row_number'] !== null) {
+                $byCode[$code]['rows'][] = (int) $error['row_number'];
+            }
+        }
+
+        $aggregated = [];
+        foreach ($byCode as $code => $data) {
+            $rows = $data['rows'] ?? [];
+            $aggregated[] = [
+                'code' => $code,
+                'label' => self::IMPORT_ERROR_LABELS[$code] ?? $code,
+                'count' => $data['count'],
+                'rows' => array_slice($rows, 0, self::IMPORT_ERROR_ROWS_SHOWN),
+                'more' => max(0, count($rows) - self::IMPORT_ERROR_ROWS_SHOWN),
+            ];
+        }
+
+        return $aggregated;
     }
 }
