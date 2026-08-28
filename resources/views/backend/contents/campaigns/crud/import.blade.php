@@ -32,7 +32,7 @@
                     <div id="csv-help" class="form-text">
                         Colonnes : name;segment_name;sequence_name;template_name;schedule_type;delivery_channel;email_verification_policy;smtp_daily_email_limit;is_active;notes.
                         segment_name obligatoire ; sequence_name obligatoire si schedule_type=sequence ; template_name obligatoire sinon.
-                        delivery_channel doit être explicite (smtp ou zoho). L’expéditeur est déduit automatiquement (une seule identité doit exister). Maximum 100 lignes et 512 Ko.
+                        delivery_channel doit être explicite (smtp, zoho ou mailjet — mailjet ne prend pas en charge schedule_type=sequence). L’expéditeur est déduit automatiquement (une seule identité doit exister). Maximum 100 lignes et 512 Ko.
                     </div>
                 </div>
                 <div class="d-flex flex-wrap gap-3 align-items-center">

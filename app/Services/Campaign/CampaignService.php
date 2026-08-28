@@ -180,6 +180,11 @@ class CampaignService
             $messages[] = 'Configuration SMTP incomplète pour l’expéditeur sélectionné.';
         }
 
+        if ($campaign->delivery_channel === 'mailjet'
+            && (blank(config('services.mailjet.key')) || blank(config('services.mailjet.secret')))) {
+            $messages[] = 'Configuration Mailjet incomplète : clés API manquantes.';
+        }
+
         if ($campaign->schedule_type === 'paced' && $preflightUsesZoho) {
             $messages[] = 'L’envoi progressif est indisponible avec le pilote Zoho tant que l’envoi par lot n’a pas été vérifié.';
         } elseif ($preflightUsesZoho) {
@@ -665,6 +670,16 @@ class CampaignService
      */
     private function sendViaLocal(CampaignRun $run, CampaignsClient $driver): void
     {
+        // Provenance parity with the zoho/smtp paths, which stamp driver_ref
+        // at run start (ZohoCampaignsDriver::dispatchRun, continueSmtpRun).
+        // Local runs keep driver_ref = NULL (unchanged, existing behavior/tests);
+        // a non-local driver run through this path (currently only mailjet)
+        // is otherwise indistinguishable from a local run in the cancel
+        // affordance and CampaignRunTimelineService::hasRunTransportEvidence().
+        if ($driver->driverName() !== 'local' && $run->driver_ref === null) {
+            $run->update(['driver_ref' => $driver->driverName()]);
+        }
+
         $recipients = CampaignRecipient::where('campaign_run_id', $run->id)
             ->where('status', 'queued')
             ->whereNull('provider_message_id')

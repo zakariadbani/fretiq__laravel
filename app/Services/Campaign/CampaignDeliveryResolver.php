@@ -12,6 +12,7 @@ class CampaignDeliveryResolver
         private readonly LocalCampaignsDriver $localDriver,
         private readonly ZohoCampaignsDriver $zohoDriver,
         private readonly SmtpCampaignsDriver $smtpDriver,
+        private readonly MailjetCampaignsDriver $mailjetDriver,
     ) {
     }
 
@@ -26,6 +27,10 @@ class CampaignDeliveryResolver
 
         if ($campaign->delivery_channel === 'smtp') {
             return $this->smtpDriver;
+        }
+
+        if ($campaign->delivery_channel === 'mailjet') {
+            return $this->mailjetDriver;
         }
 
         return config('services.zoho.driver', 'local') === 'zoho'

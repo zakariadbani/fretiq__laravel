@@ -12,8 +12,10 @@ use App\Models\Segment;
 use App\Models\SenderIdentity;
 use App\Models\Sequence;
 use App\Models\SequenceStep;
+use App\Services\Campaign\CampaignDeliveryResolver;
 use App\Services\Campaign\CampaignsClient;
 use App\Services\Campaign\LocalCampaignsDriver;
+use App\Services\Campaign\MailjetCampaignsDriver;
 use App\Services\Campaign\ZohoCampaignsDriver;
 use App\Services\Campaign\CampaignService;
 use Database\Seeders\Acl\PermissionsSeeder;
@@ -184,6 +186,38 @@ class ZohoDriverSelectionTest extends TestCase
         $driver = app(CampaignsClient::class);
 
         $this->assertInstanceOf(ZohoCampaignsDriver::class, $driver);
+    }
+
+    /**
+     * CampaignDeliveryResolver returns MailjetCampaignsDriver for an explicit
+     * delivery_channel='mailjet' campaign.
+     */
+    public function test_resolver_returns_mailjet_driver_for_mailjet_channel(): void
+    {
+        $contact = $this->makeClientContact('mailjet-resolver@acme.test');
+        $run = $this->makeCampaignWithRun($contact);
+        $run->campaign()->update(['delivery_channel' => 'mailjet']);
+
+        $driver = app(CampaignDeliveryResolver::class)->resolve($run->campaign()->first());
+
+        $this->assertInstanceOf(MailjetCampaignsDriver::class, $driver);
+    }
+
+    /**
+     * A campaign with no explicit delivery_channel (legacy null) keeps
+     * following the global driver config, unaffected by the mailjet branch.
+     */
+    public function test_resolver_null_channel_still_follows_global_driver_config(): void
+    {
+        config(['services.zoho.driver' => 'local']);
+
+        $contact = $this->makeClientContact('null-channel-resolver@acme.test');
+        $run = $this->makeCampaignWithRun($contact);
+        $this->assertNull($run->campaign()->first()->delivery_channel);
+
+        $driver = app(CampaignDeliveryResolver::class)->resolve($run->campaign()->first());
+
+        $this->assertInstanceOf(LocalCampaignsDriver::class, $driver);
     }
 
     /**

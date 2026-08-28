@@ -185,7 +185,7 @@
                             <div class="fv-row mb-7">
                                 <label class="required fw-semibold fs-6 mb-2" for="delivery_channel">Canal d’envoi</label>
                                 @if($deliveryLocked)
-                                    <input type="hidden" name="delivery_channel" value="{{ e((string) $model->delivery_channel) }}">
+                                    <input type="hidden" name="delivery_channel" value="{{ (string) $model->delivery_channel }}">
                                 @endif
                                 <select name="delivery_channel" id="delivery_channel" class="form-select form-select-solid" data-control="select2" data-hide-search="true" {{ $deliveryLocked ? 'disabled' : '' }}>
                                     @if(isset($model) && $model->id && $model->delivery_channel === null)
@@ -193,7 +193,9 @@
                                     @endif
                                     <option value="zoho" {{ $selectedDeliveryChannel === 'zoho' ? 'selected' : '' }}>Zoho Campaigns (par défaut)</option>
                                     <option value="smtp" {{ $selectedDeliveryChannel === 'smtp' ? 'selected' : '' }}>SMTP direct progressif</option>
+                                    <option value="mailjet" {{ $selectedDeliveryChannel === 'mailjet' ? 'selected' : '' }}>Mailjet</option>
                                 </select>
+                                <div class="form-text d-none" id="mailjet_sequence_hint">Mailjet : indisponible en mode séquence.</div>
                                 @if($deliveryLocked)
                                     <div class="form-text text-warning">Le canal et l’expéditeur sont verrouillés car une livraison réelle a déjà commencé.</div>
                                 @endif
@@ -715,10 +717,12 @@
             const deliverySelect = document.getElementById('delivery_channel');
             const smtpLimitWrapper = document.getElementById('smtp_daily_limit_wrapper');
             const smtpGuidanceCard = document.getElementById('smtp_guidance_card');
+            const mailjetSequenceHint = document.getElementById('mailjet_sequence_hint');
             const toggleSmtpDeliveryFields = () => {
                 const visible = deliverySelect?.value === 'smtp';
                 smtpLimitWrapper?.classList.toggle('d-none', !visible);
                 smtpGuidanceCard?.classList.toggle('d-none', !visible);
+                mailjetSequenceHint?.classList.toggle('d-none', deliverySelect?.value !== 'mailjet');
             };
             deliverySelect?.addEventListener('change', toggleSmtpDeliveryFields);
             toggleSmtpDeliveryFields();

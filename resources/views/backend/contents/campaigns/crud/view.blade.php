@@ -241,16 +241,17 @@
         @if($latestRun)
         @php($latestKpis = $latestRun->kpis())
         @if($latestSyncableZohoRun)
+        @php($syncChannelLabel = $model->delivery_channel === 'mailjet' ? 'Mailjet' : 'Zoho')
         <div class="alert alert-light-primary mt-6 mb-2" data-zoho-sync-state>
             <div class="fw-semibold text-gray-800">
-                Derni&egrave;re synchronisation Zoho :
+                Derni&egrave;re synchronisation {{ $syncChannelLabel }} :
                 {{ $latestSyncableZohoRun->stats_synced_at?->format('d/m/Y H:i') ?? 'Jamais' }}
             </div>
             @if($latestSyncableZohoRun->stats_sync_error)
                 <div class="text-danger fs-7 mt-1">{{ $latestSyncableZohoRun->stats_sync_error }}</div>
             @endif
             <div class="text-muted fs-8 mt-1">
-                L&rsquo;action dans l&rsquo;en-t&ecirc;te actualise les ex&eacute;cutions Zoho r&eacute;centes, y compris toutes les &eacute;tapes r&eacute;centes de la s&eacute;quence.
+                L&rsquo;action dans l&rsquo;en-t&ecirc;te actualise les ex&eacute;cutions {{ $syncChannelLabel }} r&eacute;centes, y compris toutes les &eacute;tapes r&eacute;centes de la s&eacute;quence.
             </div>
         </div>
         @endif

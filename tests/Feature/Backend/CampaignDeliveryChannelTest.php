@@ -173,6 +173,38 @@ class CampaignDeliveryChannelTest extends TestCase
         $this->assertFalse($campaign->usesZohoDriver());
     }
 
+    public function test_mailjet_channel_is_accepted_for_a_non_sequence_campaign(): void
+    {
+        $data = $this->fixtureData();
+        $campaign = $this->campaign(['delivery_channel' => 'zoho'], $data);
+
+        $this->actingAs($this->user)->putJson(route('admin.campaigns.update', $campaign), [
+            'name' => $campaign->name,
+            'segment_id' => $campaign->segment_id,
+            'template_id' => $campaign->template_id,
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'delivery_channel' => 'mailjet',
+            'schedule_type' => 'one_shot',
+            'timezone' => 'Europe/Paris',
+        ])->assertOk();
+
+        $this->assertSame('mailjet', $campaign->fresh()->delivery_channel);
+    }
+
+    public function test_mailjet_channel_is_rejected_for_a_sequence_campaign(): void
+    {
+        [$campaign, $sequence] = $this->pacedSequenceCampaign('smtp', now());
+
+        $response = $this->actingAs($this->user)
+            ->putJson(route('admin.campaigns.update', $campaign), $this->sequenceUpdatePayload($campaign, $sequence, 'mailjet'));
+
+        // Model-level rule failures (Campaign::rules()) return 406 in this
+        // controller — distinct from the 422 ValidationException path used
+        // by the deliverySettingsLocked() guard elsewhere in this file.
+        $response->assertStatus(406)->assertJsonValidationErrors('delivery_channel');
+        $this->assertSame('smtp', $campaign->fresh()->delivery_channel);
+    }
+
     public function test_smtp_campaign_defaults_to_twenty_emails_per_day(): void
     {
         $campaign = $this->campaign(['delivery_channel' => 'smtp', 'smtp_daily_email_limit' => null]);

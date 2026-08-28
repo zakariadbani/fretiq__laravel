@@ -275,6 +275,7 @@ return [
         'import' => ['label' => 'Import',   'color' => 'secondary'],
         'manual' => ['label' => 'Manuel',   'color' => 'secondary'],
         'zoho' => ['label' => 'Zoho Campaigns', 'color' => 'info'],
+        'mailjet' => ['label' => 'Mailjet', 'color' => 'info'],
         'dsn' => ['label' => 'Notification DSN', 'color' => 'info'],
         'hunter' => ['label' => 'Vérification e-mail', 'color' => 'info'],
     ],

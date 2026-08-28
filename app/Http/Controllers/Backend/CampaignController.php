@@ -12,6 +12,7 @@ use App\Jobs\SendCampaignJob;
 use App\Jobs\SendSequenceWaveStepJob;
 use App\Jobs\SyncCampaignRecipientEventsJob;
 use App\Jobs\SyncCampaignStatsJob;
+use App\Jobs\SyncMailjetEventsJob;
 use App\Jobs\SyncCampaignWaveZohoListJob;
 use App\Models\Campaign;
 use App\Models\CampaignCompanyDispatch;
@@ -968,12 +969,14 @@ class CampaignController extends BackendController
             ? Campaign::with(['segment', 'template', 'senderIdentity'])->find((int) $campaignId)
             : null;
         $syncableZohoRuns = is_numeric($campaignId)
-            ? CampaignRun::query()
-                ->where('campaign_id', (int) $campaignId)
-                ->eligibleForStatsSync()
-                ->whereNotNull('zoho_campaign_key')
-                ->orderByDesc('run_at')
-                ->get()
+            ? tap(
+                CampaignRun::query()
+                    ->where('campaign_id', (int) $campaignId)
+                    ->eligibleForStatsSync(),
+                fn ($query) => $editingCampaign?->effectiveDeliveryChannel() === 'mailjet'
+                    ? $query
+                    : $query->whereNotNull('zoho_campaign_key'),
+            )->orderByDesc('run_at')->get()
             : collect();
         $selectedCompany = $this->resolveSourceModel('company_id', Company::class, 'view companies');
 
@@ -1048,7 +1051,7 @@ class CampaignController extends BackendController
         $currentCampaign = $id !== null ? Campaign::find((int) $id) : null;
 
         if ($currentCampaign === null) {
-            $attributes['delivery_channel'] = in_array($attributes['delivery_channel'] ?? null, ['zoho', 'smtp'], true)
+            $attributes['delivery_channel'] = in_array($attributes['delivery_channel'] ?? null, ['zoho', 'smtp', 'mailjet'], true)
                 ? $attributes['delivery_channel']
                 : 'zoho';
             $attributes['email_verification_policy'] = in_array(
@@ -1708,19 +1711,24 @@ class CampaignController extends BackendController
     public function syncStats(Request $request, $id)
     {
         $campaign = Campaign::findOrFail((int) $id);
-        $runs = $campaign->runs()
-            ->eligibleForStatsSync()
-            ->whereNotNull('zoho_campaign_key')
-            ->get(['id']);
+        $isMailjet = $campaign->effectiveDeliveryChannel() === 'mailjet';
+
+        $runsQuery = $campaign->runs()->eligibleForStatsSync();
+        $runs = $isMailjet ? $runsQuery->get(['id']) : $runsQuery->whereNotNull('zoho_campaign_key')->get(['id']);
 
         foreach ($runs as $run) {
             SyncCampaignStatsJob::dispatch($run->id);
-            SyncCampaignRecipientEventsJob::dispatch($run->id);
+            if ($isMailjet) {
+                SyncMailjetEventsJob::dispatch($run->id);
+            } else {
+                SyncCampaignRecipientEventsJob::dispatch($run->id);
+            }
         }
 
+        $label = $isMailjet ? 'Mailjet' : 'Zoho';
         $message = $runs->isEmpty()
-            ? html_entity_decode('Aucune ex&eacute;cution Zoho r&eacute;cente &agrave; synchroniser.')
-            : html_entity_decode("Synchronisation Zoho mise en file pour {$runs->count()} ex&eacute;cution(s).");
+            ? html_entity_decode("Aucune ex&eacute;cution {$label} r&eacute;cente &agrave; synchroniser.")
+            : html_entity_decode("Synchronisation {$label} mise en file pour {$runs->count()} ex&eacute;cution(s).");
         $redirect = route('admin.campaigns.view', $campaign->id);
 
         if ($request->expectsJson()) {
@@ -1790,6 +1798,12 @@ class CampaignController extends BackendController
         $user = auth()->user();
         $attributes = $request->validate(['recipient_email' => 'required|email:rfc|max:191']);
         $router = app(\App\Services\Mail\SmtpMailRouter::class);
+        // The test email always goes out through the application's own SMTP
+        // transport (Mailpit/sender-identity SMTP) — never through the
+        // campaign's delivery channel driver (Zoho/Mailjet API). For a
+        // mailjet/zoho campaign the copy must say so plainly: a green result
+        // here proves the app can send mail, not that the channel works.
+        $isNonSmtpChannel = $campaign->effectiveDeliveryChannel() !== 'smtp';
 
         try {
             app(CampaignTestMailService::class)->send($campaign, $user, $attributes['recipient_email']);
@@ -1804,11 +1818,19 @@ class CampaignController extends BackendController
         } catch (\Throwable $exception) {
             \Illuminate\Support\Facades\Log::warning('Campaign preview failed.', ['campaign_id' => $campaign->id, 'exception_class' => $exception::class]);
 
-            return response()->json(['success' => false, 'message' => 'Envoi test impossible. Vérifiez la configuration SMTP.'], 500);
+            $failureMessage = $isNonSmtpChannel
+                ? 'Envoi test impossible. Vérifiez la configuration du transport applicatif (SMTP interne utilisé pour les tests).'
+                : 'Envoi test impossible. Vérifiez la configuration SMTP.';
+
+            return response()->json(['success' => false, 'message' => $failureMessage], 500);
         }
 
+        $successMessage = $isNonSmtpChannel
+            ? "Email test envoyé via le transport applicatif ({$transport}) — ce test n’exerce pas le canal {$campaign->effectiveDeliveryChannel()}."
+            : 'Email test envoyé.';
+
         return response()->json([
-            'success' => true, 'message' => 'Email test envoyé.', 'recipient' => $attributes['recipient_email'],
+            'success' => true, 'message' => $successMessage, 'recipient' => $attributes['recipient_email'],
             'sender' => ['name' => $campaign->senderIdentity->name, 'email' => $campaign->senderIdentity->email],
             'mode' => $mode,
             'transport' => $transport,

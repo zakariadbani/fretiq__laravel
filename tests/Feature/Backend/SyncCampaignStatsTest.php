@@ -3,6 +3,7 @@
 namespace Tests\Feature\Backend;
 
 use App\Jobs\SyncCampaignStatsJob;
+use App\Jobs\SyncMailjetEventsJob;
 use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
@@ -588,6 +589,48 @@ class SyncCampaignStatsTest extends TestCase
         \Illuminate\Support\Facades\Queue::assertNotPushed(
             \App\Jobs\SyncCampaignRecipientEventsJob::class,
             fn ($job) => $job->runId === $old->id,
+        );
+    }
+
+    /**
+     * The command routes a mailjet-channel run's feedback sync to
+     * SyncMailjetEventsJob, never SyncCampaignRecipientEventsJob — this is
+     * the only wiring that ever runs the mailjet sync job. A zoho run must
+     * still route the old way when both are present in the same sweep.
+     */
+    public function test_sync_command_dispatches_mailjet_events_job_only_for_a_mailjet_run(): void
+    {
+        \Illuminate\Support\Facades\Bus::fake();
+
+        $mailjetRun = $this->makeSentRun([
+            'run_at' => now()->subDay(),
+            'finished_at' => now()->subDay(),
+        ]);
+        $mailjetRun->campaign->update(['delivery_channel' => 'mailjet']);
+
+        $zohoRun = $this->makeSentRun([
+            'zoho_campaign_key' => 'CK-COMMAND-ZOHO',
+            'run_at' => now()->subDay(),
+            'finished_at' => now()->subDay(),
+        ]);
+
+        $this->artisan('campaign:sync-stats')->assertExitCode(0);
+
+        \Illuminate\Support\Facades\Bus::assertDispatched(
+            SyncMailjetEventsJob::class,
+            fn ($job) => $job->runId === $mailjetRun->id,
+        );
+        \Illuminate\Support\Facades\Bus::assertNotDispatched(
+            \App\Jobs\SyncCampaignRecipientEventsJob::class,
+            fn ($job) => $job->runId === $mailjetRun->id,
+        );
+        \Illuminate\Support\Facades\Bus::assertDispatched(
+            \App\Jobs\SyncCampaignRecipientEventsJob::class,
+            fn ($job) => $job->runId === $zohoRun->id,
+        );
+        \Illuminate\Support\Facades\Bus::assertNotDispatched(
+            SyncMailjetEventsJob::class,
+            fn ($job) => $job->runId === $zohoRun->id,
         );
     }
 

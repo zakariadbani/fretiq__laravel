@@ -334,6 +334,44 @@ class CampaignSendAccessTest extends TestCase
         \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\SyncCampaignRecipientEventsJob::class, 1);
     }
 
+    /**
+     * The syncStats route handler is the other stats-sync entry point besides
+     * the campaign:sync-stats command. A mailjet campaign must dispatch
+     * SyncMailjetEventsJob, never SyncCampaignRecipientEventsJob — this is
+     * the manual "Synchroniser les statistiques" button's target.
+     */
+    public function test_manual_stats_sync_json_queues_mailjet_events_job_for_a_mailjet_campaign(): void
+    {
+        \Illuminate\Support\Facades\Bus::fake();
+        $campaign = $this->makeCampaign();
+        $campaign->update(['delivery_channel' => 'mailjet']);
+        $eligible = CampaignRun::create([
+            'campaign_id' => $campaign->id,
+            'occurrence_key' => 'eligible-mailjet-json',
+            'run_at' => now()->subDay(),
+            'status' => 'sent',
+            'finished_at' => now()->subDay(),
+        ]);
+
+        $response = $this->actingAs($this->superadmin)
+            ->postJson(route('admin.campaigns.syncStats', $campaign->id));
+
+        $response->assertOk()
+            ->assertJson([
+                'message' => html_entity_decode('Synchronisation Mailjet mise en file pour 1 ex&eacute;cution(s).'),
+                'redirect' => route('admin.campaigns.view', $campaign->id),
+            ]);
+        \Illuminate\Support\Facades\Bus::assertDispatched(
+            \App\Jobs\SyncCampaignStatsJob::class,
+            fn ($job) => $job->runId === $eligible->id,
+        );
+        \Illuminate\Support\Facades\Bus::assertDispatched(
+            \App\Jobs\SyncMailjetEventsJob::class,
+            fn ($job) => $job->runId === $eligible->id,
+        );
+        \Illuminate\Support\Facades\Bus::assertNotDispatched(\App\Jobs\SyncCampaignRecipientEventsJob::class);
+    }
+
     public function test_view_only_user_sees_zoho_sync_state_but_not_the_manual_action(): void
     {
         $campaign = $this->makeCampaign();

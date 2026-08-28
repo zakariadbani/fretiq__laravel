@@ -253,6 +253,48 @@ class CampaignDispatchPreflightTest extends TestCase
         $this->assertDatabaseMissing('campaign_runs', ['campaign_id' => $campaign->id]);
     }
 
+    public function test_missing_mailjet_keys_blocks_send_without_run_or_queue(): void
+    {
+        Bus::fake();
+
+        config([
+            'services.mailjet.key' => '',
+            'services.mailjet.secret' => '',
+        ]);
+
+        $this->makeClientContact('mailjet-keys@example.test');
+        $campaign = $this->makeCampaign(Segment::create(['name' => 'Clients', 'scope' => 'client']), [
+            'delivery_channel' => 'mailjet',
+        ]);
+
+        $this->actingAs($this->superadmin)
+            ->postJson("/admin/campaigns/{$campaign->id}/send")
+            ->assertStatus(422)
+            ->assertJson(['message' => 'error'])
+            ->assertJsonPath('text', 'Configuration Mailjet incomplète : clés API manquantes.');
+
+        Bus::assertNotDispatched(SendCampaignJob::class);
+        $this->assertDatabaseMissing('campaign_runs', ['campaign_id' => $campaign->id]);
+    }
+
+    public function test_dispatch_preflight_reports_ok_false_when_mailjet_keys_are_blank(): void
+    {
+        config([
+            'services.mailjet.key' => '',
+            'services.mailjet.secret' => '',
+        ]);
+
+        $this->makeClientContact('mailjet-preflight@example.test');
+        $campaign = $this->makeCampaign(Segment::create(['name' => 'Clients', 'scope' => 'client']), [
+            'delivery_channel' => 'mailjet',
+        ]);
+
+        $preflight = app(CampaignService::class)->dispatchPreflight($campaign);
+
+        $this->assertFalse($preflight['ok']);
+        $this->assertContains('Configuration Mailjet incomplète : clés API manquantes.', $preflight['messages']);
+    }
+
     public function test_due_dispatch_marks_blocked_run_failed_without_queueing(): void
     {
         Bus::fake();

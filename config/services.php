@@ -87,6 +87,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Mailjet (per-recipient delivery channel)
+    |--------------------------------------------------------------------------
+    | Send API v3.1, one message per recipient — reuses the sendViaLocal pipeline.
+    | Set MAILJET_SANDBOX=true in staging (SandboxMode validates without delivering).
+    */
+    'mailjet' => [
+        'key'     => env('MAILJET_API_KEY'),
+        'secret'  => env('MAILJET_API_SECRET'),
+        'api_url' => env('MAILJET_API_URL', 'https://api.mailjet.com'),
+        'sandbox' => (bool) env('MAILJET_SANDBOX', false),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Discovery APIs
     |--------------------------------------------------------------------------
     */

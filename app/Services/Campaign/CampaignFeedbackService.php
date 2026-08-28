@@ -144,6 +144,14 @@ class CampaignFeedbackService
             if ($recipient->{$column} === null) {
                 $attributes[$column] = $hasOccurredAt ? $at : now();
             }
+            // A click always implies an open. Backfill opened_at in the SAME
+            // update as clicked_at/status — a caller that only ever reports
+            // 'clicked' (e.g. Mailjet's last-state-only Status field) must not
+            // need two separate apply() calls, which would leave the row
+            // permanently downgraded to 'opened' if the process died between them.
+            if ($outcome === 'clicked' && $recipient->opened_at === null) {
+                $attributes['opened_at'] = $attributes[$column] ?? ($hasOccurredAt ? $at : now());
+            }
             if (in_array($recipient->status, ['queued', 'sent', 'delivered', 'opened', 'clicked'], true)) {
                 $attributes['status'] = $outcome;
             }

@@ -24,7 +24,9 @@ use Illuminate\Support\Facades\DB;
  * save.
  *
  * House rules beyond the model's own validation:
- *  - delivery_channel must be explicit smtp|zoho (the model allows null).
+ *  - delivery_channel must be explicit smtp|zoho|mailjet (the model allows
+ *    null). mailjet additionally rejects schedule_type=sequence — the
+ *    Mailjet channel does not support sequences in v1.
  *  - is_active is forced to false only when CREATING a new campaign; updating
  *    an existing one never touches is_active (imports must never activate a
  *    send, but must not deactivate an already-running one either). A truthy
@@ -116,8 +118,13 @@ class CampaignCsvImporter extends AbstractCsvImporter
         }
 
         $deliveryChannel = trim((string) ($raw['delivery_channel'] ?? ''));
-        if (! in_array($deliveryChannel, ['smtp', 'zoho'], true)) {
-            $errors[] = "Ligne {$rowNumber} : delivery_channel doit être explicite (smtp ou zoho).";
+        if (! in_array($deliveryChannel, ['smtp', 'zoho', 'mailjet'], true)) {
+            $errors[] = "Ligne {$rowNumber} : delivery_channel doit être explicite (smtp, zoho ou mailjet).";
+
+            return null;
+        }
+        if ($deliveryChannel === 'mailjet' && $scheduleType === 'sequence') {
+            $errors[] = "Ligne {$rowNumber} : le canal Mailjet ne prend pas encore en charge les séquences.";
 
             return null;
         }

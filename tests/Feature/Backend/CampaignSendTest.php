@@ -257,6 +257,85 @@ class CampaignSendTest extends TestCase
     }
 
     /**
+     * A mailjet-channel campaign resolves MailjetCampaignsDriver (not the
+     * container-bound CampaignsClient) and sends per-recipient via Send API v3.1.
+     */
+    public function test_mailjet_run_sends_via_send_api_and_records_message_id(): void
+    {
+        config([
+            'services.mailjet.key' => 'mj-key',
+            'services.mailjet.secret' => 'mj-secret',
+        ]);
+        \Illuminate\Support\Facades\Http::fake([
+            '*api.mailjet.com/v3.1/send*' => \Illuminate\Support\Facades\Http::response([
+                'Messages' => [[
+                    'Status' => 'success',
+                    'To' => [['Email' => 'jean@acme.test', 'MessageID' => 555]],
+                ]],
+            ], 200),
+        ]);
+
+        $contact  = $this->makeClientContact();
+        $segment  = Segment::create(['name' => 'Clients', 'scope' => 'client']);
+        $template = $this->makeTemplate();
+        $sender   = $this->makeSender();
+        $campaign = $this->makeCampaign($segment, $template, $sender);
+        $campaign->update(['delivery_channel' => 'mailjet']);
+
+        $service = app(CampaignService::class);
+        $run = $service->scheduleOneShot($campaign);
+        $service->sendRun($run);
+
+        $run->refresh();
+        $this->assertSame('sent', $run->status);
+        $this->assertSame(1, (int) $run->stats_sent);
+        $this->assertDatabaseHas('campaign_recipients', [
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'sent',
+            'provider_message_id' => '555',
+        ]);
+    }
+
+    /**
+     * A mailjet-channel run whose every per-recipient send fails (e.g. every
+     * Send API call rejected) must be marked 'failed', not 'sent' — same
+     * contract as the local/SMTP driver.
+     */
+    public function test_mailjet_run_with_all_sends_failing_is_marked_failed_not_sent(): void
+    {
+        config([
+            'services.mailjet.key' => 'mj-key',
+            'services.mailjet.secret' => 'mj-secret',
+        ]);
+        \Illuminate\Support\Facades\Http::fake([
+            '*api.mailjet.com/v3.1/send*' => \Illuminate\Support\Facades\Http::response([
+                'Messages' => [['Status' => 'error']],
+            ], 200),
+        ]);
+
+        $contact  = $this->makeClientContact();
+        $segment  = Segment::create(['name' => 'Clients', 'scope' => 'client']);
+        $template = $this->makeTemplate();
+        $sender   = $this->makeSender();
+        $campaign = $this->makeCampaign($segment, $template, $sender);
+        $campaign->update(['delivery_channel' => 'mailjet']);
+
+        $service = app(CampaignService::class);
+        $run = $service->scheduleOneShot($campaign);
+        $service->sendRun($run);
+
+        $run->refresh();
+        $this->assertSame('failed', $run->status);
+        $this->assertSame(0, (int) $run->stats_sent);
+        $this->assertDatabaseHas('campaign_recipients', [
+            'campaign_run_id' => $run->id,
+            'contact_id' => $contact->id,
+            'status' => 'queued',
+        ]);
+    }
+
+    /**
      * Manual "Envoyer maintenant" runs must always create a fresh occurrence.
      * Reusing scheduleOneShot() can return an already-sent run when the campaign
      * has a fixed scheduled_at timestamp, making the UI click appear to do nothing.

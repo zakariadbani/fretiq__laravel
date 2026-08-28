@@ -6,6 +6,7 @@ namespace App\Console\Commands;
 
 use App\Jobs\SyncCampaignRecipientEventsJob;
 use App\Jobs\SyncCampaignStatsJob;
+use App\Jobs\SyncMailjetEventsJob;
 use App\Models\CampaignRun;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -61,13 +62,20 @@ class CampaignSyncStats extends Command
             $query->whereNull('zoho_campaign_key');
         }
 
-        // Use cursor() for memory-safe iteration over potentially large result sets.
-        // Only id is needed in the loop body; select it explicitly to avoid hydrating all columns.
+        // Use lazy() for memory-safe iteration over potentially large result sets.
+        // cursor() cannot batch eager loads (it hydrates one row/query at a time),
+        // so accessing $run->campaign inside the loop below was a true N+1 — lazy()
+        // chunks internally and honours with(), so the eager load stays batched.
+        // Only the columns used in the loop body are selected; campaign.delivery_channel
+        // is needed to route mailjet runs (which never carry a zoho_campaign_key) to
+        // SyncMailjetEventsJob instead of the Zoho recipient-event sync.
         $count = 0;
-        foreach ($query->select('id', 'zoho_campaign_key')->cursor() as $run) {
+        foreach ($query->select('id', 'zoho_campaign_key', 'campaign_id')->with('campaign:id,delivery_channel,driver')->lazy() as $run) {
             SyncCampaignStatsJob::dispatch($run->id);
             if (filled($run->zoho_campaign_key)) {
                 SyncCampaignRecipientEventsJob::dispatch($run->id);
+            } elseif ($run->campaign?->effectiveDeliveryChannel() === 'mailjet') {
+                SyncMailjetEventsJob::dispatch($run->id);
             }
             $count++;
         }

@@ -155,7 +155,7 @@ class Campaign extends Model
 
     public function effectiveDeliveryChannel(): string
     {
-        if (in_array($this->delivery_channel, ['zoho', 'smtp'], true)) {
+        if (in_array($this->delivery_channel, ['zoho', 'smtp', 'mailjet'], true)) {
             return $this->delivery_channel;
         }
 
@@ -323,7 +323,15 @@ class Campaign extends Model
             'send_window'        => 'nullable|array',
             'is_active'          => 'nullable|boolean',
             'driver'             => 'nullable|in:local,zoho',
-            'delivery_channel'   => 'nullable|in:zoho,smtp',
+            'delivery_channel'   => [
+                'nullable',
+                Rule::in(['zoho', 'smtp', 'mailjet']),
+                function ($attribute, $value, $fail): void {
+                    if ($value === 'mailjet' && $this->schedule_type === 'sequence') {
+                        $fail('Le canal Mailjet ne prend pas encore en charge les séquences.');
+                    }
+                },
+            ],
             'email_verification_policy' => 'required|in:verified_only,all_sendable',
             'smtp_daily_email_limit' => 'nullable|integer|min:0|max:500',
         ];
