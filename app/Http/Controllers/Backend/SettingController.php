@@ -236,6 +236,14 @@ class SettingController extends Controller
                     'type' => 'static',
                     'label' => 'Prochains jours exclus',
                 ],
+                'daily_send_cap' => [
+                    'type' => 'number',
+                    'label' => 'Plafond d\'envois par jour (séquences)',
+                    'default' => 0,
+                    'min' => 0,
+                    'max' => 100000,
+                    'help' => '0 = désactivé. Sinon nombre maximal d\'emails de séquence par jour ; surplus reporté au jour ouvré suivant.',
+                ],
             ],
         ],
 
@@ -471,6 +479,7 @@ class SettingController extends Controller
                             );
                         },
                     ],
+                    'settings.planification.daily_send_cap' => 'nullable|integer|min:0|max:100000',
                 ],
                 [
                     'settings.planification.blackout_dates.string' => 'La liste des jours exclus doit être du texte.',

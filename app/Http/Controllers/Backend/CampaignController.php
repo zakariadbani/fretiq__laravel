@@ -1272,13 +1272,16 @@ class CampaignController extends BackendController
         ]);
     }
 
-    /** Preview the next progressive-sequence batch using unsaved form values. */
+    /** Preview the next progressive batch (sequence-paced or plain paced) using unsaved form values. */
     public function nextWavePreview(Request $request, $id)
     {
         $campaign = Campaign::findOrFail((int) $id);
 
-        if ($campaign->schedule_type !== 'sequence' || $campaign->sequence_enrollment_mode !== 'paced') {
-            return response()->json(['is_sequence_paced' => false]);
+        $isSequencePaced = $campaign->schedule_type === 'sequence' && $campaign->sequence_enrollment_mode === 'paced';
+        $isPaced = $campaign->schedule_type === 'paced';
+
+        if (! $isSequencePaced && ! $isPaced) {
+            return response()->json(['is_sequence_paced' => false, 'is_paced' => false]);
         }
 
         $validated = $request->validate([
@@ -1294,7 +1297,7 @@ class CampaignController extends BackendController
             $validated['email_verification_policy'] ?? null,
         );
 
-        return response()->json(['is_sequence_paced' => true] + $projection);
+        return response()->json(['is_sequence_paced' => $isSequencePaced, 'is_paced' => $isPaced] + $projection);
     }
 
     /**
@@ -1597,6 +1600,21 @@ class CampaignController extends BackendController
         $allowEmptyAudience = ($campaign->schedule_type === 'paced' && ($validated['action'] ?? null) === 'schedule')
             || ($campaign->schedule_type === 'sequence' && $campaign->sequence_enrollment_mode === 'paced');
         $preflight = app(CampaignService::class)->dispatchPreflight($campaign, null, $allowEmptyAudience);
+
+        // The real send slices the segment to the campaign's saved
+        // daily_company_limit; the preview must show that same capped count,
+        // not the whole segment preflight resolved.
+        if ($campaign->schedule_type === 'paced') {
+            $counts = app(PacedCampaignBatchService::class)->previewManualBatch($campaign, now());
+            $preflight['company_count'] = $counts['company_count'];
+            $preflight['contact_count'] = $counts['contact_count'];
+            $preflight['count'] = $counts['contact_count'];
+        } elseif ($campaign->schedule_type === 'sequence' && $campaign->sequence_enrollment_mode === 'paced') {
+            $counts = app(PacedSequenceEnrollmentService::class)->previewDailyBatch($campaign);
+            $preflight['company_count'] = $counts['company_count'];
+            $preflight['contact_count'] = $counts['contact_count'];
+            $preflight['count'] = $counts['contact_count'];
+        }
 
         return response()->json([
             'ok' => $preflight['ok'],

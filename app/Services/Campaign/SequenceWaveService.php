@@ -11,9 +11,11 @@ use App\Models\CampaignRecipient;
 use App\Models\CampaignRun;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStepSend;
+use App\Models\Setting;
 use App\Models\Suppression;
 use App\Services\Scheduling\BusinessCalendarService;
 use App\Services\Zoho\ZohoRecipientListGateway;
+use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -108,6 +110,146 @@ class SequenceWaveService
         return $contacts;
     }
 
+    /**
+     * Global daily send cap for sequence Zoho-wave sends. Feature is OFF by
+     * default (cap <= 0) — a total no-op, zero behavior change. When on,
+     * shrinks/reschedules this run's queued recipients to fit the remaining
+     * daily budget instead of letting a large backlog blow past the cap in
+     * one shot: the surplus moves to a sibling run on the next business day,
+     * draining unbounded backlogs in daily slices without ever double-sending
+     * or stranding a recipient.
+     *
+     * @return 'proceed'|'split'|'deferred'
+     */
+    public function enforceDailyCap(CampaignRun $run): string
+    {
+        $cap = (int) Setting::get('planification.daily_send_cap', 0);
+        if ($cap <= 0) {
+            return 'proceed';
+        }
+        $tz = (string) config('prospecting.smtp.quota_timezone', 'Europe/Paris');
+
+        return DB::transaction(function () use ($run, $cap, $tz): string {
+            $locked = CampaignRun::query()->lockForUpdate()->findOrFail($run->id);
+            $remaining = $this->remainingDailyBudget($cap, $tz);
+
+            $queued = CampaignRecipient::query()
+                ->where('campaign_run_id', $locked->id)
+                ->where('status', 'queued')
+                ->with('contact.company')
+                ->get()
+                ->sort(function (CampaignRecipient $a, CampaignRecipient $b): int {
+                    $scoreA = $a->contact?->company?->ai_score ?? -1;
+                    $scoreB = $b->contact?->company?->ai_score ?? -1;
+                    if ($scoreA !== $scoreB) {
+                        return $scoreB <=> $scoreA;
+                    }
+                    $companyA = $a->contact?->company_id ?? 0;
+                    $companyB = $b->contact?->company_id ?? 0;
+                    if ($companyA !== $companyB) {
+                        return $companyA <=> $companyB;
+                    }
+                    return $a->contact_id <=> $b->contact_id;
+                })
+                ->values();
+
+            if ($queued->count() <= $remaining) {
+                return 'proceed';
+            }
+
+            if ($remaining <= 0) {
+                $deferAt = $this->nextBusinessDaySameWallTime($locked, $tz);
+                $locked->update([
+                    'status' => 'prepared',
+                    'run_at' => $deferAt,
+                ]);
+                // Mirror the split path (see deferSurplusToNextBusinessDay): keep the
+                // enrollments' next_send_at aligned with the run's bumped run_at for
+                // observability. Not load-bearing — recover() drives off run_at.
+                SequenceEnrollment::query()
+                    ->where('campaign_id', $locked->campaign_id)
+                    ->whereIn('contact_id', $queued->pluck('contact_id'))
+                    ->where('status', 'active')
+                    ->update(['next_send_at' => $deferAt]);
+                return 'deferred';
+            }
+
+            $surplus = $queued->slice($remaining)->values();
+            $this->deferSurplusToNextBusinessDay($locked, $surplus, $tz);
+            return 'split';
+        }, 3);
+    }
+
+    /** Cap minus everything already sent today (global, across all campaigns), in the quota timezone's day boundary. */
+    private function remainingDailyBudget(int $cap, string $tz): int
+    {
+        $today = now($tz);
+        $dayStart = $today->copy()->startOfDay()->utc();
+        $dayEnd = $today->copy()->endOfDay()->utc();
+
+        $sentToday = SequenceStepSend::query()
+            ->where('status', 'sent')
+            ->whereBetween('sent_at', [$dayStart, $dayEnd])
+            ->count();
+
+        return $cap - $sentToday;
+    }
+
+    /** Next allowed business day, at the run's own wall-clock hh:mm, in $tz. */
+    private function nextBusinessDaySameWallTime(CampaignRun $run, string $tz): Carbon
+    {
+        $wallTime = $run->run_at->copy()->setTimezone($tz);
+
+        return $this->calendar->shiftToAllowed(
+            now($tz)->addDay()->setTime($wallTime->hour, $wallTime->minute, 0),
+            $tz,
+        );
+    }
+
+    /**
+     * Move the surplus (over-cap) recipients of $run to a sibling CampaignRun
+     * scheduled for the next business day — create-on-deferred FIRST, then
+     * delete from the current run, so a crash mid-transfer never loses a
+     * recipient (worst case: a duplicate queued row on the deferred run,
+     * which firstOrCreate on the unique (run,contact) pair already prevents).
+     *
+     * @param Collection<int, CampaignRecipient> $surplus
+     */
+    private function deferSurplusToNextBusinessDay(CampaignRun $run, Collection $surplus, string $tz): void
+    {
+        if ($surplus->isEmpty()) {
+            return;
+        }
+
+        $deferAt = $this->nextBusinessDaySameWallTime($run, $tz);
+        $deferKey = preg_replace('/-d\d{8}$/', '', $run->occurrence_key) . '-d' . $deferAt->copy()->tz($tz)->format('Ymd');
+
+        $deferredRun = CampaignRun::firstOrCreate(
+            ['campaign_id' => $run->campaign_id, 'occurrence_key' => $deferKey],
+            [
+                'sequence_step_id' => $run->sequence_step_id,
+                'run_at' => $deferAt,
+                'status' => 'prepared',
+                'driver_ref' => 'zoho-wave-pending',
+            ],
+        );
+
+        foreach ($surplus as $recipient) {
+            CampaignRecipient::firstOrCreate(
+                ['campaign_run_id' => $deferredRun->id, 'contact_id' => $recipient->contact_id],
+                ['status' => 'queued'],
+            );
+        }
+
+        CampaignRecipient::query()->whereIn('id', $surplus->pluck('id'))->delete();
+
+        SequenceEnrollment::query()
+            ->where('campaign_id', $run->campaign_id)
+            ->whereIn('contact_id', $surplus->pluck('contact_id'))
+            ->where('status', 'active')
+            ->update(['next_send_at' => $deferAt]);
+    }
+
     public function send(CampaignRun $run): void
     {
         $run->refresh()->load(['campaign.senderIdentity', 'sequenceStep.template', 'recipients.contact.company']);
@@ -124,6 +266,16 @@ class SequenceWaveService
 
         if ($run->driver_ref === 'zoho-send-uncertain') {
             throw new \RuntimeException('Envoi Zoho incertain : reconciliation manuelle requise.');
+        }
+
+        $capOutcome = $this->enforceDailyCap($run);
+        if ($capOutcome === 'deferred') {
+            return;
+        }
+        if ($capOutcome === 'split') {
+            // The gate deleted the surplus recipient rows directly in the DB;
+            // $run's in-memory 'recipients' relation (loaded above) is stale.
+            $run->load('recipients.contact.company');
         }
 
         $queuedBefore = $run->recipients->where('status', 'queued')->count();

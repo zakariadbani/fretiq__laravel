@@ -81,40 +81,18 @@ class PacedSequenceEnrollmentService
 
             $locked->loadMissing(['segment', 'sequence']);
             $firstStep = $locked->sequence->steps()->orderBy('step_no')->firstOrFail();
-            $contacts = $this->segmentService->resolve($locked->segment, $locked->emailVerificationPolicy());
             $existingContactIds = SequenceEnrollment::query()
                 ->where('sequence_id', $locked->sequence_id)
                 ->pluck('contact_id')
                 ->mapWithKeys(fn ($id): array => [(int) $id => true])
                 ->all();
 
+            $contacts = $this->segmentService->resolve($locked->segment, $locked->emailVerificationPolicy());
             $skipped = $contacts
                 ->filter(fn (Contact $contact): bool => isset($existingContactIds[$contact->id]))
                 ->count();
 
-            $groups = $contacts
-                ->reject(fn (Contact $contact): bool => isset($existingContactIds[$contact->id]) || ! $contact->company_id)
-                ->groupBy('company_id')
-                ->sort(function (Collection $left, Collection $right): int {
-                    $leftContact = $left->first();
-                    $rightContact = $right->first();
-                    $leftScore = $leftContact?->company?->ai_score;
-                    $rightScore = $rightContact?->company?->ai_score;
-
-                    if ($leftScore === null && $rightScore !== null) {
-                        return 1;
-                    }
-                    if ($leftScore !== null && $rightScore === null) {
-                        return -1;
-                    }
-
-                    $byScore = $rightScore <=> $leftScore;
-
-                    return $byScore !== 0
-                        ? $byScore
-                        : $leftContact->company_id <=> $rightContact->company_id;
-                })
-                ->take($locked->pacedDailyCompanyLimit());
+            $groups = $this->selectDailyGroups($locked, $contacts);
 
             $enrolled = 0;
             $waveContacts = collect();
@@ -196,6 +174,97 @@ class PacedSequenceEnrollmentService
         $next = $from->copy()->setTimezone($timezone)->addDay();
 
         return $this->calendar->shiftToAllowed($next, $timezone);
+    }
+
+    /**
+     * Resolve the segment, exclude contacts already enrolled in this sequence,
+     * then rank company groups by score and stable ID, capped at the campaign's
+     * saved daily company limit.
+     *
+     * $contacts, when given, is the already-resolved segment collection (the
+     * caller in evaluateDue() also needs it for the $skipped count) — reused
+     * as-is to avoid resolving the segment twice per tick.
+     *
+     * @param Collection<int, Contact>|null $contacts
+     * @return Collection<int, Collection<int, Contact>> keyed by company ID
+     */
+    private function selectDailyGroups(Campaign $locked, ?Collection $contacts = null): Collection
+    {
+        $locked->loadMissing(['segment', 'sequence']);
+        $contacts ??= $this->segmentService->resolve($locked->segment, $locked->emailVerificationPolicy());
+        $existingContactIds = SequenceEnrollment::query()
+            ->where('sequence_id', $locked->sequence_id)
+            ->pluck('contact_id')
+            ->mapWithKeys(fn ($id): array => [(int) $id => true])
+            ->all();
+
+        return $contacts
+            ->reject(fn (Contact $contact): bool => isset($existingContactIds[$contact->id]) || ! $contact->company_id)
+            ->groupBy('company_id')
+            ->sort(function (Collection $left, Collection $right): int {
+                $leftContact = $left->first();
+                $rightContact = $right->first();
+                $leftScore = $leftContact?->company?->ai_score;
+                $rightScore = $rightContact?->company?->ai_score;
+
+                if ($leftScore === null && $rightScore !== null) {
+                    return 1;
+                }
+                if ($leftScore !== null && $rightScore === null) {
+                    return -1;
+                }
+
+                $byScore = $rightScore <=> $leftScore;
+
+                return $byScore !== 0
+                    ? $byScore
+                    : $leftContact->company_id <=> $rightContact->company_id;
+            })
+            ->take($locked->pacedDailyCompanyLimit());
+    }
+
+    /**
+     * Read-only preview of what the next paced sequence enrollment batch would
+     * select right now. No enroll, no CampaignRun/CampaignRecipient creation,
+     * no next_run_at write, no lock.
+     *
+     * @return array{company_count: int, contact_count: int}
+     */
+    public function previewDailyBatch(Campaign $campaign): array
+    {
+        $campaign->loadMissing(['segment', 'sequence']);
+        if ($campaign->segment === null || $campaign->sequence === null || $campaign->next_run_at === null) {
+            return ['company_count' => 0, 'contact_count' => 0];
+        }
+
+        // sendNow() calls activate() -> evaluateDue(..., true). The $activate
+        // flag only forces is_active/sequence_auto_enroll_enabled true and
+        // thereby bypasses the early-return gate built on those two columns
+        // (~:58) — it does NOT bypass the blocked-date / due-time gate below
+        // (~:78: `isBlockedDate($localNow) || $effectiveRunAt->gt($now)`),
+        // which runs unconditionally after cursor normalization. Preview must
+        // apply that same gate or it will show N while sendNow() returns
+        // zeros right now.
+        $now = now();
+        $timezone = $campaign->scheduleTimezone();
+        $localNow = $now->copy()->setTimezone($timezone);
+        $effectiveRunAt = $campaign->next_run_at->copy();
+
+        while ($this->calendar->isBlockedDate($effectiveRunAt->copy()->setTimezone($timezone))
+            || $effectiveRunAt->copy()->setTimezone($timezone)->toDateString() < $localNow->toDateString()) {
+            $effectiveRunAt = $this->computeNextBusinessRun($effectiveRunAt, $timezone);
+        }
+
+        if ($this->calendar->isBlockedDate($localNow) || $effectiveRunAt->gt($now)) {
+            return ['company_count' => 0, 'contact_count' => 0];
+        }
+
+        $groups = $this->selectDailyGroups($campaign);
+
+        return [
+            'company_count' => $groups->count(),
+            'contact_count' => $groups->sum(fn (Collection $group): int => $group->count()),
+        ];
     }
 
     private function assertConfigured(Campaign $campaign): void

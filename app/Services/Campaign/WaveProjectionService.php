@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Campaign;
 
 use App\Models\Campaign;
+use App\Models\CampaignCompanyDispatch;
 use App\Models\Contact;
 use App\Models\Segment;
 use App\Models\SequenceEnrollment;
@@ -49,8 +50,35 @@ class WaveProjectionService
                 ->all()
             : [];
 
+        // Plain paced campaigns (non-sequence) track "already claimed" per
+        // company via CampaignCompanyDispatch, not SequenceEnrollment —
+        // exclude those too so the projection reflects the real next wave.
+        $knownCompanyIds = CampaignCompanyDispatch::query()
+            ->where('campaign_id', $campaign->id)
+            ->pluck('company_id')
+            ->mapWithKeys(fn (int $companyId): array => [$companyId => true])
+            ->all();
+
+        // Mirror PacedCampaignBatchService::previewManualBatch()'s retry
+        // accounting: the real batch reserves quota for failed dispatches
+        // with a queued retry recipient before enrolling new companies.
+        // Sequence campaigns never create CampaignCompanyDispatch rows, so
+        // this naturally yields 0 there and behavior is unchanged.
+        // limit()->count() would strip the limit (Laravel aggregate queries
+        // drop orders/limit/offset), so cap via get()->count() to match
+        // previewManualBatch() exactly.
+        $retryCount = CampaignCompanyDispatch::query()
+            ->where('campaign_id', $campaign->id)
+            ->where('status', 'failed')
+            ->whereHas('recipients', fn ($query) => $query->where('status', 'queued'))
+            ->limit($limit)
+            ->get(['id'])
+            ->count();
+
+        $remaining = max(0, $limit - $retryCount);
+
         $eligibleCompanies = $this->segmentService->resolve($segment, $policy ?? $campaign->emailVerificationPolicy())
-            ->reject(fn (Contact $contact): bool => isset($existingContactIds[$contact->id]) || ! $contact->company_id)
+            ->reject(fn (Contact $contact): bool => isset($existingContactIds[$contact->id]) || isset($knownCompanyIds[$contact->company_id]) || ! $contact->company_id)
             ->groupBy('company_id')
             ->sort(function (Collection $left, Collection $right): int {
                 $leftContact = $left->first();
@@ -72,7 +100,7 @@ class WaveProjectionService
                     : $leftContact->company_id <=> $rightContact->company_id;
             });
 
-        $nextWave = $eligibleCompanies->take($limit);
+        $nextWave = $eligibleCompanies->take($remaining);
         $remainingCompanies = $eligibleCompanies->count();
 
         return [

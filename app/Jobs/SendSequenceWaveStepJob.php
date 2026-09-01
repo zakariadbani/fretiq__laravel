@@ -28,7 +28,17 @@ class SendSequenceWaveStepJob implements ShouldQueue, ShouldBeUnique
     }
     public function uniqueId(): string { return (string) $this->runId; }
     public function uniqueFor(): int { return 600; }
-    public function middleware(): array { return [(new WithoutOverlapping('zoho-wave-send-v2-' . $this->runId))->releaseAfter(30)->expireAfter($this->timeout + 60)]; }
+    public function middleware(): array
+    {
+        return [
+            (new WithoutOverlapping('zoho-wave-send-v2-' . $this->runId))->releaseAfter(30)->expireAfter($this->timeout + 60),
+            // ponytail: global key serializes ALL wave sends behind one lock so the
+            // daily-cap gate's read-then-write (remaining budget + queued split) can't
+            // race across concurrent workers. Fine at a few waves/day; move to a
+            // reservation table (see SmtpSendReservationService) if throughput grows.
+            (new WithoutOverlapping('zoho-wave-send-global'))->releaseAfter(30)->expireAfter($this->timeout + 60),
+        ];
+    }
     public function backoff(): array { return [10, 30, 60, 120]; }
 
     public function handle(SequenceWaveService $service): void

@@ -518,6 +518,15 @@
                                 <div class="form-text text-muted mt-1 fs-7">
                                     Tous les contacts éligibles des sociétés sélectionnées recevront l’e-mail. Le nombre d’e-mails peut dépasser le nombre de sociétés.
                                 </div>
+                                @if(isset($model) && $model->id)
+                                    <div id="next-wave-preview-paced"
+                                         class="form-text text-muted mt-3 fs-7"
+                                         aria-live="polite"
+                                         data-url="{{ route('admin.campaigns.nextWavePreview', $model->id) }}">
+                                        <span class="spinner-border spinner-border-sm me-1"></span>
+                                        Calcul de la prochaine vague...
+                                    </div>
+                                @endif
                             </div>
                         </div>
                     </div>
@@ -817,79 +826,109 @@
                 }
             }
 
-            // ── Next progressive-sequence wave preview ───────────────────────
-            const nextWavePreview = document.getElementById('next-wave-preview');
-            const dailyLimitInput = document.getElementById('sequence_daily_company_limit');
-            let nextWaveRequest = 0;
-            let nextWaveDebounce = null;
+            // ── Next progressive wave preview (sequence-paced + plain paced) ──
+            function setupNextWavePreview(targetEl, inputEl, isActive, zeroMessage) {
+                if (!targetEl) return function () {};
+
+                let requestId = 0;
+                let debounce = null;
+
+                function schedule() {
+                    ++requestId;
+                    window.clearTimeout(debounce);
+                    debounce = window.setTimeout(refresh, 400);
+                }
+
+                function refresh() {
+                    const currentRequestId = requestId;
+
+                    if (!isActive()) {
+                        targetEl.classList.add('d-none');
+                        return;
+                    }
+
+                    targetEl.classList.remove('d-none');
+
+                    const segmentId = segmentSelect?.value;
+                    const dailyLimit = Number.parseInt(inputEl?.value ?? '', 10);
+                    if (!segmentId || !Number.isInteger(dailyLimit) || dailyLimit < 1) {
+                        targetEl.textContent = 'Sélectionnez un segment et une limite quotidienne valide.';
+                        return;
+                    }
+
+                    targetEl.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Calcul de la prochaine vague...';
+
+                    axios.get(targetEl.dataset.url, {
+                        params: {
+                            segment_id: segmentId,
+                            daily_company_limit: dailyLimit,
+                            email_verification_policy: verificationPolicySelect?.value || 'verified_only',
+                        },
+                    }).then(function (response) {
+                        if (currentRequestId !== requestId) return;
+
+                        const data = response.data;
+                        if (!data.is_sequence_paced && !data.is_paced) {
+                            targetEl.classList.add('d-none');
+                            return;
+                        }
+                        if (data.next_wave_companies === 0) {
+                            targetEl.textContent = zeroMessage;
+                            return;
+                        }
+
+                        // Build via createElement+textContent to prevent XSS —
+                        // mirrors the pattern above (~L1360); no dynamic value
+                        // is interpolated into HTML.
+                        targetEl.innerHTML = '';
+                        targetEl.appendChild(document.createTextNode('Prochaine vague : '));
+                        const strong = document.createElement('strong');
+                        strong.textContent = data.next_wave_companies + ' société(s)';
+                        targetEl.appendChild(strong);
+                        targetEl.appendChild(document.createTextNode(
+                            ' · ' + data.next_wave_contacts + ' contact(s) · Restant : ' +
+                            data.eligible_remaining_companies + ' société(s) (~' +
+                            data.projected_remaining_waves + ' vague(s)) · Prochaine exécution : ' +
+                            (data.next_run_at || 'non définie')
+                        ));
+                    }).catch(function () {
+                        if (currentRequestId !== requestId) return;
+                        targetEl.textContent = 'Impossible de calculer la prochaine vague.';
+                    });
+                }
+
+                return schedule;
+            }
+
+            const scheduleSequenceWavePreview = setupNextWavePreview(
+                document.getElementById('next-wave-preview'),
+                document.getElementById('sequence_daily_company_limit'),
+                function () {
+                    return document.getElementById('schedule_type_select')?.value === 'sequence'
+                        && document.getElementById('sequence_enrollment_mode')?.value === 'paced';
+                },
+                'Aucune entreprise éligible.',
+            );
+
+            const schedulePacedWavePreview = setupNextWavePreview(
+                document.getElementById('next-wave-preview-paced'),
+                document.getElementById('daily_company_limit'),
+                function () {
+                    return document.getElementById('schedule_type_select')?.value === 'paced';
+                },
+                'Aucune nouvelle société à enrôler — audience déjà couverte.',
+            );
 
             function scheduleNextWavePreview() {
-                if (!nextWavePreview) return;
-                ++nextWaveRequest;
-                window.clearTimeout(nextWaveDebounce);
-                nextWaveDebounce = window.setTimeout(refreshNextWavePreview, 400);
+                scheduleSequenceWavePreview();
+                schedulePacedWavePreview();
             }
 
-            function refreshNextWavePreview() {
-                if (!nextWavePreview) return;
-
-                const requestId = nextWaveRequest;
-                const isPacedSequence = document.getElementById('schedule_type_select')?.value === 'sequence'
-                    && document.getElementById('sequence_enrollment_mode')?.value === 'paced';
-
-                if (!isPacedSequence) {
-                    nextWavePreview.classList.add('d-none');
-                    return;
-                }
-
-                nextWavePreview.classList.remove('d-none');
-
-                const segmentId = segmentSelect?.value;
-                const dailyLimit = Number.parseInt(dailyLimitInput?.value ?? '', 10);
-                if (!segmentId || !Number.isInteger(dailyLimit) || dailyLimit < 1) {
-                    nextWavePreview.textContent = 'Sélectionnez un segment et une limite quotidienne valide.';
-                    return;
-                }
-
-                nextWavePreview.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Calcul de la prochaine vague...';
-
-                axios.get(nextWavePreview.dataset.url, {
-                    params: {
-                        segment_id: segmentId,
-                        daily_company_limit: dailyLimit,
-                        email_verification_policy: verificationPolicySelect?.value || 'verified_only',
-                    },
-                }).then(function (response) {
-                    if (requestId !== nextWaveRequest) return;
-
-                    const data = response.data;
-                    if (!data.is_sequence_paced) {
-                        nextWavePreview.classList.add('d-none');
-                        return;
-                    }
-                    if (data.eligible_remaining_companies === 0) {
-                        nextWavePreview.textContent = 'Aucune entreprise éligible.';
-                        return;
-                    }
-
-                    nextWavePreview.innerHTML =
-                        'Prochaine vague : <strong>' + data.next_wave_companies + ' entreprise(s)</strong> (' +
-                        data.next_wave_contacts + ' contact(s)) · Restant : ' +
-                        data.eligible_remaining_companies + ' entreprise(s) (~' +
-                        data.projected_remaining_waves + ' vague(s)) · Prochaine exécution : ' +
-                        (data.next_run_at || 'non définie');
-                }).catch(function () {
-                    if (requestId !== nextWaveRequest) return;
-                    nextWavePreview.textContent = 'Impossible de calculer la prochaine vague.';
-                });
-            }
-
-            if (segmentSelect && nextWavePreview) {
+            if (segmentSelect) {
                 segmentSelect.addEventListener('change', scheduleNextWavePreview);
             }
-            if (dailyLimitInput && nextWavePreview) {
-                dailyLimitInput.addEventListener('input', scheduleNextWavePreview);
-            }
+            document.getElementById('sequence_daily_company_limit')?.addEventListener('input', scheduleSequenceWavePreview);
+            document.getElementById('daily_company_limit')?.addEventListener('input', schedulePacedWavePreview);
             verificationPolicySelect?.addEventListener('change', scheduleNextWavePreview);
             scheduleNextWavePreview();
 

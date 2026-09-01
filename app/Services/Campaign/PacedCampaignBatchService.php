@@ -162,6 +162,55 @@ class PacedCampaignBatchService
         return $this->calendar->shiftToAllowed($next, $timezone);
     }
 
+    /**
+     * Read-only preview of what a manual "Envoyer le lot du jour" batch would
+     * select right now: same retry-then-new-companies accounting as
+     * prepareLockedForDate(), without locking, writing, or reconciling anything.
+     *
+     * @return array{company_count: int, contact_count: int}
+     */
+    public function previewManualBatch(Campaign $campaign, Carbon $now): array
+    {
+        $timezone = $campaign->scheduleTimezone();
+        $localNow = $now->copy()->setTimezone($timezone);
+
+        // Mirror the two guards prepareManualBatch() applies before
+        // materializing anything, or the preview shows N while the real
+        // send throws / produces 0.
+        if ($this->calendar->isBlockedDate($localNow)) {
+            return ['company_count' => 0, 'contact_count' => 0];
+        }
+
+        $occurrenceKey = 'paced-' . $localNow->format('Ymd');
+        if ($campaign->runs()->where('occurrence_key', $occurrenceKey)->exists()) {
+            return ['company_count' => 0, 'contact_count' => 0];
+        }
+
+        $limit = $campaign->pacedDailyCompanyLimit();
+
+        $retryDispatches = CampaignCompanyDispatch::query()
+            ->where('campaign_id', $campaign->id)
+            ->where('status', 'failed')
+            ->whereHas('recipients', fn ($query) => $query->where('status', 'queued'))
+            ->orderBy('claimed_at')
+            ->orderBy('id')
+            ->limit($limit)
+            ->with(['recipients' => fn ($query) => $query->where('status', 'queued')])
+            ->get();
+
+        $retryQueuedRecipients = $retryDispatches->sum(fn (CampaignCompanyDispatch $dispatch): int => $dispatch->recipients->count());
+
+        $remaining = max(0, $limit - $retryDispatches->count());
+        $newGroups = $remaining > 0
+            ? $this->newCompanyGroups($campaign, $remaining)
+            : collect();
+
+        return [
+            'company_count' => $retryDispatches->count() + $newGroups->count(),
+            'contact_count' => $retryQueuedRecipients + $newGroups->sum(fn (Collection $group): int => $group->count()),
+        ];
+    }
+
     /** Campaign row must already be locked by the surrounding transaction. */
     private function prepareLockedForDate(Campaign $lockedCampaign, Carbon $localDate): ?CampaignRun
     {

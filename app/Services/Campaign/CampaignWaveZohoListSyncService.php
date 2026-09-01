@@ -46,6 +46,20 @@ class CampaignWaveZohoListSyncService
             ];
         }
 
+        $capOutcome = $this->waveService->enforceDailyCap($run);
+        if ($capOutcome === 'deferred') {
+            return [
+                'list_key' => (string) ($run->zoho_list_key ?? ''),
+                'list_name' => $this->listName($run),
+                'contacts' => $run->recipients->where('status', 'queued')->count(),
+            ];
+        }
+        if ($capOutcome === 'split') {
+            // The gate deleted the surplus recipient rows directly in the DB;
+            // $run's in-memory 'recipients' relation (loaded above) is stale.
+            $run->load('recipients.contact.company');
+        }
+
         $target = [];
         foreach ($this->waveService->eligibleContacts($run) as $contact) {
             $email = mb_strtolower(trim((string) $contact->email));
@@ -165,7 +179,11 @@ class CampaignWaveZohoListSyncService
     public function listName(CampaignRun $run): string
     {
         $run->loadMissing(['campaign', 'recipients']);
-        preg_match('/^sequence-wave-(\d+)(?:-step-(\d+))?$/', $run->occurrence_key, $matches);
+        // Tolerate the deferred-run '-dYYYYMMDD' suffix (SequenceWaveService::
+        // deferSurplusToNextBusinessDay) and the legacy-adoption 'legacy-<date>'
+        // form so both still parse a sane wave/step number instead of always
+        // falling back to "Wave 001".
+        preg_match('/^sequence-wave-(?:legacy-\d+|(\d+))(?:-step-(\d+))?(?:-d\d{8})?$/', $run->occurrence_key, $matches);
         $waveNumber = max(1, (int) ($matches[1] ?? 1));
         $suffix = ' - Wave ' . str_pad((string) $waveNumber, 3, '0', STR_PAD_LEFT);
         if (isset($matches[2])) {
