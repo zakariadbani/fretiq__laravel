@@ -2,7 +2,9 @@
 
 namespace Tests\Feature\Backend;
 
+use App\Http\Controllers\Backend\CampaignTemplateController;
 use App\Models\CampaignTemplate;
+use App\Models\SenderIdentity;
 use App\Models\User;
 use App\Services\Campaign\TemplateBuilder\SectionCatalog;
 use Database\Seeders\Acl\PermissionsSeeder;
@@ -129,27 +131,57 @@ class CampaignTemplateBuilderTest extends TestCase
         $response->assertSee('Solutions');
         $response->assertSee('Offre');
         $response->assertSee('Utilisez uniquement des chiffres documentés et à jour.');
-        $response->assertSee('Collecte');
+        $response->assertSee('Enlèvement EXW');
         $response->assertSee('Contenu TCL vérifié');
         $response->assertSee('https://tcltransport.com/nos-services/', false);
         $this->assertSame(1, substr_count($response->getContent(), 'id="builder_brief_input"'));
         $response->assertDontSee('data-tinymce-html-field required', false);
     }
 
+    /**
+     * The create-page hydration payload (window.__campaignTemplateBuilder,
+     * builderCatalog.middleDefaults — SectionCatalog::middleDefaults()) must
+     * carry the real TCL middle-block defaults the builder JS seeds into an
+     * absent slot on variant selection (see ensureMiddleSlotDefaults() in
+     * campaign-template-builder.js).
+     */
+    public function test_create_page_exposes_middle_defaults_catalog(): void
+    {
+        $response = $this->actingAs($this->superadmin)->get('/admin/campaign_templates/create');
+
+        $response->assertStatus(200);
+        $response->assertSee('middleDefaults', false);
+        $response->assertSee('Goussainville (France)', false);
+    }
+
     public function test_create_page_does_not_reuse_stale_variant_preview_cache(): void
     {
-        $stalePreview = '<a href="https://tcltransport.com/contact">Ancien CTA</a>';
+        $version   = (new \ReflectionClass(CampaignTemplateController::class))
+            ->getConstant('VARIANT_PREVIEWS_CACHE_VERSION');
+        $emailHash = md5((string) SenderIdentity::defaultContactEmail());
 
-        Cache::forever('builder.variant_previews.v1', [
-            'headers' => array_fill_keys(SectionCatalog::HEADERS, $stalePreview),
-            'footers' => array_fill_keys(SectionCatalog::FOOTERS, $stalePreview),
+        // Previous cache version, same email-hash suffix — the real key the
+        // controller would have written under before the last version bump.
+        $staleMarker = 'https://stale-preview.invalid/old-cta';
+        Cache::forever('builder.variant_previews.v' . ($version - 1) . '.' . $emailHash, [
+            'headers' => array_fill_keys(SectionCatalog::HEADERS, '<a href="' . $staleMarker . '">Ancien CTA</a>'),
+            'footers' => array_fill_keys(SectionCatalog::FOOTERS, '<a href="' . $staleMarker . '">Ancien CTA</a>'),
+        ]);
+
+        // Current cache key, seeded directly (bypassing buildVariantPreviews())
+        // with a distinct marker — proves the controller reads this cache
+        // entry rather than recomposing on every load.
+        $freshMarker = 'https://fresh-preview.invalid/cached-cta';
+        Cache::forever('builder.variant_previews.v' . $version . '.' . $emailHash, [
+            'headers' => array_fill_keys(SectionCatalog::HEADERS, '<a href="' . $freshMarker . '">CTA en cache</a>'),
+            'footers' => array_fill_keys(SectionCatalog::FOOTERS, '<a href="' . $freshMarker . '">CTA en cache</a>'),
         ]);
 
         $response = $this->actingAs($this->superadmin)->get('/admin/campaign_templates/create');
 
         $response->assertStatus(200);
-        $response->assertDontSee('https://tcltransport.com/contact', false);
-        $response->assertSee('https://tcltransport.com/', false);
+        $response->assertDontSee($staleMarker, false);
+        $response->assertSee($freshMarker, false);
     }
 
     public function test_edit_page_keeps_existing_shell_without_create_only_preview_controls(): void

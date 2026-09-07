@@ -83,6 +83,7 @@ class TemplateComposer
                 'compact_address' => 'TCL — 353 Mohammed V Boulevard, 7th floor – Espace Idriss, 20300 Casablanca – Morocco', 'compact_compliance' => 'You are receiving this message as part of a professional communication.',
                 'detailed_address' => '353 Mohammed V Boulevard, 7th floor – Espace Idriss, 20300 Casablanca – Morocco', 'detailed_compliance' => 'You are receiving this email as part of a professional communication.',
                 'origin' => 'Origin', 'frequency' => 'Frequency', 'challenge' => 'Challenge', 'solution' => 'TCL response', 'result' => 'Result',
+                'card_link' => 'Request a quote',
                 'contact_email' => $contactEmail,
             ]
             : [
@@ -91,6 +92,7 @@ class TemplateComposer
                 'compact_address' => 'TCL — 353 Bd Mohammed V, 7ème étage – Espace Idriss, 20300 Casablanca – Maroc', 'compact_compliance' => "Vous recevez ce message dans le cadre d'une prise de contact professionnelle.",
                 'detailed_address' => '353 Bd Mohammed V, 7ème étage – Espace Idriss, 20300 Casablanca – Maroc', 'detailed_compliance' => "Vous recevez cet e-mail dans le cadre d'une communication professionnelle.",
                 'origin' => 'Origine', 'frequency' => 'Fréquence', 'challenge' => 'Contrainte', 'solution' => 'Réponse TCL', 'result' => 'Résultat',
+                'card_link' => 'Demander une cotation',
                 'contact_email' => $contactEmail,
             ];
     }

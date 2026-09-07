@@ -207,6 +207,97 @@ class BuilderStateValidatorTest extends TestCase
         }
     }
 
+    public function test_solution_url_and_link_label_are_accepted_and_normalized(): void
+    {
+        $state = $this->validState('solutions');
+        $state['slots']['solutions'][0]['url'] = 'https://tcltransport.com/transport-routier/#cotationroutier';
+        $state['slots']['solutions'][0]['link_label'] = 'Cotation routier';
+
+        $result = $this->validator()->validate($state);
+
+        $this->assertSame('https://tcltransport.com/transport-routier/#cotationroutier', $result['slots']['solutions'][0]['url']);
+        $this->assertSame('Cotation routier', $result['slots']['solutions'][0]['link_label']);
+    }
+
+    public function test_blank_solution_url_and_link_label_are_omitted(): void
+    {
+        $state = $this->validState('solutions');
+        $state['slots']['solutions'][0]['url'] = '';
+        $state['slots']['solutions'][0]['link_label'] = '  ';
+
+        $result = $this->validator()->validate($state);
+
+        $this->assertArrayNotHasKey('url', $result['slots']['solutions'][0]);
+        $this->assertArrayNotHasKey('link_label', $result['slots']['solutions'][0]);
+    }
+
+    public function test_off_site_solution_url_is_rejected(): void
+    {
+        $state = $this->validState('solutions');
+        $state['slots']['solutions'][0]['url'] = 'https://evil.test/x';
+
+        try {
+            $this->validator()->validate($state);
+            $this->fail('Expected ValidationException for off-site solution url.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('slots.solutions.0.url', $e->errors());
+        }
+    }
+
+    public function test_lookalike_host_solution_url_is_rejected(): void
+    {
+        $lookalikes = [
+            'https://tcltransport.com.evil.tld/x',
+            'https://tcltransport.com@evil.tld/x',
+            'https://tcltransport.com-evil.tld/x',
+        ];
+
+        foreach ($lookalikes as $url) {
+            $state = $this->validState('solutions');
+            $state['slots']['solutions'][0]['url'] = $url;
+
+            try {
+                $this->validator()->validate($state);
+                $this->fail("Expected ValidationException for lookalike solution url: {$url}");
+            } catch (ValidationException $e) {
+                $this->assertArrayHasKey('slots.solutions.0.url', $e->errors());
+            }
+        }
+
+        $state = $this->validState('solutions');
+        $state['slots']['solutions'][0]['url'] = 'https://tcltransport.com/transport-routier/#cotationroutier';
+
+        $result = $this->validator()->validate($state);
+
+        $this->assertSame('https://tcltransport.com/transport-routier/#cotationroutier', $result['slots']['solutions'][0]['url']);
+    }
+
+    public function test_malformed_solution_url_is_rejected(): void
+    {
+        $state = $this->validState('solutions');
+        $state['slots']['solutions'][0]['url'] = 'tcltransport.com/x';
+
+        try {
+            $this->validator()->validate($state);
+            $this->fail('Expected ValidationException for malformed solution url.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('slots.solutions.0.url', $e->errors());
+        }
+    }
+
+    public function test_solution_link_label_over_max_is_rejected(): void
+    {
+        $state = $this->validState('solutions');
+        $state['slots']['solutions'][0]['link_label'] = str_repeat('a', 41);
+
+        try {
+            $this->validator()->validate($state);
+            $this->fail('Expected ValidationException for solution link_label over max.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('slots.solutions.0.link_label', $e->errors());
+        }
+    }
+
     public function test_unknown_merge_tag_in_new_offer_field_is_rejected(): void
     {
         $state = $this->validState('offer');
@@ -250,6 +341,17 @@ class BuilderStateValidatorTest extends TestCase
         $this->validator()->validate($this->validState(overrides: [
             'cta' => ['intent' => 'nope', 'label' => 'Label'],
         ]));
+    }
+
+    public function test_mode_quote_intents_are_accepted(): void
+    {
+        foreach (['quote_routier', 'quote_entreposage'] as $intent) {
+            $result = $this->validator()->validate($this->validState(overrides: [
+                'cta' => ['intent' => $intent, 'label' => 'Demander une cotation'],
+            ]));
+
+            $this->assertSame($intent, $result['cta']['intent']);
+        }
     }
 
     // ── Forbidden merge tag ───────────────────────────────────────────────────

@@ -514,62 +514,63 @@ test.describe('Campaign Templates module', () => {
 
     await templates.gotoCreate();
     await expect(page.locator('#form_crud input[name="name"]')).toBeVisible({ timeout: 10000 });
-    await expect(previewBody).toContainText('Dégroupement MEAD');
+    await expect(previewBody).toContainText('Livraison au Maroc');
     await templates.expectOnlyMiddleFormActive('process');
 
     await templates.selectMiddleVariant('departures');
     await templates.expectOnlyMiddleFormActive('departures');
-    await expect(previewBody).toContainText('Origine à compléter', { timeout: 8000 });
-    await expect(previewBody).not.toContainText('Dégroupement MEAD');
+    await expect(previewBody).toContainText('Goussainville (France)', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('Livraison au Maroc');
     await expect(templates.previewErrorEl).toBeHidden();
 
     const departuresState = await templates.getBuilderStateValue();
     expect(departuresState.middle_variant).toBe('departures');
     expect(departuresState.slots.departures).toEqual([
-      { origin: '', frequency: '' },
-      { origin: '', frequency: '' },
+      { origin: 'Goussainville (France)', frequency: '4 départs par semaine, transit 3 jours' },
+      { origin: 'Barcelone (Espagne)', frequency: '2 à 3 départs par semaine, transit 2 jours' },
+      { origin: 'Porto (Portugal)', frequency: 'Chaque vendredi, transit 3 à 4 jours' },
     ]);
 
     await templates.selectMiddleVariant('kpi');
     await templates.expectOnlyMiddleFormActive('kpi');
-    await expect(previewBody).toContainText('Indicateur à compléter', { timeout: 8000 });
-    await expect(previewBody).not.toContainText('Origine à compléter');
+    await expect(previewBody).toContainText('+ de 20 ans', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('Goussainville (France)');
     await expect(templates.previewErrorEl).toBeHidden();
 
     await templates.selectMiddleVariant('benefits');
     await templates.expectOnlyMiddleFormActive('benefits');
-    await expect(previewBody).toContainText('Avantage à compléter', { timeout: 8000 });
-    await expect(previewBody).not.toContainText('Indicateur à compléter');
+    await expect(previewBody).toContainText('Agrément IATA', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('+ de 20 ans');
     await expect(templates.previewErrorEl).toBeHidden();
 
     await templates.selectMiddleVariant('case_study');
     await templates.expectOnlyMiddleFormActive('case_study');
-    await expect(previewBody).toContainText('Étude de cas à compléter', { timeout: 8000 });
-    await expect(previewBody).not.toContainText('Avantage à compléter');
+    await expect(previewBody).toContainText('de bout en bout', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('Agrément IATA');
     await expect(templates.previewErrorEl).toBeHidden();
 
     await templates.selectMiddleVariant('checklist');
     await templates.expectOnlyMiddleFormActive('checklist');
-    await expect(previewBody).toContainText('Liste de contrôle à compléter', { timeout: 8000 });
-    await expect(previewBody).not.toContainText('Étude de cas à compléter');
+    await expect(previewBody).toContainText('en 4 points', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('de bout en bout');
     await expect(templates.previewErrorEl).toBeHidden();
 
     await templates.selectMiddleVariant('solutions');
     await templates.expectOnlyMiddleFormActive('solutions');
-    await expect(previewBody).toContainText('Solution à compléter', { timeout: 8000 });
-    await expect(previewBody).not.toContainText('Liste de contrôle à compléter');
+    await expect(previewBody).toContainText('Cotation routier', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('en 4 points');
     await expect(templates.previewErrorEl).toBeHidden();
 
     await templates.selectMiddleVariant('offer');
     await templates.expectOnlyMiddleFormActive('offer');
-    await expect(previewBody).toContainText('Offre à compléter', { timeout: 8000 });
-    await expect(previewBody).not.toContainText('Solution à compléter');
+    await expect(previewBody).toContainText('cotation sous 24 h', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('Cotation routier');
     await expect(templates.previewErrorEl).toBeHidden();
 
     await templates.selectMiddleVariant('process');
     await templates.expectOnlyMiddleFormActive('process');
-    await expect(previewBody).toContainText('Dégroupement MEAD', { timeout: 8000 });
-    await expect(previewBody).not.toContainText('Offre à compléter');
+    await expect(previewBody).toContainText('Livraison au Maroc', { timeout: 8000 });
+    await expect(previewBody).not.toContainText('cotation sous 24 h');
     await expect(templates.previewErrorEl).toBeHidden();
   });
 

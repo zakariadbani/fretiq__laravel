@@ -129,6 +129,24 @@ return [
                 'label' => 'Visiter nos entrepôts en 3D',
                 'path'  => 'visite-virtuelle-360/entrepot/',
             ],
+            'quote_routier' => [
+                'label' => 'Demander une cotation',
+                'path'  => 'transport-routier/#cotationroutier',
+            ],
+            'quote_maritime' => [
+                'label' => 'Demander une cotation',
+                'path'  => 'transport-maritime/#cotationmaritime',
+            ],
+            'quote_aerien' => [
+                'label' => 'Demander une cotation',
+                'path'  => 'transport-aerien/#cotationaerien',
+            ],
+            // "contationentreposage" spelling is intentional — it is the real
+            // anchor id on the public site, not a typo to fix.
+            'quote_entreposage' => [
+                'label' => 'Demander une cotation',
+                'path'  => 'entreposage/#contationentreposage',
+            ],
         ],
     ],
 

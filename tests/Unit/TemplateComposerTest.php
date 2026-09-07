@@ -54,8 +54,8 @@ class TemplateComposerTest extends TestCase
                 ['title' => 'Souplesse', 'text' => 'Une réponse adaptée à vos délais.'],
             ];
         } elseif ($middle === 'process') {
-            $slots['process_steps'] = ['Collecte', 'Acheminement', 'Dégroupement MEAD'];
-            $slots['process_highlight'] = 'Des solutions logistiques sur mesure adaptées à chaque besoin.';
+            $slots['process_steps'] = SectionCatalog::middleDefaults()['process']['process_steps'];
+            $slots['process_highlight'] = SectionCatalog::middleDefaults()['process']['process_highlight'];
         } elseif ($middle === 'case_study') {
             $slots['case_study'] = ['title' => 'Cas client', 'challenge' => 'Flux irrégulier', 'solution' => 'Pilotage TCL', 'result' => 'Délais stabilisés'];
         } elseif ($middle === 'checklist') {
@@ -134,8 +134,10 @@ class TemplateComposerTest extends TestCase
             'TCL Transport : Expertise logistique 3PL pour vos besoins en transport',
             $state['slots']['hero_title']
         );
-        $this->assertSame(['Collecte', 'Acheminement', 'Dégroupement MEAD'], $state['slots']['process_steps']);
-        $this->assertStringNotContainsString('Barcelone', json_encode($state));
+        $this->assertSame(
+            SectionCatalog::middleDefaults()['process']['process_steps'],
+            $state['slots']['process_steps']
+        );
         $this->assertStringNotContainsString('ratio volume/coût', json_encode($state));
     }
     public function test_first_name_can_be_excluded_from_both_heroes_in_french_and_english(): void
@@ -200,10 +202,10 @@ class TemplateComposerTest extends TestCase
                         $this->assertStringContainsString('Réactivité', $html, $context);
                         $this->assertStringContainsString('border-top:4px solid', $html, $context);
                     } elseif ($middle === 'process') {
-                        $this->assertStringContainsString('Collecte', $html, $context);
-                        $this->assertStringContainsString('Acheminement', $html, $context);
-                        $this->assertStringContainsString('Dégroupement MEAD', $html, $context);
-                        $this->assertStringContainsString('solutions logistiques sur mesure', $html, $context);
+                        foreach (SectionCatalog::middleDefaults()['process']['process_steps'] as $step) {
+                            $this->assertStringContainsString($step, $html, $context);
+                        }
+                        $this->assertStringContainsString('Groupage routier depuis Goussainville', $html, $context);
                     } elseif ($middle === 'case_study') {
                         $this->assertStringContainsString('Contrainte', $html, $context);
                         $this->assertStringContainsString('Réponse TCL', $html, $context);
@@ -261,6 +263,26 @@ class TemplateComposerTest extends TestCase
 
         $this->assertStringNotContainsString('<script>alert(1)</script>', $html);
         $this->assertStringContainsString('&lt;script&gt;alert(1)&lt;/script&gt;', $html);
+    }
+
+    public function test_solution_card_renders_link_when_url_present(): void
+    {
+        $html = $this->composer()->compose($this->state('logo_center', 'compact', 'solutions', [
+            'solutions' => [
+                ['title' => 'Route', 'text' => 'Départs réguliers', 'url' => 'https://tcltransport.com/transport-routier/#cotationroutier', 'link_label' => 'Cotation routier'],
+                ['title' => 'Aérien', 'text' => 'Gestion des urgences'],
+            ],
+        ]));
+
+        $this->assertStringContainsString('href="https://tcltransport.com/transport-routier/#cotationroutier"', $html);
+        $this->assertStringContainsString('Cotation routier →', $html);
+    }
+
+    public function test_solution_card_has_no_link_without_url(): void
+    {
+        $html = $this->composer()->compose($this->state('logo_center', 'compact', 'solutions'));
+
+        $this->assertStringNotContainsString('Demander une cotation →', $html);
     }
 
     // ── Note wording sanity (no accidental "Se désabonner" wording variant) ────

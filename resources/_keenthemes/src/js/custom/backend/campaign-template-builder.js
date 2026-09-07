@@ -31,7 +31,7 @@
  *         | benefits: [{title,text}]
  *         | case_study: {title,challenge,solution,result}
  *         | checklist_title + checklist_items: [...]
- *         | solutions: [{title,text}]
+ *         | solutions: [{title,text,url?,link_label?}]
  *         | offer: {title,description,highlight}
  *     }
  *   }
@@ -235,7 +235,12 @@ var KTCampaignTemplateBuilder = function () {
             slots.checklist_items = (slots.checklist_items || ['', '', '']).map(function (item) { return placeholder(item, 'Élément à compléter'); });
         } else if (previewState.middle_variant === 'solutions') {
             slots.solutions = (slots.solutions || [{}, {}]).map(function (row) {
-                return { title: placeholder(row.title, 'Solution à compléter'), text: placeholder(row.text, 'Description à compléter') };
+                return {
+                    title: placeholder(row.title, 'Solution à compléter'),
+                    text: placeholder(row.text, 'Description à compléter'),
+                    url: row.url || '',
+                    link_label: row.link_label || '',
+                };
             });
         } else if (previewState.middle_variant === 'offer') {
             slots.offer = slots.offer || {};
@@ -350,36 +355,58 @@ var KTCampaignTemplateBuilder = function () {
 
     // ── Middle-variant pills ────────────────────────────────────────────────
 
+    // Seed an absent middle-block slot from the server catalog's real TCL
+    // defaults (cfg.catalog.middleDefaults — App\Services\Campaign\
+    // TemplateBuilder\SectionCatalog::middleDefaults(), the single source of
+    // truth), falling back to blank placeholders only if the catalog has no
+    // entry for the variant. Never overwrites a slot that already has data —
+    // each branch's guard only fires when the key is absent.
     function ensureMiddleSlotDefaults(variant) {
+        var defaults = deepClone(((cfg && cfg.catalog && cfg.catalog.middleDefaults) || {})[variant] || null);
+
         if (variant === 'process' && !Array.isArray(state.slots.process_steps)) {
-            state.slots.process_steps = ['', '', ''];
-            state.slots.process_highlight = '';
+            if (defaults && Array.isArray(defaults.process_steps)) {
+                state.slots.process_steps = defaults.process_steps;
+            } else {
+                state.slots.process_steps = ['', '', ''];
+            }
+            if (typeof state.slots.process_highlight !== 'string') {
+                state.slots.process_highlight = (defaults && defaults.process_highlight) || '';
+            }
         } else if (variant === 'departures' && !Array.isArray(state.slots.departures)) {
-            state.slots.departures = [
+            state.slots.departures = (defaults && Array.isArray(defaults.departures)) ? defaults.departures : [
                 { origin: '', frequency: '' },
                 { origin: '', frequency: '' },
             ];
         } else if (variant === 'kpi' && !Array.isArray(state.slots.kpis)) {
-            state.slots.kpis = [
+            state.slots.kpis = (defaults && Array.isArray(defaults.kpis)) ? defaults.kpis : [
                 { value: '', label: '' },
                 { value: '', label: '' },
                 { value: '', label: '' },
             ];
         } else if (variant === 'benefits' && !Array.isArray(state.slots.benefits)) {
-            state.slots.benefits = [
+            state.slots.benefits = (defaults && Array.isArray(defaults.benefits)) ? defaults.benefits : [
                 { title: '', text: '' },
                 { title: '', text: '' },
                 { title: '', text: '' },
             ];
         } else if (variant === 'case_study' && !state.slots.case_study) {
-            state.slots.case_study = { title: '', challenge: '', solution: '', result: '' };
+            state.slots.case_study = (defaults && defaults.case_study) ? defaults.case_study : { title: '', challenge: '', solution: '', result: '' };
         } else if (variant === 'checklist' && !Array.isArray(state.slots.checklist_items)) {
-            state.slots.checklist_title = '';
-            state.slots.checklist_items = ['', '', ''];
+            if (defaults && Array.isArray(defaults.checklist_items)) {
+                state.slots.checklist_items = defaults.checklist_items;
+            } else {
+                state.slots.checklist_items = ['', '', ''];
+            }
+            if (typeof state.slots.checklist_title !== 'string') {
+                state.slots.checklist_title = (defaults && defaults.checklist_title) || '';
+            }
         } else if (variant === 'solutions' && !Array.isArray(state.slots.solutions)) {
-            state.slots.solutions = [{ title: '', text: '' }, { title: '', text: '' }];
+            state.slots.solutions = (defaults && Array.isArray(defaults.solutions)) ? defaults.solutions.map(function (row) {
+                return { title: row.title || '', text: row.text || '', url: row.url || '', link_label: row.link_label || '' };
+            }) : [{ title: '', text: '', url: '', link_label: '' }, { title: '', text: '', url: '', link_label: '' }];
         } else if (variant === 'offer' && !state.slots.offer) {
-            state.slots.offer = { title: '', description: '', highlight: '' };
+            state.slots.offer = (defaults && defaults.offer) ? defaults.offer : { title: '', description: '', highlight: '' };
         }
     }
 
@@ -849,6 +876,15 @@ var KTCampaignTemplateBuilder = function () {
             remove.addEventListener('click', function () { if (state.slots.solutions.length <= bounds.solutions.min) return; state.slots.solutions.splice(index, 1); renderSolutions(); schedulePreview(); serializeState(); });
             actionCol.appendChild(remove);
             wrap.appendChild(titleCol); wrap.appendChild(textCol); wrap.appendChild(actionCol); list.appendChild(wrap);
+
+            var linkWrap = document.createElement('div');
+            linkWrap.className = 'row g-2 mb-2';
+            var urlCol = document.createElement('div'); urlCol.className = 'col-8';
+            var linkLabelCol = document.createElement('div'); linkLabelCol.className = 'col-4';
+            var urlInput = makeBoundInput('input', row.url || '', bounds.solutions.fields.url.max, 'https://tcltransport.com/…', function (value) { state.slots.solutions[index].url = value; });
+            urlCol.appendChild(urlInput);
+            linkLabelCol.appendChild(makeBoundInput('input', row.link_label || '', bounds.solutions.fields.link_label.max, 'Libellé du lien (optionnel)', function (value) { state.slots.solutions[index].link_label = value; }));
+            linkWrap.appendChild(urlCol); linkWrap.appendChild(linkLabelCol); list.appendChild(linkWrap);
         });
         var add = document.getElementById('slot_solutions_add');
         if (add) add.disabled = rows.length >= bounds.solutions.max;
@@ -872,7 +908,7 @@ var KTCampaignTemplateBuilder = function () {
         var solutionsAdd = document.getElementById('slot_solutions_add');
         if (solutionsAdd) solutionsAdd.addEventListener('click', function () {
             if (state.slots.solutions.length >= bounds.solutions.max) return;
-            state.slots.solutions.push({ title: '', text: '' }); renderSolutions(); schedulePreview(); serializeState();
+            state.slots.solutions.push({ title: '', text: '', url: '', link_label: '' }); renderSolutions(); schedulePreview(); serializeState();
         });
     }
 

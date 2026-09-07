@@ -30,7 +30,7 @@ class CampaignTemplateController extends BackendController
      * otherwise invariant, so a stale cache would silently keep showing the
      * old variant card previews.
      */
-    private const VARIANT_PREVIEWS_CACHE_VERSION = 4;
+    private const VARIANT_PREVIEWS_CACHE_VERSION = 5;
 
     // beforeSave() is overridden below (builder-mode composition). `parent::`
     // can't reach it because Crudable is a TRAIT flattened into this class,
@@ -265,6 +265,7 @@ class CampaignTemplateController extends BackendController
                 'middles'    => SectionCatalog::MIDDLES,
                 'footers'    => SectionCatalog::FOOTERS,
                 'slotSchema' => SectionCatalog::slotSchema(),
+                'middleDefaults' => SectionCatalog::middleDefaults(),
                 // Explicit header→hero mapping (keyed, not positional) — the
                 // client used to derive hero from
                 // HEADERS.indexOf(value)→HEROES[idx], which only matched the

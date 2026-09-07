@@ -64,7 +64,7 @@ class BuilderStateValidator
 
     private const BENEFIT_ITEM_KEYS = ['title', 'text'];
     private const CASE_STUDY_KEYS = ['title', 'challenge', 'solution', 'result'];
-    private const SOLUTION_ITEM_KEYS = ['title', 'text'];
+    private const SOLUTION_ITEM_KEYS = ['title', 'text', 'url', 'link_label'];
     private const OFFER_KEYS = ['title', 'description', 'highlight'];
 
     /**
@@ -104,6 +104,7 @@ class BuilderStateValidator
         'slots.checklist_items.*',
         'slots.solutions.*.title',
         'slots.solutions.*.text',
+        'slots.solutions.*.link_label',
         'slots.offer.title',
         'slots.offer.description',
         'slots.offer.highlight',
@@ -258,6 +259,8 @@ class BuilderStateValidator
             $rules['slots.solutions'] = ['required', 'array', 'min:' . SectionCatalog::SOLUTIONS_MIN, 'max:' . SectionCatalog::SOLUTIONS_MAX];
             $rules['slots.solutions.*.title'] = ['required', 'string', 'max:' . SectionCatalog::SOLUTION_TITLE_MAX];
             $rules['slots.solutions.*.text'] = ['required', 'string', 'max:' . SectionCatalog::SOLUTION_TEXT_MAX];
+            $rules['slots.solutions.*.url'] = ['sometimes', 'nullable', 'string', 'max:' . SectionCatalog::SOLUTION_URL_MAX, 'url', 'starts_with:' . rtrim((string) config('prospecting.site.base_url'), '/') . '/'];
+            $rules['slots.solutions.*.link_label'] = ['sometimes', 'nullable', 'string', 'max:' . SectionCatalog::SOLUTION_LINK_LABEL_MAX];
         } elseif ($middle === 'offer') {
             $rules['slots.offer'] = ['required', 'array'];
             $rules['slots.offer.title'] = ['required', 'string', 'max:' . SectionCatalog::MIDDLE_TITLE_MAX];
@@ -613,10 +616,24 @@ class BuilderStateValidator
             $normalized['checklist_title'] = trim((string) $slots['checklist_title']);
             $normalized['checklist_items'] = array_values(array_map(fn ($value) => trim((string) $value), $slots['checklist_items']));
         } elseif ($middle === 'solutions') {
-            $normalized['solutions'] = array_values(array_map(fn ($row) => [
-                'title' => trim((string) $row['title']),
-                'text' => trim((string) $row['text']),
-            ], $slots['solutions']));
+            $normalized['solutions'] = array_values(array_map(function ($row) {
+                $item = [
+                    'title' => trim((string) $row['title']),
+                    'text' => trim((string) $row['text']),
+                ];
+
+                $url = isset($row['url']) ? trim((string) $row['url']) : '';
+                if ($url !== '') {
+                    $item['url'] = $url;
+                }
+
+                $linkLabel = isset($row['link_label']) ? trim((string) $row['link_label']) : '';
+                if ($linkLabel !== '') {
+                    $item['link_label'] = $linkLabel;
+                }
+
+                return $item;
+            }, $slots['solutions']));
         } elseif ($middle === 'offer') {
             $normalized['offer'] = array_map(fn ($value) => trim((string) $value), array_intersect_key($slots['offer'], array_flip(self::OFFER_KEYS)));
         }

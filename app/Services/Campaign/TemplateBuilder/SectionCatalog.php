@@ -88,6 +88,8 @@ class SectionCatalog
     public const SOLUTIONS_MAX = 4;
     public const SOLUTION_TITLE_MAX = 40;
     public const SOLUTION_TEXT_MAX = 160;
+    public const SOLUTION_URL_MAX = 255;
+    public const SOLUTION_LINK_LABEL_MAX = 40;
     public const OFFER_DESCRIPTION_MAX = 240;
     public const OFFER_HIGHLIGHT_MAX = 100;
 
@@ -198,8 +200,81 @@ class SectionCatalog
                     'transport routier, maritime, aérien et entreposage',
                 ],
                 'closing_line' => self::DEFAULT_CLOSING_LINE,
-                'process_steps' => ['Collecte', 'Acheminement', 'Dégroupement MEAD'],
-                'process_highlight' => 'Une chaîne logistique accompagnée de bout en bout.',
+                ...self::middleDefaults()['process'],
+            ],
+        ];
+    }
+
+    /**
+     * Valeurs par défaut réelles TCL du bloc central — source :
+     * structure/business-rules/tcl-facts-pool.md (2026-09-06). Seedées par le
+     * builder quand la variante est choisie et que le slot est absent.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public static function middleDefaults(): array
+    {
+        return [
+            'process' => [
+                'process_steps' => [
+                    'Enlèvement EXW chez votre fournisseur',
+                    'Transport et dédouanement en MEAD',
+                    'Livraison au Maroc',
+                ],
+                'process_highlight' => 'Groupage routier depuis Goussainville, Barcelone et Porto ; dépotage dans nos magasins sous douane de Casablanca ou Tanger.',
+            ],
+            'departures' => [
+                'departures' => [
+                    ['origin' => 'Goussainville (France)', 'frequency' => '4 départs par semaine, transit 3 jours'],
+                    ['origin' => 'Barcelone (Espagne)', 'frequency' => '2 à 3 départs par semaine, transit 2 jours'],
+                    ['origin' => 'Porto (Portugal)', 'frequency' => 'Chaque vendredi, transit 3 à 4 jours'],
+                ],
+            ],
+            'kpi' => [
+                'kpis' => [
+                    ['value' => '+ de 20 ans', 'label' => "d'expérience en transport international"],
+                    ['value' => '180', 'label' => 'pays desservis'],
+                    ['value' => '14 000 m²', 'label' => "d'entrepôts à Casablanca"],
+                ],
+            ],
+            'benefits' => [
+                'benefits' => [
+                    ['title' => 'Agrément IATA, agent agréé CASS', 'text' => 'Fret aérien vers plus de 100 aéroports, avec RAM, Air France, Qatar Airways, Emirates et Turkish Airlines.'],
+                    ['title' => '3 hubs routiers en Europe', 'text' => "Goussainville 4 départs par semaine, Barcelone 2 à 3, Porto 1 : transit de 2 à 4 jours, du colis de 1 kg au camion complet."],
+                    ['title' => 'Magasins sous douane (MEAD)', 'text' => 'Dédouanement et dépotage à Casablanca ou Tanger ; 2 entrepôts à Casablanca, 14 000 m², WMS en temps réel.'],
+                ],
+            ],
+            'case_study' => [
+                'case_study' => [
+                    'title' => 'Un flux Europe → Maroc, de bout en bout',
+                    'challenge' => "Un flux régulier depuis l'Europe, avec un délai à tenir et des formalités douanières à sécuriser.",
+                    'solution' => "Enlèvement EXW chez le fournisseur, groupage routier hebdomadaire (Goussainville, Barcelone et Porto), dédouanement dans nos magasins sous douane (MEAD) de Casablanca ou Tanger.",
+                    'result' => "Transit de 2 à 4 jours selon l'origine ; un interlocuteur dédié du devis à la livraison.",
+                ],
+            ],
+            'checklist' => [
+                'checklist_title' => 'Votre flux Europe → Maroc en 4 points',
+                'checklist_items' => [
+                    'Enlèvement EXW chez votre fournisseur en Europe',
+                    'Groupage routier : 4 départs par semaine depuis Goussainville, 2 à 3 depuis Barcelone, 1 depuis Porto',
+                    'Dédouanement dans nos magasins sous douane (MEAD) de Casablanca ou Tanger',
+                    'Stockage possible : 2 entrepôts à Casablanca, 14 000 m², WMS en temps réel',
+                ],
+            ],
+            'solutions' => [
+                'solutions' => [
+                    ['title' => 'Routier — groupage hebdomadaire', 'text' => '4 départs/sem. depuis Goussainville (transit 3 j), Barcelone 2–3 (2 j), Porto chaque vendredi (3–4 j). Enlèvement EXW chez votre fournisseur.', 'url' => 'https://tcltransport.com/transport-routier/#cotationroutier', 'link_label' => 'Cotation routier'],
+                    ['title' => 'Aérien — agent IATA & CASS', 'text' => 'Plus de 100 aéroports, avec RAM, Air France, Qatar Airways, Emirates, Turkish Airlines. Express, door-to-door, marchandises dangereuses.', 'url' => 'https://tcltransport.com/transport-aerien/#cotationaerien', 'link_label' => 'Cotation aérien'],
+                    ['title' => 'Maritime — FCL / LCL', 'text' => 'Plus de 180 pays desservis. Partenaires CMA CGM, MSC, MAERSK et ARKAS. Conteneurs complets ou partagés, affrètement, projets industriels.', 'url' => 'https://tcltransport.com/transport-maritime/#cotationmaritime', 'link_label' => 'Cotation maritime'],
+                    ['title' => 'Entreposage sous douane', 'text' => 'MEAD à Casablanca et Tanger ; 2 entrepôts à Casablanca (14 000 m²), WMS en temps réel.', 'url' => 'https://tcltransport.com/entreposage/#contationentreposage', 'link_label' => 'Cotation entreposage'],
+                ],
+            ],
+            'offer' => [
+                'offer' => [
+                    'title' => 'Une cotation sous 24 h',
+                    'description' => "Indiquez-nous votre ville de départ, votre ville d'arrivée et le type de marchandise : nous vous adressons une cotation sous 24 h.",
+                    'highlight' => 'Sans engagement',
+                ],
             ],
         ];
     }
@@ -277,6 +352,8 @@ class SectionCatalog
                 'fields' => [
                     'title' => ['type' => 'string', 'max' => self::SOLUTION_TITLE_MAX],
                     'text' => ['type' => 'string', 'max' => self::SOLUTION_TEXT_MAX],
+                    'url' => ['type' => 'string', 'required' => false, 'max' => self::SOLUTION_URL_MAX],
+                    'link_label' => ['type' => 'string', 'required' => false, 'max' => self::SOLUTION_LINK_LABEL_MAX],
                 ],
             ],
             'offer' => [
