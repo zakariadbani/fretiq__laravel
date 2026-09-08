@@ -912,6 +912,25 @@
                             targetEl.classList.add('d-none');
                             return;
                         }
+                        if (data.continuous_prospecting) {
+                            const scanned = Number(data.scanned_companies || 0);
+                            if (data.next_wave_companies === 0) {
+                                targetEl.textContent = zeroMessage + ' ' + scanned + ' société(s) examinée(s).';
+                                return;
+                            }
+
+                            targetEl.innerHTML = '';
+                            targetEl.appendChild(document.createTextNode('Prochain lot : '));
+                            const strong = document.createElement('strong');
+                            strong.textContent = data.next_wave_companies + ' société(s)';
+                            targetEl.appendChild(strong);
+                            targetEl.appendChild(document.createTextNode(
+                                ' · ' + data.next_wave_contacts + ' contact(s) · ' + scanned +
+                                ' société(s) examinée(s) · Prochaine exécution : ' +
+                                (data.next_run_at || 'non définie')
+                            ));
+                            return;
+                        }
                         if (data.next_wave_companies === 0) {
                             targetEl.textContent = zeroMessage;
                             return;

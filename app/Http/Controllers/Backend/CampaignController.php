@@ -1342,6 +1342,45 @@ class CampaignController extends BackendController
             'email_verification_policy' => ['sometimes', 'nullable', 'in:verified_only,all_sendable'],
         ]);
 
+        $campaign->load('segment');
+        $effective = clone $campaign;
+        $segment = array_key_exists('segment_id', $validated) && $validated['segment_id'] !== null
+            ? Segment::findOrFail((int) $validated['segment_id'])
+            : $campaign->segment;
+        $effective->segment_id = $segment?->id;
+        $effective->setRelation('segment', $segment);
+        if (array_key_exists('daily_company_limit', $validated) && $validated['daily_company_limit'] !== null) {
+            $effective->daily_company_limit = (int) $validated['daily_company_limit'];
+        }
+        if (array_key_exists('email_verification_policy', $validated) && $validated['email_verification_policy'] !== null) {
+            $effective->email_verification_policy = $validated['email_verification_policy'];
+        }
+
+        if ($segment !== null && app(CampaignProspectingEligibilityService::class)->optedIn($effective)) {
+            $research = app(SegmentService::class)->resolve($segment, $effective->emailVerificationPolicy());
+            $batch = app(PacedSequenceEnrollmentService::class)->selectBatch(
+                $effective,
+                $research,
+                $effective->pacedDailyCompanyLimit(),
+            );
+
+            return response()->json([
+                'is_sequence_paced' => $isSequencePaced,
+                'is_paced' => $isPaced,
+                'continuous_prospecting' => true,
+                'eligible_remaining_companies' => null,
+                'next_wave_companies' => $batch['contacts']->pluck('company_id')->unique()->count(),
+                'next_wave_contacts' => $batch['contacts']->count(),
+                'projected_remaining_waves' => null,
+                'daily_limit' => $effective->pacedDailyCompanyLimit(),
+                'next_run_at' => $effective->next_run_at?->copy()->setTimezone($effective->scheduleTimezone())->format('d/m/Y H:i'),
+                'scanned_companies' => $batch['scanned_companies'],
+                'scan_capped' => false,
+                'excluded_reasons' => $batch['excluded'],
+                'research_pool_count' => $research->count(),
+            ]);
+        }
+
         $projection = app(WaveProjectionService::class)->projectNext(
             $campaign,
             isset($validated['segment_id']) ? (int) $validated['segment_id'] : null,

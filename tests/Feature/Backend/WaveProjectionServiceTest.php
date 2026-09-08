@@ -3,6 +3,7 @@
 namespace Tests\Feature\Backend;
 
 use App\Models\Campaign;
+use App\Models\CampaignRecipient;
 use App\Models\CampaignTemplate;
 use App\Models\Company;
 use App\Models\Contact;
@@ -11,6 +12,7 @@ use App\Models\SenderIdentity;
 use App\Models\Sequence;
 use App\Models\SequenceEnrollment;
 use App\Models\SequenceStep;
+use App\Models\SmtpSendReservation;
 use App\Models\User;
 use App\Services\Campaign\PacedSequenceEnrollmentService;
 use App\Services\Campaign\WaveProjectionService;
@@ -19,11 +21,23 @@ use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
 class WaveProjectionServiceTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function createApplication()
+    {
+        $app = parent::createApplication();
+        if ($app->make('db')->connection()->getDatabaseName() !== 'fretiq_test') {
+            throw new \RuntimeException('These tests require the disposable fretiq_test database.');
+        }
+
+        return $app;
+    }
 
     protected function setUp(): void
     {
@@ -31,6 +45,8 @@ class WaveProjectionServiceTest extends TestCase
 
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
         config(['services.zoho.driver' => 'local']);
+        Http::preventStrayRequests();
+        Mail::fake();
         Queue::fake();
     }
 
@@ -172,6 +188,112 @@ class WaveProjectionServiceTest extends TestCase
                 'projected_remaining_waves' => 1,
                 'daily_limit' => 2,
             ]);
+    }
+
+    public function test_next_wave_preview_uses_the_continuous_selector_for_multi_contact_and_excluded_companies(): void
+    {
+        $segment = Segment::create([
+            'name' => 'Continuous preview',
+            'scope' => 'prospect',
+            'filter' => ['prospecting_rules' => ['enabled' => true]],
+        ]);
+        $sequence = Sequence::create(['name' => 'Continuous preview', 'is_active' => true, 'stop_on_reply' => false]);
+        $campaign = $this->campaign($segment, $sequence, [
+            'delivery_channel' => 'smtp',
+            'daily_company_limit' => 10,
+            'email_verification_policy' => Campaign::VERIFICATION_VERIFIED_ONLY,
+        ]);
+
+        $staleCompany = Company::create(['name' => 'Stale first', 'relationship' => 'prospect', 'is_active' => true, 'ai_score' => 100]);
+        Contact::create([
+            'company_id' => $staleCompany->id, 'email' => 'stale-first@example.test', 'name' => 'Stale first',
+            'source' => 'manual', 'email_kind' => 'role', 'email_verification_status' => 'valid',
+            'email_verification_checked_at' => now()->subDays(31),
+        ]);
+        $firstEligibleCompany = null;
+        foreach (range(1, 10) as $index) {
+            $company = Company::create([
+                'name' => "Continuous {$index}", 'relationship' => 'prospect', 'is_active' => true, 'ai_score' => 100 - $index,
+                'country' => $index === 1 ? 'CH' : 'FR',
+            ]);
+            $firstEligibleCompany ??= $company;
+            foreach (range(1, 2) as $contactIndex) {
+                Contact::create([
+                    'company_id' => $company->id, 'email' => "continuous-{$index}-{$contactIndex}@example.test", 'name' => "Continuous {$index}",
+                    'source' => 'manual', 'email_kind' => 'role', 'email_verification_status' => 'valid',
+                    'email_verification_checked_at' => now(),
+                ]);
+            }
+        }
+
+        $campaignSnapshot = $campaign->only(['segment_id', 'daily_company_limit', 'email_verification_policy']);
+        $segmentFilter = $segment->filter;
+
+        $admin = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
+        $admin->assignRole('superadmin');
+
+        $this->actingAs($admin)
+            ->getJson("/admin/campaigns/{$campaign->id}/next-wave-preview")
+            ->assertOk()
+            ->assertJson([
+                'is_sequence_paced' => true,
+                'continuous_prospecting' => true,
+                'next_wave_companies' => 10,
+                'next_wave_contacts' => 10,
+                'daily_limit' => 10,
+                'eligible_remaining_companies' => null,
+                'projected_remaining_waves' => null,
+                'scanned_companies' => 11,
+                'scan_capped' => false,
+                'excluded_reasons' => ['verification_stale' => 1],
+                'research_pool_count' => 21,
+            ]);
+
+        $override = Segment::create([
+            'name' => 'Continuous unsaved override',
+            'scope' => 'prospect',
+            'filter' => ['country' => ['CH'], 'prospecting_rules' => ['enabled' => true]],
+        ]);
+        $emptyOverride = Segment::create([
+            'name' => 'Continuous unsaved empty override',
+            'scope' => 'prospect',
+            'filter' => ['country' => ['NZ'], 'prospecting_rules' => ['enabled' => true]],
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson("/admin/campaigns/{$campaign->id}/next-wave-preview?segment_id={$override->id}&daily_company_limit=2&email_verification_policy=all_sendable")
+            ->assertOk()
+            ->assertJson([
+                'continuous_prospecting' => true,
+                'next_wave_companies' => 1,
+                'next_wave_contacts' => 1,
+                'daily_limit' => 2,
+                'scanned_companies' => 1,
+                'research_pool_count' => 2,
+            ]);
+
+        $this->actingAs($admin)
+            ->getJson("/admin/campaigns/{$campaign->id}/next-wave-preview?segment_id={$emptyOverride->id}&daily_company_limit=2")
+            ->assertOk()
+            ->assertJson([
+                'continuous_prospecting' => true,
+                'next_wave_companies' => 0,
+                'next_wave_contacts' => 0,
+                'daily_limit' => 2,
+                'scanned_companies' => 0,
+                'research_pool_count' => 0,
+            ]);
+
+        $this->assertSame($campaignSnapshot, $campaign->fresh()->only(['segment_id', 'daily_company_limit', 'email_verification_policy']));
+        $this->assertSame($segmentFilter, $segment->fresh()->filter);
+        $this->assertSame($override->filter, $override->fresh()->filter);
+        $this->assertSame($emptyOverride->filter, $emptyOverride->fresh()->filter);
+        $this->assertSame(0, SequenceEnrollment::count());
+        $this->assertSame(0, CampaignRecipient::count());
+        $this->assertSame(0, SmtpSendReservation::count());
+        Queue::assertNothingPushed();
+        Mail::assertNothingSent();
+        Http::assertNothingSent();
     }
 
     private function campaign(Segment $segment, Sequence $sequence, array $overrides = []): Campaign
