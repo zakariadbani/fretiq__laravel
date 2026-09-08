@@ -325,6 +325,7 @@
                                     <i class="bi bi-exclamation-triangle-fill fs-4 me-3 mt-1"></i>
                                     <span></span>
                                 </div>
+                                @include('backend.contents.campaigns.partials._continuous-prospecting')
                                 {{-- Audience language split (populated by JS when segment + template selected) --}}
                                 <div id="audience-lang-split" class="mt-3 d-none">
                                     <div class="d-flex gap-2 flex-wrap mb-2" id="audience-lang-chips"></div>
@@ -821,6 +822,9 @@
                             countLabel.innerHTML = '<span class="badge badge-light-secondary">' + matched + ' correspondant(s)</span> · '
                                 + '<span class="badge badge-light-primary">' + eligible + ' destinataire(s) éligible(s)</span> dans '
                                 + '<span class="badge badge-light-info">' + companies + ' société(s)</span>.';
+                            if (document.querySelector('[data-testid="continuous-prospecting-summary"]')) {
+                                countLabel.textContent = eligible + ' contacts dans le réservoir (' + companies + ' sociétés), avant les contrôles d’inscription continue ci-dessous.';
+                            }
 
                             if (eligible === 0) {
                                 if (isManual && selectedContacts === 0) {

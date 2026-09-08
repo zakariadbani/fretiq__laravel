@@ -27,6 +27,7 @@ use App\Models\SenderIdentity;
 use App\Models\Setting;
 use App\Models\SmtpSendReservation;
 use App\Services\Campaign\CampaignCsvImporter;
+use App\Services\Campaign\CampaignProspectingEligibilityService;
 use App\Services\Campaign\CampaignService;
 use App\Services\Campaign\CampaignTestMailService;
 use App\Services\Campaign\CampaignRunTimelineService;
@@ -326,6 +327,10 @@ class CampaignController extends BackendController
         $currentAudience = $campaignReadiness['contacts'];
 
         $pacedProgress = null;
+        $continuousProspecting = null;
+        if (app(CampaignProspectingEligibilityService::class)->optedIn($campaign)) {
+            $continuousProspecting = app(PacedSequenceEnrollmentService::class)->previewDailyBatch($campaign);
+        }
         if ($campaign->schedule_type === 'paced') {
             $knownCompanyIds = $campaign->companyDispatches()
                 ->pluck('company_id')
@@ -451,6 +456,7 @@ class CampaignController extends BackendController
             ->with('enrolledCompanyCount', $enrolledCompanyCount)
             ->with('campaignProgress', $campaignProgress)
             ->with('pacedProgress', $pacedProgress)
+            ->with('continuousProspecting', $continuousProspecting)
             ->with('waves', $waveData['waves'])
             ->with('selectedWave', $waveData['selectedWave'])
             ->with('selectedWaveRecipients', $waveData['recipients'])
@@ -460,6 +466,42 @@ class CampaignController extends BackendController
             ->with('schedulerHealth', $schedulerHealth)
             ->with('timelineRunStates', $timelineRunStates)
             ->with('managedTimelineRun', $managedTimelineRun);
+    }
+
+    /**
+     * Override edit() to inject the continuous-prospecting summary alongside
+     * the standard form vars. Crudable has no beforeEdit hook, so the whole
+     * method is replicated — mirrors SegmentController::edit().
+     */
+    public function edit($id)
+    {
+        $model = $this->currentModel->find($id);
+
+        if ($model === null) {
+            session()->flash('error', trans('app.not_found'));
+            return redirect(route('admin.campaigns.index'));
+        }
+
+        $continuousProspecting = null;
+        if (app(CampaignProspectingEligibilityService::class)->optedIn($model)) {
+            $continuousProspecting = app(PacedSequenceEnrollmentService::class)->previewDailyBatch($model);
+        }
+
+        $view = $this->getView('backend.contents.campaigns.crud.form');
+        $view
+            ->with('title', trans('app.edit ' . $this->modelName, ['name' => $model->{isset($this->title) ? $this->title : 'id'}]))
+            ->with('route', route('admin.campaigns.update', $id))
+            ->with('method', 'post')
+            ->with('page', 'edit')
+            ->with('model', $model)
+            ->with('continuousProspecting', $continuousProspecting);
+
+        $viewConfig = $this->buildViewConfig($model);
+        if ($viewConfig !== null) {
+            $view->with('viewConfig', $viewConfig);
+        }
+
+        return $view;
     }
 
     /** Campaign-specific paced-sequence wave summaries and selected membership. */
@@ -1876,7 +1918,7 @@ class CampaignController extends BackendController
      */
     public function sendNow($id)
     {
-        $campaign = Campaign::with('sequence')->findOrFail((int) $id);
+        $campaign = Campaign::with(['sequence', 'segment'])->findOrFail((int) $id);
 
         // ── Sequence-type branch ───────────────────────────────────────────────
         $isPacedSequence = $campaign->schedule_type === 'sequence'

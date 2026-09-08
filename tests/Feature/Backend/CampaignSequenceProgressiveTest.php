@@ -66,6 +66,41 @@ class CampaignSequenceProgressiveTest extends TestCase
         $this->assertSame('immediate', $campaign->sequence_enrollment_mode);
     }
 
+    public function test_opted_in_smtp_prospecting_selects_one_fresh_verified_contact_per_company_and_excludes_prior_company_history(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-07-21 09:00:00', 'UTC'));
+        $segment = $this->segment();
+        $segment->update(['scope' => 'prospect', 'filter' => ['prospecting_rules' => ['enabled' => true]]]);
+        $sequence = $this->sequence();
+        $company = $this->company(90);
+        $company->update(['relationship' => 'prospect']);
+        $stale = $this->contact($company);
+        $stale->update(['email_verification_checked_at' => now()->subDays(31)]);
+        $fresh = $this->contact($company);
+        $campaign = $this->campaign($segment, $sequence, [
+            'delivery_channel' => 'smtp',
+            'next_run_at' => now()->subMinute(),
+            'daily_company_limit' => 10,
+        ]);
+
+        $this->assertCount(2, app(SegmentService::class)->resolve($segment, $campaign->emailVerificationPolicy()));
+
+        $result = app(PacedSequenceEnrollmentService::class)->activate($campaign);
+
+        $this->assertSame(1, $result['companies']);
+        $this->assertDatabaseHas('sequence_enrollments', ['campaign_id' => $campaign->id, 'contact_id' => $fresh->id]);
+        $this->assertDatabaseMissing('sequence_enrollments', ['campaign_id' => $campaign->id, 'contact_id' => $stale->id]);
+
+        $nextCompany = $this->company(80);
+        $nextCompany->update(['relationship' => 'prospect']);
+        $nextContact = $this->contact($nextCompany);
+        SequenceEnrollment::create(['sequence_id' => $sequence->id, 'contact_id' => $nextContact->id, 'status' => 'completed']);
+        $campaign->update(['next_run_at' => now()->subMinute()]);
+        app(PacedSequenceEnrollmentService::class)->evaluateDue($campaign->fresh(), now());
+
+        $this->assertDatabaseMissing('sequence_enrollments', ['campaign_id' => $campaign->id, 'contact_id' => $nextContact->id]);
+    }
+
     public function test_zoho_model_validation_only_accepts_paced_sequence_enrollment(): void
     {
         $segment = $this->segment();

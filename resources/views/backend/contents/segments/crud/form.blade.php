@@ -360,6 +360,29 @@
             </div>
             {{-- end CARD 3 --}}
 
+            @php($prospectingRules = (array) data_get(isset($model) ? $model->filter : [], 'prospecting_rules', []))
+            <div class="card mb-7" data-testid="prospecting-rules">
+                <div class="card-header"><h3 class="card-title">Inscription continue — règles d'audience</h3></div>
+                <div class="card-body">
+                    <p class="text-muted">Ces règles s'appliquent aux campagnes progressives utilisant ce segment. Le compteur du segment reste le réservoir de recherche ; le prochain lot et ses exclusions sont affichés dans la campagne.</p>
+                    <p class="text-muted">S'applique uniquement aux campagnes SMTP en séquence progressive ; les autres campagnes ignorent ces règles.</p>
+                    @foreach(['enabled' => 'Activer les contrôles de prospection continue', 'one_contact_per_company' => 'Une personne par société', 'once_per_sequence_company' => 'Une seule inscription par société dans la séquence', 'exclude_engaged_companies' => 'Exclure les sociétés avec demande ou conversation', 'exclude_pending_companies' => 'Exclure les autres envois en attente'] as $rule => $label)
+                        <div class="fv-row">
+                        <input type="hidden" name="filter[prospecting_rules][{{ $rule }}]" value="0">
+                        <label class="form-check form-check-custom form-check-solid mb-4">
+                            <input type="checkbox" class="form-check-input" name="filter[prospecting_rules][{{ $rule }}]" value="1" @checked(old('filter.prospecting_rules.'.$rule, $prospectingRules[$rule] ?? ($rule !== 'enabled')))>
+                            <span class="form-check-label">{{ $label }}</span>
+                        </label>
+                        </div>
+                    @endforeach
+                    <div class="row g-4">
+                        <div class="col-md-6 fv-row"><label class="form-label" for="prospecting_gap">Délai depuis le dernier contact — jours</label><input id="prospecting_gap" class="form-control form-control-solid" type="number" min="1" max="365" name="filter[prospecting_rules][contact_gap_days]" value="{{ old('filter.prospecting_rules.contact_gap_days', $prospectingRules['contact_gap_days'] ?? 7) }}"></div>
+                        <div class="col-md-6 fv-row"><label class="form-label" for="prospecting_verification_age">Âge maximal de la vérification — jours</label><input id="prospecting_verification_age" class="form-control form-control-solid" type="number" min="1" max="365" name="filter[prospecting_rules][verification_max_age_days]" value="{{ old('filter.prospecting_rules.verification_max_age_days', $prospectingRules['verification_max_age_days'] ?? 30) }}"></div>
+                    </div>
+                    <p class="text-muted mt-4 mb-0">La qualification commerciale reste facultative. Les oppositions et rebonds restent exclus.</p>
+                </div>
+            </div>
+
             {{-- Audience bandeau (in-form, cause→effect) --}}
             @include('backend.contents.segments.partials._audience-bandeau')
 

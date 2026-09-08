@@ -42,6 +42,7 @@ class SequenceService
         private readonly BusinessCalendarService $calendar,
         private readonly SmtpSendReservationService $smtpReservations,
         private readonly ContactEligibilityService $contactEligibility,
+        private readonly CampaignProspectingEligibilityService $prospectingEligibility,
     )
     {
     }
@@ -61,6 +62,27 @@ class SequenceService
      *                                          if enrollment creation failed.
      */
     public function enroll(Sequence $seq, Contact $contact, ?Campaign $campaign = null): ?SequenceEnrollment
+    {
+        if ($campaign === null || ! $this->prospectingEligibility->optedIn($campaign)) {
+            return $this->createEnrollment($seq, $contact, $campaign);
+        }
+
+        return DB::transaction(function () use ($seq, $contact, $campaign): ?SequenceEnrollment {
+            Sequence::query()->lockForUpdate()->findOrFail($seq->id);
+            $freshCampaign = $campaign->fresh(['segment']);
+            $existing = SequenceEnrollment::where('sequence_id', $seq->id)->where('contact_id', $contact->id)->first();
+            if ($existing !== null) {
+                return $existing;
+            }
+            $freshContact = Contact::withTrashed()->with('company')->find($contact->id);
+            if ($freshContact === null || $this->prospectingEligibility->safetyReason($freshCampaign, $freshContact) !== null) {
+                return null;
+            }
+            return $this->createEnrollment($seq, $freshContact, $freshCampaign);
+        }, 3);
+    }
+
+    private function createEnrollment(Sequence $seq, Contact $contact, ?Campaign $campaign): ?SequenceEnrollment
     {
         // Return existing active enrollment — do not re-enrol.
         $existing = SequenceEnrollment::where('sequence_id', $seq->id)
@@ -420,6 +442,28 @@ class SequenceService
         }
 
         $contact = $enrollment->contact;
+        $prospectingReason = $this->prospectingEligibility->sendReason($campaign, $contact, $reservation->id);
+        if ($prospectingReason === 'contacted_recently') {
+            $deferUntil = $this->prospectingEligibility->contactedRecentlyDeferUntil($campaign, $contact)
+                ?? now()->addMinutes(15);
+            $reservations->defer($reservation, $deferUntil);
+            return;
+        }
+        if ($prospectingReason === 'pending_work') {
+            $reservations->defer($reservation, now()->addMinutes(15));
+            return;
+        }
+        if ($prospectingReason !== null) {
+            // Any other reason is a permanent SAFETY exclusion — stop the enrollment.
+            $stepSend->update(['status' => 'skipped']);
+            $enrollment->update([
+                'status' => 'stopped',
+                'stopped_reason' => $prospectingReason,
+                'next_send_at' => null,
+            ]);
+            $reservations->release($reservation);
+            return;
+        }
         $ineligibleReason = $this->contactEligibility->sendIneligibilityReasonForSingle(
             $contact,
             $campaign->emailVerificationPolicy(),

@@ -23,12 +23,13 @@ class PacedSequenceEnrollmentService
         private readonly SegmentService $segmentService,
         private readonly SequenceService $sequenceService,
         private readonly BusinessCalendarService $calendar,
+        private readonly CampaignProspectingEligibilityService $prospectingEligibility,
     ) {}
 
     /**
      * Enable progressive tracking and process the due batch, if any.
      *
-     * @return array{companies: int, enrolled: int, skipped: int, next_run_at: ?Carbon, processed_due: bool}
+     * @return array{companies: int, enrolled: int, skipped: int, excluded: array<string,int>, next_run_at: ?Carbon, processed_due: bool}
      */
     public function activate(Campaign $campaign, ?Carbon $now = null): array
     {
@@ -38,13 +39,19 @@ class PacedSequenceEnrollmentService
     /**
      * Recheck due state and process at most one occurrence under a campaign row lock.
      *
-     * @return array{companies: int, enrolled: int, skipped: int, next_run_at: ?Carbon, processed_due: bool}
+     * @return array{companies: int, enrolled: int, skipped: int, excluded: array<string,int>, next_run_at: ?Carbon, processed_due: bool}
      */
     public function evaluateDue(Campaign $campaign, Carbon $now, bool $activate = false): array
     {
         return DB::transaction(function () use ($campaign, $now, $activate): array {
             /** @var Campaign $locked */
             $locked = Campaign::query()->lockForUpdate()->findOrFail($campaign->id);
+
+            // Serialize the shared sequence before any consistent audience/history
+            // read (MySQL REPEATABLE READ), including campaigns sharing a sequence.
+            if ($locked->delivery_channel === 'smtp' && $locked->sequence_id !== null) {
+                \App\Models\Sequence::query()->lockForUpdate()->findOrFail($locked->sequence_id);
+            }
 
             $this->assertConfigured($locked);
 
@@ -81,42 +88,33 @@ class PacedSequenceEnrollmentService
 
             $locked->loadMissing(['segment', 'sequence']);
             $firstStep = $locked->sequence->steps()->orderBy('step_no')->firstOrFail();
-            $existingContactIds = SequenceEnrollment::query()
-                ->where('sequence_id', $locked->sequence_id)
-                ->pluck('contact_id')
-                ->mapWithKeys(fn ($id): array => [(int) $id => true])
-                ->all();
 
             $contacts = $this->segmentService->resolve($locked->segment, $locked->emailVerificationPolicy());
-            $skipped = $contacts
-                ->filter(fn (Contact $contact): bool => isset($existingContactIds[$contact->id]))
-                ->count();
-
-            $groups = $this->selectDailyGroups($locked, $contacts);
+            $batch = $this->selectBatch($locked, $contacts, $locked->pacedDailyCompanyLimit());
+            $skipped = $batch['already_enrolled_contacts'];
+            $excluded = $batch['excluded'];
 
             $enrolled = 0;
             $waveContacts = collect();
-            foreach ($groups as $companyContacts) {
-                foreach ($companyContacts as $contact) {
-                    $enrollment = $this->sequenceService->enroll($locked->sequence, $contact, $locked);
-                    if ($enrollment?->wasRecentlyCreated) {
-                        $usesLiveZohoWave = in_array($locked->delivery_channel, [null, 'zoho'], true)
-                            && config('services.zoho.driver', 'local') === 'zoho';
-                        // Even under Zoho-wave management, next_send_at must stay a real,
-                        // honest timestamp — never null — so a stalled wave pipeline
-                        // remains visible to SequenceService::processDue() and
-                        // sequences:repair-stalled instead of disappearing forever.
-                        // SMTP dispatch is still guarded off for these enrollments via
-                        // SequenceService::canSendViaSmtp() and SendSequenceStepJob's own
-                        // zoho-wave check, so this is safe.
-                        $enrollment->update([
-                            'next_send_at' => $usesLiveZohoWave ? $effectiveRunAt : now(),
-                        ]);
-                        $enrolled++;
-                        $waveContacts->push($contact);
-                    } else {
-                        $skipped++;
-                    }
+            foreach ($batch['contacts'] as $contact) {
+                $enrollment = $this->sequenceService->enroll($locked->sequence, $contact, $locked);
+                if ($enrollment?->wasRecentlyCreated) {
+                    $usesLiveZohoWave = in_array($locked->delivery_channel, [null, 'zoho'], true)
+                        && config('services.zoho.driver', 'local') === 'zoho';
+                    // Even under Zoho-wave management, next_send_at must stay a real,
+                    // honest timestamp — never null — so a stalled wave pipeline
+                    // remains visible to SequenceService::processDue() and
+                    // sequences:repair-stalled instead of disappearing forever.
+                    // SMTP dispatch is still guarded off for these enrollments via
+                    // SequenceService::canSendViaSmtp() and SendSequenceStepJob's own
+                    // zoho-wave check, so this is safe.
+                    $enrollment->update([
+                        'next_send_at' => $usesLiveZohoWave ? $effectiveRunAt : now(),
+                    ]);
+                    $enrolled++;
+                    $waveContacts->push($contact);
+                } else {
+                    $skipped++;
                 }
             }
 
@@ -149,10 +147,17 @@ class PacedSequenceEnrollmentService
             }
             $locked->update(['next_run_at' => $nextRunAt]);
 
+            Log::channel('campaign')->info('[PacedSequenceEnrollmentService] Batch evaluated.', [
+                'campaign_id' => $locked->id,
+                'excluded' => $excluded,
+                'scanned_companies' => $batch['scanned_companies'],
+            ]);
+
             return [
-                'companies' => $groups->count(),
+                'companies' => $batch['contacts']->pluck('company_id')->unique()->count(),
                 'enrolled' => $enrolled,
                 'skipped' => $skipped,
+                'excluded' => $excluded,
                 'next_run_at' => $nextRunAt,
                 'processed_due' => true,
             ];
@@ -177,29 +182,30 @@ class PacedSequenceEnrollmentService
     }
 
     /**
-     * Resolve the segment, exclude contacts already enrolled in this sequence,
-     * then rank company groups by score and stable ID, capped at the campaign's
-     * saved daily company limit.
+     * Rank resolved segment contacts by company (excluding contacts already
+     * enrolled in this sequence, any status), then delegate to the eligibility
+     * scan when the campaign is opted into continuous prospecting, or simply
+     * cap the ranked groups at $limit companies otherwise — the pre-existing
+     * plain paced-sequence behaviour of enrolling every matching contact in
+     * the top N companies, unfiltered.
      *
-     * $contacts, when given, is the already-resolved segment collection (the
-     * caller in evaluateDue() also needs it for the $skipped count) — reused
-     * as-is to avoid resolving the segment twice per tick.
+     * Ranking runs once; both evaluateDue() and previewDailyBatch() consume
+     * the same ranked groups, and dispatchPreflight() reuses this method too
+     * so the "audience" preview never re-implements the sort.
      *
-     * @param Collection<int, Contact>|null $contacts
-     * @return Collection<int, Collection<int, Contact>> keyed by company ID
+     * @return array{contacts:Collection<int,Contact>,excluded:array<string,int>,scanned_companies:int,already_enrolled_contacts:int,scan_capped:bool}
      */
-    private function selectDailyGroups(Campaign $locked, ?Collection $contacts = null): Collection
+    public function selectBatch(Campaign $campaign, Collection $contacts, int $limit, ?int $maxScan = null): array
     {
-        $locked->loadMissing(['segment', 'sequence']);
-        $contacts ??= $this->segmentService->resolve($locked->segment, $locked->emailVerificationPolicy());
         $existingContactIds = SequenceEnrollment::query()
-            ->where('sequence_id', $locked->sequence_id)
+            ->where('sequence_id', $campaign->sequence_id)
             ->pluck('contact_id')
             ->mapWithKeys(fn ($id): array => [(int) $id => true])
             ->all();
+        $alreadyEnrolledContacts = $contacts->filter(fn (Contact $c): bool => isset($existingContactIds[$c->id]))->count();
 
-        return $contacts
-            ->reject(fn (Contact $contact): bool => isset($existingContactIds[$contact->id]) || ! $contact->company_id)
+        $rankedGroups = $contacts
+            ->reject(fn (Contact $c): bool => isset($existingContactIds[$c->id]) || ! $c->company_id)
             ->groupBy('company_id')
             ->sort(function (Collection $left, Collection $right): int {
                 $leftContact = $left->first();
@@ -219,8 +225,29 @@ class PacedSequenceEnrollmentService
                 return $byScore !== 0
                     ? $byScore
                     : $leftContact->company_id <=> $rightContact->company_id;
-            })
-            ->take($locked->pacedDailyCompanyLimit());
+            });
+
+        if ($this->prospectingEligibility->optedIn($campaign)) {
+            $selection = $this->prospectingEligibility->select($campaign, $rankedGroups, $limit, $maxScan);
+
+            return [
+                'contacts' => $selection['contacts'],
+                'excluded' => $selection['excluded'],
+                'scanned_companies' => $selection['scanned_companies'],
+                'already_enrolled_contacts' => $alreadyEnrolledContacts,
+                'scan_capped' => $selection['scan_capped'],
+            ];
+        }
+
+        $limited = $rankedGroups->take($limit);
+
+        return [
+            'contacts' => $limited->flatten(1)->values(),
+            'excluded' => [],
+            'scanned_companies' => $limited->count(),
+            'already_enrolled_contacts' => $alreadyEnrolledContacts,
+            'scan_capped' => false,
+        ];
     }
 
     /**
@@ -228,13 +255,13 @@ class PacedSequenceEnrollmentService
      * select right now. No enroll, no CampaignRun/CampaignRecipient creation,
      * no next_run_at write, no lock.
      *
-     * @return array{company_count: int, contact_count: int}
+     * @return array{company_count: int, contact_count: int, research_pool_count:int, next_batch_company_count:int, next_batch_contact_count:int, excluded_reasons:array<string,int>, scanned_companies:int, next_processing_at:?Carbon, scan_capped:bool}
      */
     public function previewDailyBatch(Campaign $campaign): array
     {
         $campaign->loadMissing(['segment', 'sequence']);
         if ($campaign->segment === null || $campaign->sequence === null || $campaign->next_run_at === null) {
-            return ['company_count' => 0, 'contact_count' => 0];
+            return ['company_count' => 0, 'contact_count' => 0, 'research_pool_count' => 0, 'next_batch_company_count' => 0, 'next_batch_contact_count' => 0, 'excluded_reasons' => [], 'scanned_companies' => 0, 'next_processing_at' => null, 'scan_capped' => false];
         }
 
         // sendNow() calls activate() -> evaluateDue(..., true). The $activate
@@ -255,15 +282,29 @@ class PacedSequenceEnrollmentService
             $effectiveRunAt = $this->computeNextBusinessRun($effectiveRunAt, $timezone);
         }
 
-        if ($this->calendar->isBlockedDate($localNow) || $effectiveRunAt->gt($now)) {
-            return ['company_count' => 0, 'contact_count' => 0];
+        $dueNow = ! $this->calendar->isBlockedDate($localNow) && $effectiveRunAt->lte($now);
+        if (! $dueNow && ! $this->prospectingEligibility->optedIn($campaign)) {
+            return ['company_count' => 0, 'contact_count' => 0, 'research_pool_count' => 0, 'next_batch_company_count' => 0, 'next_batch_contact_count' => 0, 'excluded_reasons' => [], 'scanned_companies' => 0, 'next_processing_at' => $effectiveRunAt, 'scan_capped' => false];
         }
 
-        $groups = $this->selectDailyGroups($campaign);
+        $research = $this->segmentService->resolve($campaign->segment, $campaign->emailVerificationPolicy());
+        $limit = $campaign->pacedDailyCompanyLimit();
+        // ponytail: this runs on every campaign view/edit render for opted-in
+        // campaigns — bound it well below the cron tick's default scan cap.
+        $batch = $this->selectBatch($campaign, $research, $limit, max(30, $limit * 3));
+        $companyCount = $batch['contacts']->pluck('company_id')->unique()->count();
+        $contactCount = $batch['contacts']->count();
 
         return [
-            'company_count' => $groups->count(),
-            'contact_count' => $groups->sum(fn (Collection $group): int => $group->count()),
+            'company_count' => $dueNow ? $companyCount : 0,
+            'contact_count' => $dueNow ? $contactCount : 0,
+            'next_batch_company_count' => $companyCount,
+            'next_batch_contact_count' => $contactCount,
+            'research_pool_count' => $research->count(),
+            'excluded_reasons' => $batch['excluded'],
+            'scanned_companies' => $batch['scanned_companies'],
+            'next_processing_at' => $effectiveRunAt,
+            'scan_capped' => $batch['scan_capped'],
         ];
     }
 
@@ -288,13 +329,14 @@ class PacedSequenceEnrollmentService
         }
     }
 
-    /** @return array{companies: int, enrolled: int, skipped: int, next_run_at: ?Carbon, processed_due: bool} */
+    /** @return array{companies: int, enrolled: int, skipped: int, excluded: array<string,int>, next_run_at: ?Carbon, processed_due: bool} */
     private function result(Campaign $campaign, bool $processedDue): array
     {
         return [
             'companies' => 0,
             'enrolled' => 0,
             'skipped' => 0,
+            'excluded' => [],
             'next_run_at' => $campaign->next_run_at,
             'processed_due' => $processedDue,
         ];

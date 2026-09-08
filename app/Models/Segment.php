@@ -107,6 +107,17 @@ class Segment extends Model
             'filter.engagement.opened'         => 'nullable|boolean',
             'filter.engagement.clicked'        => 'nullable|boolean',
             'filter.engagement.sans_demande'   => 'nullable|boolean',
+
+            // Opt-in campaign admission policy.  SegmentService intentionally
+            // ignores this metadata: it is consumed only by paced SMTP campaigns.
+            'filter.prospecting_rules' => 'nullable|array',
+            'filter.prospecting_rules.enabled' => 'nullable|boolean',
+            'filter.prospecting_rules.contact_gap_days' => 'nullable|integer|min:1|max:365',
+            'filter.prospecting_rules.verification_max_age_days' => 'nullable|integer|min:1|max:365',
+            'filter.prospecting_rules.one_contact_per_company' => 'nullable|boolean',
+            'filter.prospecting_rules.once_per_sequence_company' => 'nullable|boolean',
+            'filter.prospecting_rules.exclude_engaged_companies' => 'nullable|boolean',
+            'filter.prospecting_rules.exclude_pending_companies' => 'nullable|boolean',
         ];
     }
 

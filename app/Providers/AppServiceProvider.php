@@ -97,6 +97,7 @@ class AppServiceProvider extends ServiceProvider
                 calendar: $app->make(\App\Services\Scheduling\BusinessCalendarService::class),
                 smtpReservations: $app->make(\App\Services\Campaign\SmtpSendReservationService::class),
                 contactEligibility: $app->make(\App\Services\Campaign\ContactEligibilityService::class),
+                prospectingEligibility: $app->make(\App\Services\Campaign\CampaignProspectingEligibilityService::class),
             ),
         );
 

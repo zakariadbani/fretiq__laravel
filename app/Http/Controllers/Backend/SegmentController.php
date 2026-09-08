@@ -361,7 +361,19 @@ class SegmentController extends BackendController
             $filter['engagement'] = $engagement;
         }
 
+        $rules = $this->buildProspectingRules((array) ($rawFilter['prospecting_rules'] ?? []));
+        if (! empty($rules)) {
+            $filter['prospecting_rules'] = $rules;
+        }
+
         $attributes['is_manual'] = $this->currentRequest->boolean('is_manual');
+
+        if ($attributes['is_manual'] && ($rules['enabled'] ?? false)) {
+            throw ValidationException::withMessages([
+                'filter.prospecting_rules.enabled' => ['Les règles de prospection continue nécessitent un segment dynamique.'],
+            ]);
+        }
+
         $attributes['filter'] = $attributes['is_manual'] || empty($filter) ? null : $filter;
 
         return $attributes;
@@ -743,7 +755,43 @@ class SegmentController extends BackendController
             $filter['engagement'] = $engagement;
         }
 
+        // filter.prospecting_rules is deliberately NOT normalized here: it is
+        // stripped from $validated by validatedScopeFilter()'s $request->validate()
+        // (not a listed rule there) before normalizeFilter() ever sees it — this
+        // live-preview path never persists, only beforeSave() does.
+
         return $filter;
+    }
+
+    /**
+     * Validate raw prospecting-rules input and store it as-is (no bounds/defaults
+     * here — CampaignProspectingEligibilityService::rules() is the single
+     * normalizer that clamps and defaults these at read time).
+     *
+     * @return array<string, bool|int>
+     */
+    private function buildProspectingRules(array $raw): array
+    {
+        \Illuminate\Support\Facades\Validator::make(['filter' => ['prospecting_rules' => $raw]],
+            array_filter((new Segment)->rules(), fn ($key) => str_starts_with($key, 'filter.prospecting_rules'), ARRAY_FILTER_USE_KEY)
+        )->validate();
+        if (! $this->boolInputSet($raw['enabled'] ?? null)) {
+            return [];
+        }
+
+        $rules = ['enabled' => true];
+        foreach (['contact_gap_days', 'verification_max_age_days'] as $key) {
+            if (isset($raw[$key]) && $raw[$key] !== '') {
+                $rules[$key] = (int) $raw[$key];
+            }
+        }
+        foreach (['one_contact_per_company', 'once_per_sequence_company', 'exclude_engaged_companies', 'exclude_pending_companies'] as $key) {
+            if (array_key_exists($key, $raw)) {
+                $rules[$key] = $this->boolInputSet($raw[$key]);
+            }
+        }
+
+        return $rules;
     }
 
     /**

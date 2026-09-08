@@ -232,6 +232,7 @@
                     </div>
                 </div>
             </div>
+            <div class="col-12">@include('backend.contents.campaigns.partials._continuous-prospecting')</div>
             @endif
 
         </div>
