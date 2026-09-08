@@ -28,6 +28,7 @@ use App\Services\Campaign\SmtpCampaignsDriver;
 use App\Services\Campaign\SmtpSendReservationService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Queue;
@@ -485,38 +486,141 @@ class ContinuousR1ProspectingTest extends TestCase
         $this->assertDatabaseMissing('sequence_enrollments', ['contact_id' => $contact->id]);
     }
 
-    public function test_select_caps_the_scan_on_an_unhappy_path_of_all_excluded_companies(): void
+    public function test_selection_reaches_an_eligible_company_after_two_full_excluded_chunks(): void
     {
         [$campaign, $contact] = $this->fixture();
         $contact->update(['email_verification_checked_at' => now()->subDays(31)]);
         $rankedGroups = collect([$contact->company_id => collect([$contact])]);
-        for ($i = 1; $i <= 2; $i++) {
+        for ($i = 1; $i <= 400; $i++) {
             $company = Company::create(['name' => "Stale company {$i}", 'relationship' => 'prospect', 'is_active' => true]);
             $stale = $this->contact($company, ['email_verification_checked_at' => now()->subDays(31)]);
             $rankedGroups->put($company->id, collect([$stale]));
         }
+        $eligibleCompany = Company::create(['name' => 'Eligible after chunks', 'relationship' => 'prospect', 'is_active' => true]);
+        $eligible = $this->contact($eligibleCompany);
+        $rankedGroups->put($eligibleCompany->id, collect([$eligible]));
 
-        $result = $this->policy()->select($campaign, $rankedGroups, 1, maxScan: 2);
+        $result = $this->policy()->select($campaign, $rankedGroups, 1);
 
-        $this->assertTrue($result['scan_capped']);
-        $this->assertSame(2, $result['scanned_companies']);
+        $this->assertFalse($result['scan_capped']);
+        $this->assertSame(402, $result['scanned_companies']);
+        $this->assertSame([$eligible->id], $result['contacts']->pluck('id')->all());
     }
 
-    public function test_preview_daily_batch_caps_the_scan_well_below_the_cron_ticks_cap(): void
+    public function test_preview_and_enrollment_select_the_same_company_beyond_the_old_preview_cap(): void
     {
-        // previewDailyBatch() runs on every campaign view/edit render — it must
-        // use a much tighter scan cap than evaluateDue()'s cron-tick default.
         [$campaign, $contact] = $this->fixture();
         $campaign->update(['daily_company_limit' => 1]);
         $contact->update(['email_verification_checked_at' => now()->subDays(31)]);
-        for ($i = 1; $i <= 39; $i++) {
+        for ($i = 1; $i <= 200; $i++) {
             $company = Company::create(['name' => "Stale company {$i}", 'relationship' => 'prospect', 'is_active' => true]);
             $this->contact($company, ['email_verification_checked_at' => now()->subDays(31)]);
         }
+        $eligible = $this->contact(Company::create(['name' => 'Preview eligible', 'relationship' => 'prospect', 'is_active' => true]));
 
         $preview = app(PacedSequenceEnrollmentService::class)->previewDailyBatch($campaign->fresh());
-        $this->assertTrue($preview['scan_capped']);
-        $this->assertSame(30, $preview['scanned_companies']);
+        $this->assertFalse($preview['scan_capped']);
+        $this->assertSame(202, $preview['scanned_companies']);
+        $this->assertSame(1, $preview['contact_count']);
+
+        $result = app(PacedSequenceEnrollmentService::class)->activate($campaign->fresh());
+        $this->assertSame($preview['contact_count'], $result['enrolled']);
+        $this->assertDatabaseHas('sequence_enrollments', ['contact_id' => $eligible->id]);
+    }
+
+    public function test_selection_terminates_after_all_excluded_companies_without_a_cap(): void
+    {
+        [$campaign, $contact] = $this->fixture();
+        $contact->update(['email_verification_checked_at' => now()->subDays(31)]);
+        $rankedGroups = collect([$contact->company_id => collect([$contact])]);
+        for ($i = 1; $i <= 200; $i++) {
+            $company = Company::create(['name' => "Excluded company {$i}", 'relationship' => 'prospect', 'is_active' => true]);
+            $stale = $this->contact($company, ['email_verification_checked_at' => now()->subDays(31)]);
+            $rankedGroups->put($company->id, collect([$stale]));
+        }
+
+        $result = $this->policy()->select($campaign, $rankedGroups, 1);
+
+        $this->assertFalse($result['scan_capped']);
+        $this->assertSame(201, $result['scanned_companies']);
+        $this->assertSame([], $result['contacts']->all());
+        $this->assertSame(['verification_stale' => 201], $result['excluded']);
+    }
+
+    public function test_selection_evidence_queries_grow_by_chunk_not_by_company(): void
+    {
+        [$campaign, $contact] = $this->fixture();
+        $single = collect([$contact->company_id => collect([$contact])]);
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $this->policy()->select($campaign, $single, 1);
+        $singleChunkQueries = count(DB::getQueryLog());
+
+        $many = collect();
+        for ($i = 1; $i <= 201; $i++) {
+            $company = Company::create(['name' => "Chunk query company {$i}", 'relationship' => 'prospect', 'is_active' => true]);
+            $stale = $this->contact($company, ['email_verification_checked_at' => now()->subDays(31)]);
+            $many->put($company->id, collect([$stale]));
+        }
+        DB::flushQueryLog();
+        $this->policy()->select($campaign, $many, 1);
+        $twoChunkQueries = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $this->assertLessThanOrEqual($singleChunkQueries + 30, $twoChunkQueries);
+    }
+
+    public function test_bulk_selection_preserves_normalized_alias_tombstone_suppression(): void
+    {
+        [$campaign, $contact] = $this->fixture();
+        $contact->update(['email' => 'alias@example.test']);
+        $aliasCompany = Company::create(['name' => 'Deleted alias owner', 'relationship' => 'prospect', 'is_active' => true]);
+        $alias = $this->contact($aliasCompany, ['email' => ' ALIAS@EXAMPLE.TEST ']);
+        $alias->delete();
+        Suppression::create(['email' => 'alias@example.test', 'reason' => 'unsubscribe']);
+
+        $result = $this->policy()->select($campaign, collect([$contact->company_id => collect([$contact->fresh()])]), 1);
+
+        $this->assertSame(['suppressed' => 1], $result['excluded']);
+        $this->assertTrue($result['contacts']->isEmpty());
+    }
+
+    public function test_bulk_selection_does_not_transitively_apply_inbox_email_evidence_through_a_shared_alias(): void
+    {
+        [$campaign] = $this->fixture();
+        $companyA = Company::create(['name' => 'Inbox evidence owner', 'relationship' => 'prospect', 'is_active' => true]);
+        $from = $this->contact($companyA, ['email' => 'from@example.test']);
+        $this->contact($companyA, ['email' => 'shared@example.test']);
+        $companyB = Company::create(['name' => 'Shared alias recipient', 'relationship' => 'prospect', 'is_active' => true]);
+        $candidate = $this->contact($companyB, ['email' => ' shared@example.test']);
+        InboxEmail::create(['sender_identity_id' => $campaign->sender_identity_id, 'message_id' => 'transitive-inbox-evidence',
+            'from_email' => ' FROM@example.test ', 'received_at' => now(), 'status' => 'nouveau']);
+
+        $result = $this->policy()->select($campaign, collect([
+            $companyB->id => collect([$candidate]),
+            $companyA->id => collect([$from]),
+        ]), 1);
+
+        $this->assertSame([$candidate->id], $result['contacts']->pluck('id')->all());
+        $this->assertSame([], $result['excluded']);
+    }
+
+    public function test_pausing_the_linked_sequence_holds_a_pending_smtp_send_until_resumed(): void
+    {
+        [$campaign, $contact] = $this->fixture();
+        $reservation = $this->reserve($campaign, $contact);
+        $campaign->sequence->update(['is_active' => false]);
+
+        $this->deliver($reservation);
+
+        Mail::assertNothingSent();
+        $this->assertSame('released', $reservation->fresh()->status);
+
+        $campaign->sequence->update(['is_active' => true]);
+        app(SequenceService::class)->sendStep(SequenceEnrollment::firstOrFail()->fresh());
+        $this->deliver(SmtpSendReservation::firstOrFail());
+
+        Mail::assertSent(SequenceStepMailable::class, 1);
     }
 
     public function test_is_manual_segment_with_prospecting_rules_enabled_is_rejected_with_422(): void
@@ -590,10 +694,23 @@ class ContinuousR1ProspectingTest extends TestCase
         [$campaign] = $this->fixture();
         $this->admin();
         foreach ([route('admin.campaigns.edit', $campaign), route('admin.campaigns.view', $campaign)] as $url) {
-            $this->get($url)->assertOk()->assertSee('data-testid="continuous-prospecting-summary"', false)->assertSee('Prochain lot estimé');
+            $this->get($url)->assertOk()->assertSee('data-testid="continuous-prospecting-summary"', false)->assertSee('Prochain lot estimé')->assertSee('Voir la séquence liée');
         }
         $this->assertSame(0, SequenceEnrollment::count());
         Mail::assertNothingSent();
+    }
+
+    public function test_campaign_summary_hides_the_sequence_link_without_sequence_view_permission(): void
+    {
+        [$campaign] = $this->fixture();
+        $this->seed([\Database\Seeders\Acl\RolesSeeder::class, \Database\Seeders\Acl\PermissionsSeeder::class]);
+        $user = \App\Models\User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
+        $user->givePermissionTo(['backend.access', 'view campaigns']);
+
+        $this->actingAs($user)->get(route('admin.campaigns.view', $campaign))
+            ->assertOk()
+            ->assertSee('bloque les nouvelles entrées')
+            ->assertDontSee('Voir la séquence liée');
     }
 
     public function test_view_and_edit_hide_continuous_prospecting_summary_when_not_opted_in(): void

@@ -195,7 +195,7 @@ class PacedSequenceEnrollmentService
      *
      * @return array{contacts:Collection<int,Contact>,excluded:array<string,int>,scanned_companies:int,already_enrolled_contacts:int,scan_capped:bool}
      */
-    public function selectBatch(Campaign $campaign, Collection $contacts, int $limit, ?int $maxScan = null): array
+    public function selectBatch(Campaign $campaign, Collection $contacts, int $limit): array
     {
         $existingContactIds = SequenceEnrollment::query()
             ->where('sequence_id', $campaign->sequence_id)
@@ -228,7 +228,7 @@ class PacedSequenceEnrollmentService
             });
 
         if ($this->prospectingEligibility->optedIn($campaign)) {
-            $selection = $this->prospectingEligibility->select($campaign, $rankedGroups, $limit, $maxScan);
+            $selection = $this->prospectingEligibility->select($campaign, $rankedGroups, $limit);
 
             return [
                 'contacts' => $selection['contacts'],
@@ -289,9 +289,7 @@ class PacedSequenceEnrollmentService
 
         $research = $this->segmentService->resolve($campaign->segment, $campaign->emailVerificationPolicy());
         $limit = $campaign->pacedDailyCompanyLimit();
-        // ponytail: this runs on every campaign view/edit render for opted-in
-        // campaigns — bound it well below the cron tick's default scan cap.
-        $batch = $this->selectBatch($campaign, $research, $limit, max(30, $limit * 3));
+        $batch = $this->selectBatch($campaign, $research, $limit);
         $companyCount = $batch['contacts']->pluck('company_id')->unique()->count();
         $contactCount = $batch['contacts']->count();
 

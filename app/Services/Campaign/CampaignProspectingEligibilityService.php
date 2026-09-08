@@ -66,13 +66,10 @@ class CampaignProspectingEligibilityService
      * group; only trashed/invalid_email/verification_stale are re-checked per
      * contact.
      *
-     * // ponytail: per-company queries; switch to set-based queries if the
-     * // scan exceeds ~200 companies/tick.
-     *
      * @param  Collection<int|string, Collection<int, Contact>>  $rankedGroups  Contacts grouped by company_id, already ranked.
      * @return array{contacts:Collection<int,Contact>,excluded:array<string,int>,scanned_companies:int,scan_capped:bool}
      */
-    public function select(Campaign $campaign, Collection $rankedGroups, int $limit, ?int $maxScan = null): array
+    public function select(Campaign $campaign, Collection $rankedGroups, int $limit): array
     {
         $rules = $this->rules($campaign);
         if (! $rules['enabled']) {
@@ -83,61 +80,151 @@ class CampaignProspectingEligibilityService
         $selected = collect();
         $scanned = 0;
         $companiesSelected = 0;
-        $maxScan ??= max(200, $limit * 20);
-        $scanCapped = false;
 
-        foreach ($rankedGroups as $contacts) {
+        // A chunk bounds the evidence queries, not the audience scan. Starting
+        // every due run at rank one must still reach an eligible company after
+        // any number of stale/excluded companies.
+        foreach ($rankedGroups->chunk(200) as $groups) {
             if ($companiesSelected >= $limit) {
                 break;
             }
-            if ($scanned >= $maxScan) {
-                $scanCapped = true;
-                break;
+            $evidence = $this->selectionEvidence($campaign, $groups, $rules);
+            foreach ($groups as $contacts) {
+                if ($companiesSelected >= $limit) {
+                    break 2;
+                }
+                $scanned++;
+
+                $company = $evidence['companies'][(int) $contacts->first()?->company_id] ?? null;
+                $companyOutcome = $this->companySelectionSafety($company, $rules, $evidence);
+                if ($companyOutcome['reason'] !== null) {
+                    $excluded[$companyOutcome['reason']] = ($excluded[$companyOutcome['reason']] ?? 0) + 1;
+
+                    continue;
+                }
+
+                if ($rules['once_per_sequence_company'] && $this->idsMatch($companyOutcome['ids'], $evidence['sequence_enrolled'])) {
+                    $excluded['already_enrolled'] = ($excluded['already_enrolled'] ?? 0) + 1;
+
+                    continue;
+                }
+
+                if ($rules['exclude_pending_companies'] && $this->idsMatch($companyOutcome['ids'], $evidence['pending'])) {
+                    $excluded['pending_work'] = ($excluded['pending_work'] ?? 0) + 1;
+
+                    continue;
+                }
+
+                $ordered = $contacts->sort(function (Contact $left, Contact $right): int {
+                    $freshness = ($right->email_verification_checked_at?->timestamp ?? 0) <=> ($left->email_verification_checked_at?->timestamp ?? 0);
+
+                    return $freshness !== 0 ? $freshness : $left->id <=> $right->id;
+                })->values();
+                $eligible = $ordered->filter(fn (Contact $candidate) => $this->contactSafety($candidate, $rules) === null);
+                if ($eligible->isEmpty()) {
+                    $candidate = $ordered->first();
+                    $reason = $candidate !== null ? ($this->contactSafety($candidate, $rules) ?? 'company_not_prospect') : 'company_not_prospect';
+                    $excluded[$reason] = ($excluded[$reason] ?? 0) + 1;
+
+                    continue;
+                }
+
+                $selected = $rules['one_contact_per_company'] ? $selected->push($eligible->first()) : $selected->concat($eligible);
+                $companiesSelected++;
             }
-            $scanned++;
-
-            $company = $contacts->first()?->company;
-            $companyOutcome = $this->companySafety($company, $rules);
-            if ($companyOutcome['reason'] !== null) {
-                $excluded[$companyOutcome['reason']] = ($excluded[$companyOutcome['reason']] ?? 0) + 1;
-
-                continue;
-            }
-
-            if ($rules['once_per_sequence_company'] && SequenceEnrollment::query()
-                ->where('sequence_id', $campaign->sequence_id)
-                ->whereIn('contact_id', $companyOutcome['ids'])
-                ->exists()) {
-                $excluded['already_enrolled'] = ($excluded['already_enrolled'] ?? 0) + 1;
-
-                continue;
-            }
-
-            if ($rules['exclude_pending_companies'] && $this->hasBroadPendingWork($companyOutcome['ids'])) {
-                $excluded['pending_work'] = ($excluded['pending_work'] ?? 0) + 1;
-
-                continue;
-            }
-
-            $ordered = $contacts->sort(function (Contact $left, Contact $right): int {
-                $freshness = ($right->email_verification_checked_at?->timestamp ?? 0) <=> ($left->email_verification_checked_at?->timestamp ?? 0);
-
-                return $freshness !== 0 ? $freshness : $left->id <=> $right->id;
-            })->values();
-            $eligible = $ordered->filter(fn (Contact $candidate) => $this->contactSafety($candidate, $rules) === null);
-            if ($eligible->isEmpty()) {
-                $candidate = $ordered->first();
-                $reason = $candidate !== null ? ($this->contactSafety($candidate, $rules) ?? 'company_not_prospect') : 'company_not_prospect';
-                $excluded[$reason] = ($excluded[$reason] ?? 0) + 1;
-
-                continue;
-            }
-
-            $selected = $rules['one_contact_per_company'] ? $selected->push($eligible->first()) : $selected->concat($eligible);
-            $companiesSelected++;
         }
 
-        return ['contacts' => $selected, 'excluded' => $excluded, 'scanned_companies' => $scanned, 'scan_capped' => $scanCapped];
+        return ['contacts' => $selected, 'excluded' => $excluded, 'scanned_companies' => $scanned, 'scan_capped' => false];
+    }
+
+    /** Build all company-level selection evidence once per 200-company chunk. */
+    private function selectionEvidence(Campaign $campaign, Collection $groups, array $rules): array
+    {
+        $companyIds = $groups->map(fn (Collection $contacts) => $contacts->first()?->company_id)->filter()->map(fn ($id) => (int) $id)->values();
+        $companies = Company::query()->whereIn('id', $companyIds)->get()->keyBy('id')->all();
+        $exact = Contact::withTrashed()->whereIn('company_id', $companyIds)->get();
+        $emails = $exact->pluck('email')->map(fn ($email) => strtolower(trim((string) $email)))->filter()->unique()->values()->all();
+        $contacts = Contact::withTrashed()->where(function ($query) use ($companyIds, $emails): void {
+            $query->whereIn('company_id', $companyIds);
+            if ($emails !== []) {
+                $query->orWhereIn(DB::raw('LOWER(TRIM(email))'), $emails);
+            }
+        })->get();
+        $contexts = [];
+        foreach ($companyIds as $companyId) {
+            $companyEmails = $exact->where('company_id', $companyId)->pluck('email')
+                ->map(fn ($email) => strtolower(trim((string) $email)))->filter()->unique()->values()->all();
+            $ids = $contacts->filter(fn (Contact $contact): bool => (int) $contact->company_id === (int) $companyId
+                || in_array(strtolower(trim((string) $contact->email)), $companyEmails, true))
+                ->pluck('id')->map(fn ($id) => (int) $id)->unique()->values();
+            $contexts[$companyId] = ['ids' => $ids, 'emails' => $companyEmails];
+        }
+        $contactIds = $contacts->pluck('id')->map(fn ($id) => (int) $id)->unique()->values();
+        $set = fn (Collection $ids): array => array_fill_keys($ids->map(fn ($id) => (int) $id)->all(), true);
+
+        $engaged = collect();
+        if ($rules['exclude_engaged_companies']) {
+            $engaged = $engaged->merge(DB::table('demandes')->whereIn('contact_id', $contactIds)->pluck('contact_id'))
+                ->merge(DB::table('inbox_emails')->whereIn('contact_id', $contactIds)->pluck('contact_id'))
+                ->merge(DB::table('campaign_recipients')->whereIn('contact_id', $contactIds)->where(function ($query): void {
+                    $query->whereIn('status', ['replied', 'unsubscribed'])->orWhereNotNull('replied_at');
+                })->pluck('contact_id'))
+                ->merge(SequenceEnrollment::query()->whereIn('contact_id', $contactIds)->whereIn('stopped_reason', ['replied', 'unsubscribe', 'unsubscribed'])->pluck('contact_id'));
+            $inboxEmails = DB::table('inbox_emails')->whereIn(DB::raw('LOWER(TRIM(from_email))'), $emails)->pluck('from_email')
+                ->map(fn ($email) => strtolower(trim((string) $email)))->all();
+        }
+
+        $bounced = $contacts->where('email_verification_source', 'bounce')->pluck('id')
+            ->merge(DB::table('campaign_recipients')->whereIn('contact_id', $contactIds)->where(function ($query): void {
+                $query->where('status', 'bounced')->orWhereNotNull('bounced_at');
+            })->pluck('contact_id'));
+        $pending = SequenceEnrollment::query()->whereIn('contact_id', $contactIds)->whereIn('status', ['active', 'paused'])->pluck('contact_id')
+            ->merge(DB::table('campaign_recipients')->whereIn('contact_id', $contactIds)->whereIn('status', ['queued', 'sending'])->pluck('contact_id'))
+            ->merge(DB::table('sequence_step_sends')->join('sequence_enrollments', 'sequence_enrollments.id', '=', 'sequence_step_sends.enrollment_id')
+                ->whereIn('sequence_enrollments.contact_id', $contactIds)->where('sequence_step_sends.status', 'queued')->pluck('sequence_enrollments.contact_id'))
+            ->merge(DB::table('smtp_send_reservations')->join('sequence_step_sends', function ($join): void {
+                $join->on('smtp_send_reservations.source_id', '=', 'sequence_step_sends.id')->where('smtp_send_reservations.source_type', SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND);
+            })->join('sequence_enrollments', 'sequence_enrollments.id', '=', 'sequence_step_sends.enrollment_id')
+                ->whereIn('sequence_enrollments.contact_id', $contactIds)->whereIn('smtp_send_reservations.status', ['reserved', 'sending', 'accepted', 'uncertain'])->pluck('sequence_enrollments.contact_id'))
+            ->merge(DB::table('smtp_send_reservations')->join('campaign_recipients', function ($join): void {
+                $join->on('smtp_send_reservations.source_id', '=', 'campaign_recipients.id')->where('smtp_send_reservations.source_type', SmtpSendReservation::SOURCE_CAMPAIGN_RECIPIENT);
+            })->whereIn('campaign_recipients.contact_id', $contactIds)->whereIn('smtp_send_reservations.status', ['reserved', 'sending', 'accepted', 'uncertain'])->pluck('campaign_recipients.contact_id'));
+
+        return [
+            'companies' => $companies,
+            'contexts' => $contexts,
+            'suppressed' => array_fill_keys(DB::table('suppressions')->whereIn(DB::raw('LOWER(TRIM(email))'), $emails)->pluck('email')->map(fn ($email) => strtolower(trim((string) $email)))->all(), true),
+            'engaged' => $set($engaged),
+            'engaged_emails' => array_fill_keys($inboxEmails, true),
+            'bounced' => $set($bounced),
+            'sequence_enrolled' => $set(SequenceEnrollment::query()->where('sequence_id', $campaign->sequence_id)->whereIn('contact_id', $contactIds)->pluck('contact_id')),
+            'pending' => $set($pending),
+        ];
+    }
+
+    private function companySelectionSafety(?Company $company, array $rules, array $evidence): array
+    {
+        if ($company === null || ! $company->is_active || strtolower(trim((string) $company->relationship)) !== 'prospect') {
+            return ['reason' => 'company_not_prospect', 'ids' => collect()];
+        }
+        $context = $evidence['contexts'][(int) $company->id] ?? ['ids' => collect(), 'emails' => []];
+        if (array_intersect($context['emails'], array_keys($evidence['suppressed'])) !== []) {
+            return ['reason' => 'suppressed', 'ids' => $context['ids']];
+        }
+        if ($rules['exclude_engaged_companies'] && ($this->idsMatch($context['ids'], $evidence['engaged'])
+            || array_intersect($context['emails'], array_keys($evidence['engaged_emails'])) !== [])) {
+            return ['reason' => 'engaged', 'ids' => $context['ids']];
+        }
+        if ($this->idsMatch($context['ids'], $evidence['bounced'])) {
+            return ['reason' => 'bounced', 'ids' => $context['ids']];
+        }
+
+        return ['reason' => null, 'ids' => $context['ids']];
+    }
+
+    private function idsMatch(Collection $ids, array $set): bool
+    {
+        return $ids->contains(fn ($id): bool => isset($set[(int) $id]));
     }
 
     /**
