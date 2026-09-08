@@ -23,6 +23,7 @@ use Database\Seeders\Acl\PermissionsSeeder;
 use Database\Seeders\Acl\RolesSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class CampaignDeliveryChannelTest extends TestCase
@@ -386,6 +387,123 @@ class CampaignDeliveryChannelTest extends TestCase
             ->assertSee('DKIM', false)
             ->assertSee('DMARC', false)
             ->assertSee('APP_URL', false);
+    }
+
+    public function test_smtp_sequence_edit_keeps_its_inactive_selected_sequence_and_immediate_enrollment(): void
+    {
+        config(['services.zoho.driver' => 'zoho']);
+        $data = $this->fixtureData();
+        $sequence = Sequence::create(['name' => 'Archived pilot sequence', 'is_active' => false]);
+        $campaign = Campaign::create([
+            'name' => 'SMTP pilot campaign',
+            'segment_id' => $data['segment']->id,
+            'sequence_id' => $sequence->id,
+            'sender_identity_id' => $data['sender']->id,
+            'schedule_type' => 'sequence',
+            'sequence_enrollment_mode' => 'immediate',
+            'delivery_channel' => 'smtp',
+            'smtp_daily_email_limit' => 10,
+            'timezone' => 'Europe/Paris',
+            'is_active' => false,
+        ]);
+
+        $this->actingAs($this->user)
+            ->get(route('admin.campaigns.edit', $campaign))
+            ->assertOk()
+            ->assertSee($sequence->name, false)
+            ->assertSee('id="sequence_enrollment_immediate_hint"', false);
+
+        $body = $this->actingAs($this->user)->get(route('admin.campaigns.edit', $campaign))->getContent();
+        $document = new \DOMDocument();
+        @$document->loadHTML($body);
+        $sequenceOption = (new \DOMXPath($document))
+            ->query('//select[@id="sequence_select"]/option[@value="'.$sequence->id.'"]')
+            ?->item(0);
+        self::assertNotNull($sequenceOption);
+        self::assertTrue($sequenceOption->hasAttribute('selected'));
+        self::assertMatchesRegularExpression('/<option value="immediate"[^>]*selected[^>]*>/', $body);
+        self::assertMatchesRegularExpression('/<input[^>]*name="smtp_daily_email_limit"[^>]*value="10"/', $body);
+
+        Http::preventStrayRequests();
+        Queue::fake();
+        $this->actingAs($this->user)->putJson(route('admin.campaigns.update', $campaign), [
+            'name' => $campaign->name,
+            'segment_id' => $campaign->segment_id,
+            'sender_identity_id' => $campaign->sender_identity_id,
+            'sequence_id' => $sequence->id,
+            'delivery_channel' => 'smtp',
+            'smtp_daily_email_limit' => 10,
+            'schedule_type' => 'sequence',
+            'sequence_enrollment_mode' => 'immediate',
+            'timezone' => 'Europe/Paris',
+            'is_active' => false,
+            'sequence_auto_enroll_enabled' => true,
+        ])->assertOk();
+
+        $this->assertDatabaseHas('campaigns', [
+            'id' => $campaign->id,
+            'sequence_id' => $sequence->id,
+            'sequence_enrollment_mode' => 'immediate',
+            'smtp_daily_email_limit' => 10,
+            'is_active' => false,
+            'sequence_auto_enroll_enabled' => false,
+        ]);
+        Http::assertNothingSent();
+        Queue::assertNothingPushed();
+    }
+
+    public function test_zoho_create_and_legacy_zoho_edit_keep_immediate_enrollment_unavailable(): void
+    {
+        config(['services.zoho.driver' => 'zoho']);
+
+        $create = $this->actingAs($this->user)->get(route('admin.campaigns.create'));
+        $create->assertOk()
+            ->assertSee('data-effective-delivery-channel="zoho"', false);
+        self::assertMatchesRegularExpression('/<option value="immediate"[^>]*disabled[^>]*>/', $create->getContent());
+
+        $data = $this->fixtureData();
+        $sequence = Sequence::create(['name' => 'Legacy Zoho sequence', 'is_active' => true]);
+        $campaign = Campaign::create([
+            'name' => 'Legacy Zoho campaign',
+            'segment_id' => $data['segment']->id,
+            'sequence_id' => $sequence->id,
+            'sender_identity_id' => $data['sender']->id,
+            'schedule_type' => 'sequence',
+            'sequence_enrollment_mode' => 'paced',
+            'delivery_channel' => null,
+            'driver' => 'local',
+            'daily_company_limit' => 1,
+            'next_run_at' => now()->addDay(),
+            'timezone' => 'Europe/Paris',
+            'is_active' => false,
+        ]);
+
+        $edit = $this->actingAs($this->user)->get(route('admin.campaigns.edit', $campaign));
+        $edit->assertOk()
+            ->assertSee('data-effective-delivery-channel="zoho"', false);
+        self::assertMatchesRegularExpression('/<option value="immediate"[^>]*disabled[^>]*>/', $edit->getContent());
+    }
+
+    public function test_manual_segment_preview_identifies_an_empty_selected_list(): void
+    {
+        $segment = Segment::create([
+            'name' => 'Empty manual pilot list',
+            'scope' => 'client',
+            'is_manual' => true,
+        ]);
+
+        $this->actingAs($this->user)
+            ->getJson(route('admin.campaigns.segmentCount', $segment))
+            ->assertOk()
+            ->assertJsonPath('is_manual', true)
+            ->assertJsonPath('selected_contact_count', 0);
+
+        $dynamic = Segment::create(['name' => 'Empty dynamic pilot list', 'scope' => 'client']);
+        $this->actingAs($this->user)
+            ->getJson(route('admin.campaigns.segmentCount', $dynamic))
+            ->assertOk()
+            ->assertJsonPath('is_manual', false)
+            ->assertJsonPath('matched_count', 0);
     }
 
     public function test_locked_campaign_rejects_channel_or_sender_changes_server_side(): void

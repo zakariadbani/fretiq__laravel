@@ -189,7 +189,7 @@ class RendersTrackedHtmlMergeTagsTest extends TestCase
         $this->assertSame($input, $this->render($input, $this->makeContact()));
     }
 
-    public function test_clean_html_receives_exactly_one_visible_unsubscribe_link(): void
+    public function test_clean_html_receives_no_visible_unsubscribe_link(): void
     {
         $result = RendersTrackedHtmlMergeTagsFixture::renderTrackedHtml(
             '<p>Bonjour Karim</p>',
@@ -197,8 +197,8 @@ class RendersTrackedHtmlMergeTagsTest extends TestCase
             self::UNSUBSCRIBE_URL,
         );
 
-        $this->assertSame(1, substr_count($result, 'href="' . self::UNSUBSCRIBE_URL . '"'));
-        $this->assertStringContainsString('Se désabonner', $result);
+        $this->assertSame(0, substr_count($result, self::UNSUBSCRIBE_URL));
+        $this->assertStringNotContainsString('Se désabonner', $result);
     }
 
     public function test_legacy_unsubscribe_link_keeps_its_placement_without_appending_a_duplicate(): void
@@ -232,7 +232,7 @@ class RendersTrackedHtmlMergeTagsTest extends TestCase
         $this->assertStringContainsString('<p>Second lien</p>', $result);
     }
 
-    public function test_non_clickable_legacy_placeholder_is_removed_and_driver_footer_is_appended(): void
+    public function test_non_clickable_legacy_placeholder_is_removed_without_an_automatic_footer(): void
     {
         $result = RendersTrackedHtmlMergeTagsFixture::renderTrackedHtml(
             '<p>URL brute : {{unsubscribe_url}}</p>',
@@ -240,12 +240,11 @@ class RendersTrackedHtmlMergeTagsTest extends TestCase
             self::UNSUBSCRIBE_URL,
         );
 
-        $this->assertSame(1, substr_count($result, self::UNSUBSCRIBE_URL));
-        $this->assertSame(1, substr_count($result, 'href="' . self::UNSUBSCRIBE_URL . '"'));
-        $this->assertStringContainsString('Se désabonner', $result);
+        $this->assertSame(0, substr_count($result, self::UNSUBSCRIBE_URL));
+        $this->assertStringNotContainsString('Se désabonner', $result);
     }
 
-    public function test_pcre_failure_falls_back_to_one_driver_owned_clickable_link(): void
+    public function test_pcre_failure_does_not_add_an_automatic_unsubscribe_fallback(): void
     {
         $previousLimit = ini_get('pcre.backtrack_limit');
 
@@ -262,11 +261,12 @@ class RendersTrackedHtmlMergeTagsTest extends TestCase
             ini_set('pcre.backtrack_limit', (string) $previousLimit);
         }
 
-        $this->assertSame(1, substr_count($result, self::UNSUBSCRIBE_URL));
-        $this->assertSame(1, substr_count($result, 'href="' . self::UNSUBSCRIBE_URL . '"'));
+        $this->assertSame(0, substr_count($result, self::UNSUBSCRIBE_URL));
+        $this->assertStringNotContainsString('Se désabonner', $result);
+        $this->assertStringContainsString('/track/open/tracking-token', $result);
     }
 
-    public function test_pixel_and_driver_footer_are_inserted_before_full_document_closing_tags(): void
+    public function test_pixel_is_inserted_before_full_document_closing_tags_without_an_automatic_footer(): void
     {
         $result = RendersTrackedHtmlMergeTagsFixture::renderTrackedHtml(
             '<!doctype html><html><body><p>Contenu</p></body></html>',
@@ -275,8 +275,7 @@ class RendersTrackedHtmlMergeTagsTest extends TestCase
         );
 
         $this->assertLessThan(stripos($result, '</body>'), strpos($result, '/track/open/tracking-token'));
-        $this->assertLessThan(stripos($result, '</body>'), strpos($result, 'href="' . self::UNSUBSCRIBE_URL . '"'));
-        $this->assertLessThan(stripos($result, '</html>'), strpos($result, 'href="' . self::UNSUBSCRIBE_URL . '"'));
+        $this->assertStringNotContainsString(self::UNSUBSCRIBE_URL, $result);
     }
 
     public function test_document_injection_uses_real_last_body_closing_tag_after_comment_marker(): void
@@ -341,7 +340,7 @@ class RendersTrackedHtmlMergeTagsTest extends TestCase
         $this->assertLessThan(strpos($result, '</body><!--'), strpos($result, '/track/open/tracking-token'));
     }
 
-    public function test_unclosed_comment_is_neutralized_before_visible_driver_footer(): void
+    public function test_unclosed_comment_is_neutralized_without_an_automatic_footer(): void
     {
         $result = RendersTrackedHtmlMergeTagsFixture::renderTrackedHtml(
             '<p>Content</p><!-- archived <a href="{{unsubscribe_url}}">hidden</a>',
@@ -349,13 +348,12 @@ class RendersTrackedHtmlMergeTagsTest extends TestCase
             self::UNSUBSCRIBE_URL,
         );
 
-        $this->assertSame(1, substr_count($result, self::UNSUBSCRIBE_URL));
+        $this->assertSame(0, substr_count($result, self::UNSUBSCRIBE_URL));
         $this->assertStringContainsString('<!-- archived <a href="">hidden</a>-->', $result);
         $this->assertLessThan(strpos($result, '/track/open/tracking-token'), strpos($result, '-->'));
-        $this->assertLessThan(strpos($result, 'href="' . self::UNSUBSCRIBE_URL . '"'), strpos($result, '-->'));
     }
 
-    public function test_unclosed_script_is_closed_before_pixel_and_footer_injection(): void
+    public function test_unclosed_script_is_closed_before_pixel_injection(): void
     {
         $result = RendersTrackedHtmlMergeTagsFixture::renderTrackedHtml(
             '<p>Content</p><script>var x="</body>";</script-no-close>',
@@ -365,10 +363,9 @@ class RendersTrackedHtmlMergeTagsTest extends TestCase
 
         $this->assertStringContainsString('</script-no-close></script>', $result);
         $this->assertLessThan(strpos($result, '/track/open/tracking-token'), strpos($result, '</script>'));
-        $this->assertLessThan(strpos($result, 'href="' . self::UNSUBSCRIBE_URL . '"'), strpos($result, '</script>'));
     }
 
-    public function test_large_unclosed_comment_is_scanned_without_pcre_error_and_footer_stays_visible(): void
+    public function test_large_unclosed_comment_is_scanned_without_pcre_error_or_an_automatic_footer(): void
     {
         $source = '<p>Content</p><!--' . str_repeat('x', 1250000)
             . '<a href="{{unsubscribe_url}}">hidden</a>';
@@ -387,9 +384,8 @@ class RendersTrackedHtmlMergeTagsTest extends TestCase
         }
 
         $this->assertSame(PREG_NO_ERROR, preg_last_error());
-        $this->assertSame(1, substr_count($result, self::UNSUBSCRIBE_URL));
+        $this->assertSame(0, substr_count($result, self::UNSUBSCRIBE_URL));
         $this->assertLessThan(strpos($result, '/track/open/tracking-token'), strrpos($result, '-->'));
-        $this->assertLessThan(strpos($result, 'href="' . self::UNSUBSCRIBE_URL . '"'), strrpos($result, '-->'));
     }
 
     public function test_large_unclosed_raw_text_block_does_not_depend_on_pcre_backtracking(): void
@@ -404,7 +400,8 @@ class RendersTrackedHtmlMergeTagsTest extends TestCase
         );
 
         $this->assertSame(PREG_NO_ERROR, preg_last_error());
-        $this->assertSame(1, substr_count($result, self::UNSUBSCRIBE_URL));
+        $this->assertSame(0, substr_count($result, self::UNSUBSCRIBE_URL));
+        $this->assertStringNotContainsString('Se désabonner', $result);
         $this->assertLessThan(strpos($result, '/track/open/tracking-token'), strrpos($result, '</script>'));
     }
 
@@ -459,11 +456,10 @@ class RendersTrackedHtmlMergeTagsFixture
         $fixture = new self();
         $html = self::renderMergeTags($source, $contact, $unsubscribeUrl);
 
-        return $fixture->appendTrackingPixelAndFooter(
+        return $fixture->appendTrackingPixel(
             $html,
             'tracking-token',
             $unsubscribeUrl,
-            'fr',
         );
     }
 }

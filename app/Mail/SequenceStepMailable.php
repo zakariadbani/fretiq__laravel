@@ -72,8 +72,9 @@ class SequenceStepMailable extends Mailable
     /**
      * Build the message content from the step's template HTML.
      *
-     * Variable substitution + tracking pixel + unsubscribe footer are applied
-     * in renderHtml(), mirroring the CampaignMailable approach.
+     * Variable substitution, template-owned unsubscribe normalization, and
+     * tracking pixel insertion are applied in renderHtml(), mirroring
+     * CampaignMailable.
      */
     public function content(): Content
     {
@@ -97,8 +98,8 @@ class SequenceStepMailable extends Mailable
     // ── Private helpers ────────────────────────────────────────────────────────
 
     /**
-     * Render the step template HTML with variable substitution, tracking pixel,
-     * and the unsubscribe footer block.
+     * Render the step template HTML with variable substitution, normalize any
+     * template-owned unsubscribe link, then append the tracking pixel.
      */
     private function renderHtml(): string
     {
@@ -106,6 +107,6 @@ class SequenceStepMailable extends Mailable
         $source   = $this->resolvedHtml !== '' ? $this->resolvedHtml : ($template->html_content ?? '');
         $html     = self::renderMergeTags($source, $this->contact, $this->unsubscribeUrl);
 
-        return $this->appendTrackingPixelAndFooter($html, $this->trackingToken, $this->unsubscribeUrl, $this->language);
+        return $this->appendTrackingPixel($html, $this->trackingToken, $this->unsubscribeUrl);
     }
 }

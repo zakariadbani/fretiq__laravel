@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 
 /**
- * Shared merge-tag, tracking-pixel, and unsubscribe rendering for campaign mailables.
+ * Shared merge-tag, tracking-pixel, and template-owned unsubscribe rendering for campaign mailables.
  */
 trait RendersTrackedHtml
 {
@@ -43,40 +43,23 @@ trait RendersTrackedHtml
     }
 
     /**
-     * Append the tracking pixel and one language-aware unsubscribe link.
+     * Normalize template-owned unsubscribe links, then append the tracking pixel.
      */
-    private function appendTrackingPixelAndFooter(
+    private function appendTrackingPixel(
         string $html,
         string $trackingToken,
         string $unsubscribeUrl,
-        string $language,
     ): string {
         $pixelUrl = rtrim(config('app.url'), '/') . '/track/open/' . $trackingToken;
         $pixel = '<img src="' . e($pixelUrl) . '" width="1" height="1" alt="" '
             . 'style="display:none;width:1px;height:1px;" />';
 
-        $footers = config('translation.footer') ?? [];
-        $base = config('translation.base_language', 'fr');
-        $footer = $footers[$language]
-            ?? $footers[$base]
-            ?? [
-                'intro' => 'Vous recevez cet email car vous faites partie de notre liste de contacts professionnels.',
-                'link_label' => 'Se désabonner',
-            ];
-
-        [$html, $hasUnsubscribeLink] = UnsubscribeHtmlNormalizer::normalize($html, $unsubscribeUrl);
+        [$html] = UnsubscribeHtmlNormalizer::normalize($html, $unsubscribeUrl);
         $html = $this->rewriteLinksForClickTracking($html, $trackingToken, $unsubscribeUrl);
-        $unsubscribeBlock = '';
-        if (! $hasUnsubscribeLink) {
-            $unsubscribeBlock = "\n" . '<div style="margin-top:24px;font-size:11px;color:#888;font-family:sans-serif;">'
-                . e($footer['intro']) . ' '
-                . '<a href="' . $unsubscribeUrl . '" style="color:#888;">' . e($footer['link_label']) . '</a>'
-                . '</div>';
-        }
 
         return UnsubscribeHtmlNormalizer::insertBeforeDocumentEnd(
             $html,
-            $pixel . $unsubscribeBlock,
+            $pixel,
         );
     }
 
@@ -87,8 +70,8 @@ trait RendersTrackedHtml
      *   - mailto:, tel:, #fragment, and any other non-http(s) scheme.
      *   - non-<a> tags (e.g. <link rel="stylesheet">), since only <a> tags
      *     are scanned by the outer pattern.
-     * Explicitly skipped: the unsubscribe URL (exact match, so the footer's
-     * own link — and any legacy inline one — is never rerouted through it).
+     * Explicitly skipped: the unsubscribe URL (exact match, so an explicit
+     * template-owned link is never rerouted through it).
      *
      * <script>/<style>/comment regions are protected (sentinel-swapped) via
      * UnsubscribeHtmlNormalizer before the regex scan, same as normalize()

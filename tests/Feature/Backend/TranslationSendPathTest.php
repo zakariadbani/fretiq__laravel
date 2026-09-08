@@ -45,10 +45,6 @@ class TranslationSendPathTest extends TestCase
             'translation.base_language'     => 'fr',
             'translation.target_languages'  => ['en'],
             'translation.francophone_countries' => ['FR', 'BE', 'LU', 'MC', 'CH', 'CA'],
-            'translation.footer' => [
-                'fr' => ['intro' => 'Vous recevez cet email.', 'link_label' => 'Se désabonner'],
-                'en' => ['intro' => 'You are receiving this email.', 'link_label' => 'Unsubscribe'],
-            ],
         ]);
 
         Mail::fake();
@@ -164,7 +160,7 @@ class TranslationSendPathTest extends TestCase
 
     // ── DE contact → EN content ───────────────────────────────────────────────
 
-    public function test_de_contact_receives_en_html_and_footer(): void
+    public function test_de_contact_receives_en_html_without_an_automatic_footer(): void
     {
         $template = $this->makeTemplate();
         $enTr = $this->addEnTranslation($template);
@@ -192,11 +188,12 @@ class TranslationSendPathTest extends TestCase
             $this->assertStringContainsString('EN content', $rendered,
                 'DE contact must receive EN HTML content');
 
-            // Must contain EN footer
-            $this->assertStringContainsString('Unsubscribe', $rendered,
-                'DE contact must receive EN unsubscribe footer');
+            $this->assertStringNotContainsString('Unsubscribe', $rendered,
+                'DE contact must not receive an automatic unsubscribe footer');
             $this->assertStringNotContainsString('Se désabonner', $rendered,
-                'DE contact must NOT receive FR footer');
+                'DE contact must not receive the French automatic unsubscribe footer');
+            $this->assertStringNotContainsString('You are receiving this email because you are part of our professional contact list.', $rendered);
+            $this->assertStringNotContainsString('Vous recevez cet email car vous faites partie de notre liste de contacts professionnels.', $rendered);
 
             return true;
         });
@@ -204,7 +201,7 @@ class TranslationSendPathTest extends TestCase
 
     // ── FR contact → FR base content ─────────────────────────────────────────
 
-    public function test_fr_contact_receives_fr_html_and_footer(): void
+    public function test_fr_contact_receives_fr_html_without_an_automatic_footer(): void
     {
         $template = $this->makeTemplate();
         $this->addEnTranslation($template); // EN exists, but FR contact must get FR
@@ -229,10 +226,12 @@ class TranslationSendPathTest extends TestCase
 
             $this->assertStringContainsString('contenu FR', $rendered,
                 'FR contact must receive FR HTML content');
-            $this->assertStringContainsString('Se désabonner', $rendered,
-                'FR contact must receive FR footer');
+            $this->assertStringNotContainsString('Se désabonner', $rendered,
+                'FR contact must not receive an automatic unsubscribe footer');
             $this->assertStringNotContainsString('Unsubscribe', $rendered,
-                'FR contact must NOT receive EN footer');
+                'FR contact must not receive the English automatic unsubscribe footer');
+            $this->assertStringNotContainsString('You are receiving this email because you are part of our professional contact list.', $rendered);
+            $this->assertStringNotContainsString('Vous recevez cet email car vous faites partie de notre liste de contacts professionnels.', $rendered);
 
             return true;
         });
@@ -341,16 +340,8 @@ class TranslationSendPathTest extends TestCase
         });
     }
 
-    // ── FIX 2 regression: footer must not crash or vanish when config is null ─
-
-    /**
-     * When config('translation.footer') is null (misconfiguration or missing file),
-     * CampaignMailable must still render a non-empty unsubscribe footer using the
-     * hardcoded FR fallback, and must not throw an error.
-     */
-    public function test_null_footer_config_renders_hardcoded_fallback(): void
+    public function test_missing_footer_configuration_does_not_add_visible_content(): void
     {
-        // Override footer config to null — simulates missing/broken config
         config()->set('translation.footer', null);
 
         $template = $this->makeTemplate();
@@ -365,7 +356,6 @@ class TranslationSendPathTest extends TestCase
         [, $deContact] = $this->makeContactWithCountry('DE', 'nullfooter@acme.test');
         $recipient = $this->makeRecipient($run, $deContact);
 
-        // Must not throw
         $this->driverSend($recipient, $campaign, $run);
 
         Mail::assertSent(CampaignMailable::class, function (CampaignMailable $mail) use ($deContact) {
@@ -375,12 +365,13 @@ class TranslationSendPathTest extends TestCase
 
             $rendered = $mail->render();
 
-            // Must contain SOME unsubscribe text — the hardcoded FR fallback
-            $this->assertStringContainsString('Se désabonner', $rendered,
-                'Null footer config must fall back to hardcoded FR unsubscribe text');
-
-            // Must not be empty around the footer area
             $this->assertNotEmpty($rendered, 'Rendered email must not be empty');
+            $this->assertStringNotContainsString('Se désabonner', $rendered,
+                'Missing footer configuration must not add visible unsubscribe content');
+            $this->assertStringNotContainsString('Unsubscribe', $rendered,
+                'Missing footer configuration must not add English visible unsubscribe content');
+            $this->assertStringNotContainsString('You are receiving this email because you are part of our professional contact list.', $rendered);
+            $this->assertStringNotContainsString('Vous recevez cet email car vous faites partie de notre liste de contacts professionnels.', $rendered);
 
             return true;
         });
@@ -409,30 +400,39 @@ class TranslationSendPathTest extends TestCase
         // 3 emails must have been sent
         Mail::assertSentCount(3);
 
-        // DE contact → EN footer
+        // DE contact → EN content with no automatic footer
         Mail::assertSent(CampaignMailable::class, function (CampaignMailable $mail) use ($deContact) {
             if (! $mail->hasTo($deContact->email)) {
                 return false;
             }
-            $this->assertStringContainsString('Unsubscribe', $mail->render());
+            $rendered = $mail->render();
+            $this->assertStringContainsString('EN content', $rendered);
+            $this->assertStringNotContainsString('Unsubscribe', $rendered);
+            $this->assertStringNotContainsString('Se désabonner', $rendered);
             return true;
         });
 
-        // FR contact → FR footer
+        // FR contact → FR content with no automatic footer
         Mail::assertSent(CampaignMailable::class, function (CampaignMailable $mail) use ($frContact) {
             if (! $mail->hasTo($frContact->email)) {
                 return false;
             }
-            $this->assertStringContainsString('Se désabonner', $mail->render());
+            $rendered = $mail->render();
+            $this->assertStringContainsString('contenu FR', $rendered);
+            $this->assertStringNotContainsString('Unsubscribe', $rendered);
+            $this->assertStringNotContainsString('Se désabonner', $rendered);
             return true;
         });
 
-        // Null country → FR footer
+        // Null country → FR content with no automatic footer
         Mail::assertSent(CampaignMailable::class, function (CampaignMailable $mail) use ($nullContact) {
             if (! $mail->hasTo($nullContact->email)) {
                 return false;
             }
-            $this->assertStringContainsString('Se désabonner', $mail->render());
+            $rendered = $mail->render();
+            $this->assertStringContainsString('contenu FR', $rendered);
+            $this->assertStringNotContainsString('Unsubscribe', $rendered);
+            $this->assertStringNotContainsString('Se désabonner', $rendered);
             return true;
         });
     }

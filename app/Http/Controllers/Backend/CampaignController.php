@@ -989,8 +989,16 @@ class CampaignController extends BackendController
             }
         }
 
-        $sequences = Sequence::where('is_active', true)
+        $selectedSequenceId = (int) old('sequence_id', $editingCampaign?->sequence_id ?? 0);
+        $sequences = Sequence::query()
             ->where('name', 'not like', 'E2E\_FIXTURE %')
+            ->where(function ($query) use ($selectedSequenceId): void {
+                $query->where('is_active', true);
+
+                if ($selectedSequenceId > 0) {
+                    $query->orWhere('id', $selectedSequenceId);
+                }
+            })
             ->with(['steps' => fn ($q) => $q->with('template')->orderBy('step_no')])
             ->orderBy('name')
             ->get();
@@ -1268,6 +1276,8 @@ class CampaignController extends BackendController
             'contacts_count' => $count,
             'matched_count' => (int) $stats['matched'],
             'funnel' => $stats,
+            'is_manual' => $segment->is_manual,
+            'selected_contact_count' => count($segment->includedContactIds()),
             'available' => true,
         ]);
     }

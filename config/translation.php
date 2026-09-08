@@ -39,28 +39,4 @@ return [
     */
     'francophone_countries' => ['FR', 'BE', 'LU', 'MC', 'CH', 'CA', 'MA'],
 
-    /*
-    |--------------------------------------------------------------------------
-    | Unsubscribe footer
-    |--------------------------------------------------------------------------
-    | Per-language localised text for the compliance footer appended to every
-    | campaign email (CampaignMailable / SequenceStepMailable).
-    |
-    | 'intro'      — sentence displayed before the link.
-    | 'link_label' — anchor text of the unsubscribe link.
-    |
-    | The EN string is hand-authored (never machine-translated) to ensure the
-    | RGPD/GDPR B2B legitimate-interest disclosure is legally accurate.
-    */
-    'footer' => [
-        'fr' => [
-            'intro'      => 'Vous recevez cet email car vous faites partie de notre liste de contacts professionnels.',
-            'link_label' => 'Se désabonner',
-        ],
-        'en' => [
-            'intro'      => 'You are receiving this email because you are part of our professional contact list.',
-            'link_label' => 'Unsubscribe',
-        ],
-    ],
-
 ];

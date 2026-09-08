@@ -57,7 +57,8 @@ class CampaignMailable extends Mailable
      * Variable substitution supports:
      *   {{contact.name}}, {{contact.email}}, {{company.name}}, {{unsubscribe_url}}
      *
-     * After substitution, the tracking pixel and the unsubscribe footer are appended.
+     * After substitution, template-owned unsubscribe links are normalized and
+     * the tracking pixel is appended.
      */
     public function content(): Content
     {
@@ -83,14 +84,14 @@ class CampaignMailable extends Mailable
     // ── Private helpers ────────────────────────────────────────────────────────
 
     /**
-     * Perform variable substitution on the template HTML, then append
-     * the tracking pixel and the unsubscribe link block.
+     * Perform variable substitution on the template HTML, normalize any
+     * template-owned unsubscribe link, then append the tracking pixel.
      */
     private function renderHtml(): string
     {
         $source = $this->resolvedHtml !== '' ? $this->resolvedHtml : ($this->template->html_content ?? '');
         $html   = self::renderMergeTags($source, $this->contact, $this->unsubscribeUrl);
 
-        return $this->appendTrackingPixelAndFooter($html, $this->trackingToken, $this->unsubscribeUrl, $this->language);
+        return $this->appendTrackingPixel($html, $this->trackingToken, $this->unsubscribeUrl);
     }
 }

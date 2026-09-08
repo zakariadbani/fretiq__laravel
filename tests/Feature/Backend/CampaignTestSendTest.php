@@ -112,10 +112,23 @@ class CampaignTestSendTest extends TestCase
             ->assertJsonPath('mode', 'mailpit')
             ->assertJsonPath('transport', 'Mailpit');
 
-        Mail::assertSent(CampaignMailable::class, fn (CampaignMailable $mail): bool => $mail->hasTo('override@example.test')
-            && $mail->hasFrom('noreply@tcl.test', 'TCL France')
-            && $mail->hasReplyTo('reply@tcl.test', 'TCL France')
-            && str_contains($mail->render(), 'Bonjour Admin Preview'));
+        Mail::assertSent(CampaignMailable::class, function (CampaignMailable $mail): bool {
+            $html = $mail->render();
+            $headers = $mail->headers()->text;
+
+            return $mail->hasTo('override@example.test')
+                && $mail->hasFrom('noreply@tcl.test', 'TCL France')
+                && $mail->hasReplyTo('reply@tcl.test', 'TCL France')
+                && str_contains($html, 'Bonjour Admin Preview')
+                && ! str_contains($html, 'Se désabonner')
+                && ! str_contains($html, 'Vous recevez cet email car vous faites partie de notre liste de contacts professionnels.')
+                && ! str_contains($html, 'You are receiving this email because you are part of our professional contact list.')
+                && ! str_contains($html, '/u/0')
+                && ! str_contains($html, '<a ')
+                && str_contains($html, '/track/open/')
+                && ! empty($headers['List-Unsubscribe'])
+                && ($headers['List-Unsubscribe-Post'] ?? null) === 'List-Unsubscribe=One-Click';
+        });
         $this->assertNoOperationalRows();
     }
 
@@ -186,12 +199,21 @@ class CampaignTestSendTest extends TestCase
 
         Mail::assertSent(SequenceStepMailable::class, function (SequenceStepMailable $mail): bool {
             $html = $mail->render();
+            $headers = $mail->headers()->text;
 
             return $mail->hasTo('sequence-preview@example.test')
                 && $mail->hasFrom('noreply@tcl.test', 'TCL France')
                 && $mail->hasReplyTo('reply@tcl.test', 'TCL France')
                 && $mail->hasSubject('Premier contact avec Admin Preview')
-                && str_contains($html, 'Étape pour Admin Preview — sequence-preview@example.test');
+                && str_contains($html, 'Étape pour Admin Preview — sequence-preview@example.test')
+                && ! str_contains($html, 'Se désabonner')
+                && ! str_contains($html, 'Vous recevez cet email car vous faites partie de notre liste de contacts professionnels.')
+                && ! str_contains($html, 'You are receiving this email because you are part of our professional contact list.')
+                && ! str_contains($html, '/u/0')
+                && ! str_contains($html, '<a ')
+                && str_contains($html, '/track/open/')
+                && ! empty($headers['List-Unsubscribe'])
+                && ($headers['List-Unsubscribe-Post'] ?? null) === 'List-Unsubscribe=One-Click';
         });
         Mail::assertSent(SequenceStepMailable::class, 1);
         $this->assertNoOperationalRows();

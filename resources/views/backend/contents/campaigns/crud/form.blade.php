@@ -132,6 +132,13 @@
             'email_verification_policy',
             isset($model) && $model->id ? $model->emailVerificationPolicy() : $defaultEmailVerificationPolicy
         );
+        $effectiveFormDeliveryChannel = $selectedDeliveryChannel === '' && isset($model) && $model->id
+            ? $model->effectiveDeliveryChannel()
+            : $selectedDeliveryChannel;
+        $sequenceRequiresPaced = $effectiveFormDeliveryChannel === 'zoho';
+        $selectedSequenceEnrollmentMode = $sequenceRequiresPaced
+            ? 'paced'
+            : old('sequence_enrollment_mode', $model->sequence_enrollment_mode ?? 'immediate');
     @endphp
 
     <div class="row g-5">
@@ -187,7 +194,7 @@
                                 @if($deliveryLocked)
                                     <input type="hidden" name="delivery_channel" value="{{ (string) $model->delivery_channel }}">
                                 @endif
-                                <select name="delivery_channel" id="delivery_channel" class="form-select form-select-solid" data-control="select2" data-hide-search="true" {{ $deliveryLocked ? 'disabled' : '' }}>
+                                <select name="delivery_channel" id="delivery_channel" class="form-select form-select-solid" data-control="select2" data-hide-search="true" data-effective-delivery-channel="{{ $effectiveFormDeliveryChannel }}" {{ $deliveryLocked ? 'disabled' : '' }}>
                                     @if(isset($model) && $model->id && $model->delivery_channel === null)
                                         <option value="" selected>Mode historique ({{ $model->effectiveDeliveryChannel() === 'zoho' ? 'Zoho Campaigns' : 'mail local' }})</option>
                                     @endif
@@ -313,7 +320,8 @@
                                 </div>
                                 <div id="segment-readiness-warning"
                                      class="alert alert-warning align-items-start py-3 mt-3 mb-0 d-none"
-                                     role="status">
+                                     role="status"
+                                     data-segment-edit-url="{{ route('admin.segments.edit', '__segment__') }}">
                                     <i class="bi bi-exclamation-triangle-fill fs-4 me-3 mt-1"></i>
                                     <span></span>
                                 </div>
@@ -535,19 +543,18 @@
                     <div id="fields-sequence" class="row" style="display:none;">
                         <div class="col-lg-5">
                             <div class="fv-row mb-7">
-                                <label class="fw-semibold fs-6 mb-2">Séquence active</label>
+                                <label class="fw-semibold fs-6 mb-2">Séquence</label>
 
                                 @php
-                                    $activeSequences = $sequences->where('is_active', true);
                                     $currentSequenceId = old('sequence_id', $model->sequence_id ?? '');
                                 @endphp
 
-                                @if($activeSequences->isEmpty())
+                                @if($sequences->isEmpty())
                                     {{-- #6 empty-state CTA --}}
                                     <div class="alert alert-info d-flex align-items-center py-3">
                                         <i class="bi bi-info-circle-fill fs-4 me-3 text-info"></i>
                                         <div>
-                                            Aucune séquence active disponible.
+                                            Aucune séquence disponible.
                                             @can('create sequences')
                                                 <a href="{{ route('admin.sequences.create') }}" class="fw-bold ms-1">Créer une séquence</a>
                                             @endcan
@@ -560,11 +567,11 @@
                                             data-control="select2"
                                             data-placeholder="Sélectionner une séquence...">
                                         <option value="">Sélectionner une séquence...</option>
-                                        @foreach($activeSequences as $seq)
+                                        @foreach($sequences as $seq)
                                             <option value="{{ $seq->id }}"
                                                     data-steps="{{ json_encode($seq->steps->map(fn($s) => ['step_no' => $s->step_no, 'delay_days' => $s->delay_days, 'subject' => $s->subject, 'template_name' => $s->template?->name ?? '—'])) }}"
                                                 {{ $currentSequenceId == $seq->id ? 'selected' : '' }}>
-                                                {{ $seq->name }}
+                                                {{ $seq->name }}{{ $seq->is_active ? '' : ' (inactive — campagne actuelle)' }}
                                             </option>
                                         @endforeach
                                     </select>
@@ -611,13 +618,12 @@
                                         class="form-select form-select-solid"
                                         data-control="select2"
                                         data-hide-search="true">
-                                    @if(config('services.zoho.driver', 'local') === 'zoho')
-                                        <option value="paced" selected>Progressif</option>
-                                    @else
-                                    <option value="immediate" {{ old('sequence_enrollment_mode', $model->sequence_enrollment_mode ?? 'immediate') === 'immediate' ? 'selected' : '' }}>Tous immédiatement</option>
-                                    <option value="paced" {{ old('sequence_enrollment_mode', $model->sequence_enrollment_mode ?? 'immediate') === 'paced' ? 'selected' : '' }}>Progressif</option>
-                                    @endif
+                                    <option value="immediate" {{ $selectedSequenceEnrollmentMode === 'immediate' ? 'selected' : '' }} {{ $sequenceRequiresPaced ? 'disabled' : '' }}>Tous immédiatement</option>
+                                    <option value="paced" {{ $selectedSequenceEnrollmentMode === 'paced' ? 'selected' : '' }}>Progressif</option>
                                 </select>
+                                <div class="form-text text-muted mt-1 fs-7" id="sequence_enrollment_immediate_hint">
+                                    L’inscription immédiate respecte toujours l’objectif SMTP quotidien : elle prépare les parcours, sans contourner le rythme d’envoi.
+                                </div>
                             </div>
                         </div>
                         <div class="col-12">
@@ -772,16 +778,27 @@
                 if (text) text.textContent = '';
             };
 
-            const showReadinessWarning = function (message) {
+            const showReadinessWarning = function (message, link) {
                 if (!readinessWarning) return;
                 const text = readinessWarning.querySelector('span');
-                if (text) text.textContent = message;
+                if (text) {
+                    text.textContent = message;
+                    if (link) {
+                        const anchor = document.createElement('a');
+                        anchor.href = link;
+                        anchor.className = 'fw-bold ms-1';
+                        anchor.textContent = 'Gérer les contacts sélectionnés';
+                        text.appendChild(anchor);
+                    }
+                }
                 readinessWarning.classList.remove('d-none');
                 readinessWarning.classList.add('d-flex');
             };
 
             if (segmentSelect && countLabel) {
+                let audienceRequestId = 0;
                 const fetchCount = function (segmentId) {
+                    const requestId = ++audienceRequestId;
                     hideReadinessWarning();
                     if (!segmentId) {
                         countLabel.innerHTML = 'Sélectionnez un segment pour comparer les correspondants aux destinataires éligibles.';
@@ -793,20 +810,39 @@
                         params: {email_verification_policy: verificationPolicySelect?.value || 'verified_only'}
                     })
                         .then(function (r) {
+                            if (requestId !== audienceRequestId) return;
                             const data = r.data || {};
                             const matched = Number(data.matched_count || 0);
                             const eligible = Number(data.contacts_count || 0);
                             const companies = Number(data.company_count || 0);
+                            const isManual = Boolean(data.is_manual);
+                            const selectedContacts = Number(data.selected_contact_count || 0);
 
                             countLabel.innerHTML = '<span class="badge badge-light-secondary">' + matched + ' correspondant(s)</span> · '
                                 + '<span class="badge badge-light-primary">' + eligible + ' destinataire(s) éligible(s)</span> dans '
                                 + '<span class="badge badge-light-info">' + companies + ' société(s)</span>.';
 
                             if (eligible === 0) {
-                                showReadinessWarning('Aucun destinataire n’est éligible actuellement. Vous pouvez enregistrer la campagne, mais la programmation et l’envoi resteront bloqués par la vérification.');
+                                if (isManual && selectedContacts === 0) {
+                                    const editUrl = readinessWarning?.dataset.segmentEditUrl?.replace('__segment__', String(segmentId));
+                                    showReadinessWarning('Cette liste manuelle est vide. Ajoutez des contacts sélectionnés avant de programmer la campagne.', editUrl);
+                                } else if (matched === 0) {
+                                    showReadinessWarning('Aucun contact ne correspond actuellement aux critères de ce segment.');
+                                } else {
+                                    const funnel = data.funnel || {};
+                                    const qualityCandidates = matched - Number(funnel.suppressed || 0) - Number(funnel.duplicates_excluded || 0);
+                                    const excludedByVerification = Number(funnel.verification_excluded || 0);
+                                    const verificationOnly = qualityCandidates > 0
+                                        && excludedByVerification === qualityCandidates
+                                        && Number(funnel.manually_excluded || 0) === 0;
+                                    showReadinessWarning(verificationOnly
+                                        ? 'Les contacts correspondants sont exclus par la politique de vérification sélectionnée.'
+                                        : 'Aucun destinataire n’est éligible actuellement. Consultez les critères et exclusions du segment avant de programmer la campagne.');
+                                }
                             }
                         })
                         .catch(function (error) {
+                            if (requestId !== audienceRequestId) return;
                             const message = error?.response?.data?.message || 'Le calcul de l’audience est momentanément indisponible. Réessayez.';
                             countLabel.textContent = message;
                             showReadinessWarning('Aucun nombre de destinataires n’est affiché tant que le calcul n’a pas abouti.');
@@ -1185,6 +1221,22 @@
             const fieldTimezoneWrapper = document.getElementById('field-timezone-wrapper');
             const sequenceModeSelect = document.getElementById('sequence_enrollment_mode');
             const fieldsSequencePacedEl = document.getElementById('fields-sequence-paced');
+            const immediateEnrollmentHint = document.getElementById('sequence_enrollment_immediate_hint');
+
+            function applyDeliveryChannelRules() {
+                if (!sequenceModeSelect) return;
+
+                const selectedChannel = deliverySelect?.value || deliverySelect?.dataset.effectiveDeliveryChannel;
+                const requiresPacedEnrollment = selectedChannel === 'zoho';
+                const immediateOption = sequenceModeSelect.querySelector('option[value="immediate"]');
+                if (immediateOption) immediateOption.disabled = requiresPacedEnrollment;
+                if (requiresPacedEnrollment && sequenceModeSelect.value === 'immediate') {
+                    sequenceModeSelect.value = 'paced';
+                }
+                if (window.jQuery) $(sequenceModeSelect).trigger('change.select2');
+                if (immediateEnrollmentHint) immediateEnrollmentHint.classList.toggle('d-none', requiresPacedEnrollment);
+                applySequenceEnrollmentMode();
+            }
 
             function applySequenceEnrollmentMode() {
                 const isPacedSequence = scheduleTypeSelect?.value === 'sequence'
@@ -1215,6 +1267,9 @@
                 sequenceModeSelect.addEventListener('change', applySequenceEnrollmentMode);
                 applySequenceEnrollmentMode();
             }
+
+            deliverySelect?.addEventListener('change', applyDeliveryChannelRules);
+            applyDeliveryChannelRules();
 
             if (scheduleTypeSelect) {
                 scheduleTypeSelect.addEventListener('change', function () {

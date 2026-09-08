@@ -102,10 +102,13 @@ class CampaignSequenceProgressiveTest extends TestCase
         $admin = User::factory()->create(['email_verified_at' => now()]);
         $admin->assignRole('superadmin');
 
-        $this->actingAs($admin)->get('/admin/campaigns/create')
+        $body = $this->actingAs($admin)->get('/admin/campaigns/create')
             ->assertOk()
-            ->assertDontSee('<option value="immediate"', false)
-            ->assertSee('<option value="paced" selected>', false);
+            ->getContent();
+
+        self::assertMatchesRegularExpression('/<option value="immediate"[^>]*disabled[^>]*>/', $body);
+        self::assertDoesNotMatchRegularExpression('/<option value="immediate"[^>]*selected[^>]*>/', $body);
+        self::assertMatchesRegularExpression('/<option value="paced"[^>]*selected[^>]*>/', $body);
     }
 
     public function test_due_batch_caps_companies_and_enrolls_every_contact_in_each_selected_company(): void
