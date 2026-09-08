@@ -28,7 +28,7 @@ class SenderIdentitySmtpTest extends TestCase
     {
         parent::setUp();
         $this->seed([RolesSeeder::class, PermissionsSeeder::class]);
-        config(['mail.smtp_mode' => 'mailpit']);
+        config(['mail.smtp_mode' => 'mailpit', 'mail.smtp_sent_copy.enabled' => false]);
         $this->user = User::factory()->create(['email_verified_at' => now(), 'is_active' => true]);
         $this->user->assignRole('superadmin');
     }

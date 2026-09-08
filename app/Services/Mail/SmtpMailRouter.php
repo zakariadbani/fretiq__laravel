@@ -8,6 +8,7 @@ use Illuminate\Mail\Mailable;
 use Illuminate\Mail\MailManager;
 use Illuminate\Mail\SentMessage;
 use Illuminate\Support\Facades\Mail;
+use Symfony\Component\Mailer\Transport\Smtp\SmtpTransport;
 use Symfony\Component\Mailer\Transport\Smtp\Stream\SocketStream;
 
 class SmtpMailRouter
@@ -58,7 +59,7 @@ class SmtpMailRouter
         }
 
         if ($sender === null) {
-            return Mail::mailer('smtp');
+            return $this->withSentCopyArchive(Mail::mailer('smtp'), null);
         }
 
         if (! $sender->hasCompleteSmtpConfiguration()) {
@@ -92,6 +93,26 @@ class SmtpMailRouter
             }
             $mailer->setSymfonyTransport($transport);
         }
+
+        return $this->withSentCopyArchive($mailer, $sender->getKey());
+    }
+
+    private function withSentCopyArchive(MailerContract $mailer, ?int $senderIdentityId): MailerContract
+    {
+        if (! config('mail.smtp_sent_copy.enabled', false)) {
+            return $mailer;
+        }
+        $transport = $mailer->getSymfonyTransport();
+        if ($transport instanceof SentCopyArchivingTransport
+            || ! $transport instanceof SmtpTransport) {
+            return $mailer;
+        }
+
+        $mailer->setSymfonyTransport(new SentCopyArchivingTransport(
+            $transport,
+            app(SmtpSentCopyDispatcher::class),
+            $senderIdentityId,
+        ));
 
         return $mailer;
     }

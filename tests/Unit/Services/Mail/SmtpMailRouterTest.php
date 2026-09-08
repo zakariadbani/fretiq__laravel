@@ -5,8 +5,10 @@ namespace Tests\Unit\Services\Mail;
 use App\Models\SenderIdentity;
 use App\Models\User;
 use App\Notifications\Channels\RoutedMailChannel;
+use App\Services\Mail\SentCopyArchivingTransport;
 use App\Services\Mail\SmtpConfigurationException;
 use App\Services\Mail\SmtpMailRouter;
+use App\Services\Mail\SmtpSentCopyDispatcher;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Mail\Mailable;
@@ -21,6 +23,45 @@ use Tests\TestCase;
 
 class SmtpMailRouterTest extends TestCase
 {
+    public function test_transport_rejected_message_with_null_result_never_queues_an_archive(): void
+    {
+        $delegate = Mockery::mock(\Symfony\Component\Mailer\Transport\TransportInterface::class);
+        $delegate->shouldReceive('send')->once()->andReturnNull();
+        $dispatcher = Mockery::mock(SmtpSentCopyDispatcher::class);
+        $dispatcher->shouldNotReceive('dispatchAfterAccepted');
+        $transport = new SentCopyArchivingTransport($delegate, $dispatcher, null);
+        $this->assertNull($transport->send(new \Symfony\Component\Mime\RawMessage('fixture')));
+    }
+
+    public function test_archiving_transport_dispatches_the_final_accepted_mime_once(): void
+    {
+        $delegate = new ArrayTransport;
+        $dispatcher = Mockery::mock(SmtpSentCopyDispatcher::class);
+        $dispatcher->shouldReceive('dispatchAfterAccepted')
+            ->once()
+            ->with(Mockery::type(\Symfony\Component\Mailer\SentMessage::class), null);
+
+        $transport = new SentCopyArchivingTransport($delegate, $dispatcher, null);
+        $message = (new Email)->from('sender@example.test')->to('recipient@example.test')->subject('final')->text('final body');
+        $sent = $transport->send($message);
+
+        $this->assertStringContainsString('Subject: final', $sent->toString());
+        $this->assertStringContainsString('Message-ID:', $sent->toString());
+    }
+
+    public function test_archiving_failure_does_not_reverse_an_accepted_smtp_send(): void
+    {
+        $delegate = new ArrayTransport;
+        $dispatcher = Mockery::mock(SmtpSentCopyDispatcher::class);
+        $dispatcher->shouldReceive('dispatchAfterAccepted')->once()->andThrow(new \RuntimeException('queue unavailable'));
+
+        $transport = new SentCopyArchivingTransport($delegate, $dispatcher, null);
+        $sent = $transport->send((new Email)->from('sender@example.test')->to('recipient@example.test')->subject('accepted')->text('body'));
+
+        $this->assertNotNull($sent);
+        $this->assertCount(1, $delegate->messages());
+    }
+
     public function test_mailpit_with_identity_uses_mailpit_and_identity_from_and_explicit_reply_to(): void
     {
         $transport = $this->arrayTransportFor('mailpit', 'mailpit');

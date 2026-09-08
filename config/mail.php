@@ -20,6 +20,12 @@ return [
     // inherit a provider mailer.
     'smtp_mode' => env('SMTP_MODE'),
 
+    // Archive is deliberately opt-in: SMTP acceptance remains independent from IMAP.
+    'smtp_sent_copy' => [
+        'enabled' => env('SMTP_SENT_COPY_ENABLED', false),
+        'folder' => env('SMTP_SENT_COPY_FOLDER', 'INBOX.Sent'),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Mailer Configurations

@@ -96,3 +96,6 @@ AGENTS.md
 .codex/
 .codex-remote-attachments/
 .gstack/
+
+# local scratch docs (specs live in ../structure/specs)
+/docs/
