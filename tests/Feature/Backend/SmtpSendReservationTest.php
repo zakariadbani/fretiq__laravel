@@ -93,6 +93,89 @@ class SmtpSendReservationTest extends TestCase
         $this->assertSame('2026-08-17 09:00', $two['send_at']->setTimezone('Europe/Paris')->format('Y-m-d H:i'));
     }
 
+    public function test_hourly_limit_paces_a_ten_email_morning_batch_every_six_minutes(): void
+    {
+        $identity = $this->identity(['smtp_hourly_limit' => 10, 'smtp_daily_limit' => 10]);
+        $campaign = $this->campaign($identity, ['smtp_daily_email_limit' => 10]);
+        $service = app(SmtpSendReservationService::class);
+        $morning = Carbon::parse('2026-08-10 09:30:00', 'Europe/Paris');
+
+        $reservations = [];
+        for ($sourceId = 1; $sourceId <= 11; $sourceId++) {
+            $reservations[] = $service->reserve(
+                $identity,
+                $campaign,
+                SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND,
+                100 + $sourceId,
+                $morning,
+            );
+        }
+
+        for ($index = 0; $index < 10; $index++) {
+            $this->assertSame(
+                $morning->copy()->addMinutes($index * 6)->format('Y-m-d H:i'),
+                $reservations[$index]['send_at']->setTimezone('Europe/Paris')->format('Y-m-d H:i'),
+            );
+        }
+        $this->assertSame('2026-08-11 09:00', $reservations[10]['send_at']->setTimezone('Europe/Paris')->format('Y-m-d H:i'));
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('protectedTransportStatuses')]
+    public function test_existing_pending_slots_can_be_compacted_without_changing_transport_evidence(string $status): void
+    {
+        $identity = $this->identity(['smtp_hourly_limit' => 10, 'smtp_daily_limit' => 50]);
+        $campaign = $this->campaign($identity, ['smtp_daily_email_limit' => 10]);
+        $service = app(SmtpSendReservationService::class);
+        $start = Carbon::parse('2026-09-09 09:30:00', 'Europe/Paris');
+        $now = $start->copy()->addMinutes(30);
+        $reservations = collect();
+
+        // Reproduce the already-saved 54-minute timetable before deployment.
+        for ($index = 0; $index < 10; $index++) {
+            $reservations->push(SmtpSendReservation::create([
+                'sender_identity_id' => $identity->id,
+                'campaign_id' => $campaign->id,
+                'source_type' => SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND,
+                'source_id' => 200 + $index,
+                'reserved_for' => $start->copy()->addMinutes($index * 54)->utc(),
+                'status' => $index === 0 ? $status : 'reserved',
+                'attempt_count' => $index === 0 ? 1 : 0,
+                'attempted_at' => $index === 0 ? $start->copy()->utc() : null,
+                'accepted_at' => $index === 0 && $status !== 'uncertain' ? $start->copy()->utc() : null,
+                'sent_at' => $index === 0 && $status === 'sent' ? $start->copy()->utc() : null,
+                'provider_message_id' => $index === 0 && $status !== 'uncertain' ? 'smtp-existing-200' : null,
+            ]));
+        }
+        $protected = $reservations->first()->fresh()->getRawOriginal();
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($identity, $campaign, $reservations, $service, $now): void {
+            $lockedIdentity = SenderIdentity::query()->lockForUpdate()->findOrFail($identity->id);
+            $pending = SmtpSendReservation::query()->whereIn('id', $reservations->skip(1)->pluck('id'))
+                ->orderBy('id')->lockForUpdate()->get();
+            $lockedCampaign = Campaign::query()->lockForUpdate()->findOrFail($campaign->id);
+            foreach ($pending as $index => $reservation) {
+                $moved = $service->moveToEarliestSafeSlot($reservation, $lockedIdentity, $lockedCampaign, $now);
+                $saved = $reservation->fresh();
+                $this->assertSame($now->copy()->addMinutes($index * 6)->utc()->toDateTimeString(), $saved->reserved_for->toDateTimeString());
+                $this->assertTrue($saved->reserved_for->equalTo($moved['send_at']));
+                $this->assertSame('reserved', $saved->status);
+                $this->assertSame(0, $saved->attempt_count);
+                $this->assertNull($saved->attempted_at);
+            }
+        });
+
+        $this->assertSame($protected, $reservations->first()->fresh()->getRawOriginal());
+        $eleventh = $service->reserve($identity, $campaign, SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND, 210, $now);
+        $this->assertSame('2026-09-10 09:00', $eleventh['send_at']->setTimezone('Europe/Paris')->format('Y-m-d H:i'));
+        $this->expectException(\InvalidArgumentException::class);
+        $service->moveToEarliestSafeSlot($reservations->first()->fresh(), $identity, $campaign, $now);
+    }
+
+    public static function protectedTransportStatuses(): array
+    {
+        return [['accepted'], ['sent'], ['uncertain']];
+    }
+
     public function test_zero_campaign_target_pauses_without_consuming_a_slot(): void
     {
         $identity = $this->identity();
@@ -195,7 +278,7 @@ class SmtpSendReservationTest extends TestCase
 
         $this->assertFalse($deferred['ok']);
         $this->assertSame('not_due', $deferred['reason']);
-        // Nine business hours / 20 emails = 27 minutes after the first claim.
+        // A sender limit of 10 emails per hour reserves the next slot six minutes after the first claim.
         $this->assertSame($expectedUtc, $second->fresh()->reserved_for->toDateTimeString());
         $this->assertSame('UTC', $deferred['send_at']->timezoneName);
         $this->assertSame($expectedUtc, $deferred['send_at']->toDateTimeString());
@@ -210,8 +293,8 @@ class SmtpSendReservationTest extends TestCase
     public static function parisDeferralDates(): array
     {
         return [
-            'summer UTC+2' => ['2026-09-09', '2026-09-09 08:27:00'],
-            'winter UTC+1' => ['2026-12-09', '2026-12-09 09:27:00'],
+            'summer UTC+2' => ['2026-09-09', '2026-09-09 08:06:00'],
+            'winter UTC+1' => ['2026-12-09', '2026-12-09 09:06:00'],
         ];
     }
 

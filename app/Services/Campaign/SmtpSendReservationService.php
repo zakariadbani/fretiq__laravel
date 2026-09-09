@@ -324,12 +324,9 @@ class SmtpSendReservationService
             $active->where('id', '!=', $excludeId);
         }
 
-        $window = $this->window($campaign);
-        $windowSeconds = max(60, ($window['end_minutes'] - $window['start_minutes']) * 60);
-        $hourlySpacing = (int) ceil(3600 / max(1, (int) $identity->smtp_hourly_limit));
-        $dailyLimit = min(max(1, (int) $identity->smtp_daily_limit), $campaign->smtpDailyEmailLimit());
-        $dailySpacing = (int) ceil($windowSeconds / max(1, $dailyLimit));
-        $spacing = max($hourlySpacing, $dailySpacing);
+        // Hourly capacity determines pacing; daily limits below remain caps,
+        // without stretching a small batch across the entire business window.
+        $spacing = (int) ceil(3600 / max(1, (int) $identity->smtp_hourly_limit));
 
         $latestReservedFor = ! $findEarliest ? (clone $active)->max('reserved_for') : null;
         if ($latestReservedFor !== null) {
