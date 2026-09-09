@@ -184,7 +184,9 @@ class SmtpSendReservationService
             $other = SmtpSendReservation::query()->where('id', '!=', $fresh->id)
                 ->where('sender_identity_id', $identity->id)->whereIn('status', ['sending', 'accepted', 'sent', 'uncertain'])
                 ->where('reserved_for', '<=', $nowUtc);
-            $due = $this->nextSlot($identity, $campaign, $now, $other, $fresh->id, true);
+            // Use this claim's clock instant; a second now() would make an
+            // immediately due slot look premature. Persist and return UTC.
+            $due = $this->nextSlot($identity, $campaign, $nowUtc, $other, $fresh->id, true)->utc();
             if ($due->gt($nowUtc)) {
                 $fresh->update(['reserved_for' => $due, 'status' => 'reserved']);
                 return ['ok' => false, 'reservation' => $fresh->fresh(), 'send_at' => $due, 'reason' => 'not_due'];

@@ -197,7 +197,6 @@ class SmtpCampaignPacingTest extends TestCase
             ->once()
             ->andThrow(new \RuntimeException('uncertainty persistence unavailable'));
         $driver = \Mockery::mock(SmtpCampaignsDriver::class);
-        $driver->shouldReceive('supportsBounceFeedback')->once()->andReturn(false);
         $driver->shouldReceive('send')->once()->andThrow(new \RuntimeException('transport failed after DATA'));
 
         try {
@@ -215,6 +214,15 @@ class SmtpCampaignPacingTest extends TestCase
         $this->assertSame('sending', $reservation->fresh()->status);
         Carbon::setTestNow(now()->addMinutes(6));
         $this->artisan('smtp:dispatch-reservations')->assertSuccessful();
+        $this->assertSame('uncertain', $reservation->fresh()->status);
+
+        // A stale duplicate must not cross the transport boundary again.
+        (new SendSmtpReservationJob($reservation->id))->handle(
+            $reservations,
+            $driver,
+            app(CampaignService::class),
+            app(SequenceService::class),
+        );
         $this->assertSame('uncertain', $reservation->fresh()->status);
     }
 

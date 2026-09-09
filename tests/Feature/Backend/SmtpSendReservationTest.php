@@ -147,6 +147,74 @@ class SmtpSendReservationTest extends TestCase
         $this->assertGreaterThan($recoveryTime->timestamp, $second->fresh()->reserved_for->timestamp);
     }
 
+    public function test_due_reservation_is_claimed_when_the_clock_advances_during_processing(): void
+    {
+        $identity = $this->identity();
+        $campaign = $this->campaign($identity);
+        $service = app(SmtpSendReservationService::class);
+        $reservation = $service->reserve(
+            $identity, $campaign, SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND, 72,
+            Carbon::parse('2026-09-09 07:00:00', 'UTC'),
+        )['reservation'];
+        $clock = Carbon::parse('2026-09-09 07:30:00', 'UTC');
+        Carbon::setTestNow(static function () use ($clock): Carbon {
+            return $clock->addMillisecond()->copy();
+        });
+
+        try {
+            // Exercise the production call: no explicitly supplied or frozen time.
+            $claimed = $service->claimWhenDue($reservation);
+
+            $this->assertTrue($claimed['ok']);
+            $this->assertSame('sending', $reservation->fresh()->status);
+            $this->assertSame(1, $reservation->fresh()->attempt_count);
+            $this->assertSame('2026-09-09 07:30:00', $reservation->fresh()->reserved_for->toDateTimeString());
+
+            $duplicate = $service->claimWhenDue($reservation);
+            $this->assertFalse($duplicate['ok']);
+            $this->assertSame('not_reserved', $duplicate['reason']);
+            $this->assertSame(1, $reservation->fresh()->attempt_count);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('parisDeferralDates')]
+    public function test_recalculated_slot_round_trips_in_utc(string $localDate, string $expectedUtc): void
+    {
+        $identity = $this->identity();
+        $campaign = $this->campaign($identity, ['smtp_daily_email_limit' => 20]);
+        $service = app(SmtpSendReservationService::class);
+        $scheduledAt = Carbon::parse($localDate . ' 09:00:00', 'Europe/Paris');
+        $first = $service->reserve($identity, $campaign, SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND, 73, $scheduledAt)['reservation'];
+        $second = $service->reserve($identity, $campaign, SmtpSendReservation::SOURCE_SEQUENCE_STEP_SEND, 74, $scheduledAt)['reservation'];
+        $recoveryTime = Carbon::parse($localDate . ' 10:00:00', 'Europe/Paris');
+        $this->assertTrue($service->claimWhenDue($first, $recoveryTime)['ok']);
+
+        $deferred = $service->claimWhenDue($second, $recoveryTime);
+
+        $this->assertFalse($deferred['ok']);
+        $this->assertSame('not_due', $deferred['reason']);
+        // Nine business hours / 20 emails = 27 minutes after the first claim.
+        $this->assertSame($expectedUtc, $second->fresh()->reserved_for->toDateTimeString());
+        $this->assertSame('UTC', $deferred['send_at']->timezoneName);
+        $this->assertSame($expectedUtc, $deferred['send_at']->toDateTimeString());
+        $this->assertTrue($deferred['send_at']->equalTo($deferred['reservation']->reserved_for));
+        $this->assertSame(0, $second->fresh()->attempt_count);
+
+        $claimed = $service->claimWhenDue($second, Carbon::parse($expectedUtc, 'UTC'));
+        $this->assertTrue($claimed['ok']);
+        $this->assertSame(1, $second->fresh()->attempt_count);
+    }
+
+    public static function parisDeferralDates(): array
+    {
+        return [
+            'summer UTC+2' => ['2026-09-09', '2026-09-09 08:27:00'],
+            'winter UTC+1' => ['2026-12-09', '2026-12-09 09:27:00'],
+        ];
+    }
+
     public function test_uncertain_delivery_conservatively_consumes_the_sender_quota(): void
     {
         $identity = $this->identity(['smtp_hourly_limit' => 10, 'smtp_daily_limit' => 1]);
