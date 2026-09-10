@@ -87,9 +87,11 @@ class CampaignSyncStats extends Command
         }
 
         // ── Sequence-campaign lifecycle sweep ─────────────────────────────────
-        // Atomic conditional UPDATE: sequence-type campaigns that are live
-        // (is_active=1), have at least one enrollment, and have NO remaining
+        // Atomic conditional UPDATE: non-continuous sequence campaigns that are
+        // live (is_active=1), have at least one enrollment, and have NO remaining
         // active OR paused enrollments → set is_active=0 (campaign is drained).
+        // Continuous campaigns keep their active state between daily batches so
+        // newly eligible companies can be enrolled on a future business day.
         //
         // Paused enrollments (SequenceEnrollment.status='paused') are resumable,
         // so they block closure just like active ones. Only terminal statuses
@@ -106,6 +108,7 @@ class CampaignSyncStats extends Command
             SET is_active = 0
             WHERE schedule_type = 'sequence'
               AND is_active = 1
+              AND sequence_auto_enroll_enabled = 0
               AND EXISTS (
                   SELECT 1 FROM sequence_enrollments se
                   WHERE se.campaign_id = campaigns.id

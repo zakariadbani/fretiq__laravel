@@ -210,6 +210,43 @@ class ContinuousR1ProspectingTest extends TestCase
         $this->assertSame(2, SequenceEnrollment::count());
     }
 
+    public function test_completed_continuous_batch_survives_lifecycle_cleanup_and_enrolls_only_new_companies_tomorrow(): void
+    {
+        [$campaign] = $this->fixture();
+        $campaign->update(['daily_company_limit' => 20]);
+
+        for ($i = 1; $i <= 20; $i++) {
+            $this->contact(Company::create([
+                'name' => "Future prospect {$i}",
+                'relationship' => 'prospect',
+                'is_active' => true,
+            ]));
+        }
+
+        $paced = app(PacedSequenceEnrollmentService::class);
+        $firstBatch = $paced->evaluateDue($campaign->fresh(), now());
+        $this->assertSame(20, $firstBatch['enrolled']);
+        $this->assertSame(20, SequenceEnrollment::where('campaign_id', $campaign->id)
+            ->join('contacts', 'contacts.id', '=', 'sequence_enrollments.contact_id')
+            ->distinct()->count('contacts.company_id'));
+        $this->assertSame(0, $paced->evaluateDue($campaign->fresh(), now())['enrolled']);
+
+        SequenceEnrollment::where('campaign_id', $campaign->id)->update(['status' => 'completed']);
+        $this->artisan('campaign:sync-stats')->assertExitCode(0);
+        $this->artisan('campaign:sync-stats')->assertExitCode(0);
+        $this->assertTrue((bool) $campaign->fresh()->is_active);
+
+        Carbon::setTestNow(now()->addDay());
+        $tomorrowBatch = $paced->evaluateDue($campaign->fresh(), now());
+
+        $this->assertSame(1, $tomorrowBatch['enrolled']);
+        $this->assertSame(21, SequenceEnrollment::where('campaign_id', $campaign->id)->count());
+        $this->assertSame(21, SequenceEnrollment::where('campaign_id', $campaign->id)->distinct()->count('contact_id'));
+        $this->assertSame(21, SequenceEnrollment::where('campaign_id', $campaign->id)
+            ->join('contacts', 'contacts.id', '=', 'sequence_enrollments.contact_id')
+            ->distinct()->count('contacts.company_id'));
+    }
+
     public function test_csv_parser_preserves_opt_in_rules_without_warnings(): void
     {
         $this->fixture();

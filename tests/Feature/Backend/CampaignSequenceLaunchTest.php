@@ -982,6 +982,46 @@ class CampaignSequenceLaunchTest extends TestCase
         $this->assertFalse((bool) $campaign->is_active);
     }
 
+    public function test_sync_stats_sweep_does_not_reactivate_a_disabled_continuous_campaign(): void
+    {
+        $company = $this->makeCompany('client');
+        $this->makeContact($company);
+        $campaign = $this->makeCampaign($this->makeSegment('client'), $this->makeSequenceWithSteps(2));
+
+        app(CampaignService::class)->launchSequence($campaign);
+        $campaign->update([
+            'sequence_auto_enroll_enabled' => true,
+            'is_active' => false,
+        ]);
+        SequenceEnrollment::where('campaign_id', $campaign->id)->update(['status' => 'completed']);
+
+        $this->artisan('campaign:sync-stats')->assertExitCode(0);
+
+        $this->assertFalse((bool) $campaign->fresh()->is_active);
+    }
+
+    public function test_sync_stats_sweep_keeps_drained_watched_non_smtp_campaign_active_until_auto_enrollment_stops(): void
+    {
+        $company = $this->makeCompany('client');
+        $this->makeContact($company);
+        $campaign = $this->makeCampaign($this->makeSegment('client'), $this->makeSequenceWithSteps(2));
+        $campaign->update([
+            'delivery_channel' => 'zoho',
+            'driver' => 'zoho',
+        ]);
+
+        app(CampaignService::class)->launchSequence($campaign);
+        $campaign->update(['sequence_auto_enroll_enabled' => true]);
+        SequenceEnrollment::where('campaign_id', $campaign->id)->update(['status' => 'completed']);
+
+        $this->artisan('campaign:sync-stats')->assertExitCode(0);
+        $this->assertTrue((bool) $campaign->fresh()->is_active);
+
+        $campaign->update(['sequence_auto_enroll_enabled' => false]);
+        $this->artisan('campaign:sync-stats')->assertExitCode(0);
+        $this->assertFalse((bool) $campaign->fresh()->is_active);
+    }
+
     /**
      * Test 12 (W1): Campaign saves WITHOUT template in sequence mode;
      *               template still required for one_shot/recurring.
